@@ -1,4 +1,6 @@
+import { lookup as dnsLookup } from 'node:dns/promises';
 import { existsSync } from 'node:fs';
+import { readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 
 export interface CliContext {
@@ -10,6 +12,10 @@ export interface CliContext {
   nodeVersion: string;
   homeDir: () => string | undefined;
   pathExists: (path: string) => boolean;
+  readFileText: (path: string) => Promise<string>;
+  fileSizeBytes: (path: string) => Promise<number>;
+  cwd: () => string;
+  lookup: (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
 }
 
 export const realContext = (): CliContext => ({
@@ -25,6 +31,33 @@ export const realContext = (): CliContext => ({
   nodeVersion: process.versions.node,
   homeDir: () => homedir(),
   pathExists: (path) => existsSync(path),
+  readFileText: (path) => readFile(path, 'utf8'),
+  fileSizeBytes: async (path) => {
+    const stats = await stat(path);
+    return stats.size;
+  },
+  cwd: () => process.cwd(),
+  lookup: async (hostname, signal) => {
+    signal.throwIfAborted();
+    const pending = dnsLookup(hostname, { all: true });
+    pending.catch(() => {
+      // Consume a late rejection if the race below is lost to the deadline
+    });
+    const aborted = new Promise<never>((_resolve, reject) => {
+      signal.addEventListener(
+        'abort',
+        () => {
+          reject(new Error('DNS lookup aborted by the fetch deadline'));
+        },
+        { once: true },
+      );
+    });
+    aborted.catch(() => {
+      // Consume the deadline rejection if the lookup won the race
+    });
+    const entries = await Promise.race([pending, aborted]);
+    return entries.map((entry) => entry.address);
+  },
 });
 
 export interface TestContextOverrides extends Partial<CliContext> {
@@ -47,6 +80,10 @@ export const testContext = (overrides: TestContextOverrides = {}): CliContext =>
     nodeVersion: '24.12.0',
     homeDir: () => undefined,
     pathExists: () => false,
+    readFileText: () => Promise.reject(new Error('no file access configured in testContext')),
+    fileSizeBytes: () => Promise.reject(new Error('no file access configured in testContext')),
+    cwd: () => '/test-cwd',
+    lookup: () => Promise.reject(new Error('no dns lookup configured in testContext')),
     ...rest,
   };
 };

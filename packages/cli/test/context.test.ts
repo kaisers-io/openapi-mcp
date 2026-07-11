@@ -29,6 +29,19 @@ describe('realContext', () => {
     const ctx = realContext();
     expect(ctx.now()).toBeGreaterThanOrEqual(before);
   });
+
+  it('reads real files, reports sizes, and exposes cwd', async () => {
+    const ctx = realContext();
+    const { fileURLToPath } = await import('node:url');
+    const self = fileURLToPath(import.meta.url);
+    const text = await ctx.readFileText(self);
+    expect(text).toContain('realContext');
+    await expect(ctx.fileSizeBytes(self)).resolves.toBeGreaterThan(0);
+    expect(ctx.cwd()).toBe(process.cwd());
+    const addresses = await ctx.lookup('localhost', new AbortController().signal);
+    expect(addresses.length).toBeGreaterThan(0);
+    await expect(ctx.lookup('localhost', AbortSignal.abort())).rejects.toThrow('aborted');
+  });
 });
 
 describe('testContext', () => {
@@ -40,6 +53,12 @@ describe('testContext', () => {
     expect(ctx.homeDir()).toBeUndefined();
     expect(ctx.pathExists('/anything')).toBe(false);
     expect(ctx.now()).toBe(0);
+    expect(ctx.cwd()).toBe('/test-cwd');
     await expect(ctx.fetcher('https://example.com')).rejects.toThrow('no fetcher');
+    await expect(ctx.readFileText('/x')).rejects.toThrow('no file access');
+    await expect(ctx.fileSizeBytes('/x')).rejects.toThrow('no file access');
+    await expect(ctx.lookup('example.com', new AbortController().signal)).rejects.toThrow(
+      'no dns lookup',
+    );
   });
 });
