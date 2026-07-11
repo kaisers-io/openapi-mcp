@@ -1,0 +1,27 @@
+{
+  "name": "@kaisers-io/openapi-mcp",
+  "version": "0.1.0",
+  "description": "Turn any OpenAPI spec into a strict, locally running MCP server",
+  "license": "MIT",
+  "bin": {
+    "openapi-mcp": "./bin/openapi-mcp.mjs"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsdown"
+  },
+  "devDependencies": {
+    "@kaisers-io/openapi-mcp-core": "workspace:*"
+  },
+  "engines": {
+    "node": ">=24.12"
+  }
+}
