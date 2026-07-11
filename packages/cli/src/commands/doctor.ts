@@ -2,8 +2,7 @@ import { join } from 'node:path';
 import { validationError } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
 import type { CliContext } from '../context.ts';
-import { getGlobalOpts } from '../main.ts';
-import { wrapAction } from '../output.ts';
+import { getGlobalOpts, wrapAction } from '../output.ts';
 import type { CommandRegistrar } from './registry.ts';
 
 export const APP_DIR_SEGMENTS = ['.kaisers-io', 'openapi-mcp'] as const;

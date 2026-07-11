@@ -2,19 +2,12 @@ import { Command, CommanderError } from '@commander-js/extra-typings';
 import { EXIT, usageError } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../package.json' with { type: 'json' };
 import type { CliContext } from './context.ts';
-import { emitError, type OutputOptions } from './output.ts';
+import { emitError, getGlobalOpts } from './output.ts';
 import { REGISTRARS } from './commands/registry.ts';
 
 export interface RunState {
   exitCode: number;
 }
-
-export const getGlobalOpts = (program: Command): OutputOptions => {
-  // Extra-typings erases accumulated option types on a plain Command parameter;
-  // opts() takes no type arguments in v15, so coerce at this boundary.
-  const opts = program.opts() as Record<string, unknown>;
-  return { json: opts['json'] === true, verbose: opts['verbose'] === true };
-};
 
 export const buildProgram = (ctx: CliContext, state: RunState): Command => {
   const program = new Command()

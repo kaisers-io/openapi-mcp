@@ -54,8 +54,6 @@
         "vitest/prefer-describe-function-title": "off",
         // Off per task-2 brief: spec test file uses toEqual, not toStrictEqual
         "vitest/prefer-strict-equal": "off",
-        // Off per task-3 brief: primitives.test.ts catch binding is named "err" verbatim
-        "unicorn/catch-error-name": "off",
         // Off per task-3 brief: primitives.test.ts asserts safeParse(...).success with toBe(false) verbatim
         "vitest/prefer-to-be-falsy": "off",
         // Off per task-3 brief: primitives.test.ts uses toThrowError verbatim
