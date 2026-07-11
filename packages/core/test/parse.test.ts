@@ -7,7 +7,7 @@ describe('parseSpecText — JSON', () => {
   });
 
   it('parses JSON with a UTF-8 BOM', () => {
-    expect(parseSpecText('﻿{"a":1}')).toEqual({ a: 1 });
+    expect(parseSpecText('\uFEFF{"a":1}')).toEqual({ a: 1 });
   });
 
   it('parses JSON with leading whitespace', () => {
@@ -78,7 +78,7 @@ describe('parseSpecText — structure budgets', () => {
     expect(() => parseSpecText(deep)).toThrowError(/depth/u);
   });
 
-  it('maps a V8 recursion RangeError to a depth validation error', () => {
+  it('rejects extreme nesting via the iterative depth walker (V8 JSON.parse no longer recurses)', () => {
     const extreme = `${'['.repeat(100_000)}1${']'.repeat(100_000)}`;
     try {
       parseSpecText(extreme);

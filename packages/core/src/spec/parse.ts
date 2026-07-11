@@ -2,7 +2,7 @@ import { parseDocument } from 'yaml';
 import { validationError, type OpenapiMcpError } from '../errors.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 
-const stripBom = (text: string): string => (text.startsWith('﻿') ? text.slice(1) : text);
+const stripBom = (text: string): string => (text.startsWith('\uFEFF') ? text.slice(1) : text);
 
 // Iterative depth check: never recurses, so it cannot itself overflow
 const checkDepth = (root: unknown, maxDepth: number): void => {
