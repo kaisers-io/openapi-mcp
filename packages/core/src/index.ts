@@ -21,3 +21,5 @@ export type { AddressClass, DnsLookup, EgressPolicyOptions } from './http/egress
 export { MAX_REDIRECTS, fetchSpec } from './spec/fetch.ts';
 export type { FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
 export { parseSpecText } from './spec/parse.ts';
+export { validateOpenApiDocument } from './spec/validate.ts';
+export type { OpenapiVersion, ValidatedSpec } from './spec/validate.ts';
