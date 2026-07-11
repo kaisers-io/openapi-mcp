@@ -12,3 +12,5 @@ export { MAX_DURATION_MS, parseDuration, zDuration } from './schemas/primitives.
 export { SPEC_BUDGETS } from './spec/budgets.ts';
 export type { SpecBudgets } from './spec/budgets.ts';
 export { TRUNCATION_MARKER, sanitizeSpecText } from './spec/sanitize.ts';
+export { parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
+export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';

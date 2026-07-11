@@ -36,7 +36,9 @@
     // Off per task-4 brief: output.ts wrapAction() catch binding is named "err" verbatim
     "unicorn/catch-error-name": "off",
     // Off per task-5 brief: main.ts imports `{ emitError, type OutputOptions }` from './output.ts' verbatim
-    "import/consistent-type-specifier-style": "off"
+    "import/consistent-type-specifier-style": "off",
+    // Off per task-3 brief (M2a): headers.ts's resolveHeaderEnvMappings has 14 statements verbatim
+    "max-statements": "off"
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
@@ -73,7 +75,9 @@
         // Off per task-6 brief: doctor.test.ts asserts envelope.ok/cacheRootExists with toBe(true) verbatim
         "vitest/prefer-to-be-truthy": "off",
         // Off per task-1 brief: main.test.ts defines inline CommandRegistrar closures (boom/helpToStderr) verbatim
-        "unicorn/consistent-function-scoping": "off"
+        "unicorn/consistent-function-scoping": "off",
+        // Off per task-3 brief (M2a): headers.test.ts's expectUsageError helper wraps the assertions verbatim
+        "vitest/expect-expect": "off"
       }
     }
   ]
