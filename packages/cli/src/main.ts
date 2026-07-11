@@ -3,13 +3,17 @@ import { EXIT, usageError } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../package.json' with { type: 'json' };
 import type { CliContext } from './context.ts';
 import { emitError, getGlobalOpts } from './output.ts';
-import { REGISTRARS } from './commands/registry.ts';
+import { REGISTRARS, type CommandRegistrar } from './commands/registry.ts';
 
 export interface RunState {
   exitCode: number;
 }
 
-export const buildProgram = (ctx: CliContext, state: RunState): Command => {
+export const buildProgram = (
+  ctx: CliContext,
+  state: RunState,
+  registrars: readonly CommandRegistrar[] = REGISTRARS,
+): Command => {
   const program = new Command()
     .name('openapi-mcp')
     .description('Turn any OpenAPI spec into a strict, locally running MCP server')
@@ -30,7 +34,7 @@ export const buildProgram = (ctx: CliContext, state: RunState): Command => {
         // Suppress commander's own error printing; emitError renders exactly once
       },
     });
-  for (const register of REGISTRARS) {
+  for (const register of registrars) {
     register(program, ctx, state);
   }
   return program;
@@ -38,9 +42,13 @@ export const buildProgram = (ctx: CliContext, state: RunState): Command => {
 
 const stripCommanderPrefix = (message: string): string => message.replace(/^error: /u, '');
 
-export const run = async (ctx: CliContext, argv: readonly string[]): Promise<number> => {
+export const run = async (
+  ctx: CliContext,
+  argv: readonly string[],
+  registrars: readonly CommandRegistrar[] = REGISTRARS,
+): Promise<number> => {
   const state: RunState = { exitCode: EXIT.OK };
-  const program = buildProgram(ctx, state);
+  const program = buildProgram(ctx, state, registrars);
   try {
     await program.parseAsync([...argv]);
     return state.exitCode;

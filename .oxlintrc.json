@@ -69,7 +69,9 @@
         // Off per task-6 brief: doctor.test.ts's JSON-mode `it` block has 11 statements verbatim
         "max-statements": "off",
         // Off per task-6 brief: doctor.test.ts asserts envelope.ok/cacheRootExists with toBe(true) verbatim
-        "vitest/prefer-to-be-truthy": "off"
+        "vitest/prefer-to-be-truthy": "off",
+        // Off per task-1 brief: main.test.ts defines inline CommandRegistrar closures (boom/helpToStderr) verbatim
+        "unicorn/consistent-function-scoping": "off"
       }
     }
   ]

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EXIT } from '@kaisers-io/openapi-mcp-core';
 import { testContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
+import type { CommandRegistrar } from '../src/commands/registry.ts';
 
 describe('run', () => {
   it('prints the version and exits 0', async () => {
@@ -61,5 +62,39 @@ describe('run', () => {
     const okCode = await run(ctxOk, ['node', 'openapi-mcp', '--version']);
     expect(okCode).toBe(EXIT.OK);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it('runs commands from injected registrars and routes plain thrown errors as unexpected', async () => {
+    const errLines: string[] = [];
+    const ctx = testContext({ errLines });
+    const boom: CommandRegistrar = (program) => {
+      program.command('boom').action(() => {
+        throw new Error('kaboom');
+      });
+    };
+    const code = await run(ctx, ['node', 'openapi-mcp', 'boom'], [boom]);
+    expect(code).toBe(EXIT.UNEXPECTED);
+    expect(errLines).toEqual(['openapi-mcp: kaboom']);
+  });
+
+  it('routes commander error output through the writeErr callback', async () => {
+    const errLines: string[] = [];
+    const ctx = testContext({ errLines });
+    const helpToStderr: CommandRegistrar = (program) => {
+      program.command('helpme').action(() => {
+        program.outputHelp({ error: true });
+      });
+    };
+    const code = await run(ctx, ['node', 'openapi-mcp', 'helpme'], [helpToStderr]);
+    expect(code).toBe(EXIT.OK);
+    expect(errLines.join('\n')).toContain('Usage: openapi-mcp');
+  });
+
+  it('keeps the default registrars when none are injected', async () => {
+    const lines: string[] = [];
+    const ctx = testContext({ lines, homeDir: () => '/home/tester' });
+    const code = await run(ctx, ['node', 'openapi-mcp', 'doctor']);
+    expect(code).toBe(EXIT.OK);
+    expect(lines.join('\n')).toContain('app root:');
   });
 });
