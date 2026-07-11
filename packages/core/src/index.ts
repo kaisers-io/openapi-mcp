@@ -23,3 +23,4 @@ export type { FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
 export { parseSpecText } from './spec/parse.ts';
 export { validateOpenApiDocument } from './spec/validate.ts';
 export type { OpenapiVersion, ValidatedSpec } from './spec/validate.ts';
+export { dereference } from './spec/dereference.ts';
