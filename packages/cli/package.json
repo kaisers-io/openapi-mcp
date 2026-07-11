@@ -19,7 +19,9 @@
     "build": "tsdown"
   },
   "devDependencies": {
-    "@kaisers-io/openapi-mcp-core": "workspace:*"
+    "@commander-js/extra-typings": "15.0.0",
+    "@kaisers-io/openapi-mcp-core": "workspace:*",
+    "commander": "15.0.0"
   },
   "engines": {
     "node": ">=24.12"

@@ -32,7 +32,9 @@
     "no-negated-condition": "off",
     "unicorn/no-negated-condition": "off",
     // Off per task-4 brief: output.ts wrapAction() catch binding is named "err" verbatim
-    "unicorn/catch-error-name": "off"
+    "unicorn/catch-error-name": "off",
+    // Off per task-5 brief: main.ts imports `{ emitError, type OutputOptions }` from './output.ts' verbatim
+    "import/consistent-type-specifier-style": "off"
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
@@ -63,7 +65,9 @@
         // Off per task-4 brief: context.test.ts asserts typeof ctx.homeDir() with toBe('string') verbatim
         "vitest/prefer-expect-type-of": "off",
         // Off per task-4 brief: output.test.ts uses `{ a: 1 }` as sample payload data verbatim
-        "id-length": "off"
+        "id-length": "off",
+        // Off per task-5 brief: main.test.ts's `describe('run', ...)` callback is 60 lines verbatim
+        "max-lines-per-function": "off"
       }
     }
   ]
