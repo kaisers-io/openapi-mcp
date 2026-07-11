@@ -20,3 +20,4 @@ export { assertAllowedRedirectTarget, classifyAddress } from './http/egress.ts';
 export type { AddressClass, DnsLookup, EgressPolicyOptions } from './http/egress.ts';
 export { MAX_REDIRECTS, fetchSpec } from './spec/fetch.ts';
 export type { FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
+export { parseSpecText } from './spec/parse.ts';
