@@ -1,0 +1,32 @@
+{
+  "name": "openapi-mcp-workspace",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.12",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "lint": "oxlint",
+    "fmt": "oxfmt packages vitest.config.ts vitest.shared.ts",
+    "fmt:check": "oxfmt --check packages vitest.config.ts vitest.shared.ts",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "build": "pnpm -r run build",
+    "check": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test:coverage"
+  },
+  "packageManager": "pnpm@11.11.0+sha512.4463f65fd80ed80d69bc1d4bf163ee94f605c7380fc318bb5b2ebe15f8cd12d49c51a4d59e951b401e764d3b6ca751cbf51bc50ed7001a6bcb4935e684c34882",
+  "devDependencies": {
+    "@tsconfig/node24": "24.0.4",
+    "@tsconfig/strictest": "2.0.8",
+    "@types/node": "24.13.3",
+    "@vitest/coverage-v8": "4.1.10",
+    "oxfmt": "0.58.0",
+    "oxlint": "1.73.0",
+    "tsdown": "0.22.4",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
+  }
+}

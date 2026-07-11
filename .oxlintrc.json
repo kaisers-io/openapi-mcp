@@ -1,0 +1,36 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "import", "node", "promise"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "pedantic": "error",
+    "perf": "error",
+    "style": "error"
+  },
+  "rules": {
+    "capitalized-comments": ["error", "always", { "ignoreConsecutiveComments": true }],
+    "sort-keys": "off",
+    "sort-imports": "off",
+    "no-magic-numbers": "off",
+    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z"] }],
+    "import/no-named-export": "off",
+    "import/group-exports": "off",
+    "import/no-nodejs-modules": "off",
+    "import/no-unassigned-import": "off",
+    "import/exports-last": "off",
+    "import/prefer-default-export": "off",
+    "unicorn/require-module-specifiers": "off"
+  },
+  "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
+  "overrides": [
+    {
+      "files": ["**/*.test.ts"],
+      "plugins": ["vitest"],
+      "rules": {
+        "vitest/no-hooks": "off",
+        "vitest/max-expects": "off"
+      }
+    }
+  ]
+}
