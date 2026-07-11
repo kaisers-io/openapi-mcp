@@ -59,7 +59,10 @@
     // body read are inherently serial (the chain and stream cannot be parallelized)
     "no-await-in-loop": "off",
     // Off per task-5 brief (M2a): fetch.ts's redirect loop uses `continue` verbatim
-    "no-continue": "off"
+    "no-continue": "off",
+    // Off per task-11 brief (M2a): pipeline.ts composes every Tasks 2-10 module
+    // verbatim, so it imports from 11 files
+    "import/max-dependencies": "off"
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [

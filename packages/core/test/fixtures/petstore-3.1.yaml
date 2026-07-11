@@ -1,0 +1,48 @@
+openapi: 3.1.0
+info:
+  title: Petstore Next
+  version: 2.0.0
+paths:
+  /pets:
+    get:
+      operationId: list pets
+      summary: List pets
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pet'
+  /pets/all:
+    get:
+      operationId: list*pets
+      summary: Also lists pets
+      responses:
+        '200':
+          description: ok
+  /admin:
+    trace:
+      operationId: adminTrace
+      responses:
+        '200':
+          description: ok
+    get:
+      operationId: adminGet
+      servers:
+        - url: https://admin.example.com
+      responses:
+        '200':
+          description: ok
+components:
+  schemas:
+    Pet:
+      type: object
+      properties:
+        id:
+          type: [integer, 'null']
+        name: &nameSchema
+          type: string
+        nickname: *nameSchema
