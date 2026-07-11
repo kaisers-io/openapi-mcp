@@ -22,6 +22,8 @@
     "import/prefer-default-export": "off",
     "unicorn/require-module-specifiers": "off",
     "no-ternary": "off", // ternary used by core errors.ts per task-2 brief
+    // Off per task-2 brief: sanitize.ts's control/bidi-stripping regex matches control-character ranges verbatim
+    "no-control-regex": "off",
     // Off per task-4 brief: context.ts uses node:fs existsSync verbatim
     "node/no-sync": "off",
     // Off per task-4 brief: context.ts testContext().homeDir default returns undefined verbatim
