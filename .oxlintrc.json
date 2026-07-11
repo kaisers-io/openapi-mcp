@@ -67,7 +67,11 @@
         // Off per task-4 brief: output.test.ts uses `{ a: 1 }` as sample payload data verbatim
         "id-length": "off",
         // Off per task-5 brief: main.test.ts's `describe('run', ...)` callback is 60 lines verbatim
-        "max-lines-per-function": "off"
+        "max-lines-per-function": "off",
+        // Off per task-6 brief: doctor.test.ts's JSON-mode `it` block has 11 statements verbatim
+        "max-statements": "off",
+        // Off per task-6 brief: doctor.test.ts asserts envelope.ok/cacheRootExists with toBe(true) verbatim
+        "vitest/prefer-to-be-truthy": "off"
       }
     }
   ]
