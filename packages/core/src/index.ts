@@ -31,3 +31,5 @@ export type {
   OmittedOperation,
   OperationRecord,
 } from './spec/normalize.ts';
+export { TOOL_NAME_MAX_LENGTH, assignToolNames } from './toolgen/naming.ts';
+export type { NamedOperation } from './toolgen/naming.ts';
