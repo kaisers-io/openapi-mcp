@@ -14,3 +14,5 @@ export type { SpecBudgets } from './spec/budgets.ts';
 export { TRUNCATION_MARKER, sanitizeSpecText } from './spec/sanitize.ts';
 export { parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
 export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';
+export { hashContent, loadSpecFromFile, parseSpecSource } from './spec/load.ts';
+export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
