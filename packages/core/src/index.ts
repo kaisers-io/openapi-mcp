@@ -24,3 +24,10 @@ export { parseSpecText } from './spec/parse.ts';
 export { validateOpenApiDocument } from './spec/validate.ts';
 export type { OpenapiVersion, ValidatedSpec } from './spec/validate.ts';
 export { dereference } from './spec/dereference.ts';
+export { HTTP_METHODS, normalizeSpec } from './spec/normalize.ts';
+export type {
+  HttpMethod,
+  NormalizedSpec,
+  OmittedOperation,
+  OperationRecord,
+} from './spec/normalize.ts';
