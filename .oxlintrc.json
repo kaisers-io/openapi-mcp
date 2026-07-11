@@ -20,7 +20,8 @@
     "import/no-unassigned-import": "off",
     "import/exports-last": "off",
     "import/prefer-default-export": "off",
-    "unicorn/require-module-specifiers": "off"
+    "unicorn/require-module-specifiers": "off",
+    "no-ternary": "off" // ternary used by core errors.ts per task-2 brief
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
@@ -29,7 +30,17 @@
       "plugins": ["vitest"],
       "rules": {
         "vitest/no-hooks": "off",
-        "vitest/max-expects": "off"
+        "vitest/max-expects": "off",
+        // Off per task-2 brief: spec test file omits explicit assertion counts
+        "vitest/prefer-expect-assertions": "off",
+        // Off per task-2 brief: spec test file imports describe/it/expect from 'vitest' (globals disabled)
+        "vitest/no-importing-vitest-globals": "off",
+        // Off per task-2 brief: spec test file uses "EXIT map" as a proper-noun-style title
+        "vitest/prefer-lowercase-title": "off",
+        // Off per task-2 brief: spec test file names a describe block after the imported factory
+        "vitest/prefer-describe-function-title": "off",
+        // Off per task-2 brief: spec test file uses toEqual, not toStrictEqual
+        "vitest/prefer-strict-equal": "off"
       }
     }
   ]
