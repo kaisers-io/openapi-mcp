@@ -40,7 +40,26 @@
     // Off per task-3 brief (M2a): headers.ts's resolveHeaderEnvMappings has 14 statements verbatim
     "max-statements": "off",
     // Off per task-4 brief (M2a): load.ts's stat/read try-catch blocks assign url/size/text after declaration verbatim
-    "init-declarations": "off"
+    "init-declarations": "off",
+    // Deferred/race primitives around the non-abortable dns.promises.lookup:
+    // a legitimate promise-constructor use plus detached late-rejection handlers
+    "promise/avoid-new": "off",
+    "promise/prefer-await-to-then": "off",
+    // Off per task-5 brief (M2a): egress.ts's classifyIpv4/classifyAddress branch
+    // comments are inline per condition verbatim
+    "no-inline-comments": "off",
+    // Off per task-5 brief (M2a): egress.ts's IPv6 range constants (0xfc00,
+    // 0xfdff, 0xfe80, 0xfebf, 0xffff) are lowercase and ungrouped verbatim
+    "unicorn/number-literal-case": "off",
+    "unicorn/numeric-separators-style": "off",
+    // Off per task-5 brief (M2a): egress.ts's assertAllowedRedirectTarget and
+    // fetch.ts's fetchSpec exceed 50 lines verbatim
+    "max-lines-per-function": "off",
+    // Off per task-5 brief (M2a): fetch.ts's manual redirect loop and streamed
+    // body read are inherently serial (the chain and stream cannot be parallelized)
+    "no-await-in-loop": "off",
+    // Off per task-5 brief (M2a): fetch.ts's redirect loop uses `continue` verbatim
+    "no-continue": "off"
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
@@ -81,7 +100,12 @@
         // Off per task-3 brief (M2a): headers.test.ts's expectUsageError helper wraps the assertions verbatim
         "vitest/expect-expect": "off",
         // Off per task-4 brief (M2a): load.test.ts narrows source.kind with an if inside the test verbatim
-        "vitest/no-conditional-in-test": "off"
+        "vitest/no-conditional-in-test": "off",
+        // Off per task-5 brief (M2a): fetch.test.ts's fixtures use the Fetch API's
+        // `null` response body / header values verbatim
+        "unicorn/no-null": "off",
+        // Off per task-5 brief (M2a): fetch.test.ts's redirect-chain test suite exceeds 300 lines
+        "max-lines": "off"
       }
     }
   ]
