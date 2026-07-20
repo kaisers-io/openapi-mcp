@@ -40,3 +40,20 @@ export { TOOL_NAME_MAX_LENGTH, assignToolNames } from './toolgen/naming.ts';
 export type { NamedOperation } from './toolgen/naming.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
 export type { SpecPipelineDeps, SpecPipelineOptions, SpecPipelineResult } from './spec/pipeline.ts';
+export type { CacheFs } from './cache/fs.ts';
+export {
+  CACHE_KEY_MAX_LENGTH,
+  CACHE_MAX_PERSISTED_BYTES,
+  CACHE_META_MAX_BYTES,
+  cacheLayout,
+  cacheNamespace,
+  canonicalSourceOf,
+  defaultCacheRoot,
+  objectPath,
+  parseCacheId,
+  parseCacheKey,
+  parseContentHash,
+  resolveCachePolicy,
+} from './cache/paths.ts';
+export type { CacheLayout, CachePolicy } from './cache/paths.ts';
+export { LOCK_STALE_MS, unlockNamespace, withNamespaceLock } from './cache/lock.ts';

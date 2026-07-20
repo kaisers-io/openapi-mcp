@@ -13,7 +13,10 @@
     "sort-keys": "off",
     "sort-imports": "off",
     "no-magic-numbers": "off",
-    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z"] }],
+    // Off per task-2 brief: A/R (cache/errors.ts's withCacheErrors) and T
+    // (cache/lock.ts's withNamespaceLockImpl) are the frozen generic type
+    // parameters from the Interface Contract's withNamespaceLock<T> signature
+    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z", "A", "R", "T"] }],
     "import/no-named-export": "off",
     "import/group-exports": "off",
     "import/no-nodejs-modules": "off",
@@ -111,7 +114,18 @@
         "max-lines": "off",
         // Off per task-1 brief: sanitize.test.ts and output.test.ts embed escaped
         // backslashes ('\\x', '\\u001b') as literal string content verbatim
-        "unicorn/prefer-string-raw": "off"
+        "unicorn/prefer-string-raw": "off",
+        // Off per task-2 brief: cache-lock.test.ts and context.test.ts use
+        // expect(await ...) rather than await expect(...).resolves throughout, verbatim
+        "vitest/prefer-expect-resolves": "off",
+        // Off per task-2 brief: context.test.ts's writeFileAtomic/readFileTextCapped
+        // failure-path tests assert only that a real fs error is thrown, not its
+        // message (the exact message is filesystem-dependent), verbatim
+        "vitest/require-to-throw-message": "off",
+        // Off per task-2 brief: cache-paths.test.ts's D9 collision test writes the
+        // namespace material as two concatenated literals to mirror the two-part
+        // construction it is testing against, verbatim
+        "no-useless-concat": "off"
       }
     }
   ]
