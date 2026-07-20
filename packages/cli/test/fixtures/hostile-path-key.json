@@ -1,0 +1,12 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "T",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/a\u001b]0;PWNED\u001b\\x": {
+      "get": "not-an-object"
+    }
+  }
+}

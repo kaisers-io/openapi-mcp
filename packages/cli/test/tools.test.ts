@@ -121,6 +121,23 @@ describe('tools command — file specs', () => {
     expect(code).toBe(EXIT.USAGE);
     expect(errLines.join('\n')).toContain('URL spec sources');
   });
+
+  it('strips terminal escapes from a hostile path key end to end', async () => {
+    const { errLines, ctx } = fileCtx();
+    const code = await run(ctx, [
+      'node',
+      'openapi-mcp',
+      'tools',
+      '--spec',
+      'hostile-path-key.json',
+    ]);
+    expect(code).toBe(EXIT.VALIDATION);
+    const allOutput = errLines.join('\n');
+    // The hostile path key's ESC bytes must never reach the operator's terminal
+    expect(allOutput).not.toContain('\u001B');
+    // The stripped payload should still be visible so the operator sees the attempt
+    expect(allOutput).toContain(']0;PWNED');
+  });
 });
 
 describe('tools command — URL specs', () => {

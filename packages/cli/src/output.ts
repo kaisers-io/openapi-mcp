@@ -1,5 +1,10 @@
 import type { Command } from '@commander-js/extra-typings';
-import { EXIT, renderError } from '@kaisers-io/openapi-mcp-core';
+import {
+  DISPLAY_TEXT_MAX,
+  EXIT,
+  renderError,
+  sanitizeDisplayText,
+} from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
 
 export interface OutputOptions {
@@ -44,9 +49,12 @@ export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): n
     );
     return rendered.exitCode;
   }
-  ctx.errLine(`openapi-mcp: ${rendered.message}`);
+  // Rendered messages can carry untrusted spec text (Ajv instancePaths, YAML
+  // parser messages, $ref echoes). This is the single human display boundary:
+  // sanitize line-preservingly so multi-line validation output stays readable.
+  ctx.errLine(`openapi-mcp: ${sanitizeDisplayText(rendered.message, DISPLAY_TEXT_MAX)}`);
   if (rendered.stack !== undefined) {
-    ctx.errLine(rendered.stack);
+    ctx.errLine(sanitizeDisplayText(rendered.stack, DISPLAY_TEXT_MAX));
   }
   return rendered.exitCode;
 };

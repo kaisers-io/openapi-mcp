@@ -5,6 +5,7 @@ import type { Options, ValidateFunction } from 'ajv';
 import schema30 from '@seriousme/openapi-schema-validator/schemas/v3.0/schema.json' with { type: 'json' };
 import schema31 from '@seriousme/openapi-schema-validator/schemas/v3.1/schema.json' with { type: 'json' };
 import { validationError } from '../errors.ts';
+import { sanitizeSpecText } from './sanitize.ts';
 
 // The official OpenAPI meta-schemas are imported as JSON modules so tsdown can
 // inline them into the single-file bundle (Plan Decision D1). The 3.0 schema is
@@ -54,6 +55,9 @@ const getValidator = (version: OpenapiVersion): ValidateFunction => {
   return validate;
 };
 
+// The declared version is spec content: bound it before it reaches any message
+const DECLARED_VERSION_MAX = 32;
+
 interface AjvErrorLike {
   instancePath?: string;
   message?: string;
@@ -86,8 +90,11 @@ export const validateOpenApiDocument = (document: Record<string, unknown>): Vali
   const version: OpenapiVersion = declared.startsWith('3.0.') ? '3.0' : '3.1';
   const validate = getValidator(version);
   if (!validate(document)) {
+    // The declared version is attacker-controlled past the "3.0."/"3.1." prefix
+    // checked by the gate above (D2): sanitize and cap it before it is echoed
+    const declaredDisplay = sanitizeSpecText(declared, DECLARED_VERSION_MAX);
     throw validationError(
-      `spec failed OpenAPI ${declared} schema validation:\n${formatAjvErrors(validate.errors ?? [])}`,
+      `spec failed OpenAPI ${declaredDisplay} schema validation:\n${formatAjvErrors(validate.errors ?? [])}`,
     );
   }
   return { document, version };

@@ -108,7 +108,10 @@
         // `null` response body / header values verbatim
         "unicorn/no-null": "off",
         // Off per task-5 brief (M2a): fetch.test.ts's redirect-chain test suite exceeds 300 lines
-        "max-lines": "off"
+        "max-lines": "off",
+        // Off per task-1 brief: sanitize.test.ts and output.test.ts embed escaped
+        // backslashes ('\\x', '\\u001b') as literal string content verbatim
+        "unicorn/prefer-string-raw": "off"
       }
     }
   ]
