@@ -57,3 +57,19 @@ export {
 } from './cache/paths.ts';
 export type { CacheLayout, CachePolicy } from './cache/paths.ts';
 export { LOCK_STALE_MS, unlockNamespace, withNamespaceLock } from './cache/lock.ts';
+export {
+  CACHE_META_SCHEMA_VERSION,
+  CACHE_TEXT_MAX,
+  FETCHED_AT_MAX,
+  zCacheMeta,
+} from './schemas/cache.ts';
+export type { CacheCandidate, CacheMeta } from './schemas/cache.ts';
+export {
+  persistedSpecText,
+  readCacheEntry,
+  serializedSizeWithin,
+  touchRevalidated,
+  writeAccepted,
+  writeCandidate,
+} from './cache/store.ts';
+export type { CacheEntry, CacheReadResult } from './cache/store.ts';

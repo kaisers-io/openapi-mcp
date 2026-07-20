@@ -125,7 +125,43 @@
         // Off per task-2 brief: cache-paths.test.ts's D9 collision test writes the
         // namespace material as two concatenated literals to mirror the two-part
         // construction it is testing against, verbatim
-        "no-useless-concat": "off"
+        "no-useless-concat": "off",
+        // Off per task-3 brief (M2b): cache-store.test.ts's mulberry32 PRNG needs
+        // the exact unsigned 32-bit wraparound `>>> 0` gives; Math.trunc keeps
+        // sign and does not wrap, which would silently change the generated
+        // sequence, verbatim
+        "unicorn/prefer-math-trunc": "off",
+        // Off per task-3 brief (M2b): cache-store.test.ts's round-5 finding 3
+        // case constructs a genuinely sparse array ([1, , 3]) to verify
+        // serializedSizeWithin rejects it - replacing the hole would test a
+        // different, already-covered value, verbatim
+        "no-sparse-arrays": "off",
+        // Off per task-3 brief (M2b): cache-store.test.ts's round-6 finding 1
+        // cases construct boxed primitives (new Number/String/Boolean)
+        // specifically to verify serializedSizeWithin refuses them; the
+        // unboxed-literal replacement these rules suggest is a plain primitive,
+        // which defeats the test, verbatim
+        "unicorn/new-for-builtins": "off",
+        "no-new-wrappers": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/cache/store.ts"],
+      "rules": {
+        // Off per task-3 brief (M2b): cache/store.ts is the transactional store
+        // core - schema serialization, the D14 incremental size preflight, both
+        // writers, GC, the three-way meta read, and the public reader all live in
+        // one module by design (readMetaFile is private and shared by every entry
+        // point in it) - so it verbatim exceeds 300 lines
+        "max-lines": "off",
+        // Off per task-3 brief (M2b): store.ts's writeAccepted and writeCandidate
+        // are declared async with synchronous validation (declaredOpenapiVersion,
+        // persistableTextOrThrow, the title/specVersion length check) BEFORE the
+        // `return withNamespaceLock(...)` tail call. Removing `async` would turn
+        // those synchronous throws into synchronous exceptions at the call site
+        // instead of promise rejections, breaking every `.rejects.toMatchObject`
+        // assertion against them - not behavior-preserving
+        "require-await": "off"
       }
     }
   ]

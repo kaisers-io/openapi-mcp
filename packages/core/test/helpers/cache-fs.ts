@@ -24,28 +24,39 @@ const absenceError = (path: string): Error =>
     code: 'ENOENT',
   });
 
+// Every method below reads and writes through `self.files` / `self.dirs`
+// rather than closing over the initial Map/Set bindings directly. That is
+// deliberate: several Task 3 store tests simulate "a later, independent
+// process observing the same on-disk state" by constructing a second
+// `memoryCacheFs()` and reassigning its `files`/`dirs` properties to alias an
+// existing instance's (`clean.files = fs.files`). A fake whose closures
+// captured the original local bindings would silently keep operating on its
+// own now-orphaned, empty Map/Set after such a reassignment — every write
+// would land somewhere the test can no longer see, while reads of the
+// aliased property would show a stale snapshot. Dereferencing through `self`
+// on every call makes the property the single source of truth, so
+// reassigning it actually redirects subsequent operations, matching what the
+// tests assume.
 export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCacheFs => {
-  const files = new Map<string, string>();
-  const dirs = new Set<string>(roots);
-  return {
-    files,
-    dirs,
+  const self: MemoryCacheFs = {
+    files: new Map<string, string>(),
+    dirs: new Set<string>(roots),
     mkdirSecure: (path) => {
       for (const dir of ancestors(path)) {
-        dirs.add(dir);
+        self.dirs.add(dir);
       }
       return Promise.resolve();
     },
     writeFileAtomic: (path, data) => {
       const parent = dirname(path);
-      if (!dirs.has(parent)) {
+      if (!self.dirs.has(parent)) {
         return Promise.reject(absenceError(parent));
       }
-      files.set(path, data);
+      self.files.set(path, data);
       return Promise.resolve();
     },
     readFileTextCapped: (path, maxBytes) => {
-      const found = files.get(path);
+      const found = self.files.get(path);
       if (found === undefined) {
         // Round-7 finding 4: the fake must be FAITHFUL to Node. Without a
         // `code`, isCacheAbsence answers false and every genuine-absence branch
@@ -64,12 +75,12 @@ export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCach
       return Promise.resolve(found);
     },
     readDirNames: (path) => {
-      if (!dirs.has(path)) {
+      if (!self.dirs.has(path)) {
         return Promise.reject(absenceError(path));
       }
       const prefix = `${path}/`;
       const names = new Set<string>();
-      for (const key of [...files.keys(), ...dirs]) {
+      for (const key of [...self.files.keys(), ...self.dirs]) {
         if (key.startsWith(prefix)) {
           const [head] = key.slice(prefix.length).split('/');
           if (head !== undefined) {
@@ -81,37 +92,38 @@ export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCach
     },
     removeDir: (path) => {
       const prefix = `${path}/`;
-      for (const key of files.keys()) {
+      for (const key of self.files.keys()) {
         if (key === path || key.startsWith(prefix)) {
-          files.delete(key);
+          self.files.delete(key);
         }
       }
-      for (const key of dirs) {
+      for (const key of self.dirs) {
         if (key === path || key.startsWith(prefix)) {
-          dirs.delete(key);
+          self.dirs.delete(key);
         }
       }
       return Promise.resolve();
     },
-    pathExists: (path) => Promise.resolve(files.has(path) || dirs.has(path)),
+    pathExists: (path) => Promise.resolve(self.files.has(path) || self.dirs.has(path)),
     createExclusive: (path, data) => {
       // The real implementation opens with 'wx', which fails EEXIST — and
       // therefore resolves false — for an existing directory just as much as
       // an existing file. Refusing on files.has alone would let a store bug
       // that mishandles a directory at the target path pass against the fake.
-      if (files.has(path) || dirs.has(path)) {
+      if (self.files.has(path) || self.dirs.has(path)) {
         return Promise.resolve(false);
       }
       const parent = dirname(path);
-      if (!dirs.has(parent)) {
+      if (!self.dirs.has(parent)) {
         return Promise.reject(absenceError(parent));
       }
-      files.set(path, data);
+      self.files.set(path, data);
       return Promise.resolve(true);
     },
     removeFile: (path) => {
-      files.delete(path);
+      self.files.delete(path);
       return Promise.resolve();
     },
   };
+  return self;
 };
