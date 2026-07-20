@@ -1,13 +1,16 @@
 import { join } from 'node:path';
 import { z } from 'zod';
-import { validationError } from '../errors.ts';
+import { conflictError, notFoundError, validationError } from '../errors.ts';
+import { cacheIoError, isCacheAbsence, withCacheErrors } from './errors.ts';
 import {
+  CACHE_DISPLAY_SOURCE_MAX,
   CACHE_META_SCHEMA_VERSION,
   CACHE_TEXT_MAX,
   type CacheMeta,
   zCacheMeta,
 } from '../schemas/cache.ts';
 import { hashContent } from '../spec/load.ts';
+import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import type { CacheFs } from './fs.ts';
 import { withNamespaceLock } from './lock.ts';
@@ -15,33 +18,20 @@ import {
   CACHE_MAX_PERSISTED_BYTES,
   CACHE_META_MAX_BYTES,
   type CacheLayout,
+  cacheLayout,
   objectPath,
 } from './paths.ts';
 
 // Only http(s) display sources are re-derivable; a file source is its own path
 const URL_DISPLAY_SOURCE_RE = /^https?:\/\//iu;
 
-// Round-7 finding 1: `isCacheAbsence`, `cacheIoError`, `asCacheError` and
-// `withCacheErrors` are DEFINED in `cache/errors.ts` (Task 2 Step 2b) — never
-// redeclared here. The round-7 draft said so in a comment while keeping the
-// definitions in this module, which would have left `lock.ts` importing a
-// module that was never created.
+// D17's one error boundary for this module: `isCacheAbsence`, `cacheIoError`
+// and `withCacheErrors` are DEFINED in `cache/errors.ts` (Task 2 Step 2b) —
+// never redeclared here. Every public store operation is wrapped in
+// `withCacheErrors` at the bottom of this file (Step 3b), which is the single
+// place a raw filesystem failure is typed as a validation error (exit 3)
+// rather than surfacing as an unexpected exit 1.
 //
-// Round-8 finding 2: they are NOT imported yet either. Nothing in this task's
-// store code calls them — the D17 boundary is applied to store.ts in Task 4
-// Step 3b, and Task 4 adds the import at the same moment it adds the first use.
-// Importing them here would leave this task's commit failing the repo's
-// unused-import check, which Step 7 runs as part of a full `pnpm check`.
-//
-// So this task's exports — the writers AND `readCacheEntry` below — ship
-// unwrapped for one commit, and that is deliberate. It differs from `lock.ts`,
-// which is wrapped inside Task 2, because `lock.ts` is COMPLETE in that task
-// while `store.ts` is genuinely built across Tasks 3 and 4. Wrapping half the
-// module here and re-wrapping the rest there would mean renaming the same
-// exports twice; Step 3b is the single coherent moment at which every export
-// exists. The intermediate exposure is a raw I/O error surfacing as exit 1
-// instead of exit 3 within one commit, and no released surface depends on it.
-
 // D14: one persisted representation. The validated, dereferenced, normalized
 // document, JSON.stringify'd — no pretty-printing, no trailing newline — so the
 // bytes are reproducible and the hash over them is stable.
@@ -445,7 +435,108 @@ export const declaredOpenapiVersion = (
   return undefined;
 };
 
-export const writeAccepted = async (
+const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return undefined;
+  }
+  return parsed as Record<string, unknown>;
+};
+
+// Shared by the lock-free public reader and every write path below: verifies
+// that an accepted object's bytes actually correspond to what meta.json
+// claims about them — the recorded content hash, JSON-object shape, and
+// openapiVersion agreement (round-3 finding 7: the discriminator is checked
+// against the document's own "openapi" field rather than trusted from
+// metadata, because the hash protects the OBJECT, not meta.json). Pure: it
+// takes bytes already read and never touches the filesystem, so it has no
+// opinion about retries — that is a property of the caller, not of this
+// check.
+type AcceptedObjectVerification =
+  | { kind: 'ok'; document: Record<string, unknown> }
+  | { kind: 'corrupt'; reason: string };
+
+const verifyAcceptedObject = (
+  layout: CacheLayout,
+  meta: CacheMeta,
+  acceptedText: string,
+): AcceptedObjectVerification => {
+  if (hashContent(acceptedText) !== meta.acceptedContentHash) {
+    // Tampered bytes must never become (or remain) the baseline. No retry
+    // here: the object is filed UNDER this hash, so content that does not
+    // produce it is damage, not a lost race.
+    return {
+      kind: 'corrupt',
+      reason: `the accepted spec for cache entry ${layout.namespace} does not match its recorded content hash`,
+    };
+  }
+  const document = parseJsonObject(acceptedText);
+  if (document === undefined) {
+    return {
+      kind: 'corrupt',
+      reason: `the accepted spec for cache entry ${layout.namespace} is not a JSON object`,
+    };
+  }
+  const declared = declaredOpenapiVersion(document);
+  if (declared === undefined || declared !== meta.openapiVersion) {
+    return {
+      kind: 'corrupt',
+      reason: `the accepted spec for cache entry ${layout.namespace} declares an OpenAPI version that does not match its metadata`,
+    };
+  }
+  return { kind: 'ok', document };
+};
+
+// Closes the D5 gap a corrupt-boundary review found in this task: without
+// this check, every write path decided whether an entry was corrupt purely
+// from readMetaFile — i.e. from meta.json alone — so a write could build on
+// top of, or silently replace, an accepted object whose BYTES had been
+// damaged or tampered with. That is exactly the laundering §6.3 forbids:
+// "restart is not approval" only holds if a write cannot quietly paper over
+// damage either. Concretely, without this, a damaged accepted object did not
+// merely fail to be rejected: the next writeAccepted installed the changed
+// document as the new accepted baseline, and the entry then read back as a
+// healthy hit.
+//
+// No retry loop here, unlike the lock-free public reader's use of
+// verifyAcceptedObject: every caller of this function already holds the
+// namespace lock (D12), so no concurrent commit can move the generation or
+// garbage-collect the object while this check runs, and a single, unretried
+// read is exactly as authoritative as any other read taken under the lock.
+const assertAcceptedObjectIntact = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  meta: CacheMeta,
+): Promise<void> => {
+  let acceptedText: string;
+  try {
+    acceptedText = await fs.readFileTextCapped(
+      objectPath(layout, meta.acceptedContentHash),
+      CACHE_MAX_PERSISTED_BYTES,
+    );
+  } catch (err) {
+    // Round-6 finding 2's pattern, applied here too: only genuine absence is
+    // corruption. Anything else (EACCES, EIO) rethrows unchanged, so
+    // withCacheErrors types it at the definition boundary as validation exit
+    // 3 itself, rather than this call mislabelling an I/O failure as a
+    // corrupt entry.
+    if (!isCacheAbsence(err)) {
+      throw err;
+    }
+    throw corruptEntryError(`the accepted spec for cache entry ${layout.namespace} cannot be read`);
+  }
+  const verified = verifyAcceptedObject(layout, meta, acceptedText);
+  if (verified.kind === 'corrupt') {
+    throw corruptEntryError(verified.reason);
+  }
+};
+
+const writeAcceptedImpl = async (
   layout: CacheLayout,
   fs: CacheFs,
   input: {
@@ -479,6 +570,18 @@ export const writeAccepted = async (
   // this value, so meta.json cannot disagree with the file it describes.
   const acceptedContentHash = hashContent(acceptedText);
   return withNamespaceLock(layout, fs, input.fetchedAt, async () => {
+    // D5: a fresh fetch must not be able to silently "heal" a damaged
+    // baseline by overwriting it — only an explicit "openapi-mcp cache clear"
+    // may. `miss` (including the abandoned-scaffold case) is the
+    // trust-on-first-use path and has no existing accepted object to verify;
+    // any `ok` result's accepted object is checked before this proceeds.
+    const existing = await readMetaFile(layout, fs);
+    if (existing.kind === 'corrupt') {
+      throw corruptEntryError(existing.reason);
+    }
+    if (existing.kind === 'ok') {
+      await assertAcceptedObjectIntact(layout, fs, existing.meta);
+    }
     // This deliberately drops any waiting candidate: a new accepted baseline
     // written here supersedes it. That is correct HERE — but it is why the 304
     // path must NOT route through this function (D16a2), which is what
@@ -502,7 +605,7 @@ export const writeAccepted = async (
   });
 };
 
-export const writeCandidate = async (
+const writeCandidateImpl = async (
   layout: CacheLayout,
   fs: CacheFs,
   input: {
@@ -537,6 +640,9 @@ export const writeCandidate = async (
       // D5: never paper over a broken baseline by writing next to it
       throw corruptEntryError(existing.reason);
     }
+    // Meta.json alone is not enough: verify the accepted OBJECT it names is
+    // still intact before recording a candidate beside it (D5)
+    await assertAcceptedObjectIntact(layout, fs, existing.meta);
     // The accepted half is copied through untouched: a candidate is stored,
     // never activated (§6.3), so meta.title/specVersion keep describing what is
     // actually served. D16(a2): the validators recorded are the ones returned
@@ -581,7 +687,7 @@ export const writeCandidate = async (
 // candidate, so revalidating silently discarded a candidate awaiting promotion
 // without ever approving it. This updates the timestamp and the validators and
 // touches nothing else: no object is written, and both slots survive verbatim.
-export const touchRevalidated = (
+const touchRevalidatedImpl = (
   layout: CacheLayout,
   fs: CacheFs,
   nowMs: number,
@@ -595,6 +701,10 @@ export const touchRevalidated = (
     if (existing.kind === 'corrupt') {
       throw corruptEntryError(existing.reason);
     }
+    // Meta.json alone is not enough: a 304 confirms the SOURCE is unchanged,
+    // it says nothing about whether the locally persisted bytes are still
+    // intact, so the object it names is verified before the touch proceeds (D5)
+    await assertAcceptedObjectIntact(layout, fs, existing.meta);
     // A 304 answered to a request carrying no validator returns none either, in
     // which case the recorded ones stay as they are rather than being erased
     const meta: CacheMeta = {
@@ -629,19 +739,6 @@ export type CacheReadResult =
   | { kind: 'hit'; entry: CacheEntry }
   | { kind: 'corrupt'; reason: string };
 
-const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return undefined;
-  }
-  return parsed as Record<string, unknown>;
-};
-
 // Every reason string below is assembled from layout.namespace — a hex digest by
 // construction — and fixed English. Nothing read out of the suspect file is
 // interpolated, so a hostile cache entry cannot steer the operator's terminal.
@@ -664,10 +761,7 @@ const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
 // the public API. The test names its own expected bound.
 const READ_RETRY_LIMIT = 3;
 
-export const readCacheEntry = async (
-  layout: CacheLayout,
-  fs: CacheFs,
-): Promise<CacheReadResult> => {
+const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<CacheReadResult> => {
   for (let attempt = 0; ; attempt += 1) {
     const metaRead = await readMetaFile(layout, fs);
     if (metaRead.kind !== 'ok') {
@@ -716,35 +810,302 @@ export const readCacheEntry = async (
         reason: `the accepted spec for cache entry ${layout.namespace} cannot be read within its ${CACHE_MAX_PERSISTED_BYTES}-byte budget`,
       };
     }
-    if (hashContent(acceptedText) !== meta.acceptedContentHash) {
-      // Tampered bytes must never become the baseline. No retry here: the
-      // object is filed UNDER this hash, so content that does not produce it is
-      // damage, not a lost race.
-      return {
-        kind: 'corrupt',
-        reason: `the accepted spec for cache entry ${layout.namespace} does not match its recorded content hash`,
-      };
+    // The hash, shape, and openapiVersion-agreement checks are shared with
+    // every write path via verifyAcceptedObject (defined above, near
+    // declaredOpenapiVersion): a lock-free reader has no opinion on retries
+    // itself, so this call is pure and this loop is entirely responsible for
+    // deciding when to retry.
+    const verified = verifyAcceptedObject(layout, meta, acceptedText);
+    if (verified.kind === 'corrupt') {
+      return verified;
     }
-    const acceptedDocument = parseJsonObject(acceptedText);
-    if (acceptedDocument === undefined) {
-      return {
-        kind: 'corrupt',
-        reason: `the accepted spec for cache entry ${layout.namespace} is not a JSON object`,
-      };
-    }
-    // Round-3 finding 7: the 3.0/3.1 discriminator is verified against the
-    // document's own "openapi" field rather than trusted from metadata. The
-    // hash protects the OBJECT, not meta.json — so an attacker who can edit
-    // metadata could otherwise force a 3.1 document to be normalized under 3.0
-    // rules without breaking any hash. Reading one field is not revalidation
-    // (promotion already does exactly this), so D16(b) still holds.
-    const declared = declaredOpenapiVersion(acceptedDocument);
-    if (declared === undefined || declared !== meta.openapiVersion) {
-      return {
-        kind: 'corrupt',
-        reason: `the accepted spec for cache entry ${layout.namespace} declares an OpenAPI version that does not match its metadata`,
-      };
-    }
-    return { kind: 'hit', entry: { meta, acceptedDocument } };
+    return { kind: 'hit', entry: { meta, acceptedDocument: verified.document } };
   }
 };
+
+// ---------------------------------------------------------------------------
+// Promotion, clearing and listing (Task 4). Every store operation defined
+// above this point already exists; these three round out the store's public
+// surface, on top of readCacheEntry rather than driving its creation.
+// ---------------------------------------------------------------------------
+
+export interface CacheEntrySummary {
+  id: string;
+  displaySource: string;
+  cacheKey?: string | undefined;
+  title: string;
+  specVersion: string;
+  fetchedAt: number;
+  acceptedContentHash: string;
+  candidateContentHash?: string | undefined;
+}
+
+// Namespaces are 16-char sha256 prefixes; anything else in the root is not ours
+const NAMESPACE_RE = /^[0-9a-f]{16}$/u;
+
+// Derived from the promoted document, never inherited from the accepted entry:
+// a candidate that legitimately moved 3.0 -> 3.1 would otherwise be normalized
+// under the wrong rules.
+const promotedOpenapiVersion = (
+  document: Record<string, unknown>,
+  namespace: string,
+): OpenapiVersion => {
+  const derived = declaredOpenapiVersion(document);
+  if (derived !== undefined) {
+    return derived;
+  }
+  // The candidate was validated before it was persisted, so an unusable
+  // version here means the persisted bytes are inconsistent with what was
+  // stored — promotion must not proceed
+  throw conflictError(
+    `the candidate spec for cache entry ${namespace} declares no usable OpenAPI version — refresh before promoting`,
+  );
+};
+
+// Promotion moves the trust baseline (§6.3), so it runs inside the namespace
+// lock: the expectedHash comparison and the accepted switch happen without a
+// concurrent refresh interleaving between them, which is what makes --hash a
+// real compare-and-swap rather than an advisory check.
+const promoteCandidateImpl = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  nowMs: number,
+  opts: { expectedHash?: string | undefined },
+): Promise<{ promotedHash: string }> =>
+  withNamespaceLock(layout, fs, nowMs, async () => {
+    const metaRead = await readMetaFile(layout, fs);
+    if (metaRead.kind === 'miss') {
+      throw notFoundError(`no cache entry ${layout.namespace} exists — nothing to promote`);
+    }
+    if (metaRead.kind === 'corrupt') {
+      // D5: a damaged baseline is never repaired by writing over it
+      throw corruptEntryError(metaRead.reason);
+    }
+    const { meta } = metaRead;
+    // Meta.json alone is not enough: verify the CURRENT accepted object is
+    // intact before promoting over it. Without this, a damaged accepted
+    // object did not merely go unrejected — the promotion below would
+    // install the candidate as the new baseline over undetected damage (D5)
+    await assertAcceptedObjectIntact(layout, fs, meta);
+    // D18: one nested member, so "a candidate is waiting" is all-or-none and
+    // this single check cannot be half-true
+    const { candidate } = meta;
+    if (candidate === undefined) {
+      throw conflictError(
+        `no candidate is waiting for promotion in cache entry ${layout.namespace}`,
+      );
+    }
+    let candidateText: string;
+    try {
+      candidateText = await fs.readFileTextCapped(
+        objectPath(layout, candidate.contentHash),
+        CACHE_MAX_PERSISTED_BYTES,
+      );
+    } catch (err) {
+      // Round-6 finding 2: only genuine absence means "the candidate is gone,
+      // refresh before promoting". The round-6 draft caught EVERY failure and
+      // returned conflict exit 5, so an EACCES on the candidate object silently
+      // contradicted D17's frozen validation exit 3 for persistent-cache I/O —
+      // and, being already typed, it sailed through the definition wrapper.
+      if (!isCacheAbsence(err)) {
+        throw err;
+      }
+      throw conflictError(
+        `the candidate spec for cache entry ${layout.namespace} cannot be read — refresh before promoting`,
+      );
+    }
+    const promotedHash = hashContent(candidateText);
+    if (promotedHash !== candidate.contentHash) {
+      throw conflictError(
+        `the candidate spec for cache entry ${layout.namespace} does not match its recorded hash — refresh before promoting`,
+      );
+    }
+    if (opts.expectedHash !== undefined && opts.expectedHash !== promotedHash) {
+      // --hash pins the promotion against a candidate replaced by a concurrent refresh
+      throw conflictError(`--hash does not match the waiting candidate (${promotedHash})`);
+    }
+    const document = parseJsonObject(candidateText);
+    if (document === undefined) {
+      throw conflictError(
+        `the candidate spec for cache entry ${layout.namespace} is not a JSON object — refresh before promoting`,
+      );
+    }
+    // The candidate bytes are promoted verbatim: re-serializing the parsed
+    // document could reorder keys and change the hash the operator pinned.
+    // D18: the provenance and display fields come from meta.candidate, which
+    // recorded them at write time. There is no fallback to the accepted
+    // entry's own source hash: the nested member is all-or-none.
+    await commitEntry(layout, fs, [{ hash: promotedHash, text: candidateText }], {
+      schemaVersion: CACHE_META_SCHEMA_VERSION,
+      displaySource: meta.displaySource,
+      ...(meta.cacheKey === undefined ? {} : { cacheKey: meta.cacheKey }),
+      ...(meta.etag === undefined ? {} : { etag: meta.etag }),
+      ...(meta.lastModified === undefined ? {} : { lastModified: meta.lastModified }),
+      fetchedAt: meta.fetchedAt,
+      acceptedContentHash: promotedHash,
+      sourceContentHash: candidate.sourceContentHash,
+      title: candidate.title,
+      specVersion: candidate.specVersion,
+      // Re-derived from the promoted bytes, not inherited from meta: the
+      // candidate may legitimately have moved between 3.0 and 3.1
+      openapiVersion: promotedOpenapiVersion(document, layout.namespace),
+    });
+    return { promotedHash };
+  });
+
+// D16(a), corrected in review round 2: clear runs UNDER the namespace lock.
+// A lock-free clear only ever protects against concurrent READERS. Against a
+// concurrent WRITER it fails outright: clear removes the metadata, the writer
+// commits new metadata naming its new object, clear then removes that object —
+// and the durable end state is metadata-without-spec, a permanently corrupt
+// entry produced by the one operation whose whole purpose was to leave a clean
+// absence. Ordering cannot fix an interleaving with a writer. Removing .lock
+// mid-flight would be worse still: it would re-admit a second writer to a
+// namespace already being torn down.
+//
+// The meta-first unlink ORDER is kept as defence in depth for lock-free readers,
+// but it is no longer what makes this safe — the lock is. The directory and the
+// lock path stay in place until withNamespaceLock releases normally.
+const clearNamespaceImpl = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  nowMs: number,
+): Promise<boolean> => {
+  if (!(await fs.pathExists(layout.dir))) {
+    return false;
+  }
+  return withNamespaceLock(layout, fs, nowMs, async () => {
+    // Re-checked inside the lock: another clear may have won the race between
+    // the probe above and the acquisition, and "removed something" has to
+    // describe what THIS call actually removed
+    const hadMeta = await fs.pathExists(layout.metaPath);
+    let objectNames: readonly string[] = [];
+    try {
+      objectNames = await fs.readDirNames(layout.objectsDir);
+    } catch (err) {
+      // Round-3 finding 3: only a genuinely absent objects directory means
+      // "nothing to remove". Swallowing every failure here and then deleting
+      // meta.json anyway would manufacture the metadata-without-spec
+      // corruption this function exists to avoid producing.
+      if (!isCacheAbsence(err)) {
+        throw cacheIoError(`list the objects of cache entry ${layout.namespace}`, err);
+      }
+    }
+    // Meta.json first: it is the commit point, so removing it invalidates the
+    // entry for any reader already in flight
+    await fs.removeFile(layout.metaPath);
+    // Then every object the entry owned. Content addressing means there is no
+    // fixed path to guess — the directory listing is the authority.
+    for (const name of objectNames) {
+      await fs.removeFile(join(layout.objectsDir, name));
+    }
+    await fs.removeDir(layout.objectsDir);
+    // The namespace directory and .lock deliberately survive until release:
+    // deleting the lock we are holding would re-admit a second writer, and the
+    // next write recreates the directory anyway. What is left — a directory
+    // with neither meta.json nor any object — reads as a miss (D5), which is
+    // exactly the clean absence clear is supposed to produce.
+    return hadMeta || objectNames.length > 0;
+  });
+};
+
+// CacheEntrySummary is display-only (a later task renders it in `cache list`),
+// and title/specVersion/displaySource are derived from spec documents this
+// project treats as untrusted. The meta schema bounds them by LENGTH but not
+// by character set, so a hand-planted or damaged meta.json could otherwise put
+// an ANSI escape sequence or a bidi override onto the operator's terminal.
+// Routed through sanitizeSpecText (the single-line variant: a summary is one
+// table row, so a newline in a title must not break it) HERE ONLY — the `meta`
+// object readCacheEntry returns carries hashes, validators and timestamps used
+// for logic, and rewriting those would break hash comparison and conditional
+// GET.
+const summarize = async (
+  root: string,
+  name: string,
+  fs: CacheFs,
+): Promise<CacheEntrySummary | undefined> => {
+  if (!NAMESPACE_RE.test(name)) {
+    return undefined;
+  }
+  const metaRead = await readMetaFile(cacheLayout(root, name), fs);
+  if (metaRead.kind !== 'ok') {
+    // Listing skips what it cannot read; readCacheEntry reports the reason on
+    // the path where the entry is actually trusted
+    return undefined;
+  }
+  const { meta } = metaRead;
+  return {
+    id: name,
+    displaySource: sanitizeSpecText(meta.displaySource, CACHE_DISPLAY_SOURCE_MAX),
+    ...(meta.cacheKey === undefined ? {} : { cacheKey: meta.cacheKey }),
+    title: sanitizeSpecText(meta.title, CACHE_TEXT_MAX),
+    specVersion: sanitizeSpecText(meta.specVersion, CACHE_TEXT_MAX),
+    fetchedAt: meta.fetchedAt,
+    acceptedContentHash: meta.acceptedContentHash,
+    // The summary keeps a flat hash: the nesting exists to enforce the
+    // all-or-none invariant on disk (D18), not to shape the listing output
+    ...(meta.candidate === undefined ? {} : { candidateContentHash: meta.candidate.contentHash }),
+  };
+};
+
+// Shared by listNamespaceIdsImpl and listCacheEntriesImpl below, which used to
+// carry two copies of this exact try/catch (down to the same
+// `cacheIoError('list the cache root', err)` message) — the divergence D17's
+// single error boundary exists to prevent, even between two callers in the
+// same module. Round-3 finding 3: only genuine absence is an empty cache.
+// Catching every readDirNames failure here would print "no cache entries" for
+// an unreadable root and make "cache clear --all" silently a no-op on a cache
+// it simply could not see. Callers apply their own filtering/mapping — this
+// is only the raw directory listing plus the absence-vs-I/O decision.
+const namespaceRootNames = async (root: string, fs: CacheFs): Promise<readonly string[]> => {
+  try {
+    return await fs.readDirNames(root);
+  } catch (err) {
+    if (isCacheAbsence(err)) {
+      return [];
+    }
+    throw cacheIoError('list the cache root', err);
+  }
+};
+
+// Every namespace-shaped directory under the root, readable or not. This is
+// what "cache clear --all" enumerates: listCacheEntries deliberately skips
+// entries whose metadata it cannot parse, and those are exactly the entries an
+// operator reaches for --all to remove.
+const listNamespaceIdsImpl = async (root: string, fs: CacheFs): Promise<readonly string[]> => {
+  const names = await namespaceRootNames(root, fs);
+  return names.filter((name) => NAMESPACE_RE.test(name)).toSorted();
+};
+
+// Reads only meta.json so listing stays cheap; the accepted-spec hash is
+// verified in readCacheEntry, on the path where the entry is actually used.
+const listCacheEntriesImpl = async (
+  root: string,
+  fs: CacheFs,
+): Promise<readonly CacheEntrySummary[]> => {
+  const names = await namespaceRootNames(root, fs);
+  // Promise.all rather than a sequential loop: the entries are independent, and
+  // it keeps the scan clear of the no-await-in-loop rule
+  const summaries = await Promise.all(names.map((name) => summarize(root, name, fs)));
+  return summaries
+    .filter((summary): summary is CacheEntrySummary => summary !== undefined)
+    .toSorted((left, right) => right.fetchedAt - left.fetchedAt || left.id.localeCompare(right.id));
+};
+
+// ---------------------------------------------------------------------------
+// D17's one error boundary, applied at the DEFINITION rather than at call
+// sites, so coverage is structural rather than a checklist no caller can be
+// trusted to complete. `asCacheError` passes a typed OpenapiMcpError through
+// untouched, so a lock conflictError keeps exit 5 and a corrupt-entry
+// validationError keeps its message. Because the boundary lives here, no call
+// site anywhere else in the package wraps anything.
+// ---------------------------------------------------------------------------
+
+export const readCacheEntry = withCacheErrors('read a cache entry', readCacheEntryImpl);
+export const writeAccepted = withCacheErrors('write the accepted spec', writeAcceptedImpl);
+export const writeCandidate = withCacheErrors('write the candidate spec', writeCandidateImpl);
+export const touchRevalidated = withCacheErrors('record a revalidation', touchRevalidatedImpl);
+export const promoteCandidate = withCacheErrors('promote the candidate spec', promoteCandidateImpl);
+export const clearNamespace = withCacheErrors('clear a cache entry', clearNamespaceImpl);
+export const listCacheEntries = withCacheErrors('list cache entries', listCacheEntriesImpl);
+export const listNamespaceIds = withCacheErrors('list cache namespaces', listNamespaceIdsImpl);

@@ -6,11 +6,16 @@ import {
   FETCHED_AT_MAX,
   type CacheMeta,
   cacheLayout,
+  clearNamespace,
   hashContent,
+  listCacheEntries,
+  listNamespaceIds,
   objectPath,
+  promoteCandidate,
   readCacheEntry,
   serializedSizeWithin,
   touchRevalidated,
+  withNamespaceLock,
   writeAccepted,
   writeCandidate,
   zCacheMeta,
@@ -418,7 +423,7 @@ describe('writeAccepted', () => {
     expect(written).not.toContain(objectPath(LAYOUT, acceptedHash));
   });
 
-  it('runs under the namespace writer lock (D12)', async () => {
+  it('writeAccepted refuses while another process holds the namespace lock (D12)', async () => {
     const fs = await seeded();
     // A live lock from another process blocks the write outright
     await fs.createExclusive(
@@ -960,7 +965,7 @@ describe('writeCandidate', () => {
     expect(metaOf(fs).candidate).toBeUndefined();
   });
 
-  it('runs under the namespace writer lock (D12)', async () => {
+  it('writeCandidate refuses while another process holds the namespace lock (D12)', async () => {
     const fs = await seeded();
     await fs.createExclusive(
       LAYOUT.lockPath,
@@ -1010,7 +1015,7 @@ describe('touchRevalidated', () => {
     expect(metaOf(fs).fetchedAt).toBe(1_700_001_000_000);
   });
 
-  it('refuses when there is no baseline to revalidate', async () => {
+  it('refuses to revalidate a namespace with no accepted baseline at all', async () => {
     await expect(
       touchRevalidated(LAYOUT, memoryCacheFs(), 1_700_000_000_000, {}),
     ).rejects.toMatchObject({ code: 'validation' });
@@ -1025,7 +1030,7 @@ describe('touchRevalidated', () => {
     });
   });
 
-  it('runs under the namespace writer lock (D12)', async () => {
+  it('touchRevalidated refuses while another process holds the namespace lock (D12)', async () => {
     const fs = await seeded();
     await fs.createExclusive(
       LAYOUT.lockPath,
@@ -1236,5 +1241,1081 @@ describe('serializeMeta: the schema is the final safety net (D5)', () => {
     await expect(
       writeAccepted(LAYOUT, fs, acceptedInput({ title: overlongTitle })),
     ).rejects.toMatchObject({ code: 'validation' });
+  });
+});
+
+const NOW = 1_700_001_000_000;
+
+const withCandidate = async (): Promise<MemoryCacheFs> => {
+  const fs = await seeded();
+  await writeCandidate(LAYOUT, fs, candidateInput());
+  return fs;
+};
+
+// Round-9 finding 1: this block lives in Task 4, not Task 3. Two of its cases
+// call clearNamespace, and all four use NOW — both are introduced here, so in
+// Task 3 the block referenced names that did not yet exist. Keeping the
+// concurrency cases together next to promotion and clearing is also where they
+// belong: they are about what a lock-free reader observes while another
+// operation mutates the namespace.
+
+describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
+  it('retries against the new generation when GC collected the one it was reading', async () => {
+    // Immutable objects do NOT by themselves make immediate reclamation safe.
+    // A reader loads generation A, a writer commits B and collects A's object,
+    // and the reader — still holding A's hash — finds nothing. The round-3
+    // draft reported that healthy cache as corrupt.
+    const fs = await seeded();
+    const oldHash = metaOf(fs).acceptedContentHash;
+    let swapped = false;
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = async (path, maxBytes) => {
+      // The instant the reader reaches for generation A's object, let a
+      // concurrent commit land and reclaim it
+      if (!swapped && path === objectPath(LAYOUT, oldHash)) {
+        swapped = true;
+        await writeAccepted(LAYOUT, fs, acceptedInput({ document: DOC_V2, fetchedAt: NOW }));
+      }
+      return inner(path, maxBytes);
+    };
+    const result = await readCacheEntry(LAYOUT, fs);
+    // Not corrupt: the entry is perfectly healthy, it just moved
+    expect(result.kind).toBe('hit');
+    if (result.kind !== 'hit') {
+      expect.unreachable('expected the retry to observe the new generation');
+    }
+    expect(result.entry.acceptedDocument).toEqual(DOC_V2);
+  });
+
+  it('still reports corrupt when the object is gone and the generation did NOT move', async () => {
+    // The complement: without a concurrent commit, a missing object is real
+    // damage and must stay fail-closed (D5)
+    const fs = await seeded();
+    fs.files.delete(objectPath(LAYOUT, metaOf(fs).acceptedContentHash));
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).toBe('corrupt');
+  });
+
+  it('reports a miss, not corrupt, when a concurrent clear removed the entry (round-4 finding 2)', async () => {
+    // The round-4 retry only recognised a CHANGED hash, so a clear landing
+    // mid-read left the reader reporting corrupt on an entry the operator had
+    // simply asked to delete — which would have failed the clear-vs-read
+    // expectation that the reader stays exit 0.
+    const fs = await seeded();
+    const hash = metaOf(fs).acceptedContentHash;
+    let cleared = false;
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = async (path, maxBytes) => {
+      if (!cleared && path === objectPath(LAYOUT, hash)) {
+        cleared = true;
+        await clearNamespace(LAYOUT, fs, NOW);
+      }
+      return inner(path, maxBytes);
+    };
+    expect(await readCacheEntry(LAYOUT, fs)).toEqual({ kind: 'miss' });
+  });
+
+  it('survives a clear followed by re-seeding the SAME content (round-4 finding 2)', async () => {
+    // A hash-change check cannot detect this: the new generation has the same
+    // content hash as the one that was collected, so "did the hash change" is
+    // false even though the object really was recreated underneath the reader.
+    const fs = await seeded();
+    const hash = metaOf(fs).acceptedContentHash;
+    let reseeded = false;
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = async (path, maxBytes) => {
+      if (!reseeded && path === objectPath(LAYOUT, hash)) {
+        reseeded = true;
+        await clearNamespace(LAYOUT, fs, NOW);
+        // Identical document, therefore identical hash
+        await writeAccepted(LAYOUT, fs, acceptedInput({ fetchedAt: NOW + 1 }));
+      }
+      return inner(path, maxBytes);
+    };
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).toBe('hit');
+    if (result.kind !== 'hit') {
+      expect.unreachable('expected the retry to observe the re-seeded generation');
+    }
+    expect(result.entry.acceptedDocument).toEqual(DOC);
+  });
+
+  it('gives up after the bounded number of attempts rather than spinning', async () => {
+    // The retry must terminate even against an adversarial filesystem that
+    // keeps the object missing while metadata stays readable.
+    //
+    // Round-9 finding 2: this asserted against `READ_RETRY_LIMIT + 1`, but that
+    // constant is PRIVATE to store.ts — never exported, never imported here, so
+    // the identifier was simply unbound and the file could not typecheck. The
+    // bound is named locally instead of exported, because the behaviour under
+    // test is that the loop terminates within its documented bound, not that an
+    // implementation constant is part of the public API. Exporting it to make
+    // the test compile would widen the contract to satisfy a test.
+    //
+    // Round-9 prose: the first `readFileTextCapped` assignment here was dead —
+    // it was overwritten below before any call could reach it, which is noise
+    // and would likely trip the strict useless-assignment lint.
+    const EXPECTED_MAX_READ_ATTEMPTS = 4; // READ_RETRY_LIMIT (3) + the initial try
+    const fs = await seeded();
+    let reads = 0;
+    const metaText = fs.files.get(LAYOUT.metaPath) ?? '';
+    fs.readFileTextCapped = (path) =>
+      path === LAYOUT.metaPath
+        ? Promise.resolve(metaText)
+        : ((reads += 1), Promise.reject(new Error('ENOENT')));
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).toBe('corrupt');
+    expect(reads).toBeLessThanOrEqual(EXPECTED_MAX_READ_ATTEMPTS);
+  });
+});
+
+describe('readCacheEntry', () => {
+  it('returns a hit with the parsed accepted document', async () => {
+    const fs = await seeded();
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).toBe('hit');
+    if (result.kind !== 'hit') {
+      expect.unreachable('expected a hit');
+    }
+    expect(result.entry.acceptedDocument).toEqual(DOC);
+    expect(result.entry.meta.acceptedContentHash).toBe(hashContent(DOC_TEXT));
+  });
+
+  it('round-trips the OpenAPI version discriminator (D16b)', async () => {
+    // The hit path feeds this straight to normalizeSpec without revalidating,
+    // so it has to survive the write/read round trip exactly
+    const fs = memoryCacheFs();
+    await writeAccepted(LAYOUT, fs, acceptedInput({ document: DOC_30 }));
+    const result = await readCacheEntry(LAYOUT, fs);
+    if (result.kind !== 'hit') {
+      expect.unreachable('expected a hit');
+    }
+    expect(result.entry.meta.openapiVersion).toBe('3.0');
+  });
+
+  it('takes no lock, so a live writer lock does not block a read', async () => {
+    const fs = await seeded();
+    await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'other', acquiredAt: NOW }));
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).toBe('hit');
+  });
+
+  it('reports a miss when the namespace directory does not exist', async () => {
+    expect(await readCacheEntry(LAYOUT, memoryCacheFs())).toEqual({ kind: 'miss' });
+  });
+
+  it('reports a miss for an abandoned scaffold that never held a baseline', async () => {
+    // The lock creates the directory before the first commit; a crash there
+    // must not brick a first-ever fetch, and the directory is evidentially
+    // identical to one that was never created
+    const fs = memoryCacheFs();
+    await fs.mkdirSecure(LAYOUT.dir);
+    await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'x', acquiredAt: 0 }));
+    expect(await readCacheEntry(LAYOUT, fs)).toEqual({ kind: 'miss' });
+  });
+
+  it.each<[string, (fs: MemoryCacheFs) => void, string]>([
+    // NOTE: "meta.json deleted, objects surviving" is deliberately NOT in this
+    // list any more. Round-3 finding 2: it is a miss, covered by its own
+    // describe block above, because an orphan object is not a baseline and the
+    // alternative wedged a crashed first commit forever.
+    [
+      'meta.json is truncated mid-object',
+      (fs) => {
+        fs.files.set(LAYOUT.metaPath, '{"schemaVersion":1,');
+      },
+      'not valid JSON',
+    ],
+    [
+      'meta.json fails zCacheMeta',
+      (fs) => {
+        fs.files.set(LAYOUT.metaPath, JSON.stringify({ schemaVersion: 1 }));
+      },
+      'expected schema',
+    ],
+    [
+      'meta.json carries an unknown key',
+      (fs) => {
+        const meta = JSON.parse(fs.files.get(LAYOUT.metaPath) ?? '') as Record<string, unknown>;
+        fs.files.set(LAYOUT.metaPath, JSON.stringify({ ...meta, injected: true }));
+      },
+      'expected schema',
+    ],
+    [
+      'meta.json was written by a future schema version',
+      (fs) => {
+        const meta = JSON.parse(fs.files.get(LAYOUT.metaPath) ?? '') as Record<string, unknown>;
+        fs.files.set(
+          LAYOUT.metaPath,
+          JSON.stringify({ ...meta, schemaVersion: CACHE_META_SCHEMA_VERSION + 1 }),
+        );
+      },
+      'expected schema',
+    ],
+    [
+      'meta.json exceeds its 64 KB budget',
+      (fs) => {
+        fs.files.set(LAYOUT.metaPath, 'x'.repeat(65_537));
+      },
+      'budget',
+    ],
+    [
+      'the object meta.json names is missing',
+      (fs) => {
+        fs.files.delete(objectPath(LAYOUT, hashContent(DOC_TEXT)));
+      },
+      'cannot be read',
+    ],
+    [
+      'the accepted object does not match the hash it is filed under',
+      (fs) => {
+        // Content addressing makes this self-contradictory by construction: the
+        // filename asserts one hash and the bytes produce another
+        fs.files.set(
+          objectPath(LAYOUT, hashContent(DOC_TEXT)),
+          JSON.stringify({ openapi: '3.1.0', paths: {} }),
+        );
+      },
+      'does not match',
+    ],
+    [
+      'the accepted object is truncated and unparsable',
+      (fs) => {
+        fs.files.set(
+          objectPath(LAYOUT, hashContent(DOC_TEXT)),
+          '{"openapi":"3.1.0","info":{"title":"Tamp',
+        );
+      },
+      'does not match',
+    ],
+    [
+      'the accepted object is a JSON array rather than an object',
+      (fs) => {
+        // Filed under its own hash and named by meta, so it survives the hash
+        // check and has to be rejected on shape instead
+        const text = JSON.stringify([1, 2, 3]);
+        const meta = JSON.parse(fs.files.get(LAYOUT.metaPath) ?? '') as Record<string, unknown>;
+        fs.files.set(objectPath(LAYOUT, hashContent(text)), text);
+        fs.files.set(
+          LAYOUT.metaPath,
+          JSON.stringify({ ...meta, acceptedContentHash: hashContent(text) }),
+        );
+      },
+      'not a JSON object',
+    ],
+    [
+      'meta.json names an object that was never written',
+      (fs) => {
+        // A dangling pointer must fail closed, not fall back to any other
+        // object that happens to be lying around
+        const meta = JSON.parse(fs.files.get(LAYOUT.metaPath) ?? '') as Record<string, unknown>;
+        fs.files.set(
+          LAYOUT.metaPath,
+          JSON.stringify({ ...meta, acceptedContentHash: 'e'.repeat(64) }),
+        );
+      },
+      'cannot be read',
+    ],
+    [
+      'meta.json carries a candidate missing one of its two hashes (D18)',
+      (fs) => {
+        const meta = JSON.parse(fs.files.get(LAYOUT.metaPath) ?? '') as Record<string, unknown>;
+        fs.files.set(
+          LAYOUT.metaPath,
+          JSON.stringify({ ...meta, candidate: { contentHash: 'c'.repeat(64) } }),
+        );
+      },
+      'expected schema',
+    ],
+  ])('reports corrupt when %s (D5)', async (_label, damage, needle) => {
+    const fs = await seeded();
+    damage(fs);
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).toBe('corrupt');
+    if (result.kind !== 'corrupt') {
+      expect.unreachable('expected a corrupt result');
+    }
+    expect(result.reason).toContain(LAYOUT.namespace);
+    expect(result.reason).toContain(needle);
+  });
+
+  it('never echoes content from the corrupt file', async () => {
+    const fs = await seeded();
+    fs.files.set(
+      LAYOUT.metaPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        displaySource: 'https://evil.example/\u001B]0;PWNED',
+        rogue: 'x'.repeat(50),
+      }),
+    );
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).toBe('corrupt');
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain('evil.example');
+    expect(serialized).not.toContain('PWNED');
+    expect(serialized).not.toContain('rogue');
+  });
+
+  it('never returns a document read out of a corrupt entry', async () => {
+    const fs = await seeded();
+    fs.files.set(
+      objectPath(LAYOUT, hashContent(DOC_TEXT)),
+      JSON.stringify({ openapi: '3.1.0', paths: { '/admin': {} } }),
+    );
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).toBe('corrupt');
+    expect('entry' in result).toBe(false);
+  });
+});
+
+describe('D5 regression: a corrupt baseline cannot be laundered by restarting (§6.3)', () => {
+  it('refuses the entry instead of letting a changed remote become accepted', async () => {
+    // Process A accepted v1 and it is the durable record of what the operator
+    // approved. An attacker (or a bad disk) damages the accepted object while
+    // the remote now serves v2. Restarting must NOT make v2 accepted.
+    const fs = await seeded();
+    expect(metaOf(fs).acceptedContentHash).toBe(hashContent(DOC_TEXT));
+    fs.files.set(
+      objectPath(LAYOUT, hashContent(DOC_TEXT)),
+      '{"openapi":"3.1.0","info":{"title":"Tamp',
+    );
+
+    const result = await readCacheEntry(LAYOUT, fs);
+    // The critical assertion: corrupt, NOT miss. Only a miss may become TOFU.
+    expect(result.kind).toBe('corrupt');
+    expect(result.kind).not.toBe('miss');
+
+    // Every write path refuses too, so nothing about v2 reaches the entry
+    await expect(writeCandidate(LAYOUT, fs, candidateInput())).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+    });
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+    });
+    // No v2 bytes exist anywhere in the store, under any name
+    expect([...fs.files.values()].join('\n')).not.toContain('Petstore v2');
+    expect(metaOf(fs).candidate).toBeUndefined();
+    expect(metaOf(fs).acceptedContentHash).toBe(hashContent(DOC_TEXT));
+  });
+
+  it('names cache clear as the deliberate reset path, and clearing works', async () => {
+    const fs = await seeded();
+    fs.files.set(LAYOUT.metaPath, 'wrecked');
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toThrowError(
+      /openapi-mcp cache clear/u,
+    );
+    expect(await clearNamespace(LAYOUT, fs, NOW)).toBe(true);
+    // Only after the explicit reset is the source a miss again, i.e. TOFU-able
+    expect(await readCacheEntry(LAYOUT, fs)).toEqual({ kind: 'miss' });
+  });
+});
+
+// Not part of the Task 4 brief: adjudicated fix for a defect the brief's own
+// D5 regression test exposed. readMetaFile alone (meta.json's shape and
+// schema) is not enough to decide whether an entry is corrupt — a damaged
+// ACCEPTED OBJECT slipped through every write path that checked only
+// readMetaFile, and the next writeAccepted then installed the changed remote
+// document as the new accepted baseline: the entry read back as a healthy
+// hit, which is exactly the laundering D5 and §6.3 exist to forbid. Every
+// write path now verifies the accepted object it is building on top of (or
+// leaving untouched) before proceeding, sharing the exact hash/shape/version
+// checks readCacheEntry itself uses.
+describe('D5: every write path verifies the accepted OBJECT, not just meta.json', () => {
+  const damageAcceptedObject = (fs: MemoryCacheFs): void => {
+    fs.files.set(
+      objectPath(LAYOUT, hashContent(DOC_TEXT)),
+      '{"openapi":"3.1.0","info":{"title":"Tamp',
+    );
+  };
+
+  it('writeAccepted refuses to install a new baseline over a damaged one', async () => {
+    const fs = await seeded();
+    damageAcceptedObject(fs);
+    await expect(
+      writeAccepted(LAYOUT, fs, acceptedInput({ document: DOC_V2, fetchedAt: NOW })),
+    ).rejects.toMatchObject({ code: 'validation', exitCode: 3 });
+    // The critical property the probe found missing: no v2 bytes anywhere,
+    // and the entry is still corrupt rather than a healthy hit on v2
+    expect([...fs.files.values()].join('\n')).not.toContain('Petstore v2');
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).toBe('corrupt');
+  });
+
+  it('writeAccepted proceeds normally on a first-ever write (miss, nothing to verify)', async () => {
+    // The complement: TOFU must not be blocked by a check that only applies
+    // once a baseline already exists
+    const fs = memoryCacheFs();
+    await expect(writeAccepted(LAYOUT, fs, acceptedInput())).resolves.toBeDefined();
+  });
+
+  it('writeCandidate refuses to record a candidate beside a damaged baseline', async () => {
+    const fs = await seeded();
+    damageAcceptedObject(fs);
+    await expect(writeCandidate(LAYOUT, fs, candidateInput())).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+    });
+  });
+
+  it('promoteCandidate refuses to promote over a damaged baseline', async () => {
+    const fs = await withCandidate();
+    damageAcceptedObject(fs);
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+    });
+  });
+
+  it('touchRevalidated refuses to record a 304 against a damaged baseline', async () => {
+    const fs = await seeded();
+    damageAcceptedObject(fs);
+    await expect(touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' })).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+    });
+  });
+
+  it('reports the accepted object as unreadable, not a hash mismatch, when it is entirely gone', async () => {
+    // The complement to damageAcceptedObject above: a genuinely ABSENT object
+    // is a distinct branch inside assertAcceptedObjectIntact from a present
+    // but tampered one, and it is the one branch none of this describe
+    // block's other cases reach. It must stay distinguishable from the
+    // EACCES-rethrow branch right next to it in the implementation — both
+    // surface as the same exit 3, so only the message can tell them apart,
+    // and it has to keep naming "cache clear" as the deliberate reset path.
+    const fs = await seeded();
+    fs.files.delete(objectPath(LAYOUT, hashContent(DOC_TEXT)));
+    await expect(writeCandidate(LAYOUT, fs, candidateInput())).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+      message: expect.stringMatching(/cache clear/u) as string,
+    });
+  });
+});
+
+describe('promoteCandidate', () => {
+  it('moves the candidate to accepted and clears the candidate state', async () => {
+    const fs = await withCandidate();
+    const { promotedHash } = await promoteCandidate(LAYOUT, fs, NOW, {});
+    expect(promotedHash).toBe(hashContent(DOC_V2_TEXT));
+    expect(acceptedTextOf(fs)).toBe(DOC_V2_TEXT);
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result).toMatchObject({
+      kind: 'hit',
+      entry: { acceptedDocument: DOC_V2, meta: { acceptedContentHash: promotedHash } },
+    });
+    expect(metaOf(fs).candidate).toBeUndefined();
+    // The superseded accepted object is collected; the promoted one stays
+    expect(objectNamesOf(fs)).toEqual([`${promotedHash}.json`]);
+  });
+
+  it('promotes the exact candidate bytes, so the pinned hash stays valid', async () => {
+    // Content addressing makes this structural rather than a convention: the
+    // promoted object is ALREADY the candidate object. Nothing is copied, so
+    // there is no re-serialization that could reorder keys and move the hash.
+    const fs = await withCandidate();
+    const before = candidateTextOf(fs);
+    const { promotedHash } = await promoteCandidate(LAYOUT, fs, NOW, {});
+    expect(acceptedTextOf(fs)).toBe(before);
+    expect(hashContent(acceptedTextOf(fs) ?? '')).toBe(promotedHash);
+    expect(metaOf(fs).acceptedContentHash).toBe(CANDIDATE_HASH);
+  });
+
+  it('carries the candidate source hash into the accepted source hash (D14)', async () => {
+    const fs = await withCandidate();
+    await promoteCandidate(LAYOUT, fs, NOW, {});
+    expect(metaOf(fs).sourceContentHash).toBe(SOURCE_HASH_V2);
+  });
+
+  it('adopts the promoted document title and version', async () => {
+    const fs = await withCandidate();
+    await promoteCandidate(LAYOUT, fs, NOW, {});
+    expect(metaOf(fs)).toMatchObject({ title: 'Petstore v2', specVersion: '2.0.0' });
+  });
+
+  it('derives the OpenAPI version from the promoted document, not the accepted entry (D16b)', async () => {
+    // DOC_V2 declares 3.1.0 over a 3.0 baseline: inheriting the accepted value
+    // would normalize the promoted document under the wrong rules
+    const fs = memoryCacheFs();
+    await writeAccepted(LAYOUT, fs, acceptedInput({ document: DOC_30 }));
+    await writeCandidate(LAYOUT, fs, candidateInput());
+    await promoteCandidate(LAYOUT, fs, NOW, {});
+    expect(metaOf(fs).openapiVersion).toBe('3.1');
+  });
+
+  it('rejects a candidate document whose openapi field is unusable', async () => {
+    // Validated before it was persisted, so this state means the persisted
+    // bytes are inconsistent — a conflict, never a silent promotion
+    const fs = await seeded();
+    await writeCandidate(LAYOUT, fs, {
+      ...candidateInput(),
+      document: { openapi: '2.0', info: { title: 'Petstore v2', version: '2.0.0' }, paths: {} },
+    });
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'conflict',
+      message: expect.stringContaining('no usable OpenAPI version') as string,
+    });
+    expect(acceptedTextOf(fs)).toBe(DOC_TEXT);
+  });
+
+  it("promotes with the candidate's own recorded title even when its document has none (D18, no fallback)", async () => {
+    // Corrected per project-owner adjudication: the round-1 draft had a
+    // `boundedText` helper that recovered a missing title from the promoted
+    // DOCUMENT, falling back further to the previous accepted entry's title.
+    // That helper is gone (D18) — meta.candidate records the candidate's own
+    // title and version at write time, and promotion reads only that, with no
+    // fallback to the document or to the entry being replaced. candidateInput()
+    // fixes title 'Petstore v2'/specVersion '2.0.0' regardless of `document`,
+    // so a document with no info.title still promotes with those values, not
+    // the previous accepted entry's 'Petstore'/'1.0.0'.
+    const fs = await seeded();
+    await writeCandidate(LAYOUT, fs, {
+      ...candidateInput(),
+      document: { openapi: '3.1.0', paths: {} },
+    });
+    await promoteCandidate(LAYOUT, fs, NOW, {});
+    expect(metaOf(fs)).toMatchObject({ title: 'Petstore v2', specVersion: '2.0.0' });
+  });
+
+  it('accepts a matching expectedHash', async () => {
+    const fs = await withCandidate();
+    await expect(
+      promoteCandidate(LAYOUT, fs, NOW, { expectedHash: hashContent(DOC_V2_TEXT) }),
+    ).resolves.toEqual({ promotedHash: hashContent(DOC_V2_TEXT) });
+  });
+
+  it('rejects a mismatched expectedHash and leaves the baseline untouched', async () => {
+    const fs = await withCandidate();
+    await expect(
+      promoteCandidate(LAYOUT, fs, NOW, { expectedHash: hashContent(DOC_TEXT) }),
+    ).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
+    expect(acceptedTextOf(fs)).toBe(DOC_TEXT);
+    expect(candidateTextOf(fs)).toBe(DOC_V2_TEXT);
+  });
+
+  it('evaluates expectedHash under the lock, making it a compare-and-swap (D12)', async () => {
+    const fs = await withCandidate();
+    // A concurrent refresh holding the lock cannot interleave with the check
+    await fs.createExclusive(
+      LAYOUT.lockPath,
+      JSON.stringify({ owner: 'refresh', acquiredAt: NOW }),
+    );
+    await expect(
+      promoteCandidate(LAYOUT, fs, NOW, { expectedHash: hashContent(DOC_V2_TEXT) }),
+    ).rejects.toMatchObject({ code: 'conflict' });
+    expect(acceptedTextOf(fs)).toBe(DOC_TEXT);
+  });
+
+  it('releases the lock after a successful promotion', async () => {
+    const fs = await withCandidate();
+    await promoteCandidate(LAYOUT, fs, NOW, {});
+    expect(fs.files.has(LAYOUT.lockPath)).toBe(false);
+  });
+
+  it('rejects when no candidate is recorded', async () => {
+    await expect(promoteCandidate(LAYOUT, await seeded(), NOW, {})).rejects.toMatchObject({
+      code: 'conflict',
+      message: expect.stringContaining('no candidate') as string,
+    });
+  });
+
+  it('reports not-found for a namespace that does not exist', async () => {
+    await expect(promoteCandidate(LAYOUT, memoryCacheFs(), NOW, {})).rejects.toMatchObject({
+      code: 'not_found',
+      exitCode: 4,
+    });
+  });
+
+  it('rejects when the recorded candidate object is missing', async () => {
+    const fs = await withCandidate();
+    fs.files.delete(objectPath(LAYOUT, CANDIDATE_HASH));
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'conflict',
+    });
+  });
+
+  it('takes the candidate provenance from meta, with no fallback (D18)', async () => {
+    // The round-1 draft fell back to the ACCEPTED entry's source hash when the
+    // candidate's own was absent, recording the replaced document's provenance
+    // against the promoted bytes. The nested member makes that unrepresentable,
+    // so the promoted source hash is always the candidate's own.
+    const fs = await withCandidate();
+    await promoteCandidate(LAYOUT, fs, NOW, {});
+    const meta = metaOf(fs);
+    expect(meta.sourceContentHash).toBe(SOURCE_HASH_V2);
+    expect(meta.sourceContentHash).not.toBe(SOURCE_HASH);
+    // And the display fields come from meta.candidate rather than being
+    // re-derived from the persisted bytes
+    expect(meta).toMatchObject({ title: 'Petstore v2', specVersion: '2.0.0' });
+  });
+
+  it('rejects when the candidate object does not match its recorded hash', async () => {
+    const fs = await withCandidate();
+    fs.files.set(objectPath(LAYOUT, CANDIDATE_HASH), '{"openapi":"3.1.0","info":{"title":"Swapp');
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'conflict',
+      message: expect.stringContaining('does not match') as string,
+    });
+    expect(acceptedTextOf(fs)).toBe(DOC_TEXT);
+  });
+
+  it('fails closed with a validation error on a corrupt entry, not a conflict (D5)', async () => {
+    const fs = await withCandidate();
+    fs.files.set(LAYOUT.metaPath, 'not json');
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+    });
+  });
+});
+
+describe('clearNamespace (D16a — under the lock after review round 2)', () => {
+  it('removes the metadata and every object, leaving a clean miss', async () => {
+    const fs = await withCandidate();
+    expect(await clearNamespace(LAYOUT, fs, NOW)).toBe(true);
+    expect(fs.files.has(LAYOUT.metaPath)).toBe(false);
+    expect(objectNamesOf(fs)).toEqual([]);
+    // The end state is an empty namespace directory, which reads as a miss —
+    // exactly the clean absence clear is supposed to produce (D5)
+    expect(await readCacheEntry(LAYOUT, fs)).toEqual({ kind: 'miss' });
+  });
+
+  it('reports false when there was nothing to remove', async () => {
+    expect(await clearNamespace(LAYOUT, memoryCacheFs(), NOW)).toBe(false);
+  });
+
+  it('acquires the namespace lock and refuses while a writer holds it', async () => {
+    // The round-1 draft was lock-free here and cleared straight through a live
+    // writer
+    const fs = await withCandidate();
+    await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'writer', acquiredAt: NOW }));
+    await expect(clearNamespace(LAYOUT, fs, NOW)).rejects.toMatchObject({
+      code: 'conflict',
+      exitCode: 5,
+    });
+    // Nothing was removed: the entry is intact for the writer that owns it
+    expect(fs.files.has(LAYOUT.metaPath)).toBe(true);
+    expect(acceptedTextOf(fs)).toBe(DOC_TEXT);
+  });
+
+  it('never deletes the lock it does not own', async () => {
+    const fs = await seeded();
+    await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'writer', acquiredAt: NOW }));
+    await expect(clearNamespace(LAYOUT, fs, NOW)).rejects.toMatchObject({ code: 'conflict' });
+    // The round-1 draft unlinked .lock unconditionally, which re-admitted a
+    // second writer to a namespace already being torn down
+    expect(JSON.parse(fs.files.get(LAYOUT.lockPath) ?? '')).toMatchObject({ owner: 'writer' });
+  });
+
+  it('releases its own lock afterwards so the namespace is reusable', async () => {
+    const fs = await withCandidate();
+    await clearNamespace(LAYOUT, fs, NOW);
+    expect(fs.files.has(LAYOUT.lockPath)).toBe(false);
+    // A first-ever write can immediately recreate the namespace
+    await expect(writeAccepted(LAYOUT, fs, acceptedInput())).resolves.toBeDefined();
+  });
+
+  it('cannot leave a durable metadata-without-spec entry against a concurrent writer', async () => {
+    // THE round-2 finding. The interleaving the round-1 lock-free clear
+    // permitted: clear removes the metadata, a writer commits new metadata
+    // naming its new object, clear then removes that object — and the durable
+    // end state is metadata pointing at bytes that no longer exist, i.e. a
+    // permanently corrupt entry produced by the operation meant to leave a
+    // clean absence. Driven deterministically by attempting the write from
+    // inside clear's own removal sequence.
+    const fs = await withCandidate();
+    let writeAttempt: Promise<unknown> | undefined;
+    const innerRemoveFile = fs.removeFile;
+    fs.removeFile = (path) => {
+      if (path === LAYOUT.metaPath && writeAttempt === undefined) {
+        // The exact instant the round-1 code was vulnerable. Deliberately NOT
+        // awaited here: this fires the write and captures its eventual
+        // outcome (value or error) without blocking removeFile's synchronous
+        // return, which is what lets it interleave with clear's own removal
+        // sequence.
+        // eslint-disable promise/prefer-await-to-callbacks -- fire-and-forget capture, not a callback-style API; block form because oxfmt wraps the statement across lines
+        writeAttempt = writeAccepted(LAYOUT, fs, acceptedInput({ fetchedAt: NOW + 1 })).catch(
+          (err: unknown) => err,
+        );
+        // eslint-enable promise/prefer-await-to-callbacks
+      }
+      return innerRemoveFile(path);
+    };
+    await clearNamespace(LAYOUT, fs, NOW);
+    // The writer was serialised behind the lock, so it either never ran or ran
+    // afterwards — never interleaved
+    const outcome = await writeAttempt;
+    if (outcome instanceof Error) {
+      expect(outcome).toMatchObject({ code: 'conflict' });
+      expect(await readCacheEntry(LAYOUT, fs)).toEqual({ kind: 'miss' });
+    } else {
+      // If it committed after the clear, it committed COMPLETELY
+      const result = await readCacheEntry(LAYOUT, fs);
+      expect(result.kind).toBe('hit');
+    }
+    // What must never happen, under either branch: metadata naming an object
+    // that is not there
+    const result = await readCacheEntry(LAYOUT, fs);
+    expect(result.kind).not.toBe('corrupt');
+  });
+
+  it('keeps unlinking meta.json first as defence in depth for lock-free readers', async () => {
+    // No longer load-bearing — the lock is — but a reader in flight still
+    // benefits from the commit point disappearing first
+    const fs = await withCandidate();
+    const calls: string[] = [];
+    const innerRemoveFile = fs.removeFile;
+    fs.removeFile = (path) => {
+      calls.push(path);
+      return innerRemoveFile(path);
+    };
+    expect(await clearNamespace(LAYOUT, fs, NOW)).toBe(true);
+    expect(calls[0]).toBe(LAYOUT.metaPath);
+    const acceptedObjectPath = objectPath(LAYOUT, hashContent(DOC_TEXT));
+    expect(calls.indexOf(acceptedObjectPath)).toBeGreaterThan(0);
+  });
+});
+
+describe('touchRevalidated (D16a2 — the 304 transition)', () => {
+  it('preserves a waiting candidate that the round-1 304 path destroyed', async () => {
+    // THE round-2 finding. A 304 used to run writeAccepted, which rewrites the
+    // accepted entry and clears the candidate — so revalidating silently
+    // discarded a candidate awaiting promotion without ever approving it.
+    const fs = await withCandidate();
+    const before = metaOf(fs);
+    await touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' });
+    const after = metaOf(fs);
+    expect(after.candidate).toEqual(before.candidate);
+    expect(candidateTextOf(fs)).toBe(DOC_V2_TEXT);
+  });
+
+  it('preserves the accepted baseline byte for byte', async () => {
+    const fs = await withCandidate();
+    const before = metaOf(fs);
+    await touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' });
+    const after = metaOf(fs);
+    expect(after.acceptedContentHash).toBe(before.acceptedContentHash);
+    expect(after.sourceContentHash).toBe(before.sourceContentHash);
+    expect(after.title).toBe(before.title);
+    expect(after.openapiVersion).toBe(before.openapiVersion);
+    expect(acceptedTextOf(fs)).toBe(DOC_TEXT);
+  });
+
+  it('writes no object at all — only the metadata changes', async () => {
+    const fs = await withCandidate();
+    const namesBefore = objectNamesOf(fs);
+    const written: string[] = [];
+    const inner = fs.writeFileAtomic;
+    fs.writeFileAtomic = (path, data) => {
+      written.push(path);
+      return inner(path, data);
+    };
+    await touchRevalidated(LAYOUT, fs, NOW, {});
+    expect(written).toEqual([LAYOUT.metaPath]);
+    expect(objectNamesOf(fs)).toEqual(namesBefore);
+  });
+
+  it('advances fetchedAt so the TTL restarts from the successful check', async () => {
+    const fs = await withCandidate();
+    await touchRevalidated(LAYOUT, fs, NOW, {});
+    expect(metaOf(fs).fetchedAt).toBe(NOW);
+  });
+
+  it('records the validators the 304 returned', async () => {
+    const fs = await seeded();
+    await touchRevalidated(LAYOUT, fs, NOW, {
+      etag: '"fresh"',
+      lastModified: 'Thu, 22 Oct 2026 07:28:00 GMT',
+    });
+    expect(metaOf(fs)).toMatchObject({
+      etag: '"fresh"',
+      lastModified: 'Thu, 22 Oct 2026 07:28:00 GMT',
+    });
+  });
+
+  it('keeps the recorded validators when the 304 returned none', async () => {
+    // A 304 answered to a validator-free request carries none either: erasing
+    // what we have would force an unconditional refetch next time
+    const fs = memoryCacheFs();
+    await writeAccepted(LAYOUT, fs, acceptedInput({ etag: '"keep"' }));
+    await touchRevalidated(LAYOUT, fs, NOW, {});
+    expect(metaOf(fs).etag).toBe('"keep"');
+  });
+
+  it('runs under the namespace writer lock', async () => {
+    const fs = await seeded();
+    await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'other', acquiredAt: NOW }));
+    await expect(touchRevalidated(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'conflict',
+    });
+  });
+
+  it('fails closed on a corrupt entry (D5)', async () => {
+    const fs = await seeded();
+    fs.files.set(LAYOUT.metaPath, 'not json');
+    await expect(touchRevalidated(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+    });
+  });
+
+  it('refuses a 304 revalidation when there is no baseline to revalidate (D16a2)', async () => {
+    await expect(touchRevalidated(LAYOUT, memoryCacheFs(), NOW, {})).rejects.toMatchObject({
+      code: 'validation',
+    });
+  });
+});
+
+describe('listCacheEntries', () => {
+  it('returns an empty list when the root does not exist', async () => {
+    expect(await listCacheEntries('/missing', memoryCacheFs())).toEqual([]);
+  });
+
+  it('summarizes every readable entry, newest first', async () => {
+    const fs = memoryCacheFs();
+    const older = cacheLayout('/cache', '1111111111111111');
+    const newer = cacheLayout('/cache', '2222222222222222');
+    await writeAccepted(older, fs, acceptedInput());
+    await writeAccepted(
+      newer,
+      fs,
+      acceptedInput({ fetchedAt: 1_700_000_500_000, title: 'Newer', cacheKey: 'prod' }),
+    );
+    const entries = await listCacheEntries('/cache', fs);
+    expect(entries.map((entry) => entry.id)).toEqual([newer.namespace, older.namespace]);
+    expect(entries[0]).toEqual({
+      id: newer.namespace,
+      displaySource: 'https://api.example.com/openapi.json',
+      cacheKey: 'prod',
+      title: 'Newer',
+      specVersion: '1.0.0',
+      fetchedAt: 1_700_000_500_000,
+      acceptedContentHash: hashContent(DOC_TEXT),
+    });
+  });
+
+  it('surfaces the cache-key label so two namespaces of one URL are distinguishable (D9)', async () => {
+    const fs = memoryCacheFs();
+    const a = cacheLayout('/cache', '1111111111111111');
+    const b = cacheLayout('/cache', '2222222222222222');
+    await writeAccepted(a, fs, acceptedInput({ cacheKey: 'tenant-a' }));
+    await writeAccepted(
+      b,
+      fs,
+      acceptedInput({ cacheKey: 'tenant-b', fetchedAt: 1_700_000_400_000 }),
+    );
+    const entries = await listCacheEntries('/cache', fs);
+    expect(entries.map((entry) => entry.cacheKey)).toEqual(['tenant-b', 'tenant-a']);
+  });
+
+  it('omits the cache key rather than reporting undefined for an unkeyed entry', async () => {
+    const entries = await listCacheEntries('/cache', await seeded());
+    expect('cacheKey' in (entries[0] ?? {})).toBe(false);
+  });
+
+  it('reports a waiting candidate hash', async () => {
+    const entries = await listCacheEntries('/cache', await withCandidate());
+    expect(entries[0]?.candidateContentHash).toBe(hashContent(DOC_V2_TEXT));
+  });
+
+  it('skips entries it cannot read instead of failing the whole listing', async () => {
+    const fs = memoryCacheFs();
+    const good = cacheLayout('/cache', '1111111111111111');
+    const broken = cacheLayout('/cache', '2222222222222222');
+    const future = cacheLayout('/cache', '3333333333333333');
+    await writeAccepted(good, fs, acceptedInput());
+    await writeAccepted(broken, fs, acceptedInput());
+    await writeAccepted(future, fs, acceptedInput());
+    fs.files.set(broken.metaPath, '{oops');
+    fs.files.set(future.metaPath, JSON.stringify({ schemaVersion: CACHE_META_SCHEMA_VERSION + 1 }));
+    const entries = await listCacheEntries('/cache', fs);
+    expect(entries.map((entry) => entry.id)).toEqual([good.namespace]);
+  });
+
+  it('ignores directory names that are not namespaces', async () => {
+    const fs = await seeded();
+    await fs.mkdirSecure('/cache/not-a-namespace');
+    await fs.writeFileAtomic('/cache/stray.txt', 'x');
+    const entries = await listCacheEntries('/cache', fs);
+    expect(entries.map((entry) => entry.id)).toEqual([LAYOUT.namespace]);
+  });
+
+  it('breaks fetchedAt ties deterministically by id', async () => {
+    const fs = memoryCacheFs();
+    for (const namespace of ['3333333333333333', '1111111111111111', '2222222222222222']) {
+      await writeAccepted(cacheLayout('/cache', namespace), fs, acceptedInput());
+    }
+    const entries = await listCacheEntries('/cache', fs);
+    expect(entries.map((entry) => entry.id)).toEqual([
+      '1111111111111111',
+      '2222222222222222',
+      '3333333333333333',
+    ]);
+  });
+});
+
+describe('every exported cache operation types its raw I/O (D17)', () => {
+  const eaccesError = (): Error => Object.assign(new Error('EACCES'), { code: 'EACCES' });
+
+  const breaking = async (method: keyof MemoryCacheFs, seed = true): Promise<MemoryCacheFs> => {
+    const fs = seed ? await seeded() : memoryCacheFs();
+    // TypeScript cannot verify that a single zero-arg function is assignable
+    // to every one of MemoryCacheFs's differently-shaped methods (and its
+    // `files`/`dirs` properties aren't functions at all) when `method` is a
+    // generic key rather than a literal — this is the same limitation `any`
+    // would paper over, but `Record<keyof MemoryCacheFs, unknown>` widens
+    // only the VALUE type, so the key itself stays constrained to
+    // `keyof MemoryCacheFs` and a typo in `method` is still caught.
+    (fs as Record<keyof MemoryCacheFs, unknown>)[method] = () => Promise.reject(eaccesError());
+    return fs;
+  };
+
+  it.each([
+    [
+      'writeAccepted',
+      'writeFileAtomic',
+      (fs: MemoryCacheFs) => writeAccepted(LAYOUT, fs, acceptedInput()),
+    ],
+    [
+      'writeCandidate',
+      'writeFileAtomic',
+      (fs: MemoryCacheFs) => writeCandidate(LAYOUT, fs, candidateInput()),
+    ],
+    // Round-7 finding 3: NOT readFileTextCapped. readMetaFile catches that and
+    // resolves kind:'corrupt', exactly as the frozen signature promises, so the
+    // row would never reject. pathExists is the raw path that does reach the
+    // definition adapter.
+    ['readCacheEntry', 'pathExists', (fs: MemoryCacheFs) => readCacheEntry(LAYOUT, fs)],
+    ['clearNamespace', 'removeFile', (fs: MemoryCacheFs) => clearNamespace(LAYOUT, fs, NOW)],
+    ['listCacheEntries', 'readDirNames', (fs: MemoryCacheFs) => listCacheEntries('/cache', fs)],
+    ['listNamespaceIds', 'readDirNames', (fs: MemoryCacheFs) => listNamespaceIds('/cache', fs)],
+    [
+      'withNamespaceLock',
+      'createExclusive',
+      (fs: MemoryCacheFs) => withNamespaceLock(LAYOUT, fs, NOW, () => Promise.resolve(0)),
+    ],
+  ] as const)('%s reports validation exit 3 when %s fails raw', async (_name, method, call) => {
+    const fs = await breaking(method as keyof MemoryCacheFs);
+    await expect(call(fs)).rejects.toMatchObject({ code: 'validation', exitCode: 3 });
+  });
+
+  it('does NOT flatten a lock conflict into a validation error', async () => {
+    // The pass-through half of the rule: a typed OpenapiMcpError keeps its own
+    // exit code, so contention stays distinguishable from an I/O failure
+    const fs = await seeded();
+    await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'other', acquiredAt: NOW }));
+    await expect(writeAccepted(LAYOUT, fs, acceptedInput())).rejects.toMatchObject({
+      code: 'conflict',
+      exitCode: 5,
+    });
+  });
+
+  it('surfaces EACCES on the lock holder read during CONTENTION (round-6 finding 2)', async () => {
+    // The round-6 draft swallowed this into "unreadable holder" and then
+    // reported a conflict — a typed error the outer wrapper deliberately
+    // preserves, so the I/O failure became permanently invisible
+    const fs = await seeded();
+    await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'other', acquiredAt: NOW }));
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = (path, maxBytes) =>
+      path === LAYOUT.lockPath ? Promise.reject(eaccesError()) : inner(path, maxBytes);
+    await expect(writeAccepted(LAYOUT, fs, acceptedInput())).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+    });
+  });
+
+  it('surfaces EACCES on the lock holder read during RELEASE (round-6 finding 2)', async () => {
+    const fs = memoryCacheFs();
+    const inner = fs.readFileTextCapped;
+    let inRun = false;
+    fs.readFileTextCapped = (path, maxBytes) =>
+      inRun && path === LAYOUT.lockPath ? Promise.reject(eaccesError()) : inner(path, maxBytes);
+    await expect(
+      withNamespaceLock(LAYOUT, fs, NOW, () => {
+        inRun = true;
+        return Promise.resolve('done');
+      }),
+    ).rejects.toMatchObject({ code: 'validation', exitCode: 3 });
+  });
+
+  it('surfaces EACCES on the candidate read during PROMOTION (round-6 finding 2)', async () => {
+    // The round-6 draft turned this into conflict exit 5, contradicting D17's
+    // frozen validation exit 3 for persistent-cache I/O
+    const fs = await withCandidate();
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = (path, maxBytes) =>
+      path === objectPath(LAYOUT, CANDIDATE_HASH)
+        ? Promise.reject(eaccesError())
+        : inner(path, maxBytes);
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'validation',
+      exitCode: 3,
+    });
+  });
+
+  it('still reports conflict when the candidate object is genuinely ABSENT', async () => {
+    // The complement, so narrowing the catch did not simply invert it
+    const fs = await withCandidate();
+    fs.files.delete(objectPath(LAYOUT, CANDIDATE_HASH));
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+      code: 'conflict',
+      exitCode: 5,
+    });
+  });
+});
+
+// Not part of the Task 4 brief: CacheEntrySummary is display-only (a later
+// task renders it in the `cache list` table), and the meta schema bounds
+// displaySource/title/specVersion by LENGTH but not by character set. Those
+// three are derived from spec documents this project treats as untrusted, so
+// a hand-planted or damaged meta.json — schema-valid, but hostile — must not
+// be able to put an ANSI escape sequence or a bidi override onto the
+// operator's terminal by way of `cache list`. Built with String.fromCodePoint
+// rather than a \u escape literal, so the hostile bytes exist only at test
+// runtime and never sit in the source file as a raw control character.
+describe('listCacheEntries: sanitizes hostile metadata before display', () => {
+  it('strips control and bidi characters from displaySource, title, and specVersion', async () => {
+    const ESC = String.fromCodePoint(0x1b);
+    const BEL = String.fromCodePoint(0x07);
+    const BIDI_OVERRIDE = String.fromCodePoint(0x202e);
+    const fs = await seeded();
+    const hostileMeta = {
+      ...metaOf(fs),
+      displaySource: `https://api.example.com/${ESC}[31mRED${ESC}[0m`,
+      title: `Evil${BIDI_OVERRIDE}title`,
+      specVersion: `1.0${BEL}bell`,
+    };
+    fs.files.set(LAYOUT.metaPath, JSON.stringify(hostileMeta));
+
+    const entries = await listCacheEntries('/cache', fs);
+    const [summary] = entries;
+    expect(summary).toBeDefined();
+    const rendered = JSON.stringify(summary);
+    expect(rendered).not.toContain(ESC);
+    expect(rendered).not.toContain(BIDI_OVERRIDE);
+    expect(rendered).not.toContain(BEL);
+    expect(summary?.displaySource).toBe('https://api.example.com/[31mRED[0m');
+    expect(summary?.title).toBe('Eviltitle');
+    expect(summary?.specVersion).toBe('1.0bell');
+  });
+
+  it('does not sanitize the meta object readCacheEntry returns, only the summary', async () => {
+    // Hashes, validators, and timestamps are used for logic (hash comparison,
+    // conditional GET); rewriting them would break readCacheEntry's contract.
+    // Sanitizing is a summarize()-only concern.
+    const ESC = String.fromCodePoint(0x1b);
+    const fs = await seeded();
+    const hostileMeta = { ...metaOf(fs), title: `Evil${ESC}title` };
+    fs.files.set(LAYOUT.metaPath, JSON.stringify(hostileMeta));
+
+    const result = await readCacheEntry(LAYOUT, fs);
+    if (result.kind !== 'hit') {
+      expect.unreachable('expected a hit');
+    }
+    expect(result.entry.meta.title).toBe(`Evil${ESC}title`);
   });
 });

@@ -64,12 +64,18 @@ export {
   zCacheMeta,
 } from './schemas/cache.ts';
 export type { CacheCandidate, CacheMeta } from './schemas/cache.ts';
+export { asCacheError, cacheIoError, isCacheAbsence } from './cache/errors.ts';
 export {
+  clearNamespace,
+  declaredOpenapiVersion,
+  listCacheEntries,
+  listNamespaceIds,
   persistedSpecText,
+  promoteCandidate,
   readCacheEntry,
   serializedSizeWithin,
   touchRevalidated,
   writeAccepted,
   writeCandidate,
 } from './cache/store.ts';
-export type { CacheEntry, CacheReadResult } from './cache/store.ts';
+export type { CacheEntry, CacheEntrySummary, CacheReadResult } from './cache/store.ts';

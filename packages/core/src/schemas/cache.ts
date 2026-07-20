@@ -102,3 +102,8 @@ export const zCacheMeta: z.ZodType<CacheMeta> = z.strictObject({
 });
 
 export const CACHE_TEXT_MAX = TEXT_MAX;
+
+// Exported so cache/store.ts's summarize() can bound the sanitized
+// displaySource it copies into a CacheEntrySummary at the same length this
+// schema enforces on write, rather than a magic number of its own.
+export const CACHE_DISPLAY_SOURCE_MAX = DISPLAY_SOURCE_MAX;
