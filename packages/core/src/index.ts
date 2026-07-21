@@ -101,3 +101,5 @@ export type {
   GlobToken,
   MatchBudget,
 } from './filter/pattern.ts';
+export { applyFilters, closestMatch, matchesOperation } from './filter/engine.ts';
+export type { DeadPattern, FilterDecision } from './filter/engine.ts';
