@@ -1,6 +1,13 @@
+import { validationError } from '../errors.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
-import { type FilterPattern, type MatchBudget, createMatchBudget, globMatches } from './pattern.ts';
+import {
+  FILTER_WORK_BUDGET_EXCEEDED_MESSAGE,
+  type FilterPattern,
+  type MatchBudget,
+  createMatchBudget,
+  globMatches,
+} from './pattern.ts';
 
 // Spec §3.2 rule 3: with no --allow, only these methods are exposed
 const READ_ONLY_METHODS = new Set(['get', 'head']);
@@ -54,16 +61,37 @@ export const matchesOperation = (
 
 // Levenshtein distance, abandoned as soon as it is known to exceed maxDistance.
 // Returns maxDistance + 1 to signal "further than you asked about".
-const boundedDistance = (left: string, right: string, maxDistance: number): number => {
+//
+// Final review, high-severity finding 1: this used to take no
+// budget at all, so the suggestion phase escaped the D15 aggregate that
+// matchesOperation/globMatches enforce — measured at 35,917 ms of CPU at
+// admitted dimensions (128 dead patterns x 512 candidates x 256-char
+// identifiers). Charged per row, before that row's cells are computed, so an
+// exhausted budget stops the work rather than completing it — mirroring
+// globMatches's spend discipline in pattern.ts exactly, sharing its message.
+const boundedDistance = (
+  left: string,
+  right: string,
+  maxDistance: number,
+  budget: MatchBudget,
+): number => {
   const tooFar = maxDistance + 1;
   if (Math.abs(left.length - right.length) > maxDistance) {
     return tooFar;
   }
+  const spend = (steps: number): void => {
+    budget.remaining -= steps;
+    if (budget.remaining < 0) {
+      throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
+    }
+  };
   let previous: number[] = [];
   for (let column = 0; column <= right.length; column += 1) {
     previous.push(column);
   }
   for (let row = 1; row <= left.length; row += 1) {
+    // One unit per cell in the row about to be computed, charged before it
+    spend(right.length);
     const current = [row];
     for (let col = 1; col <= right.length; col += 1) {
       const substitution = (previous[col - 1] ?? 0) + (left[row - 1] === right[col - 1] ? 0 : 1);
@@ -81,7 +109,14 @@ const boundedDistance = (left: string, right: string, maxDistance: number): numb
   return previous[right.length] ?? tooFar;
 };
 
-export const closestMatch = (raw: string, candidates: readonly string[]): string | undefined => {
+// D15: the budget defaults exactly as matchesOperation's does, so the 14
+// existing two-argument callers (and any other direct caller) keep working
+// unchanged and get a full budget when no shared one is threaded in.
+export const closestMatch = (
+  raw: string,
+  candidates: readonly string[],
+  budget: MatchBudget = createMatchBudget(),
+): string | undefined => {
   if (raw === '' || raw.length > SUGGESTION_MAX_LENGTH) {
     return undefined;
   }
@@ -97,7 +132,7 @@ export const closestMatch = (raw: string, candidates: readonly string[]): string
     if (candidate.length > SUGGESTION_MAX_LENGTH) {
       continue;
     }
-    const distance = boundedDistance(raw, candidate, threshold);
+    const distance = boundedDistance(raw, candidate, threshold, budget);
     if (distance > threshold) {
       continue;
     }
@@ -167,6 +202,7 @@ const deadPatternsFor = (
       const suggestion = closestMatch(
         suggestionInput(pattern),
         candidateSpace(pattern, operations),
+        budget,
       );
       return suggestion === undefined
         ? { raw: pattern.raw, flag }

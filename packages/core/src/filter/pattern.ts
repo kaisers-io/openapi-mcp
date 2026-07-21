@@ -167,6 +167,13 @@ export const createMatchBudget = (limit: number = FILTER_MAX_MATCH_STEPS): Match
   remaining: limit,
 });
 
+// Final review, high-severity finding 1: closestMatch's suggestion
+// phase (engine.ts) used to run unbudgeted, escaping the D15 aggregate this
+// message is part of. Shared here, rather than duplicated in engine.ts, so the
+// two exhaustion paths cannot drift apart.
+export const FILTER_WORK_BUDGET_EXCEEDED_MESSAGE =
+  'filter matching exceeded its work budget — reduce the number of --allow/--deny patterns, the number of wildcards in them, or the size of the spec';
+
 // Thompson state-set simulation. Every input code unit advances each live state
 // at most once, so the cost is strictly O(tokens x length) with no
 // input-dependent blowup: the shape that cost 134 ms as a RegExp costs 0.004 ms
@@ -180,9 +187,7 @@ export const globMatches = (
   const spend = (steps: number): void => {
     budget.remaining -= steps;
     if (budget.remaining < 0) {
-      throw validationError(
-        'filter matching exceeded its work budget — reduce the number of --allow/--deny patterns, the number of wildcards in them, or the size of the spec',
-      );
+      throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
     }
   };
   // Round-4 finding 4: the counter charges EVERY input-dependent cost, in

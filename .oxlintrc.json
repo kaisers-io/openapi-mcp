@@ -198,6 +198,25 @@
         // so it verbatim exceeds 300 lines
         "max-lines": "off"
       }
+    },
+    {
+      "files": ["packages/cli/src/context.ts"],
+      "rules": {
+        // Off per task-12 brief (M2b final review, finding 2):
+        // context.ts is the sole home of the real cache filesystem seam, and
+        // mkdirSecure's per-component umask-0177 walk plus writeFileAtomic's
+        // D3 temp+rename and readFileTextCapped's D12 capped read already
+        // carry load-bearing round-N rationale by design. Fixing the round-10
+        // symlink-following finding added an lstat-based
+        // rejectUnlessRealDirectory guard, used in both of mkdirSecure's
+        // branches, with rationale comments that are load-bearing security
+        // documentation, not incidental. A comment-free version of the same
+        // fix still lands a few lines past 300 (there was no headroom left),
+        // so trimming the fix's own rationale could not have closed the gap
+        // either — this mirrors the pattern.ts/store.ts/pipeline.ts overrides
+        // above for the same reason
+        "max-lines": "off"
+      }
     }
   ]
 }

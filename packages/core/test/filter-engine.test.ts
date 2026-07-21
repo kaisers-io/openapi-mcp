@@ -348,4 +348,40 @@ describe('applyFilters — aggregate work budget (D15 mechanism 2)', () => {
     applyFilters(named(fixture), patterns('**'), [], budget);
     expect(FILTER_MAX_MATCH_STEPS - budget.remaining).toBeLessThan(10_000);
   });
+
+  // Final review, high-severity finding 1: closestMatch's
+  // boundedDistance ran unbudgeted, so the dead-pattern SUGGESTION phase
+  // escaped the D15 aggregate entirely — measured at 35,917 ms of CPU at
+  // admitted dimensions (128 dead patterns x 512 candidates x 256-char
+  // identifiers). This makes the applyFilters comment above ("ONE budget for
+  // the whole run — exposure AND dead-pattern detection alike") true.
+  it('bounds closestMatch itself by the work budget it is given', () => {
+    // A single candidate whose length is close enough to clear the admission
+    // screen already exceeds a tiny budget on the very first Levenshtein row
+    // — falsifiable: reverting closestMatch to ignore its third argument (or
+    // boundedDistance to not charge/throw) makes this run to completion
+    // instead of throwing.
+    const candidates = Array.from({ length: 20 }, (_, index) => `${'x'.repeat(200)}${index}`);
+    const budget = createMatchBudget(50);
+    expect(() => closestMatch('y'.repeat(200), candidates, budget)).toThrowError(/work budget/u);
+  });
+
+  it('shares the aggregate budget between matching and the suggestion phase', () => {
+    // 40 unique long operationIds make the suggestion phase (closestMatch
+    // scanning every operationId as a candidate for the one dead pattern)
+    // far more expensive than the matching phase (glob matching is linear in
+    // input length; Levenshtein is quadratic). A budget that comfortably
+    // survives both matching scans (exposure + dead-pattern detection) but
+    // cannot survive even one full boundedDistance call proves the
+    // suggestion phase now draws on the SAME budget applyFilters created —
+    // before this fix, this budget would have survived the whole call.
+    const longOps = Array.from({ length: 40 }, (_, index) =>
+      record('get', `/p${index}`, `op${'x'.repeat(200)}${index}`),
+    );
+    const decoyPattern = `zz${'y'.repeat(200)}`;
+    const budget = createMatchBudget(50_000);
+    expect(() => applyFilters(named(longOps), patterns(decoyPattern), [], budget)).toThrowError(
+      /work budget/u,
+    );
+  });
 });

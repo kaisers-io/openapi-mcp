@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, type Stats } from 'node:fs';
 import {
   chmod,
   type FileHandle,
+  lstat,
   mkdir,
   open,
   readFile,
@@ -74,6 +75,20 @@ export const readExactly = async (handle: FileHandle, buffer: Buffer): Promise<n
   return offset;
 };
 
+// Round-10 finding: `stat` FOLLOWS a symlink, so the round-9 `!isDirectory()`
+// guard never caught one — a symlink to a real directory reports
+// `isDirectory() === true` through `stat`, and a subsequent `chmod` (which
+// also follows) would 0700 the attacker-chosen target. Callers pass an lstat
+// result here instead, so a planted symlink is rejected before any chmod.
+const rejectUnlessRealDirectory = (path: string, info: Stats): void => {
+  if (info.isSymbolicLink()) {
+    throw validationError(`cache path "${path}" is a symlink, which is not allowed`);
+  }
+  if (!info.isDirectory()) {
+    throw validationError(`cache path "${path}" exists and is not a directory`);
+  }
+};
+
 const realCacheFs = (): CacheFs => ({
   mkdirSecure: async (path) => {
     // D4, re-probed: mkdir(path, { recursive: true, mode: 0o700 }) does NOT
@@ -109,6 +124,12 @@ const realCacheFs = (): CacheFs => ({
         if (err === null || typeof err !== 'object' || !('code' in err) || err.code !== 'EEXIST') {
           throw err;
         }
+        // Round-10 finding: a symlink planted at `component` between our
+        // walk-up `stat` and this `mkdir` also surfaces as EEXIST here, since
+        // mkdir does not follow it — lstat tells that apart from a benign
+        // concurrent creator before the chmod below, which DOES follow. A
+        // genuine race (a real directory) passes this check unchanged.
+        rejectUnlessRealDirectory(component, await lstat(component));
       }
       await chmod(component, 0o700);
     }
@@ -118,14 +139,15 @@ const realCacheFs = (): CacheFs => ({
       // must not be inherited), but never re-permission ancestors we did not
       // create — those are not ours.
       //
-      // Round-9 finding: stat succeeding does not mean it is a directory. A
-      // regular file sitting at the namespace path would otherwise be chmod'd
-      // to 0700 (executable) here, deferring the real failure to the first
-      // write inside it — refuse it explicitly instead.
-      const info = await stat(path);
-      if (!info.isDirectory()) {
-        throw validationError(`cache path "${path}" exists and is not a directory`);
-      }
+      // Round-9 finding: succeeding does not mean it is a directory — a
+      // regular file here would otherwise be chmod'd to 0700 (executable),
+      // deferring the real failure to the first write inside it. Round-10
+      // finding: `stat` also follows a symlink to a real directory and
+      // reports `isDirectory() === true`, so lstat replaces it here — a
+      // symlink now reports `isSymbolicLink() === true` and is rejected
+      // before the chmod below ever runs (chmod DOES follow).
+      const info = await lstat(path);
+      rejectUnlessRealDirectory(path, info);
       await chmod(path, 0o700);
     }
   },

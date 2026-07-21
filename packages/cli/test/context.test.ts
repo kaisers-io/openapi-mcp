@@ -8,6 +8,7 @@ import {
   readdir,
   rm,
   stat,
+  symlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -162,6 +163,37 @@ describe('realContext cacheFs', () => {
       code: 'validation',
     });
     expect(await modeOf(target)).toBe('644');
+  });
+
+  // Final review, high-severity finding 2. `stat`/`chmod` FOLLOW
+  // symlinks, so a same-user attacker who can write into the 0700 cache root
+  // could plant a 16-hex namespace symlink pointing at an arbitrary directory:
+  // the round-9 `!info.isDirectory()` guard never caught it (a symlink to a
+  // directory reports isDirectory() === true through `stat`), so `chmod`
+  // followed the symlink and 0700'd the attacker-chosen target, and subsequent
+  // writeFileAtomic/clearNamespace calls read, wrote, and deleted inside it.
+  //
+  // Load-bearing / falsifiable: this must fail if the lstat guard in
+  // mkdirSecure's `missing.length === 0` branch is reverted to `stat` — with
+  // `stat`, the symlink resolves to the (real, existing) victim directory,
+  // `isDirectory()` is true, the guard never fires, and the victim's mode
+  // would be silently forced to 0700 instead of the call being rejected.
+  it('rejects a symlink planted at the namespace path instead of following it (round-10 finding)', async () => {
+    const victim = await mkdtemp(join(tmpdir(), 'openapi-mcp-victim-'));
+    await chmod(victim, 0o750);
+    const namespace = join(dir, 'a1b2c3d4e5f60718'); // A plausible 16-hex namespace name
+    await symlink(victim, namespace, 'dir');
+    try {
+      await expect(realContext().cacheFs.mkdirSecure(namespace)).rejects.toMatchObject({
+        code: 'validation',
+      });
+      // The victim directory itself must be untouched: no mode change, no
+      // write landed inside it via the symlink.
+      expect(await modeOf(victim)).toBe('750');
+      expect(await readdir(victim)).toEqual([]);
+    } finally {
+      await rm(victim, { recursive: true, force: true });
+    }
   });
 
   it('writes new files at 0600', async () => {
