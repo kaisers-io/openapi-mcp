@@ -31,7 +31,8 @@
     "node/no-sync": "off",
     // Off per task-4 brief: context.ts testContext().homeDir default returns undefined verbatim
     "unicorn/no-useless-undefined": "off",
-    // Off per task-4 brief: output.ts emit() has four parameters verbatim
+    // Off per task-11 brief (M2b): cache.ts's promoteCandidate/withNamespaceLock
+    // call sites take four parameters verbatim
     "max-params": "off",
     // Off per task-4 brief: output.ts uses `!== undefined ? ... : {}` verbatim
     "no-negated-condition": "off",
@@ -62,10 +63,7 @@
     // body read are inherently serial (the chain and stream cannot be parallelized)
     "no-await-in-loop": "off",
     // Off per task-5 brief (M2a): fetch.ts's redirect loop uses `continue` verbatim
-    "no-continue": "off",
-    // Off per task-11 brief (M2a): pipeline.ts composes every Tasks 2-10 module
-    // verbatim, so it imports from 11 files
-    "import/max-dependencies": "off"
+    "no-continue": "off"
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
@@ -97,8 +95,6 @@
         "id-length": "off",
         // Off per task-5 brief: main.test.ts's `describe('run', ...)` callback is 60 lines verbatim
         "max-lines-per-function": "off",
-        // Off per task-6 brief: doctor.test.ts's JSON-mode `it` block has 11 statements verbatim
-        "max-statements": "off",
         // Off per task-6 brief: doctor.test.ts asserts envelope.ok/cacheRootExists with toBe(true) verbatim
         "vitest/prefer-to-be-truthy": "off",
         // Off per task-1 brief: main.test.ts defines inline CommandRegistrar closures (boom/helpToStderr) verbatim
@@ -146,6 +142,15 @@
       }
     },
     {
+      "files": ["packages/core/src/spec/pipeline.ts"],
+      "rules": {
+        // Off for the pipeline only: it is the composition root of the spec
+        // subsystem and imports load, parse, validate, dereference, normalize,
+        // naming, budgets, fetch, cache paths/fs/store/ttl, and the filter engine
+        "import/max-dependencies": "off"
+      }
+    },
+    {
       "files": ["packages/core/src/cache/store.ts"],
       "rules": {
         // Off per task-3 brief (M2b): cache/store.ts is the transactional store
@@ -154,6 +159,12 @@
         // one module by design (readMetaFile is private and shared by every entry
         // point in it) - so it verbatim exceeds 300 lines
         "max-lines": "off",
+        // Off per task-11 brief (M2b): scoping import/max-dependencies to
+        // pipeline.ts only (rather than disabling it repository-wide) puts the
+        // rule back in force here too, and store.ts imports from 11 files for
+        // the same reason its max-lines override above gives - it is the
+        // transactional store core and genuinely draws on every one of them
+        "import/max-dependencies": "off",
         // Off per task-3 brief (M2b): store.ts's writeAccepted and writeCandidate
         // are declared async with synchronous validation (declaredOpenapiVersion,
         // persistableTextOrThrow, the title/specVersion length check) BEFORE the

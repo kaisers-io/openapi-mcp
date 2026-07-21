@@ -1,0 +1,89 @@
+import type { Command } from '@commander-js/extra-typings';
+import {
+  cacheLayout,
+  cacheNamespace,
+  canonicalSourceOf,
+  clearNamespace,
+  defaultCacheRoot,
+  listNamespaceIds,
+  parseCacheId,
+  parseCacheKey,
+  parseSpecSource,
+  validationError,
+  type CacheLayout,
+} from '@kaisers-io/openapi-mcp-core';
+import type { CliContext } from '../context.ts';
+import { getGlobalOpts } from '../output.ts';
+
+// Split out of cache.ts (Step 10, task-11 brief): once import/max-dependencies
+// is scoped to pipeline.ts only rather than disabled repository-wide, the rule
+// is back on for cache.ts too. These are the shared target-resolution helpers
+// every cache subcommand needs, so they live in their own module rather than
+// widening the override.
+
+export const collect = (value: string, previous: readonly string[]): readonly string[] => [
+  ...previous,
+  value,
+];
+
+// Cache display values are spec- or remote-derived: bound them for the terminal
+export const CACHE_DISPLAY_MAX = 512;
+
+export const rootOf = (ctx: CliContext): string => {
+  const home = ctx.homeDir();
+  if (home === undefined || home === '') {
+    throw validationError('cannot resolve the home directory for the openapi-mcp cache root');
+  }
+  return defaultCacheRoot(home);
+};
+
+export const layoutForSpec = (
+  ctx: CliContext,
+  spec: string,
+  cacheKey: string | undefined,
+): CacheLayout => {
+  const source = parseSpecSource(spec, { cwd: ctx.cwd() });
+  const key = cacheKey === undefined ? undefined : parseCacheKey(cacheKey);
+  return cacheLayout(rootOf(ctx), cacheNamespace(canonicalSourceOf(source), key));
+};
+
+// The parseCacheId call below is the path-traversal boundary: an --id
+// reaching cacheLayout unchecked is the one place operator input could steer
+// a filesystem path. It throws a usageError that never echoes the raw value.
+export const layoutForId = (ctx: CliContext, id: string): CacheLayout =>
+  cacheLayout(rootOf(ctx), parseCacheId(id));
+
+// Command.parent is typed CommandUnknownOpts | null by the base commander.js
+// class extra-typings re-exports as-is, so `program.parent ?? program` widens
+// to a union getGlobalOpts's Command parameter does not accept. The runtime
+// value is the same root Command instance either way (extra-typings just
+// narrows its static option types, which getGlobalOpts does not use), so this
+// cast documents a real type-fidelity gap rather than papering over a bug.
+export const globalOptsOf = (program: Command): ReturnType<typeof getGlobalOpts> =>
+  getGlobalOpts((program.parent ?? program) as Command);
+
+// Also split out of cache.ts for the same max-lines reason: the "--all" sweep
+// belongs next to layoutForId/layoutForSpec because it walks the same
+// namespace-id space rather than a single resolved target.
+export const clearAllNamespaces = async (
+  root: string,
+  cacheFs: CliContext['cacheFs'],
+  now: number,
+): Promise<number> => {
+  // Round-3 finding: --all must enumerate NAMESPACE DIRECTORIES, not readable
+  // summaries. listCacheEntries deliberately skips entries it cannot parse,
+  // so the round-3 draft could not clear precisely the corrupt entries that
+  // "clear" is the documented recovery path for — "--all" quietly meant "all
+  // the healthy ones".
+  const namespaceIds = await listNamespaceIds(root, cacheFs);
+  let cleared = 0;
+  for (const id of namespaceIds) {
+    // D16(a2): each namespace is cleared under its OWN lock, exactly as a
+    // targeted clear is. A sweep is not a licence to skip the serialisation a
+    // single clear needs.
+    if (await clearNamespace(cacheLayout(root, id), cacheFs, now)) {
+      cleared += 1;
+    }
+  }
+  return cleared;
+};
