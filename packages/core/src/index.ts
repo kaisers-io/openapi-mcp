@@ -23,8 +23,8 @@ export { hashContent, loadSpecFromFile, parseSpecSource } from './spec/load.ts';
 export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
 export { assertAllowedRedirectTarget, classifyAddress } from './http/egress.ts';
 export type { AddressClass, DnsLookup, EgressPolicyOptions } from './http/egress.ts';
-export { MAX_REDIRECTS, fetchSpec } from './spec/fetch.ts';
-export type { FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
+export { MAX_REDIRECTS, fetchSpec, fetchSpecConditional } from './spec/fetch.ts';
+export type { ConditionalFetchResult, FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
 export { parseSpecText } from './spec/parse.ts';
 export { validateOpenApiDocument } from './spec/validate.ts';
 export type { OpenapiVersion, ValidatedSpec } from './spec/validate.ts';
@@ -79,3 +79,5 @@ export {
   writeCandidate,
 } from './cache/store.ts';
 export type { CacheEntry, CacheEntrySummary, CacheReadResult } from './cache/store.ts';
+export { evaluateFreshness } from './cache/ttl.ts';
+export type { FreshnessDecision } from './cache/ttl.ts';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_REDIRECTS, fetchSpec, hashContent } from '../src/index.ts';
+import { MAX_REDIRECTS, fetchSpec, fetchSpecConditional, hashContent } from '../src/index.ts';
 
 interface RecordedCall {
   url: string;
@@ -385,6 +385,245 @@ describe('fetchSpec', () => {
     ).rejects.toMatchObject({
       code: 'validation',
       message: expect.stringContaining('fetch failed') as string,
+    });
+  });
+});
+
+const notModified = (headers: Record<string, string> = {}): Response =>
+  new Response(null, { status: 304, headers });
+
+// The Fetch API's Headers implementation refuses to construct a header value
+// containing a raw CR or LF byte (WHATWG Fetch "invalid header value"), so a
+// real fetch() response can never surface a header-injection payload through
+// response.headers.get() — the runtime already forecloses it below our code.
+// These fixtures simulate the byte sequence arriving anyway (a non-conformant
+// fetcher, or defense-in-depth against a future runtime being more lenient)
+// by overriding just the headers accessor on an otherwise-real Response.
+const withRawHeader = (response: Response, name: string, rawValue: string): Response => {
+  const lower = name.toLowerCase();
+  const original = response.headers;
+  Object.defineProperty(response, 'headers', {
+    value: { get: (n: string) => (n.toLowerCase() === lower ? rawValue : original.get(n)) },
+    configurable: true,
+  });
+  return response;
+};
+
+describe('fetchSpecConditional', () => {
+  it('reports not-modified for a 304 (D6)', async () => {
+    // Probed: fetch surfaces a 304 with ok === false and body === null, so the
+    // status must be checked before the generic !ok branch would reject it
+    const { fetcher, calls } = fakeFetcher([notModified({ etag: '"v1"' })]);
+    const result = await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [], etag: '"v1"' },
+      { fetcher, lookup: rejectingLookup },
+    );
+    // D16(a2): the validators the 304 returned come back with it, so the entry
+    // can refresh what it replays next time
+    expect(result).toEqual({ kind: 'not-modified', etag: '"v1"' });
+    expect(calls[0]?.headers.get('if-none-match')).toBe('"v1"');
+    expect(calls[0]?.headers.get('if-modified-since')).toBeNull();
+  });
+
+  it('carries a refreshed validator back from a 304 (D16a2)', async () => {
+    // A server may answer 304 while rotating the ETag it wants next time
+    const { fetcher } = fakeFetcher([
+      notModified({ etag: '"v2"', 'last-modified': 'Thu, 22 Oct 2026 07:28:00 GMT' }),
+    ]);
+    const result = await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [], etag: '"v1"' },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect(result).toEqual({
+      kind: 'not-modified',
+      etag: '"v2"',
+      lastModified: 'Thu, 22 Oct 2026 07:28:00 GMT',
+    });
+  });
+
+  it('drops a header-hostile validator returned on a 304, as it does on a 200', async () => {
+    const { fetcher } = fakeFetcher([withRawHeader(notModified(), 'etag', 'v1\r\nX-Evil: 1')]);
+    const result = await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [], etag: '"v1"' },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect(result).toEqual({ kind: 'not-modified' });
+  });
+
+  it('sends If-Modified-Since only when a lastModified is cached', async () => {
+    const { fetcher, calls } = fakeFetcher([notModified()]);
+    await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [], lastModified: 'Wed, 21 Oct 2026 07:28:00 GMT' },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect(calls[0]?.headers.get('if-modified-since')).toBe('Wed, 21 Oct 2026 07:28:00 GMT');
+    expect(calls[0]?.headers.get('if-none-match')).toBeNull();
+  });
+
+  it('sends both validators when the entry recorded both', async () => {
+    const { fetcher, calls } = fakeFetcher([notModified()]);
+    await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [], etag: '"v1"', lastModified: 'Wed, 21 Oct 2026 07:28:00 GMT' },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect(calls[0]?.headers.get('if-none-match')).toBe('"v1"');
+    expect(calls[0]?.headers.get('if-modified-since')).toBe('Wed, 21 Oct 2026 07:28:00 GMT');
+  });
+
+  it('performs a plain GET when the entry has no validators', async () => {
+    const { fetcher, calls } = fakeFetcher([new Response('{"openapi":"3.1.0"}')]);
+    const result = await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [] },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect(calls[0]?.headers.get('if-none-match')).toBeNull();
+    expect(calls[0]?.headers.get('if-modified-since')).toBeNull();
+    expect(result).toMatchObject({ kind: 'fetched' });
+  });
+
+  it('treats a 304 answered to a validator-free request as unchanged (D6, fail-safe)', async () => {
+    // The caller keeps serving its accepted baseline, which is the safe
+    // direction: a server answering a question nobody asked cannot force a swap
+    const { fetcher } = fakeFetcher([notModified()]);
+    await expect(
+      fetchSpecConditional(
+        new URL('https://api.example.com/openapi.json'),
+        { headers: [] },
+        { fetcher, lookup: rejectingLookup },
+      ),
+    ).resolves.toEqual({ kind: 'not-modified' });
+  });
+
+  it('checks 304 before the redirect branch, so a 304 is never followed', async () => {
+    const { fetcher, calls } = fakeFetcher([
+      notModified({ location: 'https://evil.example.net/spec.json' }),
+    ]);
+    const result = await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [], etag: '"v1"' },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect(result).toEqual({ kind: 'not-modified' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('returns the body, hash, redacted source, and fresh validators on a 200', async () => {
+    const body = '{"openapi":"3.1.0"}';
+    const { fetcher } = fakeFetcher([
+      new Response(body, {
+        headers: { etag: '"v2"', 'last-modified': 'Thu, 22 Oct 2026 07:28:00 GMT' },
+      }),
+    ]);
+    const result = await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json?tenant=alpha'),
+      { headers: AUTH, etag: '"v1"' },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect(result).toEqual({
+      kind: 'fetched',
+      loaded: {
+        text: body,
+        contentHash: hashContent(body),
+        displaySource: 'https://api.example.com/openapi.json',
+      },
+      etag: '"v2"',
+      lastModified: 'Thu, 22 Oct 2026 07:28:00 GMT',
+    });
+  });
+
+  it('omits an absent validator rather than returning undefined', async () => {
+    const { fetcher } = fakeFetcher([new Response('{}')]);
+    const result = await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [] },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect(Object.keys(result).toSorted()).toEqual(['kind', 'loaded']);
+  });
+
+  it.each([
+    ['a CRLF header-injection sequence', 'v1\r\nX-Evil: 1'],
+    ['a control character', 'v1\u0007'],
+    ['an over-long value', `"${'x'.repeat(400)}"`],
+  ])('drops a returned validator carrying %s', async (_label, etag) => {
+    // The response is remote-controlled and its validators are stored in
+    // meta.json and replayed as request headers on the next revalidation
+    const { fetcher } = fakeFetcher([withRawHeader(new Response('{}'), 'etag', etag)]);
+    const result = await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [] },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect('etag' in result).toBe(false);
+  });
+
+  it('never replays validators or auth headers to a foreign origin', async () => {
+    const { fetcher, calls } = fakeFetcher([
+      redirectTo('https://cdn.example.net/spec.json'),
+      new Response('{}'),
+    ]);
+    await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: AUTH, etag: '"v1"' },
+      { fetcher, lookup: publicLookup },
+    );
+    expect(calls[1]?.headers.get('if-none-match')).toBeNull();
+    expect(calls[1]?.headers.get('authorization')).toBeNull();
+  });
+
+  it('keeps the existing redirect, egress, and budget discipline', async () => {
+    const { fetcher, calls } = fakeFetcher([redirectTo('http://10.0.0.5/spec.json')]);
+    await expect(
+      fetchSpecConditional(
+        new URL('https://api.example.com/openapi.json'),
+        { headers: [], etag: '"v1"' },
+        { fetcher, lookup: publicLookup },
+      ),
+    ).rejects.toMatchObject({ code: 'validation' });
+    expect(calls).toHaveLength(1);
+    const { fetcher: bigFetcher } = fakeFetcher([new Response('x'.repeat(64))]);
+    await expect(
+      fetchSpecConditional(
+        new URL('https://api.example.com/openapi.json'),
+        { headers: [], maxBytes: 16 },
+        { fetcher: bigFetcher, lookup: rejectingLookup },
+      ),
+    ).rejects.toMatchObject({ message: expect.stringContaining('budget') as string });
+  });
+
+  it('still maps a real failure status to a validation error', async () => {
+    const { fetcher } = fakeFetcher([new Response('denied', { status: 401 })]);
+    await expect(
+      fetchSpecConditional(
+        new URL('https://api.example.com/openapi.json'),
+        { headers: AUTH, etag: '"v1"' },
+        { fetcher, lookup: rejectingLookup },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('--spec-header-env') as string,
+    });
+  });
+});
+
+describe('fetchSpec and 304', () => {
+  it('rejects an unsolicited 304 for an unconditional fetch', async () => {
+    const { fetcher } = fakeFetcher([notModified()]);
+    await expect(
+      fetchSpec(
+        new URL('https://api.example.com/openapi.json'),
+        { headers: [] },
+        { fetcher, lookup: rejectingLookup },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('304') as string,
     });
   });
 });

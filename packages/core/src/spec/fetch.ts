@@ -92,11 +92,39 @@ const failureHint = (status: number, hasHeaders: boolean): string => {
     : ' — the spec URL may require authentication via --spec-header-env';
 };
 
-export const fetchSpec = async (
+// D16(a2): a 304 carries readable headers (probed), and the round-1 draft threw
+// them away — so a revalidation could not refresh the validators it replays on
+// the next run. The not-modified branch carries them.
+export type ConditionalFetchResult =
+  | { kind: 'not-modified'; etag?: string | undefined; lastModified?: string | undefined }
+  | {
+      kind: 'fetched';
+      loaded: LoadedSpecText;
+      etag?: string | undefined;
+      lastModified?: string | undefined;
+    };
+
+type ConditionalOptions = FetchSpecOptions & {
+  etag?: string | undefined;
+  lastModified?: string | undefined;
+};
+
+// A validator is remote-controlled, is stored in meta.json, and is replayed as a
+// request header on the next revalidation: keep it bounded and printable ASCII,
+// and drop anything else rather than storing a header-hostile value. The bound
+// matches zCacheMeta's, so a value accepted here always survives the write.
+const VALIDATOR_RE = /^[ -~]{1,256}$/u;
+
+const readValidator = (response: Response, name: string): string | undefined => {
+  const raw = response.headers.get(name);
+  return raw !== null && VALIDATOR_RE.test(raw) ? raw : undefined;
+};
+
+const fetchChain = async (
   initialUrl: URL,
-  opts: FetchSpecOptions,
+  opts: ConditionalOptions,
   deps: FetchSpecDeps,
-): Promise<LoadedSpecText> => {
+): Promise<ConditionalFetchResult> => {
   const timeoutMs = opts.timeoutMs ?? SPEC_BUDGETS.fetchTimeoutMs;
   const maxBytes = opts.maxBytes ?? SPEC_BUDGETS.maxSpecBytes;
   const allowPrivateNetwork = opts.allowPrivateNetwork ?? false;
@@ -113,9 +141,16 @@ export const fetchSpec = async (
       accept: 'application/json, application/yaml;q=0.9, text/yaml;q=0.8, */*;q=0.1',
     });
     if (url.origin === originalOrigin) {
-      // Auth headers are never forwarded to a foreign origin (spec §5.1)
+      // Auth headers are never forwarded to a foreign origin (spec §5.1), and
+      // neither are cache validators: they describe the original origin's copy
       for (const header of opts.headers) {
         headers.set(header.name, header.value);
+      }
+      if (opts.etag !== undefined) {
+        headers.set('if-none-match', opts.etag);
+      }
+      if (opts.lastModified !== undefined) {
+        headers.set('if-modified-since', opts.lastModified);
       }
     }
     let response: Response;
@@ -127,6 +162,26 @@ export const fetchSpec = async (
         throw validationError(`spec fetch timed out after ${timeoutMs}ms (${displaySource(url)})`);
       }
       throw validationError(`spec fetch failed for ${displaySource(url)}: ${describeCause(err)}`);
+    }
+    // D6, verified by probe: fetch surfaces a 304 with ok === false and
+    // body === null, so it must be recognised BEFORE both the redirect branch
+    // and the !response.ok branch below — otherwise a successful revalidation
+    // is reported as a fetch failure, and a 304 carrying a Location header
+    // would be followed. Headers survive on a 304 but there is nothing to
+    // read, so the body cancel is a no-op safety net.
+    if (response.status === 304) {
+      await response.body?.cancel();
+      // D16(a2): a 304 carries readable headers (probed: etag survives), and
+      // the round-1 draft discarded them — so a revalidation could never
+      // refresh the validator it replays on the next run. They are bounded by
+      // the same rule as on a 200: remote-controlled, stored, and replayed.
+      const etag = readValidator(response, 'etag');
+      const lastModified = readValidator(response, 'last-modified');
+      return {
+        kind: 'not-modified',
+        ...(etag === undefined ? {} : { etag }),
+        ...(lastModified === undefined ? {} : { lastModified }),
+      };
     }
     if (REDIRECT_STATUSES.has(response.status)) {
       await response.body?.cancel();
@@ -157,7 +212,40 @@ export const fetchSpec = async (
       );
     }
     const text = await readBodyCapped(response, maxBytes, displaySource(url));
-    return { text, contentHash: hashContent(text), displaySource: displaySource(url) };
+    const etag = readValidator(response, 'etag');
+    const lastModified = readValidator(response, 'last-modified');
+    return {
+      kind: 'fetched',
+      loaded: { text, contentHash: hashContent(text), displaySource: displaySource(url) },
+      ...(etag === undefined ? {} : { etag }),
+      ...(lastModified === undefined ? {} : { lastModified }),
+    };
   }
   throw validationError(`spec fetch exceeded ${MAX_REDIRECTS} redirects`);
 };
+
+export const fetchSpec = async (
+  initialUrl: URL,
+  opts: FetchSpecOptions,
+  deps: FetchSpecDeps,
+): Promise<LoadedSpecText> => {
+  const result = await fetchChain(initialUrl, opts, deps);
+  if (result.kind === 'not-modified') {
+    // No validator was sent, so a 304 here is the server answering a question
+    // that was never asked: there is no body and no cached copy to fall back on
+    throw validationError(
+      `spec fetch returned HTTP 304 for ${displaySource(initialUrl)} without a conditional request`,
+    );
+  }
+  return result.loaded;
+};
+
+// Spec §5.4: revalidation of an expired baseline. Validators are sent only when
+// the cached entry actually recorded them; with neither this is a plain GET, and
+// a 304 answer is then treated as "unchanged" — the fail-safe direction, since
+// the caller keeps serving its accepted baseline.
+export const fetchSpecConditional = (
+  initialUrl: URL,
+  opts: ConditionalOptions,
+  deps: FetchSpecDeps,
+): Promise<ConditionalFetchResult> => fetchChain(initialUrl, opts, deps);
