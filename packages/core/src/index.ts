@@ -39,7 +39,12 @@ export type {
 export { TOOL_NAME_MAX_LENGTH, assignToolNames } from './toolgen/naming.ts';
 export type { NamedOperation } from './toolgen/naming.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
-export type { SpecPipelineDeps, SpecPipelineOptions, SpecPipelineResult } from './spec/pipeline.ts';
+export type {
+  CacheStatus,
+  SpecPipelineDeps,
+  SpecPipelineOptions,
+  SpecPipelineResult,
+} from './spec/pipeline.ts';
 export type { CacheFs } from './cache/fs.ts';
 export {
   CACHE_KEY_MAX_LENGTH,
