@@ -81,3 +81,23 @@ export {
 export type { CacheEntry, CacheEntrySummary, CacheReadResult } from './cache/store.ts';
 export { evaluateFreshness } from './cache/ttl.ts';
 export type { FreshnessDecision } from './cache/ttl.ts';
+export {
+  FILTER_MAX_MATCH_STEPS,
+  FILTER_PATTERN_MAX_COUNT,
+  FILTER_PATTERN_MAX_LENGTH,
+  FILTER_PATTERN_MAX_WILDCARDS,
+  GLOBSTAR,
+  STAR,
+  compileGlob,
+  createMatchBudget,
+  globMatches,
+  parseFilterPattern,
+  parseFilterPatterns,
+} from './filter/pattern.ts';
+export type {
+  CompiledGlob,
+  FilterMethod,
+  FilterPattern,
+  GlobToken,
+  MatchBudget,
+} from './filter/pattern.ts';

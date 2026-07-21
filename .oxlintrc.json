@@ -163,6 +163,17 @@
         // assertion against them - not behavior-preserving
         "require-await": "off"
       }
+    },
+    {
+      "files": ["packages/core/src/filter/pattern.ts"],
+      "rules": {
+        // Off per task-6 brief: pattern.ts is the whole D15 token-programme
+        // module - the grammar constants, compileGlob, the step budget, and
+        // the Thompson state-set matcher live together by design (the design
+        // rationale comments are load-bearing, not incidental), so it
+        // verbatim exceeds 300 lines
+        "max-lines": "off"
+      }
     }
   ]
 }
