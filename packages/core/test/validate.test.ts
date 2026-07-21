@@ -89,4 +89,34 @@ describe('validateOpenApiDocument', () => {
     expect(validateOpenApiDocument(minimal31()).version).toBe('3.1');
     expect(validateOpenApiDocument(minimal31()).version).toBe('3.1');
   });
+
+  it('does not echo control characters from the declared openapi version (D2)', () => {
+    // The version gate only checks the "3.0."/"3.1." prefix — the remainder is
+    // arbitrary spec content that reached stderr verbatim before this fix
+    const doc = {
+      openapi: '3.0.\u001B]0;PWNED\u0007',
+      info: { title: 'T' },
+      paths: {},
+    };
+    try {
+      validateOpenApiDocument(doc);
+      expect.unreachable('expected a validation error');
+    } catch (err) {
+      const { message } = err as OpenapiMcpError;
+      expect(message).not.toContain('\u001B');
+      expect(message).not.toContain('\u0007');
+      expect(message).toContain('3.0.]0;PWNED');
+    }
+  });
+
+  it('caps an over-long declared openapi version in the error message', () => {
+    const doc = { openapi: `3.0.${'x'.repeat(500)}`, info: { title: 'T' }, paths: {} };
+    try {
+      validateOpenApiDocument(doc);
+      expect.unreachable('expected a validation error');
+    } catch (err) {
+      // 32-char cap on the version fragment, not on the whole message
+      expect((err as OpenapiMcpError).message).not.toContain('x'.repeat(40));
+    }
+  });
 });

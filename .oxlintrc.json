@@ -13,7 +13,10 @@
     "sort-keys": "off",
     "sort-imports": "off",
     "no-magic-numbers": "off",
-    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z"] }],
+    // Off per task-2 brief: A/R (cache/errors.ts's withCacheErrors) and T
+    // (cache/lock.ts's withNamespaceLockImpl) are the frozen generic type
+    // parameters from the Interface Contract's withNamespaceLock<T> signature
+    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z", "A", "R", "T"] }],
     "import/no-named-export": "off",
     "import/group-exports": "off",
     "import/no-nodejs-modules": "off",
@@ -28,7 +31,8 @@
     "node/no-sync": "off",
     // Off per task-4 brief: context.ts testContext().homeDir default returns undefined verbatim
     "unicorn/no-useless-undefined": "off",
-    // Off per task-4 brief: output.ts emit() has four parameters verbatim
+    // Off per task-11 brief (M2b): cache.ts's promoteCandidate/withNamespaceLock
+    // call sites take four parameters verbatim
     "max-params": "off",
     // Off per task-4 brief: output.ts uses `!== undefined ? ... : {}` verbatim
     "no-negated-condition": "off",
@@ -59,10 +63,7 @@
     // body read are inherently serial (the chain and stream cannot be parallelized)
     "no-await-in-loop": "off",
     // Off per task-5 brief (M2a): fetch.ts's redirect loop uses `continue` verbatim
-    "no-continue": "off",
-    // Off per task-11 brief (M2a): pipeline.ts composes every Tasks 2-10 module
-    // verbatim, so it imports from 11 files
-    "import/max-dependencies": "off"
+    "no-continue": "off"
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
@@ -94,8 +95,6 @@
         "id-length": "off",
         // Off per task-5 brief: main.test.ts's `describe('run', ...)` callback is 60 lines verbatim
         "max-lines-per-function": "off",
-        // Off per task-6 brief: doctor.test.ts's JSON-mode `it` block has 11 statements verbatim
-        "max-statements": "off",
         // Off per task-6 brief: doctor.test.ts asserts envelope.ok/cacheRootExists with toBe(true) verbatim
         "vitest/prefer-to-be-truthy": "off",
         // Off per task-1 brief: main.test.ts defines inline CommandRegistrar closures (boom/helpToStderr) verbatim
@@ -108,6 +107,114 @@
         // `null` response body / header values verbatim
         "unicorn/no-null": "off",
         // Off per task-5 brief (M2a): fetch.test.ts's redirect-chain test suite exceeds 300 lines
+        "max-lines": "off",
+        // Off per task-1 brief: sanitize.test.ts and output.test.ts embed escaped
+        // backslashes ('\\x', '\\u001b') as literal string content verbatim
+        "unicorn/prefer-string-raw": "off",
+        // Off per task-2 brief: cache-lock.test.ts and context.test.ts use
+        // expect(await ...) rather than await expect(...).resolves throughout, verbatim
+        "vitest/prefer-expect-resolves": "off",
+        // Off per task-2 brief: context.test.ts's writeFileAtomic/readFileTextCapped
+        // failure-path tests assert only that a real fs error is thrown, not its
+        // message (the exact message is filesystem-dependent), verbatim
+        "vitest/require-to-throw-message": "off",
+        // Off per task-2 brief: cache-paths.test.ts's D9 collision test writes the
+        // namespace material as two concatenated literals to mirror the two-part
+        // construction it is testing against, verbatim
+        "no-useless-concat": "off",
+        // Off per task-3 brief (M2b): cache-store.test.ts's mulberry32 PRNG needs
+        // the exact unsigned 32-bit wraparound `>>> 0` gives; Math.trunc keeps
+        // sign and does not wrap, which would silently change the generated
+        // sequence, verbatim
+        "unicorn/prefer-math-trunc": "off",
+        // Off per task-3 brief (M2b): cache-store.test.ts's round-5 finding 3
+        // case constructs a genuinely sparse array ([1, , 3]) to verify
+        // serializedSizeWithin rejects it - replacing the hole would test a
+        // different, already-covered value, verbatim
+        "no-sparse-arrays": "off",
+        // Off per task-3 brief (M2b): cache-store.test.ts's round-6 finding 1
+        // cases construct boxed primitives (new Number/String/Boolean)
+        // specifically to verify serializedSizeWithin refuses them; the
+        // unboxed-literal replacement these rules suggest is a plain primitive,
+        // which defeats the test, verbatim
+        "unicorn/new-for-builtins": "off",
+        "no-new-wrappers": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/spec/pipeline.ts"],
+      "rules": {
+        // Off for the pipeline only: it is the composition root of the spec
+        // subsystem and imports load, parse, validate, dereference, normalize,
+        // naming, budgets, fetch, cache paths/fs/store/ttl, and the filter engine
+        "import/max-dependencies": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/cache/store.ts"],
+      "rules": {
+        // Off per task-3 brief (M2b): cache/store.ts is the transactional store
+        // core - schema serialization, the D14 incremental size preflight, both
+        // writers, GC, the three-way meta read, and the public reader all live in
+        // one module by design (readMetaFile is private and shared by every entry
+        // point in it) - so it verbatim exceeds 300 lines
+        "max-lines": "off",
+        // Off per task-11 brief (M2b): scoping import/max-dependencies to
+        // pipeline.ts only (rather than disabling it repository-wide) puts the
+        // rule back in force here too, and store.ts imports from 11 files for
+        // the same reason its max-lines override above gives - it is the
+        // transactional store core and genuinely draws on every one of them
+        "import/max-dependencies": "off",
+        // Off per task-3 brief (M2b): store.ts's writeAccepted and writeCandidate
+        // are declared async with synchronous validation (declaredOpenapiVersion,
+        // persistableTextOrThrow, the title/specVersion length check) BEFORE the
+        // `return withNamespaceLock(...)` tail call. Removing `async` would turn
+        // those synchronous throws into synchronous exceptions at the call site
+        // instead of promise rejections, breaking every `.rejects.toMatchObject`
+        // assertion against them - not behavior-preserving
+        "require-await": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/filter/pattern.ts"],
+      "rules": {
+        // Off per task-6 brief: pattern.ts is the whole D15 token-programme
+        // module - the grammar constants, compileGlob, the step budget, and
+        // the Thompson state-set matcher live together by design (the design
+        // rationale comments are load-bearing, not incidental), so it
+        // verbatim exceeds 300 lines
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/spec/pipeline.ts"],
+      "rules": {
+        // Off per task-9 brief: pipeline.ts is where every M2b part meets -
+        // policy resolution, the D5 fail-closed read, the conditional refresh,
+        // the D16b cache-hit path, the last-known-good fallback, and the D16a2
+        // finish/commitRefresh helpers live together by design, and the
+        // extensive round-N rationale comments documenting each control-flow
+        // decision are load-bearing security documentation, not incidental -
+        // so it verbatim exceeds 300 lines
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/cli/src/context.ts"],
+      "rules": {
+        // Off per task-12 brief (M2b final review, finding 2):
+        // context.ts is the sole home of the real cache filesystem seam, and
+        // mkdirSecure's per-component umask-0177 walk plus writeFileAtomic's
+        // D3 temp+rename and readFileTextCapped's D12 capped read already
+        // carry load-bearing round-N rationale by design. Fixing the round-10
+        // symlink-following finding added an lstat-based
+        // rejectUnlessRealDirectory guard, used in both of mkdirSecure's
+        // branches, with rationale comments that are load-bearing security
+        // documentation, not incidental. A comment-free version of the same
+        // fix still lands a few lines past 300 (there was no headroom left),
+        // so trimming the fix's own rationale could not have closed the gap
+        // either — this mirrors the pattern.ts/store.ts/pipeline.ts overrides
+        // above for the same reason
         "max-lines": "off"
       }
     }
