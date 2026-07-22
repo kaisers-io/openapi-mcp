@@ -4,6 +4,7 @@ import { existsSync, type Stats } from 'node:fs';
 import {
   chmod,
   type FileHandle,
+  link,
   lstat,
   mkdir,
   open,
@@ -15,12 +16,16 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { type CacheFs, validationError } from '@kaisers-io/openapi-mcp-core';
+import { cachePathTypeError, type CacheFs, validationError } from '@kaisers-io/openapi-mcp-core';
 
 export interface CliContext {
   env: Readonly<Record<string, string | undefined>>;
   out: (line: string) => void;
   errLine: (line: string) => void;
+  // Stderr terminal width when stderr is a TTY, else undefined (no soft-wrap
+  // downstream). The error framing hard-wraps to this to keep hostile spec
+  // text from reaching visual column zero on a dumb terminal.
+  errWidth: () => number | undefined;
   fetcher: typeof fetch;
   now: () => number;
   nodeVersion: string;
@@ -80,12 +85,21 @@ export const readExactly = async (handle: FileHandle, buffer: Buffer): Promise<n
 // `isDirectory() === true` through `stat`, and a subsequent `chmod` (which
 // also follows) would 0700 the attacker-chosen target. Callers pass an lstat
 // result here instead, so a planted symlink is rejected before any chmod.
+// Task 11 fix round: these two throws used to be validationError, but the
+// sweep in cache-target.ts's clearAllNamespaces needs a way to tell "this
+// namespace-shaped path is not a real directory" apart from EVERY OTHER
+// validationError a cache operation can raise — including one whose
+// interpolated PATH happens to contain the substring "is not a directory" or
+// "is a symlink" (readFileTextCapped's over-budget message embeds the path
+// verbatim, and it is called on layout.lockPath during the very same lock
+// acquisition this function guards). A message-substring match could not
+// tell those apart; a dedicated code can.
 const rejectUnlessRealDirectory = (path: string, info: Stats): void => {
   if (info.isSymbolicLink()) {
-    throw validationError(`cache path "${path}" is a symlink, which is not allowed`);
+    throw cachePathTypeError(`cache path "${path}" is a symlink, which is not allowed`);
   }
   if (!info.isDirectory()) {
-    throw validationError(`cache path "${path}" exists and is not a directory`);
+    throw cachePathTypeError(`cache path "${path}" exists and is not a directory`);
   }
 };
 
@@ -214,26 +228,62 @@ const realCacheFs = (): CacheFs => ({
     }
   },
   createExclusive: async (path, data) => {
-    // The "wx" flag is the lock primitive: an atomic create-or-fail (D12)
-    let handle: Awaited<ReturnType<typeof open>>;
+    // Publish the lock atomically. Write the record to a PRIVATE temp first,
+    // then link() it into place: link fails EEXIST if the lock is held (the
+    // create-or-fail primitive, D12), and on ANY write failure only the temp is
+    // removed — `path` is never created partial and never removed by us, so a
+    // failed acquisition can neither leave an orphan lock nor delete a
+    // replacement one (the round-2 TOCTOU the naive rm(path) would have had).
+    // Follow-up (documented, not fixed here): this depends on hard-link support.
+    // On a filesystem that offers exclusive create but not hard links (exFAT/
+    // FAT32, some network mounts) link throws EPERM/ENOTSUP/ENOSYS — rethrown
+    // below since only EEXIST is caught — and acquisition fails where a plain
+    // open(path, 'wx') would have succeeded. The cache root is always under the
+    // home directory, whose filesystem already has to honour the 0700/0600 mode
+    // model this subsystem relies on, so a hard-link-incapable root is already
+    // out of scope; a fallback would reintroduce the orphan-lock window closed here.
+    const tmp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
     try {
-      handle = await open(path, 'wx', 0o600);
-    } catch (err) {
-      if (err !== null && typeof err === 'object' && 'code' in err && err.code === 'EEXIST') {
-        return false;
+      const handle = await open(tmp, 'wx', 0o600);
+      try {
+        await handle.writeFile(data, 'utf8');
+        await handle.chmod(0o600);
+      } finally {
+        await handle.close();
       }
-      throw err;
-    }
-    try {
-      await handle.writeFile(data, 'utf8');
-      await handle.chmod(0o600);
+      try {
+        await link(tmp, path);
+      } catch (err) {
+        if (err !== null && typeof err === 'object' && 'code' in err && err.code === 'EEXIST') {
+          return false;
+        }
+        throw err;
+      }
+      return true;
     } finally {
-      await handle.close();
+      // The temp is private scratch: a failure to remove it must NEVER turn a
+      // successful acquisition into a rejection (which would orphan the lock
+      // we just published, since withNamespaceLock has not yet entered its
+      // release finally — the round-3 finding). A stray .tmp is harmless.
+      await rm(tmp, { force: true }).catch(() => undefined);
     }
-    return true;
   },
   removeFile: (path) => rm(path, { force: true }),
 });
+
+// A TTY whose columns are unavailable (0/undefined) still soft-wraps, so it
+// resolves to a real fallback width rather than undefined (which downstream
+// means "non-TTY, no wrap"). Pure so it is testable directly.
+const STDERR_FALLBACK_WIDTH = 80;
+export const resolveErrWidth = (
+  isTTY: boolean,
+  columns: number | undefined,
+): number | undefined => {
+  if (!isTTY) {
+    return undefined;
+  }
+  return columns !== undefined && columns > 0 ? columns : STDERR_FALLBACK_WIDTH;
+};
 
 export const realContext = (): CliContext => ({
   env: process.env,
@@ -243,6 +293,7 @@ export const realContext = (): CliContext => ({
   errLine: (line) => {
     process.stderr.write(`${line}\n`);
   },
+  errWidth: () => resolveErrWidth(process.stderr.isTTY === true, process.stderr.columns),
   fetcher: fetch,
   now: () => Date.now(),
   nodeVersion: process.versions.node,
@@ -293,6 +344,7 @@ export const testContext = (overrides: TestContextOverrides = {}): CliContext =>
     errLine: (line) => {
       errLines.push(line);
     },
+    errWidth: () => undefined,
     fetcher: () => Promise.reject(new Error('no fetcher configured in testContext')),
     now: () => 0,
     nodeVersion: '24.12.0',

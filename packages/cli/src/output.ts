@@ -1,7 +1,11 @@
 import type { Command } from '@commander-js/extra-typings';
 import {
+  displayCells,
   DISPLAY_TEXT_MAX,
   EXIT,
+  FRAME_MAX_LINES,
+  FRAME_PER_LINE_MAX,
+  gutterFrame,
   renderError,
   sanitizeDisplayText,
   sanitizeSpecText,
@@ -46,10 +50,52 @@ export const emit = (ctx: CliContext, opts: OutputOptions, result: ActionResult)
   // dead filter patterns, cache diagnostics), and a warning must occupy exactly
   // one line, so the collapsing sanitizer is the correct one here —
   // sanitizeDisplayText is for rendered errors, where structure must survive.
+  const warningGutter = 'openapi-mcp: warning: ';
   for (const warning of warnings) {
-    ctx.errLine(`openapi-mcp: warning: ${sanitizeSpecText(warning, WARNING_DISPLAY_MAX)}`);
+    const single = sanitizeSpecText(warning, WARNING_DISPLAY_MAX);
+    const wrapped = gutterFrame([single], {
+      gutter: warningGutter,
+      terminalWidth: ctx.errWidth(),
+      // Ceiling == the sanitized input's own cell count: gutterFrame can only
+      // WRAP to terminalWidth, never re-truncate content sanitizeSpecText
+      // already bounded (a same-valued perLineMax would double-truncate: the
+      // sanitizer measures code UNITS, gutterFrame's cap measures display
+      // CELLS, and its truncation marker's ellipsis is a 2-cell codepoint).
+      perLineMax: displayCells(single),
+      maxLines: 1,
+    });
+    for (const line of wrapped.lines) {
+      ctx.errLine(line);
+    }
   }
 };
+
+const ERROR_GUTTER = 'openapi-mcp: | ';
+
+// Trusted header/footer, guttered hostile body: a multi-line or over-width
+// message cannot spoof the framing lines because those two are never derived
+// from untrusted text, and every body line is anchored by the gutter prefix.
+const framedError = (ctx: CliContext, code: string, exitCode: number, bodyText: string): void => {
+  const logicalLines = bodyText.split('\n');
+  const body = gutterFrame(logicalLines, {
+    gutter: ERROR_GUTTER,
+    terminalWidth: ctx.errWidth(),
+    perLineMax: FRAME_PER_LINE_MAX,
+    maxLines: FRAME_MAX_LINES,
+  });
+  ctx.errLine(`openapi-mcp: error [${code}] (exit ${exitCode})`);
+  for (const line of body.lines) {
+    ctx.errLine(line);
+  }
+  const noun = body.logicalShown === 1 ? 'line' : 'lines';
+  const suffix = body.truncated ? '; DETAILS TRUNCATED' : '';
+  ctx.errLine(`openapi-mcp: [END ERROR: ${body.logicalShown} logical ${noun} shown${suffix}]`);
+};
+
+// Cell-aware (not code-unit) width check: a CJK/fullwidth line can be short in
+// code units yet overflow the terminal in display cells (the H1 fix).
+const fitsCompact = (line: string, width: number | undefined): boolean =>
+  width === undefined || displayCells(`openapi-mcp: ${line}`) <= width;
 
 export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): number => {
   const rendered = renderError(err, { verbose: opts.verbose });
@@ -69,10 +115,18 @@ export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): n
   // Rendered messages can carry untrusted spec text (Ajv instancePaths, YAML
   // parser messages, $ref echoes). This is the single human display boundary:
   // sanitize line-preservingly so multi-line validation output stays readable.
-  ctx.errLine(`openapi-mcp: ${sanitizeDisplayText(rendered.message, DISPLAY_TEXT_MAX)}`);
-  if (rendered.stack !== undefined) {
-    ctx.errLine(sanitizeDisplayText(rendered.stack, DISPLAY_TEXT_MAX));
+  const message = sanitizeDisplayText(rendered.message, DISPLAY_TEXT_MAX);
+  const stack =
+    rendered.stack !== undefined
+      ? sanitizeDisplayText(rendered.stack, DISPLAY_TEXT_MAX)
+      : undefined;
+  // Compact only for a single short line with no stack: nothing to spoof.
+  if (stack === undefined && !message.includes('\n') && fitsCompact(message, ctx.errWidth())) {
+    ctx.errLine(`openapi-mcp: ${message}`);
+    return rendered.exitCode;
   }
+  const bodyText = stack === undefined ? message : `${message}\n${stack}`;
+  framedError(ctx, rendered.code, rendered.exitCode, bodyText);
   return rendered.exitCode;
 };
 

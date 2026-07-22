@@ -62,11 +62,10 @@ describe('parseFilterPattern — form detection', () => {
     });
   });
 
-  it('compiles each pattern exactly once, at parse time (D15)', () => {
+  it('compiles each pattern once, carrying the programme on the pattern (D15)', () => {
     // The compiled programme travels WITH the pattern so matching never
     // recompiles per candidate string
     const parsed = parseFilterPattern('GET /users/**');
-    expect(parsed.compiled).toBe(parsed.compiled);
     expect(parsed.compiled.tokens).toEqual(compileGlob('/users/**').tokens);
   });
 

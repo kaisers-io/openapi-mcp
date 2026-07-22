@@ -1,6 +1,7 @@
 export {
   EXIT,
   OpenapiMcpError,
+  cachePathTypeError,
   conflictError,
   notFoundError,
   renderError,
@@ -17,6 +18,15 @@ export {
   sanitizeDisplayText,
   sanitizeSpecText,
 } from './spec/sanitize.ts';
+export {
+  displayCells,
+  FRAME_MAX_LINES,
+  FRAME_MIN_CONTENT_WIDTH,
+  FRAME_PER_LINE_MAX,
+  gutterFrame,
+  type GutterFrameOptions,
+  type GutteredBody,
+} from './spec/display.ts';
 export { parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
 export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';
 export { hashContent, loadSpecFromFile, parseSpecSource } from './spec/load.ts';
@@ -75,10 +85,10 @@ export {
   declaredOpenapiVersion,
   listCacheEntries,
   listNamespaceIds,
-  persistedSpecText,
   promoteCandidate,
   readCacheEntry,
   serializedSizeWithin,
+  serializeWithinBudget,
   touchRevalidated,
   writeAccepted,
   writeCandidate,

@@ -147,7 +147,15 @@
         // Off for the pipeline only: it is the composition root of the spec
         // subsystem and imports load, parse, validate, dereference, normalize,
         // naming, budgets, fetch, cache paths/fs/store/ttl, and the filter engine
-        "import/max-dependencies": "off"
+        "import/max-dependencies": "off",
+        // Off per task-9 brief: pipeline.ts is where every M2b part meets -
+        // policy resolution, the D5 fail-closed read, the conditional refresh,
+        // the D16b cache-hit path, the last-known-good fallback, and the D16a2
+        // finish/commitRefresh helpers live together by design, and the
+        // extensive round-N rationale comments documenting each control-flow
+        // decision are load-bearing security documentation, not incidental -
+        // so it verbatim exceeds 300 lines
+        "max-lines": "off"
       }
     },
     {
@@ -183,19 +191,6 @@
         // the Thompson state-set matcher live together by design (the design
         // rationale comments are load-bearing, not incidental), so it
         // verbatim exceeds 300 lines
-        "max-lines": "off"
-      }
-    },
-    {
-      "files": ["packages/core/src/spec/pipeline.ts"],
-      "rules": {
-        // Off per task-9 brief: pipeline.ts is where every M2b part meets -
-        // policy resolution, the D5 fail-closed read, the conditional refresh,
-        // the D16b cache-hit path, the last-known-good fallback, and the D16a2
-        // finish/commitRefresh helpers live together by design, and the
-        // extensive round-N rationale comments documenting each control-flow
-        // decision are load-bearing security documentation, not incidental -
-        // so it verbatim exceeds 300 lines
         "max-lines": "off"
       }
     },

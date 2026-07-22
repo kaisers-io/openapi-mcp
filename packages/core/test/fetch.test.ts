@@ -548,13 +548,23 @@ describe('fetchSpecConditional', () => {
   });
 
   it.each([
-    ['a CRLF header-injection sequence', 'v1\r\nX-Evil: 1'],
     ['a control character', 'v1\u0007'],
     ['an over-long value', `"${'x'.repeat(400)}"`],
-  ])('drops a returned validator carrying %s', async (_label, etag) => {
-    // The response is remote-controlled and its validators are stored in
-    // meta.json and replayed as request headers on the next revalidation
-    const { fetcher } = fakeFetcher([withRawHeader(new Response('{}'), 'etag', etag)]);
+  ])('drops a returned validator carrying %s (native Headers)', async (_label, etag) => {
+    const { fetcher } = fakeFetcher([new Response('{}', { headers: { etag } })]);
+    const result = await fetchSpecConditional(
+      new URL('https://api.example.com/openapi.json'),
+      { headers: [] },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect('etag' in result).toBe(false);
+  });
+
+  it('drops a returned validator carrying a CRLF header-injection sequence', async () => {
+    // A raw CR/LF cannot be placed in a real Headers (WHATWG throws at
+    // construction), so this hostile value is injected through withRawHeader —
+    // the only row that genuinely needs it.
+    const { fetcher } = fakeFetcher([withRawHeader(new Response('{}'), 'etag', 'v1\r\nX-Evil: 1')]);
     const result = await fetchSpecConditional(
       new URL('https://api.example.com/openapi.json'),
       { headers: [] },

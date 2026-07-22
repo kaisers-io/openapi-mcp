@@ -107,4 +107,13 @@ describe('sanitizeDisplayText', () => {
     expect(sanitizeSpecText('a\nb', 100)).toBe('a b');
     expect(sanitizeDisplayText('a\nb', 100)).toBe('a\nb');
   });
+
+  it('does not split an astral code point at the display cap', () => {
+    const out = sanitizeDisplayText(`${'a'.repeat(10)}\u{1F600}`, 11);
+    // 11 - marker (12) <= marker, so hard-cut at 11 units would land mid-emoji
+    // at unit 10/11; the surrogate-safe truncate stops before it.
+    expect([...out].every((ch) => ch.codePointAt(0)! < 0xd800 || ch.codePointAt(0)! > 0xdfff)).toBe(
+      true,
+    );
+  });
 });
