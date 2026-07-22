@@ -1,6 +1,7 @@
 import { validationError } from '../errors.ts';
 import { assertAllowedRedirectTarget, type DnsLookup } from '../http/egress.ts';
 import type { ResolvedHeader } from '../http/headers.ts';
+import { VALIDATOR_RE } from '../schemas/cache.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 import { findSensitiveQueryParam, hashContent, type LoadedSpecText } from './load.ts';
 import { sanitizeSpecText } from './sanitize.ts';
@@ -113,8 +114,6 @@ type ConditionalOptions = FetchSpecOptions & {
 // request header on the next revalidation: keep it bounded and printable ASCII,
 // and drop anything else rather than storing a header-hostile value. The bound
 // matches zCacheMeta's, so a value accepted here always survives the write.
-const VALIDATOR_RE = /^[ -~]{1,256}$/u;
-
 const readValidator = (response: Response, name: string): string | undefined => {
   const raw = response.headers.get(name);
   return raw !== null && VALIDATOR_RE.test(raw) ? raw : undefined;

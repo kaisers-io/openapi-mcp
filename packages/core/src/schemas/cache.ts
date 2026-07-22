@@ -11,9 +11,11 @@ export const CACHE_META_SCHEMA_VERSION = 1;
 const CONTENT_HASH_RE = /^[0-9a-f]{64}$/u;
 
 // ETag and Last-Modified come back from a remote server and are replayed as
-// request headers on the next revalidation: bound them to printable ASCII so a
-// stored validator can never carry a CR/LF header-injection sequence
-const VALIDATOR_RE = /^[ -~]+$/u;
+// request headers on the next revalidation: bound them to printable ASCII and
+// 1–256 chars so a stored validator can never carry a header-injection
+// sequence. Shared with fetch.ts's readValidator so the drop rule and the
+// persisted schema can never diverge.
+export const VALIDATOR_RE = /^[ -~]{1,256}$/u;
 
 // The same charset parseCacheKey enforces (D9); revalidated here because
 // meta.json is untrusted input on the way back in
