@@ -411,6 +411,13 @@ const readMetaFile = async (layout: CacheLayout, fs: CacheFs): Promise<MetaReadR
   try {
     raw = await fs.readFileTextCapped(layout.metaPath, CACHE_META_MAX_BYTES);
   } catch (err) {
+    // The pathExists probe above and this read are two separate calls: a
+    // concurrent clear can unlink meta.json in between (TOCTOU). That is a
+    // legitimate miss (D17's one outcome that may re-enter trust-on-first-use),
+    // not corruption — the entry was raced away, not damaged.
+    if (isCacheAbsence(err)) {
+      return { kind: 'miss' };
+    }
     // The read above throws a typed validationError ONLY for over-budget; a
     // raw Node error (EACCES/EIO) means the file could not be read at all.
     // Split the wording so the operator message matches the cause.
@@ -791,58 +798,108 @@ export type CacheReadResult =
 // each one requires a concurrent commit to have completed, so an unbounded
 // sequence would require unbounded concurrent writers.
 //
-// Deliberately PRIVATE (round-9 finding 2): the tested behaviour is that the
-// loop terminates within the documented bound, not that this number is part of
-// the public API. The test names its own expected bound.
-const READ_RETRY_LIMIT = 3;
+// The lock-free reader retries a failed object read on two distinct grounds:
+// a GENERATION ADVANCE (a concurrent commit replaced the object — self-limiting,
+// each advance is a real commit, capped for a pathological sustained adversary),
+// or a bounded number of STATIC-generation confirmations (fetchedAt is not
+// guaranteed unique, so a same-content same-ms clear→reseed can look static
+// while the object reappears). A static generation still missing after the
+// confirmations is genuine deletion (D5, fail closed).
+const READ_GENERATION_RETRY_CAP = 64;
+const READ_STATIC_CONFIRM_LIMIT = 2;
+const generationKey = (meta: CacheMeta): string =>
+  `${meta.acceptedContentHash}:${String(meta.fetchedAt)}`;
 
 const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<CacheReadResult> => {
-  for (let attempt = 0; ; attempt += 1) {
+  let advanceRetries = 0;
+  let staticConfirms = 0;
+  let previousGenKey: string | undefined;
+  for (;;) {
     const metaRead = await readMetaFile(layout, fs);
     if (metaRead.kind !== 'ok') {
       return metaRead;
     }
     const { meta } = metaRead;
+    const genKey = generationKey(meta);
+    // The advance branch below resets staticConfirms when ITS OWN recheck sees
+    // a new generation, but a commit can just as easily land between one
+    // iteration's static-confirm retry and the NEXT iteration's own
+    // readMetaFile call — the loop then starts reading a new generation here,
+    // silently, with no recheck ever noticing the change. Track the
+    // generation this loop last read and reset the budget whenever the TOP of
+    // the loop itself observes a change, so every generation gets its own
+    // static-confirm budget no matter how the change was noticed.
+    if (previousGenKey !== undefined && genKey !== previousGenKey) {
+      // A generation advance observed at the TOP of the loop must consume the
+      // generation-retry budget too, or a sustained clear/reseed+advance storm
+      // that keeps resetting staticConfirms here (never reaching the advance
+      // branch) would loop unboundedly — bypassing both caps. Every advance,
+      // however observed, is bounded (round-6).
+      if (advanceRetries >= READ_GENERATION_RETRY_CAP) {
+        return {
+          kind: 'corrupt',
+          reason: `the accepted spec for cache entry ${layout.namespace} could not be read`,
+        };
+      }
+      advanceRetries += 1;
+      staticConfirms = 0;
+    }
+    previousGenKey = genKey;
     let acceptedText: string;
     try {
-      // D12.1: the object is addressed BY its recorded hash, so a stale
-      // meta.json can never point at bytes some later write replaced — the
-      // bytes for a given hash are immutable and the filename proves which
-      // generation they belong to. D14: the cap is the persisted-document
-      // budget the writers enforce, so a validly written entry is always
-      // readable back.
       acceptedText = await fs.readFileTextCapped(
         objectPath(layout, meta.acceptedContentHash),
         CACHE_MAX_PERSISTED_BYTES,
       );
-    } catch {
-      // Round-4 finding 2: the round-4 draft retried only when the re-read
-      // metadata was `ok` with a DIFFERENT accepted hash. That missed two
-      // states. A concurrent `clear` leaves the recheck at `miss`, and the
-      // reader then reported `corrupt` on an entry an operator had merely
-      // asked to delete — contradicting the clear-vs-read assertion that the
-      // reader stays exit 0. And a clear followed by re-seeding identical
-      // content produces a NEW generation with the SAME hash, which a
-      // hash-change test cannot see at all.
-      //
-      // The state machine is therefore: recheck `miss` is a miss (the entry is
-      // gone, which is a legitimate outcome, not damage); any `ok` recheck is
-      // retried while attempts remain, regardless of whether the hash changed,
-      // because the object may have been re-created underneath us; only an
-      // exhausted budget or a `corrupt` recheck falls through to corrupt.
+    } catch (err) {
+      // An over-budget object is genuine corruption, not a lost race.
+      if (err instanceof OpenapiMcpError && err.code === 'validation') {
+        return {
+          kind: 'corrupt',
+          reason: `the accepted spec for cache entry ${layout.namespace} exceeds its ${CACHE_MAX_PERSISTED_BYTES}-byte budget`,
+        };
+      }
+      // Only a genuine absence (ENOENT/ENOTDIR) is a candidate lost race — an
+      // EACCES or EIO under a stable meta is a real I/O failure, not a
+      // concurrent commit or deletion, and must propagate like every other
+      // isCacheAbsence site in this module rather than being retried toward
+      // an eventual, misleading "corrupt" report.
+      if (!isCacheAbsence(err)) {
+        throw err;
+      }
       const recheck = await readMetaFile(layout, fs);
       if (recheck.kind === 'miss') {
         return { kind: 'miss' };
       }
-      if (recheck.kind === 'ok' && attempt < READ_RETRY_LIMIT) {
-        continue;
-      }
       if (recheck.kind === 'corrupt') {
         return recheck;
       }
+      if (generationKey(recheck.meta) !== genKey) {
+        // A concurrent commit advanced the generation: retry against it, and
+        // RESET the static-confirm budget — the new generation is entitled to
+        // its own confirmations (round-4: leaking staticConfirms across an
+        // advance corrupts a healthy later generation prematurely).
+        if (advanceRetries < READ_GENERATION_RETRY_CAP) {
+          advanceRetries += 1;
+          staticConfirms = 0;
+          continue;
+        }
+        return {
+          kind: 'corrupt',
+          reason: `the accepted spec for cache entry ${layout.namespace} could not be read`,
+        };
+      }
+      // Static generation: re-loop a bounded number of times — the next pass
+      // re-reads meta (catching an advancing commit that GC'd the object) AND
+      // the object (catching a same-key re-create race). Still missing after
+      // the confirmations under a stable generation is genuine deletion.
+      if (staticConfirms < READ_STATIC_CONFIRM_LIMIT) {
+        staticConfirms += 1;
+        continue;
+      }
       return {
         kind: 'corrupt',
-        reason: `the accepted spec for cache entry ${layout.namespace} cannot be read within its ${CACHE_MAX_PERSISTED_BYTES}-byte budget`,
+        reason: `the accepted spec for cache entry ${layout.namespace} could not be read`,
       };
     }
     // The hash, shape, and openapiVersion-agreement checks are shared with

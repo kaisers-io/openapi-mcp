@@ -102,6 +102,14 @@ export const objectNamesOf = (fs: MemoryCacheFs, layout = LAYOUT): readonly stri
     .map((key) => key.slice(layout.objectsDir.length + 1))
     .sort();
 
+// A hand-rolled mock must be faithful to Node the same way memoryCacheFs's own
+// absenceError is (round-7 finding 4): the store now branches on `err.code`
+// (isCacheAbsence) to tell a lost race apart from a genuine I/O failure, so a
+// mock simulating "the object is transiently missing" has to carry the same
+// `.code` a real ENOENT would, or it is indistinguishable from EACCES/EIO.
+export const enoentError = (message: string): Error =>
+  Object.assign(new Error(message), { code: 'ENOENT' });
+
 const validMeta = (): CacheMeta => ({
   schemaVersion: CACHE_META_SCHEMA_VERSION,
   displaySource: 'https://api.example.com/openapi.json',
@@ -1135,6 +1143,20 @@ describe('readCacheEntry corrupt states (D5)', () => {
     expect((read as { reason: string }).reason).not.toMatch(/budget/u);
   });
 
+  it('reports a miss, not corrupt, when meta.json is concurrently unlinked between the existence probe and the read (TOCTOU)', async () => {
+    // Meta reading does pathExists(metaPath) THEN readFileTextCapped(metaPath):
+    // a concurrent clear can unlink the file in between. That is a legitimate
+    // miss (D17's one outcome that may re-enter trust-on-first-use), not
+    // damage — the entry was not corrupt, it was raced away underneath us.
+    const fs = await seeded();
+    fs.readFileTextCapped = (path) =>
+      path === LAYOUT.metaPath
+        ? Promise.reject(enoentError('unlinked between probe and read'))
+        : Promise.reject(new Error('unexpected read'));
+    const read = await readCacheEntry(LAYOUT, fs);
+    expect(read).toEqual({ kind: 'miss' });
+  });
+
   it('reports corrupt when meta.json is not valid JSON', async () => {
     const fs = await seeded();
     fs.files.set(LAYOUT.metaPath, 'not json');
@@ -1224,7 +1246,7 @@ describe('readCacheEntry retry loop (round-3/4 findings)', () => {
       if (path === objPath) {
         calls += 1;
         if (calls === 1) {
-          return Promise.reject(new Error('transient read failure'));
+          return Promise.reject(enoentError('transient read failure'));
         }
       }
       return inner(path, maxBytes);
@@ -1239,11 +1261,11 @@ describe('readCacheEntry retry loop (round-3/4 findings)', () => {
     const objPath = objectPath(LAYOUT, metaOf(fs).acceptedContentHash);
     const inner = fs.readFileTextCapped;
     fs.readFileTextCapped = (path, maxBytes) =>
-      path === objPath ? Promise.reject(new Error('always fails')) : inner(path, maxBytes);
+      path === objPath ? Promise.reject(enoentError('always fails')) : inner(path, maxBytes);
     const result = await readCacheEntry(LAYOUT, fs);
     expect(result).toEqual({
       kind: 'corrupt',
-      reason: expect.stringContaining('cannot be read within its') as string,
+      reason: expect.stringContaining('could not be read') as string,
     });
   });
 
@@ -1256,12 +1278,27 @@ describe('readCacheEntry retry loop (round-3/4 findings)', () => {
       if (path === objPath && !failedOnce) {
         failedOnce = true;
         fs.files.delete(LAYOUT.metaPath);
-        return Promise.reject(new Error('object vanished mid-read'));
+        return Promise.reject(enoentError('object vanished mid-read'));
       }
       return inner(path, maxBytes);
     };
     const result = await readCacheEntry(LAYOUT, fs);
     expect(result).toEqual({ kind: 'miss' });
+  });
+
+  it('propagates a non-absence I/O error on the object read instead of treating it as a lost race', async () => {
+    // EACCES/EIO under a STABLE meta is not a concurrent commit or a deletion
+    // — it is a genuine I/O failure and must propagate (like the module's
+    // other isCacheAbsence sites), not get counted toward the static-confirm
+    // budget and eventually reported as a merely-corrupt entry.
+    const fs = await seeded();
+    const objPath = objectPath(LAYOUT, metaOf(fs).acceptedContentHash);
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = (path, maxBytes) =>
+      path === objPath
+        ? Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }))
+        : inner(path, maxBytes);
+    await expect(readCacheEntry(LAYOUT, fs)).rejects.toMatchObject({ code: 'validation' });
   });
 });
 
@@ -1447,10 +1484,172 @@ describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
     fs.readFileTextCapped = (path) =>
       path === LAYOUT.metaPath
         ? Promise.resolve(metaText)
-        : ((reads += 1), Promise.reject(new Error('ENOENT')));
+        : ((reads += 1), Promise.reject(enoentError('ENOENT')));
     const result = await readCacheEntry(LAYOUT, fs);
     expect(result.kind).toBe('corrupt');
     expect(reads).toBeLessThanOrEqual(EXPECTED_MAX_READ_ATTEMPTS);
+  });
+
+  it('does not report corrupt when four concurrent commits keep replacing the object', async () => {
+    const fs = await seeded();
+    const hash = metaOf(fs).acceptedContentHash;
+    let failures = 0;
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = async (path, maxBytes) => {
+      if (path === objectPath(LAYOUT, hash) && failures < 4) {
+        failures += 1;
+        // A concurrent commit: identical content (same hash) but a NEW
+        // generation (advanced fetchedAt), and the object momentarily missing.
+        await clearNamespace(LAYOUT, fs, NOW);
+        await writeAccepted(LAYOUT, fs, acceptedInput({ fetchedAt: NOW + failures }));
+        throw enoentError('ENOENT');
+      }
+      return inner(path, maxBytes);
+    };
+    const read = await readCacheEntry(LAYOUT, fs);
+    // A lost race across four commits is not corruption — the fifth read hits.
+    expect(read.kind).toBe('hit');
+  });
+
+  it('hits when the object is restored under the SAME generation (same content, same timestamp)', async () => {
+    const fs = await seeded();
+    const hash = metaOf(fs).acceptedContentHash;
+    // Base on the SEEDED fetchedAt, not NOW — the seed's timestamp differs from
+    // NOW, so re-seeding at NOW would ADVANCE the generation (round-5 fix). Use
+    // the seeded value so the generation key is genuinely unchanged.
+    const initial = metaOf(fs).fetchedAt;
+    let raced = false;
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = async (path, maxBytes) => {
+      if (!raced && path === objectPath(LAYOUT, hash)) {
+        raced = true;
+        // Clear then re-seed IDENTICAL content at the SAME fetchedAt: the
+        // generation key does not change, but the object reappears. The initial
+        // read already lost the race (throws), the static-confirm re-loop finds it.
+        await clearNamespace(LAYOUT, fs, NOW);
+        await writeAccepted(LAYOUT, fs, acceptedInput({ fetchedAt: initial }));
+        throw enoentError('ENOENT');
+      }
+      return inner(path, maxBytes);
+    };
+    const read = await readCacheEntry(LAYOUT, fs);
+    expect(read.kind).toBe('hit');
+  });
+
+  it('resets the static-confirm budget after a generation advance (round-4)', async () => {
+    const fs = await seeded();
+    const hash = metaOf(fs).acceptedContentHash;
+    // Base on the SEEDED fetchedAt so the FIRST failing read is a true STATIC
+    // (same generation), not an advance (round-5 fix — NOW differs from the seed).
+    // Failing-read generations: static A(initial), advance to B, two statics under B.
+    const initial = metaOf(fs).fetchedAt;
+    const timeline = [initial, initial + 1, initial + 1, initial + 1];
+    let call = 0;
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = async (path, maxBytes) => {
+      if (path === objectPath(LAYOUT, hash) && call < timeline.length) {
+        const fetchedAt = timeline[call]!;
+        call += 1;
+        await clearNamespace(LAYOUT, fs, NOW);
+        await writeAccepted(LAYOUT, fs, acceptedInput({ fetchedAt }));
+        throw enoentError('ENOENT');
+      }
+      return inner(path, maxBytes); // Fifth read: the object is present
+    };
+    // Only reachable if the advance RESET the static budget so generation B gets
+    // its own two confirmations; without the reset this corrupts on the 4th read.
+    const read = await readCacheEntry(LAYOUT, fs);
+    expect(read.kind).toBe('hit');
+  });
+
+  it('gives generation B its own static-confirm budget when the advance is observed at the TOP of the loop, not inside the advance branch', async () => {
+    // The advance branch's own staticConfirms reset only fires when THIS
+    // iteration's failed-read recheck sees a different generation. It does
+    // NOT cover the case where a commit lands between one iteration's static
+    // confirm and the NEXT iteration's own top-of-loop readMetaFile call — the
+    // loop silently starts reading generation B while staticConfirms still
+    // carries A's leaked count.
+    const fs = await seeded();
+    const hash = metaOf(fs).acceptedContentHash;
+    const initial = metaOf(fs).fetchedAt;
+    let metaCalls = 0;
+    let objectCalls = 0;
+    const inner = fs.readFileTextCapped;
+    fs.readFileTextCapped = async (path, maxBytes) => {
+      if (path === LAYOUT.metaPath) {
+        metaCalls += 1;
+        if (metaCalls === 3) {
+          // The THIRD meta read is the top-of-loop call for iteration 2 — land
+          // the concurrent commit to generation B right before it resolves, so
+          // this read (not the advance branch's own recheck) is what first
+          // observes B.
+          await clearNamespace(LAYOUT, fs, NOW);
+          await writeAccepted(LAYOUT, fs, acceptedInput({ fetchedAt: initial + 1 }));
+        }
+        return inner(path, maxBytes);
+      }
+      if (path === objectPath(LAYOUT, hash) && objectCalls < 3) {
+        objectCalls += 1;
+        // Iteration 1: A fails once, its recheck still sees A (one static
+        // confirm spent). Iteration 2: B fails once, its recheck sees B
+        // (should be a FRESH static budget). Iteration 3: B fails a second
+        // time — only reachable if generation B's budget was not leaked from
+        // A's already-spent confirmation.
+        throw enoentError('ENOENT');
+      }
+      return inner(path, maxBytes);
+    };
+    const read = await readCacheEntry(LAYOUT, fs);
+    expect(read.kind).toBe('hit');
+  });
+
+  it('terminates a sustained top-of-loop advance storm at the generation-retry cap instead of spinning', async () => {
+    // A generation advance detected at the TOP of the loop resets
+    // staticConfirms (Fix 1) but must ALSO consume the generation-retry
+    // budget the advance branch already does, or a sustained storm that
+    // advances every top-of-loop meta read (while each failed-read recheck
+    // sees only a STATIC generation, never triggering the advance branch
+    // itself) would reset staticConfirms forever and never terminate.
+    //
+    // The fake advances a fabricated meta's fetchedAt on every ODD
+    // readFileTextCapped(metaPath) call (a top-of-loop read) and holds it
+    // steady on every EVEN call (the failed-read recheck), so every
+    // iteration looks like "the generation just advanced, and its own
+    // recheck confirms it, static" — exactly the storm shape. The object
+    // read always ENOENTs. Capped at STORM_CEILING advances so the test
+    // cannot hang even if the fix under test is absent — after the ceiling
+    // the fake freezes on the last generation, which then eventually
+    // exhausts the (small) static-confirm budget and returns corrupt on its
+    // own, bounding even the pre-fix run.
+    const STORM_CEILING = 300;
+    const fs = await seeded();
+    const baseMeta = metaOf(fs);
+    const initial = baseMeta.fetchedAt;
+    let metaCalls = 0;
+    let generation = 0;
+    let objectReads = 0;
+    fs.readFileTextCapped = (path) => {
+      if (path === LAYOUT.metaPath) {
+        metaCalls += 1;
+        if (metaCalls % 2 === 1 && generation < STORM_CEILING) {
+          generation += 1;
+        }
+        return Promise.resolve(JSON.stringify({ ...baseMeta, fetchedAt: initial + generation }));
+      }
+      if (path === objectPath(LAYOUT, baseMeta.acceptedContentHash)) {
+        objectReads += 1;
+        return Promise.reject(enoentError('ENOENT'));
+      }
+      return Promise.reject(new Error(`unexpected read: ${path}`));
+    };
+    const read = await readCacheEntry(LAYOUT, fs);
+    expect(read.kind).toBe('corrupt');
+    // Bounded near READ_GENERATION_RETRY_CAP (64, private to store.ts — named
+    // locally per the same round-9 rationale as the existing "gives up" test),
+    // not anywhere near the fake's 300-advance storm ceiling.
+    const READ_GENERATION_RETRY_CAP_LOCAL = 64;
+    expect(objectReads).toBeLessThanOrEqual(READ_GENERATION_RETRY_CAP_LOCAL + 5);
+    expect(objectReads).toBeGreaterThan(READ_GENERATION_RETRY_CAP_LOCAL / 2);
   });
 });
 
@@ -1549,7 +1748,7 @@ describe('readCacheEntry', () => {
       (fs) => {
         fs.files.delete(objectPath(LAYOUT, hashContent(DOC_TEXT)));
       },
-      'cannot be read',
+      'could not be read',
     ],
     [
       'the accepted object does not match the hash it is filed under',
@@ -1599,7 +1798,7 @@ describe('readCacheEntry', () => {
           JSON.stringify({ ...meta, acceptedContentHash: 'e'.repeat(64) }),
         );
       },
-      'cannot be read',
+      'could not be read',
     ],
     [
       'meta.json carries a candidate missing one of its two hashes (D18)',
