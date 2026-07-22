@@ -1477,7 +1477,11 @@ describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
     // Round-9 prose: the first `readFileTextCapped` assignment here was dead —
     // it was overwritten below before any call could reach it, which is noise
     // and would likely trip the strict useless-assignment lint.
-    const EXPECTED_MAX_READ_ATTEMPTS = 4; // READ_RETRY_LIMIT (3) + the initial try
+    // Bounded by the static-confirm path: the initial object read plus up to
+    // READ_STATIC_CONFIRM_LIMIT (2) re-confirmations on an unchanging generation
+    // before it reports corrupt; 4 is a safe ceiling (the old READ_RETRY_LIMIT
+    // this once named was removed with the generation-gated retry).
+    const EXPECTED_MAX_READ_ATTEMPTS = 4;
     const fs = await seeded();
     let reads = 0;
     const metaText = fs.files.get(LAYOUT.metaPath) ?? '';

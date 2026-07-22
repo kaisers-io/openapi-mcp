@@ -234,6 +234,14 @@ const realCacheFs = (): CacheFs => ({
     // removed — `path` is never created partial and never removed by us, so a
     // failed acquisition can neither leave an orphan lock nor delete a
     // replacement one (the round-2 TOCTOU the naive rm(path) would have had).
+    // Follow-up (documented, not fixed here): this depends on hard-link support.
+    // On a filesystem that offers exclusive create but not hard links (exFAT/
+    // FAT32, some network mounts) link throws EPERM/ENOTSUP/ENOSYS — rethrown
+    // below since only EEXIST is caught — and acquisition fails where a plain
+    // open(path, 'wx') would have succeeded. The cache root is always under the
+    // home directory, whose filesystem already has to honour the 0700/0600 mode
+    // model this subsystem relies on, so a hard-link-incapable root is already
+    // out of scope; a fallback would reintroduce the orphan-lock window closed here.
     const tmp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
     try {
       const handle = await open(tmp, 'wx', 0o600);
