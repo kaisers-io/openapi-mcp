@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { z } from 'zod';
-import { conflictError, notFoundError, validationError } from '../errors.ts';
+import { OpenapiMcpError, conflictError, notFoundError, validationError } from '../errors.ts';
 import { cacheIoError, isCacheAbsence, withCacheErrors } from './errors.ts';
 import {
   CACHE_DISPLAY_SOURCE_MAX,
@@ -410,10 +410,16 @@ const readMetaFile = async (layout: CacheLayout, fs: CacheFs): Promise<MetaReadR
   let raw: string;
   try {
     raw = await fs.readFileTextCapped(layout.metaPath, CACHE_META_MAX_BYTES);
-  } catch {
+  } catch (err) {
+    // The read above throws a typed validationError ONLY for over-budget; a
+    // raw Node error (EACCES/EIO) means the file could not be read at all.
+    // Split the wording so the operator message matches the cause.
+    const overBudget = err instanceof OpenapiMcpError && err.code === 'validation';
     return {
       kind: 'corrupt',
-      reason: `cache metadata for entry ${layout.namespace} cannot be read within its ${CACHE_META_MAX_BYTES}-byte budget`,
+      reason: overBudget
+        ? `cache metadata for entry ${layout.namespace} exceeds its ${CACHE_META_MAX_BYTES}-byte budget`
+        : `cache metadata for entry ${layout.namespace} could not be read`,
     };
   }
   let parsed: unknown;

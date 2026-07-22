@@ -16,6 +16,7 @@ import {
   serializedSizeWithin,
   serializeWithinBudget,
   touchRevalidated,
+  validationError,
   withNamespaceLock,
   writeAccepted,
   writeCandidate,
@@ -1107,6 +1108,31 @@ describe('readCacheEntry corrupt states (D5)', () => {
     fs.files.set(LAYOUT.metaPath, `x${'y'.repeat(CACHE_META_MAX_BYTES)}`);
     const result = await readCacheEntry(LAYOUT, fs);
     expect(result.kind).toBe('corrupt');
+  });
+
+  it('reports meta over-budget distinctly from a read failure', async () => {
+    const fs = await seeded(); // A fake whose metaPath exists
+    fs.readFileTextCapped = () =>
+      Promise.reject(
+        validationError('cache file "x" is 99999 bytes — exceeds the 65536-byte budget'),
+      );
+    const read = await readCacheEntry(LAYOUT, fs);
+    expect(read).toMatchObject({
+      kind: 'corrupt',
+      reason: expect.stringMatching(/exceeds its .*budget/u) as string,
+    });
+  });
+
+  it('reports a meta read failure as unreadable, not over-budget', async () => {
+    const fs = await seeded();
+    fs.readFileTextCapped = () =>
+      Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }));
+    const read = await readCacheEntry(LAYOUT, fs);
+    expect(read).toMatchObject({
+      kind: 'corrupt',
+      reason: expect.stringMatching(/could not be read/u) as string,
+    });
+    expect((read as { reason: string }).reason).not.toMatch(/budget/u);
   });
 
   it('reports corrupt when meta.json is not valid JSON', async () => {
