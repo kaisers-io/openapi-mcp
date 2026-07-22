@@ -30,15 +30,6 @@ describe('emitError', () => {
     expect(errLines).toEqual(['openapi-mcp: bad flag']);
   });
 
-  it('appends the stack line in verbose human mode', () => {
-    const errLines: string[] = [];
-    const ctx = testContext({ errLines });
-    const code = emitError(ctx, { json: false, verbose: true }, usageError('bad flag'));
-    expect(code).toBe(EXIT.USAGE);
-    expect(errLines[0]).toBe('openapi-mcp: bad flag');
-    expect(errLines[1]).toContain('output.test.ts');
-  });
-
   it('writes the error envelope to stdout in json mode', () => {
     const lines: string[] = [];
     const errLines: string[] = [];
@@ -60,19 +51,75 @@ describe('emitError', () => {
     expect(envelope.error.stack).toContain('output.test.ts');
   });
 
-  it('sanitizes control characters out of the human stderr path', () => {
+  it('frames a multi-line error with header, gutter, and footer', () => {
     const errLines: string[] = [];
-    const ctx = testContext({ errLines });
-    // Reproduces the M2a final-review finding: a hostile path key in an Ajv
-    // instancePath reaching the operator's terminal as an OSC escape
+    const ctx = testContext({ errLines }); // Undefined errWidth() -> no hard-wrap
     const err = validationError(
       'spec failed OpenAPI 3.0.3 schema validation:\n  /paths/~1a\u001B]0;PWNED\u001B\\x/get: must be object',
     );
     emitError(ctx, { json: false, verbose: false }, err);
-    expect(errLines).toHaveLength(1);
-    expect(errLines[0]).not.toContain('\u001B');
-    // The multi-line structure survives — this is why sanitizeSpecText is wrong here
-    expect(errLines[0]).toContain('\n  /paths/~1a]0;PWNED\\x/get: must be object');
+    expect(errLines).toEqual([
+      'openapi-mcp: error [validation] (exit 3)',
+      'openapi-mcp: | spec failed OpenAPI 3.0.3 schema validation:',
+      'openapi-mcp: |   /paths/~1a]0;PWNED\\x/get: must be object',
+      'openapi-mcp: [END ERROR: 2 logical lines shown]',
+    ]);
+    // No escape survives, and no body line sits at column zero
+    for (const line of errLines) {
+      expect(line).not.toContain('\u001B');
+      expect(line.startsWith('openapi-mcp:')).toBe(true);
+    }
+  });
+
+  it('keeps a short single-line error compact', () => {
+    const errLines: string[] = [];
+    const ctx = testContext({ errLines });
+    emitError(ctx, { json: false, verbose: false }, usageError('bad flag'));
+    expect(errLines).toEqual(['openapi-mcp: bad flag']);
+  });
+
+  it('promotes a single line that overflows the TTY width to framed mode', () => {
+    const errLines: string[] = [];
+    const ctx = testContext({ errLines, errWidth: () => 40 });
+    emitError(ctx, { json: false, verbose: false }, validationError('z'.repeat(60)));
+    expect(errLines[0]).toBe('openapi-mcp: error [validation] (exit 3)');
+    expect(errLines.at(-1)).toBe('openapi-mcp: [END ERROR: 1 logical line shown]');
+    // Every body physical line fits the width and carries the gutter
+    for (const line of errLines.slice(1, -1)) {
+      expect(line.length).toBeLessThanOrEqual(40);
+      expect(line.startsWith('openapi-mcp: | ')).toBe(true);
+    }
+  });
+
+  it('marks the footer truncated when the body exceeds the line-count cap', () => {
+    const errLines: string[] = [];
+    const ctx = testContext({ errLines });
+    const body = Array.from({ length: 60 }, (_v, i) => `entry ${i}`).join('\n');
+    emitError(ctx, { json: false, verbose: false }, validationError(body));
+    expect(errLines.at(-1)).toBe(
+      'openapi-mcp: [END ERROR: 40 logical lines shown; DETAILS TRUNCATED]',
+    );
+  });
+
+  it('does not keep a wide (CJK) single line compact when it overflows the width in cells', () => {
+    const errLines: string[] = [];
+    const ctx = testContext({ errLines, errWidth: () => 40 });
+    // 27 CJK chars = 54 cells; + "openapi-mcp: " (13) = 67 cells > 40, so the
+    // pre-fix code-unit check (27 + 13 = 40) wrongly kept it compact.
+    emitError(ctx, { json: false, verbose: false }, validationError('界'.repeat(27)));
+    expect(errLines[0]).toBe('openapi-mcp: error [validation] (exit 3)');
+    expect(errLines.at(-1)!.startsWith('openapi-mcp: [END ERROR:')).toBe(true);
+  });
+
+  it('frames the stack in verbose human mode', () => {
+    const errLines: string[] = [];
+    const ctx = testContext({ errLines });
+    emitError(ctx, { json: false, verbose: true }, usageError('bad flag'));
+    expect(errLines[0]).toBe('openapi-mcp: error [usage] (exit 2)');
+    expect(
+      errLines.some((l) => l.startsWith('openapi-mcp: | ') && l.includes('output.test.ts')),
+    ).toBe(true);
+    expect(errLines.at(-1)!.startsWith('openapi-mcp: [END ERROR:')).toBe(true);
   });
 
   it('sanitizes the stack line in verbose human mode', () => {
@@ -81,8 +128,10 @@ describe('emitError', () => {
     const err = usageError('bad flag');
     err.stack = 'Error: bad flag\n    at \u001B]0;PWNED\u0007evil.ts:1:1';
     emitError(ctx, { json: false, verbose: true }, err);
-    expect(errLines[1]).not.toContain('\u001B');
-    expect(errLines[1]).not.toContain('\u0007');
+    for (const line of errLines) {
+      expect(line).not.toContain('\u001B');
+      expect(line).not.toContain('\u0007');
+    }
   });
 
   it('leaves the json envelope raw — JSON encoding already escapes controls', () => {
