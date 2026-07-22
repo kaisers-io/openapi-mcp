@@ -50,8 +50,23 @@ export const emit = (ctx: CliContext, opts: OutputOptions, result: ActionResult)
   // dead filter patterns, cache diagnostics), and a warning must occupy exactly
   // one line, so the collapsing sanitizer is the correct one here —
   // sanitizeDisplayText is for rendered errors, where structure must survive.
+  const warningGutter = 'openapi-mcp: warning: ';
   for (const warning of warnings) {
-    ctx.errLine(`openapi-mcp: warning: ${sanitizeSpecText(warning, WARNING_DISPLAY_MAX)}`);
+    const single = sanitizeSpecText(warning, WARNING_DISPLAY_MAX);
+    const wrapped = gutterFrame([single], {
+      gutter: warningGutter,
+      terminalWidth: ctx.errWidth(),
+      // Ceiling == the sanitized input's own cell count: gutterFrame can only
+      // WRAP to terminalWidth, never re-truncate content sanitizeSpecText
+      // already bounded (a same-valued perLineMax would double-truncate: the
+      // sanitizer measures code UNITS, gutterFrame's cap measures display
+      // CELLS, and its truncation marker's ellipsis is a 2-cell codepoint).
+      perLineMax: displayCells(single),
+      maxLines: 1,
+    });
+    for (const line of wrapped.lines) {
+      ctx.errLine(line);
+    }
   }
 };
 

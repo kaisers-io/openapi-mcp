@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EXIT, usageError, validationError } from '@kaisers-io/openapi-mcp-core';
+import { EXIT, sanitizeSpecText, usageError, validationError } from '@kaisers-io/openapi-mcp-core';
 import { testContext } from '../src/context.ts';
 import { emit, emitError, wrapAction, type ActionResult } from '../src/output.ts';
 
@@ -270,6 +270,39 @@ describe('warnings channel', () => {
       },
     );
     expect(errLines[0]!.length).toBeLessThanOrEqual('openapi-mcp: warning: '.length + 1024);
+  });
+
+  it('hard-wraps a long warning to the TTY width, repeating the prefix', () => {
+    const errLines: string[] = [];
+    const ctx = testContext({ errLines, errWidth: () => 30 });
+    emit(
+      ctx,
+      { json: false, verbose: false },
+      {
+        data: {},
+        humanLines: [],
+        warnings: ['w'.repeat(40)],
+      },
+    );
+    for (const line of errLines) {
+      expect(line.length).toBeLessThanOrEqual(30);
+      expect(line.startsWith('openapi-mcp: warning: ')).toBe(true);
+    }
+    // The full payload is preserved across the wrapped lines
+    expect(errLines.map((l) => l.slice('openapi-mcp: warning: '.length)).join('')).toBe(
+      'w'.repeat(40),
+    );
+  });
+
+  it('wraps a warning without re-truncating the sanitize-capped content (incl. wide chars)', () => {
+    const gutter = 'openapi-mcp: warning: ';
+    for (const raw of ['界'.repeat(1024), '界'.repeat(2000), 'w'.repeat(4000)]) {
+      const errLines: string[] = [];
+      const ctx = testContext({ errLines }); // Undefined errWidth() -> one line, easy reconstruction
+      emit(ctx, { json: false, verbose: false }, { data: {}, humanLines: [], warnings: [raw] });
+      const reconstructed = errLines.map((l) => l.slice(gutter.length)).join('');
+      expect(reconstructed).toBe(sanitizeSpecText(raw, 1024)); // Exactly one marker, no double-truncation
+    }
   });
 
   it('leaves the json warning raw — JSON encoding already escapes controls', () => {
