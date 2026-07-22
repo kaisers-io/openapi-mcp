@@ -14,7 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { readExactly, realContext, testContext } from '../src/context.ts';
+import { readExactly, realContext, resolveErrWidth, testContext } from '../src/context.ts';
 
 describe('realContext', () => {
   afterEach(() => {
@@ -75,6 +75,23 @@ describe('testContext', () => {
     await expect(ctx.lookup('example.com', new AbortController().signal)).rejects.toThrow(
       'no dns lookup',
     );
+  });
+});
+
+describe('errWidth', () => {
+  it('defaults to undefined (not a TTY) in testContext', () => {
+    expect(testContext().errWidth()).toBeUndefined();
+  });
+
+  it('honours an override', () => {
+    expect(testContext({ errWidth: () => 100 }).errWidth()).toBe(100);
+  });
+
+  it('resolveErrWidth maps TTY/columns to a usable width and non-TTY to undefined', () => {
+    expect(resolveErrWidth(false, 120)).toBeUndefined(); // Not a TTY -> no wrap
+    expect(resolveErrWidth(true, 120)).toBe(120); // A real column count is used
+    expect(resolveErrWidth(true, 0)).toBe(80); // TTY, no columns -> fallback
+    expect(resolveErrWidth(true, undefined)).toBe(80); // TTY, columns unknown -> fallback
   });
 });
 

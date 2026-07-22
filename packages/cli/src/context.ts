@@ -21,6 +21,10 @@ export interface CliContext {
   env: Readonly<Record<string, string | undefined>>;
   out: (line: string) => void;
   errLine: (line: string) => void;
+  // Stderr terminal width when stderr is a TTY, else undefined (no soft-wrap
+  // downstream). The error framing hard-wraps to this to keep hostile spec
+  // text from reaching visual column zero on a dumb terminal.
+  errWidth: () => number | undefined;
   fetcher: typeof fetch;
   now: () => number;
   nodeVersion: string;
@@ -235,6 +239,20 @@ const realCacheFs = (): CacheFs => ({
   removeFile: (path) => rm(path, { force: true }),
 });
 
+// A TTY whose columns are unavailable (0/undefined) still soft-wraps, so it
+// resolves to a real fallback width rather than undefined (which downstream
+// means "non-TTY, no wrap"). Pure so it is testable directly.
+const STDERR_FALLBACK_WIDTH = 80;
+export const resolveErrWidth = (
+  isTTY: boolean,
+  columns: number | undefined,
+): number | undefined => {
+  if (!isTTY) {
+    return undefined;
+  }
+  return columns !== undefined && columns > 0 ? columns : STDERR_FALLBACK_WIDTH;
+};
+
 export const realContext = (): CliContext => ({
   env: process.env,
   out: (line) => {
@@ -243,6 +261,7 @@ export const realContext = (): CliContext => ({
   errLine: (line) => {
     process.stderr.write(`${line}\n`);
   },
+  errWidth: () => resolveErrWidth(process.stderr.isTTY === true, process.stderr.columns),
   fetcher: fetch,
   now: () => Date.now(),
   nodeVersion: process.versions.node,
@@ -293,6 +312,7 @@ export const testContext = (overrides: TestContextOverrides = {}): CliContext =>
     errLine: (line) => {
       errLines.push(line);
     },
+    errWidth: () => undefined,
     fetcher: () => Promise.reject(new Error('no fetcher configured in testContext')),
     now: () => 0,
     nodeVersion: '24.12.0',
