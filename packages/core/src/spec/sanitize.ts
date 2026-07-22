@@ -19,11 +19,17 @@ const truncate = (cleaned: string, maxLength: number): string => {
   if (cleaned.length <= maxLength) {
     return cleaned;
   }
-  if (maxLength <= TRUNCATION_MARKER.length) {
-    // Less room than the marker needs: hard cut, never exceed the cap
-    return cleaned.slice(0, maxLength);
+  const hardCut = maxLength <= TRUNCATION_MARKER.length;
+  let end = hardCut ? maxLength : maxLength - TRUNCATION_MARKER.length;
+  // Never slice between a high and low surrogate: codePointAt(end - 1) only
+  // exceeds 0xffff when the unit at `end - 1` and the unit at `end` form a
+  // genuine astral pair, so step back one unit to keep it whole.
+  const codePoint = end > 0 ? cleaned.codePointAt(end - 1) : 0;
+  if (codePoint !== undefined && codePoint > 0xffff) {
+    end -= 1;
   }
-  return `${cleaned.slice(0, maxLength - TRUNCATION_MARKER.length)}${TRUNCATION_MARKER}`;
+  const head = cleaned.slice(0, end);
+  return hardCut ? head : `${head}${TRUNCATION_MARKER}`;
 };
 
 export const sanitizeSpecText = (raw: string, maxLength: number): string => {
