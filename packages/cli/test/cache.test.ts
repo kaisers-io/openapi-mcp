@@ -553,6 +553,38 @@ describe('cache refresh', () => {
     expect(capture.lines.join('\n')).toContain('unchanged');
   });
 
+  it('does not claim "unchanged" when a trusted refresh accepts a changed spec', async () => {
+    const capture = cacheCtx([specText, changedText]);
+    const seedCode = await run(capture.ctx, [
+      'node',
+      'openapi-mcp',
+      'tools',
+      '--spec',
+      SPEC_URL,
+      '--cache-key',
+      'prod',
+    ]);
+    expect(seedCode).toBe(EXIT.OK);
+    capture.lines.length = 0;
+    const code = await run(capture.ctx, [
+      'node',
+      'openapi-mcp',
+      'cache',
+      'refresh',
+      '--spec',
+      SPEC_URL,
+      '--cache-key',
+      'prod',
+      '--trust-spec-updates',
+    ]);
+    expect(code).toBe(EXIT.OK);
+    const candidateLine = capture.lines.find((line) => line.startsWith('  candidate:'));
+    expect(candidateLine).toBe('  candidate: none');
+    expect(capture.lines.join('\n')).not.toMatch(/the spec is unchanged/u);
+    // The changed status is still conveyed by the header line
+    expect(capture.lines[0]).toMatch(/\(accepted-update\)/u);
+  });
+
   it('rejects a refresh that would resolve to a non-persistent bypass (D13)', async () => {
     const capture = cacheCtx([specText], { env: { SPEC_TOKEN: 'Bearer x' } });
     const code = await run(capture.ctx, [

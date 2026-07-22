@@ -204,7 +204,7 @@ const registerRefresh: CommandRegistrar = (program, ctx, state) => {
           `  entry:     ${data.id}`,
           `  accepted:  ${data.acceptedContentHash}`,
           meta?.candidate === undefined
-            ? '  candidate: none — the spec is unchanged'
+            ? `  candidate: none${data.cacheStatus === 'revalidated' ? ' — the spec is unchanged' : ''}`
             : `  candidate: ${meta.candidate.contentHash} (run "openapi-mcp cache promote" to accept)`,
         ];
         return { data, humanLines, warnings: result.warnings };
