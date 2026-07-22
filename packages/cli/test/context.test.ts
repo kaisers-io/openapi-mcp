@@ -176,8 +176,12 @@ describe('realContext cacheFs', () => {
     // write inside it.
     const target = join(dir, 'not-a-dir');
     await writeFile(target, 'x', { mode: 0o644 });
+    // Task 11 fix round: this is now the dedicated cache_path_type code
+    // (still exit 3, via EXIT.VALIDATION) rather than plain 'validation', so
+    // the --all sweep can discriminate the signal by code, not by matching
+    // substrings in an attacker-influenceable path.
     await expect(realContext().cacheFs.mkdirSecure(target)).rejects.toMatchObject({
-      code: 'validation',
+      code: 'cache_path_type',
     });
     expect(await modeOf(target)).toBe('644');
   });
@@ -201,8 +205,10 @@ describe('realContext cacheFs', () => {
     const namespace = join(dir, 'a1b2c3d4e5f60718'); // A plausible 16-hex namespace name
     await symlink(victim, namespace, 'dir');
     try {
+      // Task 11 fix round: cache_path_type, not 'validation' — see the
+      // non-directory case above for why the code changed.
       await expect(realContext().cacheFs.mkdirSecure(namespace)).rejects.toMatchObject({
-        code: 'validation',
+        code: 'cache_path_type',
       });
       // The victim directory itself must be untouched: no mode change, no
       // write landed inside it via the symlink.

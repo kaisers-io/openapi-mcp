@@ -1,5 +1,13 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { EXIT, type CacheFs } from '@kaisers-io/openapi-mcp-core';
+import {
+  cacheLayout,
+  cachePathTypeError,
+  EXIT,
+  validationError,
+  type CacheFs,
+} from '@kaisers-io/openapi-mcp-core';
+import { clearAllNamespaces } from '../src/commands/cache-target.ts';
 import { testContext, type CliContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 
@@ -146,6 +154,15 @@ const seed = async (capture: Capture): Promise<void> => {
 
 const idOf = (capture: Capture): string =>
   [...capture.cacheFs.files.keys()][0]!.slice(ROOT.length + 1).split('/')[0]!;
+
+// Plants a healthy namespace directly (meta.json + one object) under a chosen
+// 16-hex id, bypassing the real pipeline so clearAllNamespaces tests can pin
+// specific ids alongside a planted non-directory entry.
+const seedNamespace = (fs: MemoryCacheFs, id: string): void => {
+  const layout = cacheLayout(ROOT, id);
+  fs.files.set(layout.metaPath, 'seed-meta');
+  fs.files.set(join(layout.objectsDir, 'seed-object'), 'seed-object-bytes');
+};
 
 describe('cache list', () => {
   it('reports an empty cache without failing', async () => {
@@ -361,6 +378,65 @@ describe('cache clear', () => {
     );
     const envelope = JSON.parse(capture.lines.at(-1)!) as { data: { entries: unknown[] } };
     expect(envelope.data.entries).toEqual([]);
+  });
+
+  it('clears healthy namespaces and skips a non-directory 16-hex entry', async () => {
+    const base = memoryCacheFs();
+    seedNamespace(base, 'a'.repeat(16));
+    seedNamespace(base, 'b'.repeat(16));
+    const fileId = 'c'.repeat(16);
+    base.files.set(join(ROOT, fileId), 'not a directory');
+    // A fake that reproduces the real mkdirSecure rejection for the file entry:
+    // context.ts's rejectUnlessRealDirectory throws exactly this typed
+    // cachePathTypeError when the namespace-shaped name is a regular file.
+    const fs = {
+      ...base,
+      mkdirSecure: (path: string) =>
+        path === cacheLayout(ROOT, fileId).dir
+          ? Promise.reject(cachePathTypeError(`cache path "${path}" exists and is not a directory`))
+          : base.mkdirSecure(path),
+    };
+    // Old behaviour: the sweep aborts on the file entry. New: it skips it.
+    const cleared = await clearAllNamespaces(ROOT, fs, 0);
+    // Both real namespaces were processed; the file did not abort the sweep
+    expect(cleared).toBe(2);
+  });
+
+  it('still propagates an unrelated validation error from the sweep', async () => {
+    // The code-match must NOT swallow other validation failures (round-2 Low).
+    const base = memoryCacheFs();
+    seedNamespace(base, 'a'.repeat(16));
+    const fs = {
+      ...base,
+      mkdirSecure: () => Promise.reject(validationError('a different validation failure')),
+    };
+    await expect(clearAllNamespaces(ROOT, fs, 0)).rejects.toThrow(
+      /a different validation failure/u,
+    );
+  });
+
+  it('propagates an over-budget validation error even when its interpolated path contains "is not a directory" (fix-round collision regression)', async () => {
+    // Round-2 Low, confirmed reachable: readFileTextCapped's over-budget
+    // message embeds the raw path verbatim ('cache file "<path>" is N bytes
+    // — exceeds...'), and that read runs on layout.lockPath during the same
+    // lock acquisition the sweep goes through. A cache root containing a
+    // path segment that literally reads "is not a directory" would, under a
+    // MESSAGE-substring discriminator, be indistinguishable from the real
+    // skip signal and get silently swallowed — reporting success while a
+    // genuine failure was dropped. The discriminator must be the CODE
+    // (cache_path_type), not the message, so this unrelated validationError
+    // — whose message contains the exact substring — still propagates.
+    const base = memoryCacheFs();
+    seedNamespace(base, 'a'.repeat(16));
+    const collidingMessage =
+      'cache file "/cache/is not a directory/.lock" is 2048 bytes — exceeds the 1024-byte budget';
+    const fs = {
+      ...base,
+      mkdirSecure: () => Promise.reject(validationError(collidingMessage)),
+    };
+    await expect(clearAllNamespaces(ROOT, fs, 0)).rejects.toThrow(
+      /is 2048 bytes — exceeds the 1024-byte budget/u,
+    );
   });
 
   it('recovers a corrupt entry that the pipeline refuses to serve (D5)', async () => {

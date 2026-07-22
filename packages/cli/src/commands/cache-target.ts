@@ -6,6 +6,7 @@ import {
   clearNamespace,
   defaultCacheRoot,
   listNamespaceIds,
+  OpenapiMcpError,
   parseCacheId,
   parseCacheKey,
   parseSpecSource,
@@ -78,11 +79,27 @@ export const clearAllNamespaces = async (
   const namespaceIds = await listNamespaceIds(root, cacheFs);
   let cleared = 0;
   for (const id of namespaceIds) {
-    // D16(a2): each namespace is cleared under its OWN lock, exactly as a
-    // targeted clear is. A sweep is not a licence to skip the serialisation a
-    // single clear needs.
-    if (await clearNamespace(cacheLayout(root, id), cacheFs, now)) {
-      cleared += 1;
+    try {
+      // D16(a2): each namespace is cleared under its OWN lock, exactly as a
+      // targeted clear is. A sweep is not a licence to skip the serialisation
+      // a single clear needs.
+      if (await clearNamespace(cacheLayout(root, id), cacheFs, now)) {
+        cleared += 1;
+      }
+    } catch (err) {
+      // A namespace-shaped NAME that is not a real directory (a planted file
+      // or symlink) is not ours to clear — skip it and continue the sweep
+      // rather than aborting every remaining healthy namespace. mkdirSecure's
+      // rejectUnlessRealDirectory surfaces this as the dedicated
+      // cache_path_type code; any other error, INCLUDING a validationError
+      // whose message happens to contain "is not a directory" or "is a
+      // symlink" (readFileTextCapped's over-budget message embeds the raw
+      // path, and it is reachable here via the lock read), still propagates.
+      // The discriminator is the CODE, never the message, so an
+      // attacker-controlled cache path can never spoof the skip signal.
+      if (!(err instanceof OpenapiMcpError && err.code === 'cache_path_type')) {
+        throw err;
+      }
     }
   }
   return cleared;

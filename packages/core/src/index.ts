@@ -1,6 +1,7 @@
 export {
   EXIT,
   OpenapiMcpError,
+  cachePathTypeError,
   conflictError,
   notFoundError,
   renderError,

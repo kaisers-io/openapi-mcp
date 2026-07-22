@@ -15,7 +15,7 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { type CacheFs, validationError } from '@kaisers-io/openapi-mcp-core';
+import { cachePathTypeError, type CacheFs, validationError } from '@kaisers-io/openapi-mcp-core';
 
 export interface CliContext {
   env: Readonly<Record<string, string | undefined>>;
@@ -84,12 +84,21 @@ export const readExactly = async (handle: FileHandle, buffer: Buffer): Promise<n
 // `isDirectory() === true` through `stat`, and a subsequent `chmod` (which
 // also follows) would 0700 the attacker-chosen target. Callers pass an lstat
 // result here instead, so a planted symlink is rejected before any chmod.
+// Task 11 fix round: these two throws used to be validationError, but the
+// sweep in cache-target.ts's clearAllNamespaces needs a way to tell "this
+// namespace-shaped path is not a real directory" apart from EVERY OTHER
+// validationError a cache operation can raise — including one whose
+// interpolated PATH happens to contain the substring "is not a directory" or
+// "is a symlink" (readFileTextCapped's over-budget message embeds the path
+// verbatim, and it is called on layout.lockPath during the very same lock
+// acquisition this function guards). A message-substring match could not
+// tell those apart; a dedicated code can.
 const rejectUnlessRealDirectory = (path: string, info: Stats): void => {
   if (info.isSymbolicLink()) {
-    throw validationError(`cache path "${path}" is a symlink, which is not allowed`);
+    throw cachePathTypeError(`cache path "${path}" is a symlink, which is not allowed`);
   }
   if (!info.isDirectory()) {
-    throw validationError(`cache path "${path}" exists and is not a directory`);
+    throw cachePathTypeError(`cache path "${path}" exists and is not a directory`);
   }
 };
 

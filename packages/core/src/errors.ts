@@ -27,6 +27,19 @@ export const usageError = (message: string): OpenapiMcpError =>
 export const validationError = (message: string): OpenapiMcpError =>
   new OpenapiMcpError('validation', message, EXIT.VALIDATION);
 
+// A dedicated code for "a namespace-shaped path exists but is not a real
+// directory" (a planted file or symlink), distinct from `validationError`.
+// It carries the SAME exit code (3) — a single-namespace `cache clear` on
+// such a path must still fail exactly as it did before this type split. The
+// separate code exists so a caller (the `--all` sweep) can discriminate on
+// THIS specific signal by CODE rather than by matching substrings in the
+// message, which an attacker-controlled path could otherwise spoof: a path
+// containing the literal text "is not a directory" would make an unrelated
+// validationError (e.g. an over-budget lock file read) collide with a
+// message-based match.
+export const cachePathTypeError = (message: string): OpenapiMcpError =>
+  new OpenapiMcpError('cache_path_type', message, EXIT.VALIDATION);
+
 export const notFoundError = (message: string): OpenapiMcpError =>
   new OpenapiMcpError('not_found', message, EXIT.NOT_FOUND);
 
