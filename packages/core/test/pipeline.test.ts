@@ -555,6 +555,46 @@ describe('runSpecPipeline — cache', () => {
     expect(revalidated.namedOperations.map((named) => named.toolName)).toEqual(['listThings']);
   });
 
+  it('a 304 keeps the pending candidate even with --trust-spec-updates', async () => {
+    // Same shared 304 branch as the sibling above, but with trustSpecUpdates: true —
+    // pins that trust does not let a 304 (unchanged content) accept a candidate.
+    const cacheFs = memoryCacheFs();
+    let calls = 0;
+    const fetcher = ((_url: string | URL | Request, _init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve(new Response(remoteSpec('Remote'), { headers: { etag: '"v1"' } }));
+      }
+      if (calls === 2) {
+        return Promise.resolve(
+          new Response(remoteSpec('Remote', '/extra'), { headers: { etag: '"v2"' } }),
+        );
+      }
+      return Promise.resolve(new Response(null, { status: 304, headers: { etag: '"v2"' } }));
+    }) as typeof fetch;
+    await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
+    const created = await runSpecPipeline(
+      specUrl,
+      { ...cachedOpts, nowMs: 3_600_001 },
+      { ...fileDeps, fetcher, cacheFs },
+    );
+    expect(created.cacheStatus).toBe('candidate');
+    const before = metaOf(cacheFs);
+
+    const revalidated = await runSpecPipeline(
+      specUrl,
+      { ...cachedOpts, nowMs: 7_200_002, trustSpecUpdates: true },
+      { ...fileDeps, fetcher, cacheFs },
+    );
+    expect(revalidated.cacheStatus).toBe('revalidated');
+    const after = metaOf(cacheFs);
+    expect(after.acceptedContentHash).toBe(before.acceptedContentHash);
+    // The SAME pending candidate survived (not merely "a candidate exists"),
+    // matching the existing sibling's assertion style (pipeline.test.ts:551).
+    expect(after.candidate?.contentHash).toBe(before.candidate?.contentHash);
+    expect(after.candidate?.contentHash).toBeDefined();
+  });
+
   it('replays the candidate validators on the next revalidation (D16a2)', async () => {
     // Meta.etag describes the most recently FETCHED representation, which is
     // the candidate once one exists
