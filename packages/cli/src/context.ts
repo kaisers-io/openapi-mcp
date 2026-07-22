@@ -4,6 +4,7 @@ import { existsSync, type Stats } from 'node:fs';
 import {
   chmod,
   type FileHandle,
+  link,
   lstat,
   mkdir,
   open,
@@ -227,23 +228,37 @@ const realCacheFs = (): CacheFs => ({
     }
   },
   createExclusive: async (path, data) => {
-    // The "wx" flag is the lock primitive: an atomic create-or-fail (D12)
-    let handle: Awaited<ReturnType<typeof open>>;
+    // Publish the lock atomically. Write the record to a PRIVATE temp first,
+    // then link() it into place: link fails EEXIST if the lock is held (the
+    // create-or-fail primitive, D12), and on ANY write failure only the temp is
+    // removed — `path` is never created partial and never removed by us, so a
+    // failed acquisition can neither leave an orphan lock nor delete a
+    // replacement one (the round-2 TOCTOU the naive rm(path) would have had).
+    const tmp = join(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
     try {
-      handle = await open(path, 'wx', 0o600);
-    } catch (err) {
-      if (err !== null && typeof err === 'object' && 'code' in err && err.code === 'EEXIST') {
-        return false;
+      const handle = await open(tmp, 'wx', 0o600);
+      try {
+        await handle.writeFile(data, 'utf8');
+        await handle.chmod(0o600);
+      } finally {
+        await handle.close();
       }
-      throw err;
-    }
-    try {
-      await handle.writeFile(data, 'utf8');
-      await handle.chmod(0o600);
+      try {
+        await link(tmp, path);
+      } catch (err) {
+        if (err !== null && typeof err === 'object' && 'code' in err && err.code === 'EEXIST') {
+          return false;
+        }
+        throw err;
+      }
+      return true;
     } finally {
-      await handle.close();
+      // The temp is private scratch: a failure to remove it must NEVER turn a
+      // successful acquisition into a rejection (which would orphan the lock
+      // we just published, since withNamespaceLock has not yet entered its
+      // release finally — the round-3 finding). A stray .tmp is harmless.
+      await rm(tmp, { force: true }).catch(() => undefined);
     }
-    return true;
   },
   removeFile: (path) => rm(path, { force: true }),
 });
