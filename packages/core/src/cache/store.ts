@@ -32,12 +32,6 @@ const URL_DISPLAY_SOURCE_RE = /^https?:\/\//iu;
 // place a raw filesystem failure is typed as a validation error (exit 3)
 // rather than surfacing as an unexpected exit 1.
 //
-// D14: one persisted representation. The validated, dereferenced, normalized
-// document, JSON.stringify'd — no pretty-printing, no trailing newline — so the
-// bytes are reproducible and the hash over them is stable.
-export const persistedSpecText = (document: Record<string, unknown>): string =>
-  JSON.stringify(document);
-
 // Spec §5.3: credentials, headers, and raw URLs with query strings are never
 // cached. A URL display source must be exactly origin + path, which also rules
 // out a fragment and userinfo (URL.origin excludes both).
@@ -84,11 +78,11 @@ const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
 };
 
 // D14 / round-3 finding 10: the budget is checked BEFORE the aggregate string
-// exists. The round-3 draft called persistedSpecText (an unbounded
-// JSON.stringify) and measured the result — but dereferencing can repeat a
-// large source string through many $ref expansions while staying inside the
-// 500,000-node budget, so the allocation being refused could already have
-// happened, at whatever size the document implied.
+// exists. The round-3 draft called an unbounded JSON.stringify and measured
+// the result — but dereferencing can repeat a large source string through many
+// $ref expansions while staying inside the 500,000-node budget, so the
+// allocation being refused could already have happened, at whatever size the
+// document implied.
 //
 // This walks the document and accumulates the serialized size incrementally,
 // abandoning the walk the moment it exceeds the budget. It computes the same
@@ -105,18 +99,20 @@ const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
 // That is precisely the D14 invariant this preflight exists to establish.
 // The minimal case: JSON.stringify({x:'é' + EMOJI}) is 11 UTF-16 units and
 // 14 UTF-8 bytes.
-export const serializedSizeWithin = (value: unknown, budget: number): number | undefined => {
+export const serializeWithinBudget = (value: unknown, budget: number): string | undefined => {
   let used = 0;
+  const parts: string[] = [];
   const overflow = Symbol('overflow');
-  const addBytes = (byteCount: number): void => {
-    used += byteCount;
+  const unsupported = Symbol('unsupported');
+  const seen = new Set<object>();
+  // Emit a fragment and charge its bytes; abort as soon as the running total
+  // passes the budget so a hostile document never materializes in full.
+  const emit = (fragment: string): void => {
+    used += Buffer.byteLength(fragment, 'utf8');
     if (used > budget) {
       throw overflow;
     }
-  };
-  // Structural characters are ASCII, so their byte count equals their count
-  const addFragment = (fragment: string): void => {
-    addBytes(Buffer.byteLength(fragment, 'utf8'));
+    parts.push(fragment);
   };
   // Round-5 finding 3: the sizer is EXACT only for a JSON-safe, dense,
   // plain-object tree, and the exported writers accept Record<string, unknown>,
@@ -130,8 +126,7 @@ export const serializedSizeWithin = (value: unknown, budget: number): number | u
   // null, the walker would skip them), objects carrying a toJSON hook
   // (stringify serializes the replacement), functions/symbols/bigint, and
   // cycles (which would otherwise fail only after the preflight).
-  const unsupported = Symbol('unsupported');
-  const seen = new Set<object>();
+  //
   // JSON.stringify(undefined) produces NO string at all, so a top-level
   // undefined must be refused rather than reported as zero bytes by the final
   // no-op branch (round-6 finding 1)
@@ -143,14 +138,12 @@ export const serializedSizeWithin = (value: unknown, budget: number): number | u
       throw unsupported;
     }
     if (node === null || typeof node === 'boolean' || typeof node === 'number') {
-      // Non-finite numbers serialize as null — four ASCII bytes either way
-      addFragment(JSON.stringify(node) ?? 'null');
+      // Non-finite numbers serialize as null — JSON.stringify(node) ?? 'null'
+      emit(JSON.stringify(node) ?? 'null');
       return;
     }
     if (typeof node === 'string') {
-      // Exact: JSON.stringify escapes, so the ENCODED form is what counts, and
-      // its byte length is what lands on disk
-      addFragment(JSON.stringify(node));
+      emit(JSON.stringify(node));
       return;
     }
     if (Array.isArray(node)) {
@@ -167,16 +160,25 @@ export const serializedSizeWithin = (value: unknown, budget: number): number | u
       if (Object.getPrototypeOf(node) !== Array.prototype) {
         throw unsupported; // A subclass is outside the domain
       }
-      if (typeof (node as { toJSON?: unknown }).toJSON === 'function') {
+      // Reject a toJSON via its own descriptor so a getter is never invoked (a
+      // getter could mutate the document mid-serialization and desync the
+      // bytes from metadata derived before this pass). A non-function toJSON
+      // DATA property is a legitimate JSON key and must still serialize
+      // normally.
+      const arrayToJsonDescriptor = Object.getOwnPropertyDescriptor(node, 'toJSON');
+      if (
+        arrayToJsonDescriptor !== undefined &&
+        (typeof arrayToJsonDescriptor.get === 'function' ||
+          typeof arrayToJsonDescriptor.set === 'function' ||
+          typeof arrayToJsonDescriptor.value === 'function')
+      ) {
         throw unsupported;
       }
       seen.add(node);
-      addBytes(2); // The brackets
+      emit('[');
       for (let index = 0; index < node.length; index += 1) {
-        // An own DATA descriptor, and the CAPTURED value is what gets walked,
-        // so the element is read exactly once. A hole or an explicit undefined
-        // serializes as null, which the round-5 walker skipped entirely —
-        // {"x":[undefined]} is 12 bytes, it counted 8.
+        // Own DATA descriptor, captured value walked exactly once (a hole or
+        // explicit undefined serializes as null, which the domain refuses).
         const descriptor = Object.getOwnPropertyDescriptor(node, index);
         if (
           descriptor === undefined ||
@@ -187,10 +189,11 @@ export const serializedSizeWithin = (value: unknown, budget: number): number | u
           throw unsupported;
         }
         if (index > 0) {
-          addBytes(1); // The comma
+          emit(',');
         }
         walk(descriptor.value);
       }
+      emit(']');
       seen.delete(node);
       return;
     }
@@ -198,49 +201,56 @@ export const serializedSizeWithin = (value: unknown, budget: number): number | u
       if (seen.has(node)) {
         throw unsupported; // A cycle
       }
-      // A toJSON hook means the serialized form is NOT this object
-      if (typeof (node as { toJSON?: unknown }).toJSON === 'function') {
+      // Reject a toJSON via its own descriptor so a getter is never invoked (a
+      // getter could mutate the document mid-serialization and desync the
+      // bytes from metadata derived before this pass). A non-function toJSON
+      // DATA property is a legitimate JSON key and must still serialize
+      // normally.
+      const toJSONDescriptor = Object.getOwnPropertyDescriptor(node, 'toJSON');
+      if (
+        toJSONDescriptor !== undefined &&
+        (typeof toJSONDescriptor.get === 'function' ||
+          typeof toJSONDescriptor.set === 'function' ||
+          typeof toJSONDescriptor.value === 'function')
+      ) {
         throw unsupported;
       }
-      // Round-6 finding 1: the round-6 draft CLAIMED a plain-object tree and
-      // then accepted any object at all. Two consequences, both breaking
-      // exactness. Boxed primitives: JSON.stringify(new Number(5)) is '5' while
-      // Object.entries sees nothing and the walker counts '{}'. And an
-      // enumerable GETTER is worse than inexact — sizing and persistedSpecText
-      // read the property twice, so a getter can answer small for the preflight
-      // and over-budget for the stringify that follows, defeating the check
-      // entirely. Requiring a plain prototype and own enumerable DATA
-      // descriptors makes the double read provably identical.
       const prototype = Object.getPrototypeOf(node) as unknown;
       if (prototype !== Object.prototype && prototype !== null) {
         throw unsupported;
       }
-      for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(node))) {
-        if (typeof descriptor.get === 'function' || typeof descriptor.set === 'function') {
+      seen.add(node);
+      emit('{');
+      let first = true;
+      // Object.keys is exactly the set JSON.stringify iterates, in the same
+      // order; getOwnPropertyDescriptor captures each value once (an accessor is
+      // refused on that same read, so it can never be measured then serialized).
+      for (const key of Object.keys(node)) {
+        const descriptor = Object.getOwnPropertyDescriptor(node, key);
+        if (
+          descriptor === undefined ||
+          typeof descriptor.get === 'function' ||
+          typeof descriptor.set === 'function'
+        ) {
           throw unsupported;
         }
-      }
-      seen.add(node);
-      addBytes(2); // The braces
-      let first = true;
-      for (const [key, item] of Object.entries(node as Record<string, unknown>)) {
+        const item = descriptor.value as unknown;
         if (item === undefined || typeof item === 'function' || typeof item === 'symbol') {
           continue; // JSON.stringify omits the whole member, key included
         }
         if (!first) {
-          addBytes(1); // The comma
+          emit(',');
         }
         first = false;
-        addFragment(JSON.stringify(key));
-        addBytes(1); // The colon
+        emit(JSON.stringify(key));
+        emit(':');
         walk(item);
       }
+      emit('}');
       seen.delete(node);
       // The if-chain above is now exhausted, so control falls out of `walk`
       // normally: an explicit return here would be redundant (no-useless-return)
     }
-    // Undefined / function / symbol: JSON.stringify omits or nulls these, and
-    // the persisted document contains none of them
   };
   try {
     walk(value);
@@ -255,22 +265,41 @@ export const serializedSizeWithin = (value: unknown, budget: number): number | u
     }
     throw err;
   }
-  return used;
+  return parts.join('');
 };
 
-// Enforced BEFORE the lock is taken and before serialization, on both writers,
-// against the same constant the read path uses — so "anything this build
-// persisted, this build can read back" holds by construction.
+// Kept for existing callers/tests that only need the size.
+export const serializedSizeWithin = (value: unknown, budget: number): number | undefined => {
+  const text = serializeWithinBudget(value, budget);
+  return text === undefined ? undefined : Buffer.byteLength(text, 'utf8');
+};
+
+// Round-3 Low, since closed: the `toJSON` member is checked via its own
+// `Object.getOwnPropertyDescriptor`, in both the object and array branches of
+// `walk` above, rather than a plain `node.toJSON` property read. A plain read
+// invokes a `toJSON` GETTER — even a non-enumerable one Object.keys never
+// visits — which could mutate the document mid-walk and desync the serialized
+// bytes from metadata already derived from the (pre-mutation) document. The
+// descriptor check rejects a `toJSON` accessor or function-valued data
+// property WITHOUT ever calling it, and still lets a legitimate non-function
+// `toJSON` data property (e.g. `{"toJSON":"x"}`) serialize normally, since
+// JSON.stringify only treats a CALLABLE toJSON specially.
+
+// Enforced BEFORE the lock is taken, on both writers, against the same constant
+// the read path uses — so "anything this build persisted, this build can read
+// back" holds by construction. Serialized ONCE here: the bytes returned are the
+// bytes written and hashed, with no independent JSON.stringify to diverge from.
 const persistableTextOrThrow = (
   document: Record<string, unknown>,
   slot: 'accepted' | 'candidate',
 ): string => {
-  if (serializedSizeWithin(document, CACHE_MAX_PERSISTED_BYTES) === undefined) {
+  const text = serializeWithinBudget(document, CACHE_MAX_PERSISTED_BYTES);
+  if (text === undefined) {
     throw validationError(
       `refusing to cache the ${slot} spec: its dereferenced form exceeds the ${CACHE_MAX_PERSISTED_BYTES}-byte persisted-document budget`,
     );
   }
-  return persistedSpecText(document);
+  return text;
 };
 
 // D12 mechanisms 1 and 2. Spec objects are immutable and content-addressed, so

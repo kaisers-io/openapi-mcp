@@ -14,6 +14,7 @@ import {
   promoteCandidate,
   readCacheEntry,
   serializedSizeWithin,
+  serializeWithinBudget,
   touchRevalidated,
   withNamespaceLock,
   writeAccepted,
@@ -624,9 +625,11 @@ describe('the persisted-size preflight is exact (round-4 finding 1)', () => {
   });
 
   it('refuses an enumerable getter, which could answer twice (round-6 finding 1)', () => {
-    // Worse than inexact: sizing and persistedSpecText read the property
-    // separately, so a getter can answer small for the preflight and
-    // over-budget for the stringify that follows — defeating the check itself.
+    // Worse than inexact: measuring and serializing used to read the property
+    // separately, so a getter could answer small for the preflight and
+    // over-budget for the stringify that followed — defeating the check
+    // itself. The single-pass walk now reads it once, via descriptor, so this
+    // is refused before the getter ever runs.
     let calls = 0;
     const value = Object.defineProperty({}, 'x', {
       enumerable: true,
@@ -676,6 +679,62 @@ describe('the persisted-size preflight is exact (round-4 finding 1)', () => {
     await writeAccepted(LAYOUT, fs, acceptedInput({ document: { ...DOC, padding } }));
     const readResult = await readCacheEntry(LAYOUT, fs);
     expect(readResult.kind).toBe('hit');
+  });
+});
+
+describe('serializeWithinBudget: the single pass the sizer and the writer now share', () => {
+  it('serializeWithinBudget is byte-identical to JSON.stringify for a JSON-safe tree', () => {
+    const doc = { a: 1, b: ['x', { c: true, d: null }], 'k"q': 'v\nw', e: [] };
+    expect(serializeWithinBudget(doc, 10_000)).toBe(JSON.stringify(doc));
+  });
+
+  it('returns undefined (not a size) when serialization would exceed the budget', () => {
+    expect(serializeWithinBudget({ a: 'x'.repeat(100) }, 10)).toBeUndefined();
+  });
+
+  it('refuses an accessor member via its descriptor, never invoking the getter', () => {
+    // The single pass rejects an accessor from getOwnPropertyDescriptor WITHOUT
+    // reading it, so there is no second, separate serialization that could read
+    // a different value — the divergence the two-traversal design allowed is
+    // structurally gone. (The getter must not run at all.)
+    let getterRan = false;
+    const doc = {
+      get a() {
+        getterRan = true;
+        return 'x';
+      },
+    };
+    expect(() => serializeWithinBudget(doc, 10_000)).toThrow(/round-trip exactly/u);
+    expect(getterRan).toBe(false);
+  });
+
+  it('still refuses undefined, toJSON hooks, and cycles', () => {
+    expect(() => serializeWithinBudget(undefined, 10)).toThrow(/not a JSON object/u);
+    expect(() => serializeWithinBudget({ toJSON: () => 1 }, 10)).toThrow(/round-trip exactly/u);
+    const cyclic: Record<string, unknown> = {};
+    cyclic['self'] = cyclic;
+    expect(() => serializeWithinBudget(cyclic, 10_000)).toThrow(/round-trip exactly/u);
+  });
+
+  it('rejects a toJSON accessor via its descriptor without invoking the getter', () => {
+    let getterRan = false;
+    const doc: Record<string, unknown> = { a: 1 };
+    Object.defineProperty(doc, 'toJSON', {
+      enumerable: false,
+      configurable: true,
+      get() {
+        getterRan = true;
+        (doc as { a: number }).a = 999;
+        return undefined;
+      },
+    });
+    expect(() => serializeWithinBudget(doc, 10_000)).toThrow(/round-trip exactly/u);
+    expect(getterRan).toBe(false);
+  });
+
+  it('serializes a non-function toJSON data property byte-identically to JSON.stringify', () => {
+    const doc = { toJSON: 'literal', b: 2 };
+    expect(serializeWithinBudget(doc, 10_000)).toBe(JSON.stringify(doc));
   });
 });
 
