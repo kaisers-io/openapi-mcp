@@ -1776,7 +1776,7 @@ describe('D5: every write path verifies the accepted OBJECT, not just meta.json'
     await expect(writeCandidate(LAYOUT, fs, candidateInput())).rejects.toMatchObject({
       code: 'validation',
       exitCode: 3,
-      message: expect.stringMatching(/cache clear/u) as string,
+      message: expect.stringMatching(/cannot be read/u) as string,
     });
   });
 });
