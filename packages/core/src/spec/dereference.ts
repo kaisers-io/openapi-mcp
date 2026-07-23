@@ -102,7 +102,11 @@ export const dereference = (document: Record<string, unknown>): Record<string, u
     }
     const entries = Object.entries(record);
     ensureCapacity(entries.length);
-    const result: Record<string, unknown> = {};
+    // Null-prototype accumulator: an own `__proto__` key (produced by JSON.parse)
+    // must survive as a real key, not pollute the prototype and vanish. Every
+    // consumer reads via Object.entries / bracket access / JSON.stringify, all of
+    // which handle a null-prototype object unchanged.
+    const result: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     for (const [key, value] of entries) {
       result[key] = walk(value, refStack);
     }
