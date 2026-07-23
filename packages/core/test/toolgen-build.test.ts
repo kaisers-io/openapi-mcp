@@ -92,6 +92,23 @@ describe('buildTools', () => {
     );
     expect(Object.keys(tools[0]!.mapper.fields)).toEqual(['keep']);
   });
+
+  it('reserves a mixed-case operator auth header (case-insensitive set contents)', () => {
+    // M4/M5 unions operator-configured auth-header names into reservedHeaders;
+    // those may be mixed-case. buildTools must lowercase the set contents so the
+    // case-insensitive header lookup matches — otherwise the auth header leaks in
+    // as a tool input. reservedHeaders here carries the mixed-case 'X-API-Key'.
+    const { tools } = buildTools(
+      [
+        named('h', [
+          { name: 'X-API-Key', in: 'header', schema: { type: 'string' } },
+          { name: 'keep', in: 'query', schema: { type: 'string' } },
+        ]),
+      ],
+      { reservedHeaders: new Set([...SYSTEM_HEADERS, 'X-API-Key']), openapiVersion: '3.1' },
+    );
+    expect(Object.keys(tools[0]!.mapper.fields)).toEqual(['keep']);
+  });
 });
 
 describe('buildTools — §6.4 wire schema + sanitization', () => {

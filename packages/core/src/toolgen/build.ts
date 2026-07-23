@@ -55,9 +55,16 @@ export const buildTools = (
 ): BuildToolsResult => {
   const tools: GeneratedTool[] = [];
   const omitted: OmittedOperation[] = [];
+  // HTTP header names are case-insensitive, and the header drop in paramFields
+  // looks up `reservedHeaders.has(name.toLowerCase())`. The caller's set contents
+  // are NOT guaranteed lowercase — M4/M5 unions operator-configured auth-header
+  // names (which may be mixed-case) into this set (see SYSTEM_HEADERS above). A
+  // mixed-case entry like 'X-API-Key' would otherwise fail to match and the auth
+  // header would be exposed as a tool input. Normalize once here (fail-closed).
+  const reservedHeaders = new Set([...opts.reservedHeaders].map((name) => name.toLowerCase()));
   for (const named of namedOperations) {
     const method = named.operation.method.toUpperCase();
-    const layout = buildLayout(named.operation, opts.reservedHeaders, opts.openapiVersion);
+    const layout = buildLayout(named.operation, reservedHeaders, opts.openapiVersion);
     if (!('ok' in layout)) {
       omitted.push({ method, path: named.operation.path, reason: layout.unrepresentable });
       continue;
