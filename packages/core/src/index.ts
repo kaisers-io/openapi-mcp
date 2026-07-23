@@ -122,3 +122,5 @@ export type {
 } from './filter/pattern.ts';
 export { applyFilters, closestMatch, matchesOperation } from './filter/engine.ts';
 export type { DeadPattern, FilterDecision } from './filter/engine.ts';
+export { buildLayout } from './toolgen/layout.ts';
+export type { LayoutResult } from './toolgen/layout.ts';

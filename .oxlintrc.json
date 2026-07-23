@@ -241,7 +241,14 @@
         // picks, not sequential decision logic, so an if-else rewrite would not
         // improve on it
         "no-nested-ternary": "off",
-        "unicorn/no-nested-ternary": "off"
+        "unicorn/no-nested-ternary": "off",
+        // Off per task-4 brief (M3): layout.ts is the whole field-layout module -
+        // paramFields, the body classification (bodyFields/isFlattenableRoot/
+        // selectMedia), collision resolution, and buildLayout's assembly
+        // (including the optional-body all-or-nothing refine) live together by
+        // design, with load-bearing round-N security rationale comments
+        // throughout, so it verbatim exceeds 300 lines
+        "max-lines": "off"
       }
     },
     {
