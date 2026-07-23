@@ -358,3 +358,400 @@ describe('convertSchema — sibling-assertion conflicts (fail-closed)', () => {
     ).toBe(true);
   });
 });
+
+describe('convertSchema — composites', () => {
+  it('maps a strict object and rejects unknown keys', () => {
+    const s = ok(
+      convertSchema({
+        type: 'object',
+        additionalProperties: false,
+        properties: { a: { type: 'string' } },
+        required: ['a'],
+      }),
+    );
+    expect(s.safeParse({ a: 'x' }).success).toBe(true);
+    expect(s.safeParse({ a: 'x', b: 1 }).success).toBe(false);
+    expect(s.safeParse({}).success).toBe(false);
+  });
+
+  it('maps an object with absent additionalProperties as strict', () => {
+    const s = ok(convertSchema({ type: 'object', properties: { a: { type: 'string' } } }));
+    expect(s.safeParse({ a: 'x', extra: 9 }).success).toBe(false);
+  });
+
+  it('maps additionalProperties:true as an open object', () => {
+    const s = ok(
+      convertSchema({
+        type: 'object',
+        additionalProperties: true,
+        properties: { a: { type: 'string' } },
+      }),
+    );
+    expect(s.safeParse({ a: 'x', extra: 9 }).success).toBe(true);
+  });
+
+  it('enforces a schema-valued additionalProperties via catchall', () => {
+    const s = ok(
+      convertSchema({
+        type: 'object',
+        additionalProperties: { type: 'number' },
+        properties: { a: { type: 'string' } },
+      }),
+    );
+    expect(s.safeParse({ a: 'x', extra: 9 }).success).toBe(true);
+    expect(s.safeParse({ a: 'x', extra: 'y' }).success).toBe(false);
+  });
+
+  it('maps arrays with item bounds', () => {
+    const s = ok(
+      convertSchema({ type: 'array', items: { type: 'integer' }, minItems: 1, maxItems: 2 }),
+    );
+    expect(s.safeParse([1]).success).toBe(true);
+    expect(s.safeParse([]).success).toBe(false);
+    expect(s.safeParse([1, 2, 3]).success).toBe(false);
+    expect(s.safeParse(['x']).success).toBe(false);
+  });
+
+  it('merges allOf of disjoint objects', () => {
+    const s = ok(
+      convertSchema({
+        allOf: [
+          { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] },
+          { type: 'object', properties: { b: { type: 'integer' } }, required: ['b'] },
+        ],
+      }),
+    );
+    expect(s.safeParse({ a: 'x', b: 1 }).success).toBe(true);
+    expect(s.safeParse({ a: 'x' }).success).toBe(false);
+  });
+
+  it('omits allOf with overlapping properties', () => {
+    expect(
+      'unrepresentable' in
+        convertSchema({
+          allOf: [
+            { type: 'object', properties: { id: { type: 'string' } } },
+            { type: 'object', properties: { id: { type: 'integer' } } },
+          ],
+        }),
+    ).toBe(true);
+  });
+
+  it('omits an allOf with a non-object member (single or multi)', () => {
+    // Every allOf member must be an object; the merge produces one object.
+    expect(
+      'unrepresentable' in convertSchema({ allOf: [{ type: 'object' }, { type: 'string' }] }),
+    ).toBe(true);
+    expect('unrepresentable' in convertSchema({ allOf: [{ type: 'string' }] })).toBe(true);
+  });
+
+  it('omits an allOf whose outer type contradicts an object merge', () => {
+    // {type:'object', allOf:[{type:'string'}]} must omit — the single-member fast
+    // path used to drop the outer type and return a string.
+    expect(
+      'unrepresentable' in convertSchema({ type: 'object', allOf: [{ type: 'string' }] }),
+    ).toBe(true);
+  });
+
+  it('merges a single-member object allOf', () => {
+    const s = ok(
+      convertSchema({
+        allOf: [
+          { type: 'object', properties: { a: { type: 'string', minLength: 2 } }, required: ['a'] },
+        ],
+      }),
+    );
+    expect(s.safeParse({ a: 'ab' }).success).toBe(true);
+    expect(s.safeParse({ a: 'x' }).success).toBe(false);
+    expect(s.safeParse({ a: 'ab', extra: 1 }).success).toBe(false);
+  });
+
+  it('maps oneOf/anyOf to a plain union', () => {
+    const s = ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] }));
+    expect(s.safeParse('x').success).toBe(true);
+    expect(s.safeParse(3).success).toBe(true);
+    expect(s.safeParse(true).success).toBe(false);
+  });
+
+  it('omits when a union member is unrepresentable', () => {
+    expect('unrepresentable' in convertSchema({ anyOf: [{ type: 'string' }, { not: {} }] })).toBe(
+      true,
+    );
+  });
+
+  it('omits a property whose schema is unrepresentable', () => {
+    expect(
+      'unrepresentable' in convertSchema({ type: 'object', properties: { bad: { not: {} } } }),
+    ).toBe(true);
+  });
+
+  it('omits a multi-member allOf with additionalProperties:false', () => {
+    // Member 1 forbids member 2's properties, so the composed schema is far
+    // stricter than the merged property set — not faithfully mergeable.
+    expect(
+      'unrepresentable' in
+        convertSchema({
+          allOf: [
+            { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: false },
+            { type: 'object', properties: { b: { type: 'string' } } },
+          ],
+        }),
+    ).toBe(true);
+  });
+
+  it('omits a required name that is not a declared property', () => {
+    expect(
+      'unrepresentable' in
+        convertSchema({ type: 'object', required: ['token'], additionalProperties: true }),
+    ).toBe(true);
+  });
+
+  it('omits a required array with a non-string or duplicate element', () => {
+    // The frozen validator does not check Schema Object VALUES, so required:[123]
+    // or required:['a','a'] reaches the converter; merely filtering non-strings (as
+    // objectSchema would) silently accepts an invalid Schema Object. malformedKeyword
+    // omits it (fail-closed, round-12). Falsifiable only here — the object path is a
+    // placeholder at Task 1.
+    expect(
+      'unrepresentable' in
+        convertSchema({ type: 'object', properties: { x: { type: 'string' } }, required: [123] }),
+    ).toBe(true);
+    expect(
+      'unrepresentable' in
+        convertSchema({
+          type: 'object',
+          properties: { a: { type: 'string' } },
+          required: ['a', 'a'],
+        }),
+    ).toBe(true);
+    // A well-formed required is still accepted (proves the gate is not over-broad).
+    expect(
+      'ok' in
+        convertSchema({ type: 'object', properties: { a: { type: 'string' } }, required: ['a'] }),
+    ).toBe(true);
+  });
+
+  it('allows a declared required property alongside additionalProperties:true', () => {
+    const s = ok(
+      convertSchema({
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        required: ['a'],
+        additionalProperties: true,
+      }),
+    );
+    expect(s.safeParse({ a: 'x', extra: 9 }).success).toBe(true);
+    expect(s.safeParse({ extra: 9 }).success).toBe(false);
+  });
+
+  it('omits a property named __proto__ (prototype hazard)', () => {
+    expect(
+      'unrepresentable' in
+        convertSchema({ type: 'object', properties: { ['__proto__']: { type: 'string' } } }),
+    ).toBe(true);
+  });
+
+  it('omits an allOf property named __proto__', () => {
+    expect(
+      'unrepresentable' in
+        convertSchema({
+          allOf: [
+            { type: 'object', properties: { a: { type: 'string' } } },
+            { type: 'object', properties: { ['__proto__']: { type: 'string' } } },
+          ],
+        }),
+    ).toBe(true);
+  });
+
+  it('omits any allOf member declaring additionalProperties (fail-closed, cannot merge)', () => {
+    // Single-member with AP:true → omit (not silently strict, not silently open).
+    expect(
+      'unrepresentable' in
+        convertSchema({
+          allOf: [
+            { type: 'object', additionalProperties: true, properties: { a: { type: 'string' } } },
+          ],
+        }),
+    ).toBe(true);
+    // Multi-member with any declared AP → omit.
+    expect(
+      'unrepresentable' in
+        convertSchema({
+          allOf: [
+            { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: true },
+            { type: 'object', properties: { b: { type: 'string' } } },
+          ],
+        }),
+    ).toBe(true);
+  });
+
+  it('omits an allOf member with a malformed required array', () => {
+    // mergeAllOf processes members without convertSchema, so it must re-check a
+    // member's `required` as an array of unique strings; a non-string or duplicate
+    // element would otherwise be silently filtered/deduped (fail-closed, round-14).
+    expect(
+      'unrepresentable' in
+        convertSchema({
+          allOf: [{ type: 'object', properties: { a: { type: 'string' } }, required: [123] }],
+        }),
+    ).toBe(true);
+    expect(
+      'unrepresentable' in
+        convertSchema({
+          allOf: [{ type: 'object', properties: { a: { type: 'string' } }, required: ['a', 'a'] }],
+        }),
+    ).toBe(true);
+  });
+
+  it('omits an allOf member with non-record properties', () => {
+    // A non-record `properties` on a member would be silently skipped, producing a
+    // strictObject({}) instead of omitting (fail-closed, round-14).
+    expect(
+      'unrepresentable' in convertSchema({ allOf: [{ type: 'object', properties: 'wrong' }] }),
+    ).toBe(true);
+  });
+
+  it('omits allOf combined with sibling properties (conflict gate)', () => {
+    expect(
+      'unrepresentable' in
+        convertSchema({ allOf: [{ type: 'object' }], properties: { a: { type: 'string' } } }),
+    ).toBe(true);
+  });
+
+  it('omits oneOf combined with a sibling type (conflict gate)', () => {
+    expect(
+      'unrepresentable' in
+        convertSchema({ type: 'string', oneOf: [{ type: 'string' }, { type: 'number' }] }),
+    ).toBe(true);
+  });
+
+  it('allows allOf with a redundant type:object sibling', () => {
+    const s = ok(
+      convertSchema({
+        type: 'object',
+        allOf: [
+          { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] },
+          { type: 'object', properties: { b: { type: 'integer' } } },
+        ],
+      }),
+    );
+    expect(s.safeParse({ a: 'x', b: 1 }).success).toBe(true);
+  });
+
+  it('omits an empty allOf', () => {
+    expect('unrepresentable' in convertSchema({ allOf: [] })).toBe(true);
+  });
+
+  it('omits an allOf member with no object evidence', () => {
+    // Each of these accepts any value; merging as z.strictObject({}) would narrow.
+    expect('unrepresentable' in convertSchema({ allOf: [{}] })).toBe(true);
+    expect('unrepresentable' in convertSchema({ allOf: [{ description: 'x' }] })).toBe(true);
+    expect('unrepresentable' in convertSchema({ allOf: [{ properties: {} }] })).toBe(true);
+    expect('unrepresentable' in convertSchema({ allOf: [{ required: [] }] })).toBe(true);
+  });
+
+  it('maps a typeless NON-EMPTY properties-only object as a strict object', () => {
+    const s = ok(convertSchema({ properties: { a: { type: 'string' } }, required: ['a'] }));
+    expect(s.safeParse({ a: 'x' }).success).toBe(true);
+    expect(s.safeParse({ a: 'x', extra: 9 }).success).toBe(false);
+    expect(s.safeParse({}).success).toBe(false);
+  });
+
+  it('omits a typeless EMPTY properties object (no constraint)', () => {
+    expect('unrepresentable' in convertSchema({ properties: {} })).toBe(true);
+  });
+
+  it('maps an explicit empty object (type:object, properties:{}) as accepting only {}', () => {
+    const s = ok(convertSchema({ type: 'object', properties: {} }));
+    expect(s.safeParse({}).success).toBe(true);
+    expect(s.safeParse({ a: 1 }).success).toBe(false);
+  });
+
+  it('maps a 3.1 nullable array (type [array, null]) as a nullable array, not an object', () => {
+    const s = ok(convertSchema({ type: ['array', 'null'], items: { type: 'string' } }));
+    expect(s.safeParse(['a']).success).toBe(true);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse({}).success).toBe(false);
+    expect(s.safeParse('x').success).toBe(false);
+  });
+
+  it('maps a nullable object (3.0 nullable:true, version passed explicitly)', () => {
+    const s = ok(
+      convertSchema(
+        { type: 'object', nullable: true, properties: { a: { type: 'string' } }, required: ['a'] },
+        '3.0',
+      ),
+    );
+    expect(s.safeParse({ a: 'x' }).success).toBe(true);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse({ a: 'x', extra: 9 }).success).toBe(false);
+  });
+
+  it('represents a 3.1 nullable-composition node as a plain union (nullable ignored, not widened)', () => {
+    // Companion to Task 1's `omits a nullable composition` (which uses '3.0'): under
+    // 3.1 the boolean `nullable` is not a keyword, so {nullable:true, oneOf:[...]} is
+    // a plain oneOf and IS representable. This can only be asserted at Task 2, where
+    // convertComposite really builds the union (the Task-1 placeholder returns
+    // unrepresentable for any composite regardless of version). Crucially, the result
+    // still REJECTS null — nullable is ignored, never widened to admit null.
+    const s = ok(convertSchema({ nullable: true, oneOf: [{ type: 'string' }] }, '3.1'));
+    expect(s.safeParse('x').success).toBe(true);
+    expect(s.safeParse(null).success).toBe(false);
+  });
+
+  it('advertises pattern on composite branches (wire keyword, not enforced)', () => {
+    // Pattern is attached uniformly in convertSchema, so allOf/oneOf/const also
+    // carry it into the wire schema. z is imported at the top of this file.
+    const oneOfWire = z.toJSONSchema(
+      ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }], pattern: '^x$' })),
+    ) as { pattern?: string };
+    expect(oneOfWire.pattern).toBe('^x$');
+    const constWire = z.toJSONSchema(ok(convertSchema({ const: 'a', pattern: '^a$' }))) as {
+      pattern?: string;
+    };
+    expect(constWire.pattern).toBe('^a$');
+  });
+
+  it('carries format + pattern + minLength together in the wire schema', () => {
+    const wire = z.toJSONSchema(
+      ok(convertSchema({ type: 'string', format: 'email', pattern: '^x', minLength: 2 })),
+    ) as {
+      format?: string;
+      pattern?: string;
+      minLength?: number;
+    };
+    expect(wire).toMatchObject({ format: 'email', pattern: '^x', minLength: 2 });
+  });
+
+  it('keeps enum + format representable (format is advisory, no conflict)', () => {
+    const s = ok(convertSchema({ type: 'string', enum: ['a', 'b'], format: 'uuid' }));
+    expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse('c').success).toBe(false);
+    expect((z.toJSONSchema(s) as { format?: string }).format).toBe('uuid');
+  });
+
+  it('merges an allOf that includes an explicit-empty-object member (type:object, properties:{})', () => {
+    // The explicit-empty member has type:'object' evidence and contributes no
+    // properties; the merge is the other member as a strict object.
+    const s = ok(
+      convertSchema({
+        allOf: [
+          { type: 'object', properties: {} },
+          { type: 'object', properties: { a: { type: 'string' } }, required: ['a'] },
+        ],
+      }),
+    );
+    expect(s.safeParse({ a: 'x' }).success).toBe(true);
+    expect(s.safeParse({ a: 'x', extra: 1 }).success).toBe(false);
+  });
+
+  it('omits a typeless schema carrying an assertion', () => {
+    expect('unrepresentable' in convertSchema({ minLength: 2 })).toBe(true);
+  });
+
+  it('guards against pathological structural depth', () => {
+    let node: Record<string, unknown> = { type: 'string' };
+    for (let i = 0; i <= MAX_CONVERT_DEPTH + 1; i += 1) node = { type: 'array', items: node };
+    expect('unrepresentable' in convertSchema(node)).toBe(true);
+  });
+});

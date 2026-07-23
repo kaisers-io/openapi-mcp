@@ -389,14 +389,233 @@ const enumSchema = (values: readonly unknown[]): SchemaResult => {
   return { ok: z.union(members as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]]) };
 };
 
-// Composite branches (object/array/allOf/oneOf/anyOf) are added in Task 2.
+// allOf members may carry only object-schema keywords (no combinators/not/etc);
+// a member outside this set, a non-object member, or an overlapping property name
+// omits the operation (a strict tool cannot faithfully intersect strict objects,
+// unlike hey-api's loose z.intersection).
+const ALLOF_MEMBER_KEYS: ReadonlySet<string> = new Set([
+  'type',
+  'properties',
+  'required',
+  'additionalProperties',
+  'title',
+  'description',
+  'example',
+  'default',
+  'deprecated',
+  'readOnly',
+  'writeOnly',
+  'xml',
+  'externalDocs',
+  '$comment',
+  '$schema',
+  'discriminator',
+]);
+
+// Merges every allOf member (any count) into one object schema. Each member must
+// be an object; a member declaring additionalProperties (false/true/schema) omits
+// the operation (false would forbid the other members' properties; true/schema
+// would need cross-member intersection). The `isDangerousKey` check must precede
+// the plain-object assignment, or a `__proto__` property would pollute the
+// accumulator and vanish before objectSchema could reject it.
+const mergeAllOf = (
+  parts: readonly unknown[],
+): Record<string, unknown> | { unrepresentable: string } => {
+  const properties: Record<string, unknown> = {};
+  const required = new Set<string>();
+  const seen = new Set<string>();
+  for (const part of parts) {
+    if (!isRecord(part)) {
+      return { unrepresentable: 'an allOf member that is not an object schema' };
+    }
+    for (const key of Object.keys(part)) {
+      if (!key.startsWith('x-') && !ALLOF_MEMBER_KEYS.has(key)) {
+        return { unrepresentable: `an allOf member using "${key}"` };
+      }
+    }
+    if (part['type'] !== undefined && part['type'] !== 'object') {
+      return { unrepresentable: 'an allOf member that is not an object' };
+    }
+    // mergeAllOf processes members structurally WITHOUT running convertSchema on
+    // them, so it must re-apply the value-domain gates a member would otherwise get:
+    // a non-record `properties`, or a `required` that is not an array of UNIQUE
+    // strings, omits (fail-closed, round-14) — otherwise a malformed member (e.g.
+    // `properties:'wrong'` or `required:[123]`) would be silently skipped/filtered.
+    if (part['properties'] !== undefined && !isRecord(part['properties'])) {
+      return { unrepresentable: 'an allOf member with a non-record "properties"' };
+    }
+    if (
+      part['required'] !== undefined &&
+      (!Array.isArray(part['required']) ||
+        !part['required'].every((k) => typeof k === 'string') ||
+        new Set(part['required']).size !== part['required'].length)
+    ) {
+      return { unrepresentable: 'an allOf member with a malformed "required" array' };
+    }
+    // A member must carry object evidence; an empty or metadata-only member
+    // (`{}`, `{description:…}`, `{properties:{}}`, 3.1 `{required:[]}`) accepts any
+    // value, so merging it as a strict object would narrow the composition. Empty
+    // `properties`/`required` are NOT evidence — only an explicit `type:'object'`
+    // or a NON-empty properties/required set (object keywords do not implicitly
+    // constrain the instance type in JSON Schema / OAS 3.1).
+    const hasObjectEvidence =
+      part['type'] === 'object' ||
+      (isRecord(part['properties']) && Object.keys(part['properties']).length > 0) ||
+      (Array.isArray(part['required']) && part['required'].length > 0);
+    if (!hasObjectEvidence) {
+      return {
+        unrepresentable: 'an allOf member with no object evidence (empty or metadata-only)',
+      };
+    }
+    if (part['additionalProperties'] !== undefined) {
+      return { unrepresentable: 'a multi-member allOf whose member declares additionalProperties' };
+    }
+    if (isRecord(part['properties'])) {
+      for (const [key, child] of Object.entries(part['properties'])) {
+        if (isDangerousKey(key)) {
+          return { unrepresentable: `an allOf property named "${key}"` };
+        }
+        if (seen.has(key)) {
+          return { unrepresentable: `an allOf with the overlapping property "${key}"` };
+        }
+        seen.add(key);
+        properties[key] = child;
+      }
+    }
+    if (Array.isArray(part['required'])) {
+      for (const key of part['required']) {
+        if (typeof key === 'string') {
+          required.add(key);
+        }
+      }
+    }
+  }
+  return { type: 'object', properties, required: [...required] };
+};
+
+const objectSchema = (
+  node: Record<string, unknown>,
+  depth: number,
+  version: OpenapiVersion,
+): SchemaResult => {
+  const properties = isRecord(node['properties']) ? node['properties'] : {};
+  const required = new Set(
+    Array.isArray(node['required'])
+      ? node['required'].filter((k): k is string => typeof k === 'string')
+      : [],
+  );
+  const shape: Record<string, z.ZodType> = {};
+  for (const [key, child] of Object.entries(properties)) {
+    if (isDangerousKey(key)) {
+      return { unrepresentable: `a property named "${key}"` };
+    }
+    const conv = convertSchema(child, version, depth + 1);
+    if (!('ok' in conv)) {
+      return { unrepresentable: `property "${key}": ${conv.unrepresentable}` };
+    }
+    shape[key] = required.has(key) ? conv.ok : conv.ok.optional();
+  }
+  // A required name with no declared property cannot be enforced (there is no
+  // schema for it) — omit rather than silently accept its absence. Object.hasOwn,
+  // not `in`, so an inherited name like `toString` is not treated as declared.
+  for (const name of required) {
+    if (!Object.hasOwn(shape, name)) {
+      return { unrepresentable: `the required property "${name}" is not declared in properties` };
+    }
+  }
+  const ap = node['additionalProperties'];
+  if (ap === undefined || ap === false) {
+    return { ok: z.strictObject(shape) };
+  }
+  if (ap === true) {
+    return { ok: z.object(shape).loose() };
+  }
+  const apConv = convertSchema(ap, version, depth + 1);
+  if (!('ok' in apConv)) {
+    return { unrepresentable: `additionalProperties: ${apConv.unrepresentable}` };
+  }
+  return { ok: z.object(shape).catchall(apConv.ok) };
+};
+
+const arraySchema = (
+  node: Record<string, unknown>,
+  depth: number,
+  version: OpenapiVersion,
+): SchemaResult => {
+  const item = convertSchema(node['items'] ?? {}, version, depth + 1);
+  if (!('ok' in item)) {
+    return { unrepresentable: `array items: ${item.unrepresentable}` };
+  }
+  let s = z.array(item.ok);
+  if (typeof node['minItems'] === 'number') {
+    s = s.min(node['minItems']);
+  }
+  if (typeof node['maxItems'] === 'number') {
+    s = s.max(node['maxItems']);
+  }
+  return { ok: s };
+};
+
+const unionSchema = (
+  variants: readonly unknown[],
+  depth: number,
+  version: OpenapiVersion,
+): SchemaResult => {
+  const members: z.ZodType[] = [];
+  for (const variant of variants) {
+    const conv = convertSchema(variant, version, depth + 1);
+    if (!('ok' in conv)) {
+      return { unrepresentable: `union member: ${conv.unrepresentable}` };
+    }
+    members.push(conv.ok);
+  }
+  if (members.length === 0) {
+    return { unrepresentable: 'an empty union' };
+  }
+  if (members.length === 1) {
+    return { ok: members[0] as z.ZodType };
+  }
+  return { ok: z.union(members as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]]) };
+};
+
 const convertComposite = (
-  _node: Record<string, unknown>,
-  _depth: number,
-  _version: OpenapiVersion,
-): SchemaResult => ({
-  unrepresentable: 'an unsupported composite schema',
-});
+  node: Record<string, unknown>,
+  depth: number,
+  version: OpenapiVersion,
+): SchemaResult => {
+  if (Array.isArray(node['allOf'])) {
+    if (node['allOf'].length === 0) {
+      // An empty allOf constrains nothing; do not invent an empty object.
+      return { unrepresentable: 'an empty allOf' };
+    }
+    // Every allOf member must be an object; the merge produces one object schema.
+    // A member declaring additionalProperties (false/true/schema) omits the
+    // operation — it cannot be faithfully merged. Single-member allOf is NOT
+    // special-cased: doing so dropped an outer `type` constraint
+    // (`{type:'object', allOf:[{type:'string'}]}` must omit, not become a string).
+    // An outer `type:'object'` (the only type the conflict gate allows here) is
+    // redundant with the object merge.
+    const merged = mergeAllOf(node['allOf']);
+    // `mergeAllOf`'s return type unions a plain `Record<string, unknown>` with
+    // `{ unrepresentable: string }`; because the Record side has an open index
+    // signature, `'unrepresentable' in merged` cannot narrow it away (the Record
+    // could itself carry that key), so TS2322 fires on the bare ternary under
+    // strictest. The cast is behavior-preserving — the runtime check is unchanged.
+    return 'unrepresentable' in merged
+      ? (merged as { unrepresentable: string })
+      : objectSchema(merged, depth, version);
+  }
+  if (Array.isArray(node['oneOf'])) {
+    return unionSchema(node['oneOf'], depth, version);
+  }
+  if (Array.isArray(node['anyOf'])) {
+    return unionSchema(node['anyOf'], depth, version);
+  }
+  if (node['type'] === 'array') {
+    return arraySchema(node, depth, version);
+  }
+  return objectSchema(node, depth, version);
+};
 
 // The scalar/object/array dispatch. A sibling `nullable` wraps THIS result (a
 // nullable string/object/array is faithful); determiners are handled separately
