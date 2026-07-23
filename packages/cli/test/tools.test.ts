@@ -506,3 +506,125 @@ describe('tools command — cache and ttl', () => {
     expect(lines.join('\n')).toContain('cache: bypassed');
   });
 });
+
+describe('tools command — toolgen omissions', () => {
+  it('counts only toolgen-generated tools and merges a toolgen omission with the spec-level ones', async () => {
+    const specText = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Omit', version: '1.0.0' },
+      paths: {
+        '/clean': {
+          get: {
+            operationId: 'getClean',
+            parameters: [{ name: 'q', in: 'query', schema: { type: 'string' } }],
+            responses: { '200': { description: 'ok' } },
+          },
+        },
+        '/bad': {
+          post: {
+            operationId: 'postBad',
+            requestBody: {
+              content: { 'application/json': { schema: { not: {} } } },
+            },
+            responses: { '200': { description: 'ok' } },
+          },
+        },
+      },
+    });
+    const fetcher = (() => Promise.resolve(new Response(specText))) as typeof fetch;
+    const { lines, ctx } = fileCtx({ fetcher });
+    const code = await run(ctx, [
+      'node',
+      'openapi-mcp',
+      '--json',
+      'tools',
+      '--spec',
+      'https://api.example.com/openapi.json',
+      '--allow',
+      '**',
+    ]);
+    expect(code).toBe(EXIT.OK);
+    const envelope = JSON.parse(lines[0]!) as {
+      data: {
+        toolCount: number;
+        tools: { name: string }[];
+        omitted: { method: string; path: string; reason: string }[];
+      };
+    };
+    // POST /bad is unrepresentable (a "not" body schema) and must be dropped by
+    // toolgen, not counted as a generated tool.
+    expect(envelope.data.toolCount).toBe(1);
+    expect(envelope.data.tools.map((tool) => tool.name)).toEqual(['getClean']);
+    const badOmission = envelope.data.omitted.find(
+      (omission) => omission.method === 'POST' && omission.path === '/bad',
+    );
+    expect(badOmission).toBeDefined();
+    expect(badOmission?.reason).toContain('not');
+  });
+
+  it('sanitizes a hostile parameter name before it reaches the omission warning (round-2 HIGH 3)', async () => {
+    // Built at runtime, never typed literally: BEL (0x07) and RTL override (0x202e)
+    const bad = `p${String.fromCodePoint(0x07)}${String.fromCodePoint(0x202e)}`;
+    const specText = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Hostile', version: '1.0.0' },
+      paths: {
+        '/h': {
+          get: {
+            operationId: 'getH',
+            parameters: [
+              { name: bad, in: 'query', schema: { type: 'string' }, style: 'deepObject' },
+            ],
+            responses: { '200': { description: 'ok' } },
+          },
+        },
+      },
+    });
+    const fetcher = (() => Promise.resolve(new Response(specText))) as typeof fetch;
+    const { errLines, ctx } = fileCtx({ fetcher });
+    const code = await run(ctx, [
+      'node',
+      'openapi-mcp',
+      'tools',
+      '--spec',
+      'https://api.example.com/openapi.json',
+      '--allow',
+      '**',
+    ]);
+    expect(code).toBe(EXIT.OK);
+    const allOutput = errLines.join('\n');
+    // The warning must exist — the unsupported "deepObject" style is what
+    // triggers the toolgen omission for GET /h.
+    expect(allOutput).toContain('omitted GET /h');
+    expect(allOutput).toContain('deepObject');
+    // But the hostile bytes it carried in the raw parameter name must not.
+    expect(allOutput).not.toContain(bad);
+    expect(allOutput).not.toContain(String.fromCodePoint(0x07));
+    expect(allOutput).not.toContain(String.fromCodePoint(0x202e));
+
+    // Bind the tools.ts reason-sanitize wrap directly. In human mode emit()
+    // re-sanitizes every warning line, so the assertions above hold even if the
+    // inner sanitizeSpecText(reason) is removed. The --json envelope emits the
+    // warnings array WITHOUT that human-mode sanitize loop (output.ts), so the
+    // inner wrap is the sole sanitizer of the reason there: dropping it lets the
+    // raw hostile parameter name reach the --json warnings entry. (data.omitted
+    // stays raw by policy, so we assert on warnings, not on data.omitted.)
+    const jsonRun = fileCtx({ fetcher });
+    const jsonCode = await run(jsonRun.ctx, [
+      'node',
+      'openapi-mcp',
+      '--json',
+      'tools',
+      '--spec',
+      'https://api.example.com/openapi.json',
+      '--allow',
+      '**',
+    ]);
+    expect(jsonCode).toBe(EXIT.OK);
+    const envelope = JSON.parse(jsonRun.lines[0]!) as { warnings: string[] };
+    const warningsText = envelope.warnings.join('\n');
+    expect(warningsText).toContain('omitted GET /h');
+    expect(warningsText).not.toContain(String.fromCodePoint(0x07));
+    expect(warningsText).not.toContain(String.fromCodePoint(0x202e));
+  });
+});

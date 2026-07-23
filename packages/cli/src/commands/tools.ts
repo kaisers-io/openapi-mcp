@@ -1,4 +1,5 @@
 import {
+  buildTools,
   defaultCacheRoot,
   parseCacheKey,
   parseDuration,
@@ -7,6 +8,7 @@ import {
   resolveHeaderEnvMappings,
   runSpecPipeline,
   sanitizeSpecText,
+  SYSTEM_HEADERS,
   validationError,
   type DeadPattern,
   type FilterPattern,
@@ -30,6 +32,14 @@ const PATTERN_DISPLAY_MAX = 256;
 export interface ParsedFilters {
   allow: readonly FilterPattern[];
   deny: readonly FilterPattern[];
+}
+
+interface ToolRow {
+  name: string;
+  method: string;
+  path: string;
+  summary?: string;
+  deprecated: boolean;
 }
 
 // Patterns parse in the command layer so a syntax error, an over-long pattern,
@@ -127,13 +137,23 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           // Spec §8 mandates exit 3 for dead patterns under --strict-filters
           throw validationError(deadMessages.join('\n'));
         }
-        const tools = result.namedOperations.map((named) => ({
-          name: named.toolName,
-          method: named.operation.method.toUpperCase(),
-          path: named.operation.path,
-          ...(named.operation.summary === undefined ? {} : { summary: named.operation.summary }),
-          deprecated: named.operation.deprecated,
-        }));
+        const built = buildTools(result.namedOperations, {
+          reservedHeaders: SYSTEM_HEADERS,
+          openapiVersion: result.spec.openapiVersion,
+        });
+        const allOmitted = [...result.spec.omitted, ...built.omitted];
+        const tools: ToolRow[] = built.tools.map((generated) => {
+          const row: ToolRow = {
+            name: generated.toolName,
+            method: generated.operation.method.toUpperCase(),
+            path: generated.operation.path,
+            deprecated: generated.operation.deprecated,
+          };
+          if (generated.operation.summary !== undefined) {
+            row.summary = generated.operation.summary;
+          }
+          return row;
+        });
         const data = {
           source: result.displaySource,
           title: result.spec.title,
@@ -146,7 +166,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           cacheStatus: result.cacheStatus,
           toolCount: tools.length,
           tools,
-          omitted: result.spec.omitted,
+          omitted: allOmitted,
           deadPatterns: result.deadPatterns,
         };
         const humanLines: string[] = [
@@ -168,9 +188,9 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
         }
         // Omissions, dead patterns, and cache degradation are all non-fatal
         // conditions: they belong on the warnings channel, not on stdout
-        const omissionWarnings = result.spec.omitted.map(
+        const omissionWarnings = allOmitted.map(
           (omission) =>
-            `omitted ${omission.method} ${sanitizeSpecText(omission.path, PATH_DISPLAY_MAX)} — ${omission.reason}`,
+            `omitted ${omission.method} ${sanitizeSpecText(omission.path, PATH_DISPLAY_MAX)} — ${sanitizeSpecText(omission.reason, PATH_DISPLAY_MAX)}`,
         );
         return {
           data,
