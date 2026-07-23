@@ -15,8 +15,11 @@
     "no-magic-numbers": "off",
     // Off per task-2 brief: A/R (cache/errors.ts's withCacheErrors) and T
     // (cache/lock.ts's withNamespaceLockImpl) are the frozen generic type
-    // parameters from the Interface Contract's withNamespaceLock<T> signature
-    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z", "A", "R", "T"] }],
+    // parameters from the Interface Contract's withNamespaceLock<T> signature.
+    // v/k/t added per task-1 brief (M3): toolgen/schema.ts's malformedKeyword,
+    // conflictingCombination, stringSchema, numberSchema, enumSchema, and build
+    // use these single-letter parameter/loop-variable names verbatim throughout.
+    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z", "A", "R", "T", "v", "k", "t"] }],
     "import/no-named-export": "off",
     "import/group-exports": "off",
     "import/no-nodejs-modules": "off",
@@ -192,6 +195,81 @@
         // rationale comments are load-bearing, not incidental), so it
         // verbatim exceeds 300 lines
         "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/toolgen/schema.ts"],
+      "rules": {
+        // Off per task-1 brief (M3): schema.ts is the full converter framework -
+        // the malformed-value gate, the keyword allowlist, the sibling-conflict
+        // gate, the nullable/multi-type normalization, and every leaf branch
+        // (string/number/integer/boolean/null/const/enum/typeless) live together
+        // by design (the round-N rationale comments are load-bearing security
+        // documentation, not incidental), so it verbatim exceeds 300 lines even
+        // before Task 2 adds the composite branches
+        "max-lines": "off",
+        // Off per task-1 brief (M3): the "oneOf / anyOf + type" comment in
+        // conflictingCombination intentionally starts with the lowercase
+        // JSON-Schema keyword names oneOf/anyOf, verbatim
+        "capitalized-comments": "off"
+      }
+    },
+    {
+      "files": ["packages/core/test/toolgen-schema.test.ts"],
+      "rules": {
+        // Off per task-1 brief (M3): several comments in this test file
+        // intentionally start with a lowercase code identifier (nullable,
+        // numberSchema, enum, pattern) to name the exact keyword/function being
+        // discussed, verbatim
+        "capitalized-comments": "off",
+        // Off per task-1 brief (M3): the `ok` test helper's early-throw guard
+        // uses a braceless `if (...) throw ...;` verbatim
+        "curly": "off",
+        // Off per task-1 brief (M3): the keyword-allowlist `it.each` fixture for
+        // the `if` keyword includes a sibling `then: {}` property because it is
+        // a literal JSON Schema `if`/`then` node under test, not a thenable,
+        // verbatim
+        "unicorn/no-thenable": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/toolgen/layout.ts"],
+      "rules": {
+        // Off to support task-3's verbatim converged code (M3, owner decision round-15): paramFields's
+        // location -> FieldMapping selection is the converged three-way ternary
+        // verbatim; the path/query/header branches are parallel literal-object
+        // picks, not sequential decision logic, so an if-else rewrite would not
+        // improve on it
+        "no-nested-ternary": "off",
+        "unicorn/no-nested-ternary": "off",
+        // Off per task-4 brief (M3): layout.ts is the whole field-layout module -
+        // paramFields, the body classification (bodyFields/isFlattenableRoot/
+        // selectMedia), collision resolution, and buildLayout's assembly
+        // (including the optional-body all-or-nothing refine) live together by
+        // design, with load-bearing round-N security rationale comments
+        // throughout, so it verbatim exceeds 300 lines
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/test/toolgen-layout.test.ts"],
+      "rules": {
+        // Off to support task-3's verbatim converged code (M3): comments in
+        // this test file intentionally start with the lowercase identifier
+        // `paramFields` or the lowercase JSON-Schema/OpenAPI keyword
+        // `allowReserved`, verbatim (same rationale as the
+        // toolgen-schema.test.ts override above)
+        "capitalized-comments": "off",
+        // Off to support task-3's verbatim converged code (M3): the
+        // `okFields` test helper's early-throw guard uses a braceless
+        // `if (...) throw ...;` verbatim (same rationale as
+        // toolgen-schema.test.ts's `ok` helper above)
+        "curly": "off",
+        // Off to support task-3's verbatim converged code (M3): the round-15 reserved-header assertions
+        // nest `expect(okFields(paramFields(op([...` (4 calls) verbatim, one
+        // level deeper than the file's usual `const fields = okFields(paramFields(op([...`
+        // assignment form, to assert the mapped result inline
+        "unicorn/max-nested-calls": "off"
       }
     },
     {

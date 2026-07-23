@@ -46,8 +46,6 @@ export type {
   OmittedOperation,
   OperationRecord,
 } from './spec/normalize.ts';
-export { TOOL_NAME_MAX_LENGTH, assignToolNames } from './toolgen/naming.ts';
-export type { NamedOperation } from './toolgen/naming.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
 export type {
   CacheStatus,
@@ -118,3 +116,24 @@ export type {
 } from './filter/pattern.ts';
 export { applyFilters, closestMatch, matchesOperation } from './filter/engine.ts';
 export type { DeadPattern, FilterDecision } from './filter/engine.ts';
+export {
+  assignToolNames,
+  buildLayout,
+  buildTools,
+  convertSchema,
+  MAX_CONVERT_DEPTH,
+  paramFields,
+  SYSTEM_HEADERS,
+  TOOL_NAME_MAX_LENGTH,
+} from './toolgen/index.ts';
+export type {
+  BuildToolsResult,
+  Field,
+  FieldMapping,
+  GeneratedTool,
+  LayoutResult,
+  NamedOperation,
+  RequestMapper,
+  SchemaResult,
+  WireSchema,
+} from './toolgen/index.ts';
