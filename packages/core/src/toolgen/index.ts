@@ -6,3 +6,8 @@ export { buildLayout, paramFields } from './layout.ts';
 export type { Field, FieldMapping, LayoutResult, RequestMapper } from './layout.ts';
 export { buildTools, SYSTEM_HEADERS } from './build.ts';
 export type { BuildToolsResult, GeneratedTool, WireSchema } from './build.ts';
+export { deriveAnnotations } from './annotations.ts';
+export type { ToolAnnotations } from './annotations.ts';
+export { composeDescription } from './description.ts';
+export { deriveOutputSchema } from './output-schema.ts';
+export type { JsonSchemaRecord } from './output-schema.ts';
