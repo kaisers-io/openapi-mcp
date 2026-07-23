@@ -48,6 +48,8 @@ export type {
 } from './spec/normalize.ts';
 export { TOOL_NAME_MAX_LENGTH, assignToolNames } from './toolgen/naming.ts';
 export type { NamedOperation } from './toolgen/naming.ts';
+export { convertSchema, MAX_CONVERT_DEPTH } from './toolgen/schema.ts';
+export type { SchemaResult } from './toolgen/schema.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
 export type {
   CacheStatus,
