@@ -9,6 +9,8 @@ export {
   validationError,
 } from './errors.ts';
 export type { ExitCode, RenderedError } from './errors.ts';
+export { createRedactor } from './redact.ts';
+export type { Redactor } from './redact.ts';
 export { MAX_DURATION_MS, parseDuration, zDuration } from './schemas/primitives.ts';
 export { SPEC_BUDGETS } from './spec/budgets.ts';
 export type { SpecBudgets } from './spec/budgets.ts';
