@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EXIT, sanitizeSpecText, usageError, validationError } from '@kaisers-io/openapi-mcp-core';
 import { testContext } from '../src/context.ts';
-import { emit, emitError, wrapAction, type ActionResult } from '../src/output.ts';
+import { emit, emitError, emitWarnings, wrapAction, type ActionResult } from '../src/output.ts';
 
 describe('emit', () => {
   it('prints human lines to stdout in human mode', () => {
@@ -238,6 +238,19 @@ describe('warnings channel', () => {
       },
     );
     expect(errLines[0]).not.toContain('\u001B');
+    expect(errLines[0]).toBe('openapi-mcp: warning: GET /a]0;PWNED\\x omitted');
+  });
+
+  // Serve.ts (Task 6 security fix) calls emitWarnings() directly -- never
+  // emit() -- so the sanitization it relies on must be proven against
+  // emitWarnings() itself, not only inferred from emit() delegating to it.
+  // The ESC byte is built at runtime, never typed/pasted literally.
+  it('emitWarnings() sanitizes untrusted spec text directly, independent of emit()', () => {
+    const esc = String.fromCodePoint(0x1b);
+    const errLines: string[] = [];
+    const ctx = testContext({ errLines });
+    emitWarnings(ctx, [`GET /a${esc}]0;PWNED${esc}\\x omitted`]);
+    expect(errLines[0]).not.toContain(esc);
     expect(errLines[0]).toBe('openapi-mcp: warning: GET /a]0;PWNED\\x omitted');
   });
 

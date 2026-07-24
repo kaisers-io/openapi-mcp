@@ -170,4 +170,33 @@ describe('buildTools — §6.4 wire schema + sanitization', () => {
     expect(zodDesc).not.toContain(bel);
     expect(zodDesc).not.toContain(rlo);
   });
+
+  it('wires description, annotations, and outputSchema onto every GeneratedTool', () => {
+    const built = buildTools(
+      [
+        {
+          toolName: 'getThing',
+          operation: {
+            method: 'get',
+            path: '/things/{id}',
+            tags: [],
+            summary: 'Get a thing',
+            deprecated: false,
+            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+            responses: {
+              '200': {
+                content: { 'application/json': { schema: { type: 'object', properties: {} } } },
+              },
+            },
+          },
+        },
+      ],
+      { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' },
+    );
+    expect(built.tools).toHaveLength(1);
+    const [tool] = built.tools;
+    expect(tool?.description).toBe('Get a thing');
+    expect(tool?.annotations).toEqual({ readOnlyHint: true, openWorldHint: true });
+    expect(tool?.outputSchema).toBeDefined();
+  });
 });

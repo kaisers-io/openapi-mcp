@@ -74,6 +74,17 @@
       "files": ["**/*.test.ts"],
       "plugins": ["vitest"],
       "rules": {
+        // Off per task-4 brief (M4): "vitest/prefer-called-once" and
+        // "vitest/prefer-called-times" directly contradict each other for a
+        // `toHaveBeenCalledTimes(1)` call site (one demands
+        // `toHaveBeenCalledOnce()`, the other demands `toHaveBeenCalledTimes(1)`
+        // for the exact same assertion) - no rewrite satisfies both
+        // simultaneously. Kept "prefer-called-times" (it matches this
+        // codebase's existing convention, e.g.
+        // context-createexclusive.test.ts's `toHaveBeenCalledTimes(0)`) and
+        // turned the other off here rather than weakening the "style"
+        // category as a whole.
+        "vitest/prefer-called-once": "off",
         "vitest/no-hooks": "off",
         "vitest/max-expects": "off",
         // Off per task-2 brief: spec test file omits explicit assertion counts
@@ -288,6 +299,24 @@
         // so trimming the fix's own rationale could not have closed the gap
         // either — this mirrors the pattern.ts/store.ts/pipeline.ts overrides
         // above for the same reason
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/server/sdk-v1/streamable-http.ts"],
+      "rules": {
+        // Off per task-8 brief: streamable-http.ts is the single home of the
+        // Streamable HTTP listener wiring — the session-capacity
+        // synchronous-reservation fix (C4) and its rollback (C4-rollback),
+        // the request-guard-before-transport wiring (Task 7), the 4 MB
+        // body-cap/parse-error handling, and the two-phase bounded graceful
+        // shutdown (C5) each carry load-bearing round-N security rationale
+        // comments by design (see the file's own comments for the exact
+        // SDK-source verification each one cites). Splitting any of these
+        // across files would separate a fix from the exact SDK behavior it
+        // documents, which is itself the load-bearing artifact — this
+        // mirrors the context.ts/layout.ts overrides above for the same
+        // reason
         "max-lines": "off"
       }
     }

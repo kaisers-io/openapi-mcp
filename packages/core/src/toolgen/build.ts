@@ -1,8 +1,11 @@
 import { z } from 'zod';
 import type { OmittedOperation, OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import { deriveAnnotations, type ToolAnnotations } from './annotations.ts';
+import { composeDescription } from './description.ts';
 import { buildLayout, type RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
+import { deriveOutputSchema, type JsonSchemaRecord } from './output-schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
 
@@ -12,6 +15,9 @@ export interface GeneratedTool {
   inputSchema: z.ZodType;
   wireSchema: WireSchema;
   mapper: RequestMapper;
+  description: string;
+  annotations: ToolAnnotations;
+  outputSchema?: JsonSchemaRecord;
 }
 
 export interface BuildToolsResult {
@@ -82,12 +88,18 @@ export const buildTools = (
       });
       continue;
     }
+    const description = composeDescription(named.operation);
+    const annotations = deriveAnnotations(named.operation.method);
+    const outputSchema = deriveOutputSchema(named.operation, opts.openapiVersion);
     tools.push({
       toolName: named.toolName,
       operation: named.operation,
       inputSchema: layout.ok.inputSchema,
       wireSchema,
       mapper: layout.ok.mapper,
+      description,
+      annotations,
+      ...(outputSchema === undefined ? {} : { outputSchema }),
     });
   }
   return { tools, omitted };
