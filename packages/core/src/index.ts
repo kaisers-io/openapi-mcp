@@ -148,6 +148,7 @@ export {
   createDispatcher,
   createMetaExecutor,
   createRateLimiter,
+  createSessionStore,
   DEFAULT_RATE_LIMIT,
   evaluateRequest,
   executionUnavailable,
@@ -171,6 +172,8 @@ export type {
   RateLimiterOptions,
   RequestGuardOptions,
   ServerSnapshot,
+  SessionStore,
+  SessionStoreOptions,
   SnapshotPipelineInput,
   SnapshotTool,
   SnapshotToolKind,
@@ -181,3 +184,8 @@ export type {
 export { createProtocolSession } from './server/sdk-v1/protocol.ts';
 export type { ProtocolSessionOptions } from './server/sdk-v1/protocol.ts';
 export { connectStdio } from './server/sdk-v1/stdio.ts';
+export { createStreamableHttpServer } from './server/sdk-v1/streamable-http.ts';
+export type {
+  StreamableHttpOptions,
+  StreamableHttpServerHandle,
+} from './server/sdk-v1/streamable-http.ts';

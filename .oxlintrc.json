@@ -301,6 +301,24 @@
         // above for the same reason
         "max-lines": "off"
       }
+    },
+    {
+      "files": ["packages/core/src/server/sdk-v1/streamable-http.ts"],
+      "rules": {
+        // Off per task-8 brief: streamable-http.ts is the single home of the
+        // Streamable HTTP listener wiring — the session-capacity
+        // synchronous-reservation fix (C4) and its rollback (C4-rollback),
+        // the request-guard-before-transport wiring (Task 7), the 4 MB
+        // body-cap/parse-error handling, and the two-phase bounded graceful
+        // shutdown (C5) each carry load-bearing round-N security rationale
+        // comments by design (see the file's own comments for the exact
+        // SDK-source verification each one cites). Splitting any of these
+        // across files would separate a fix from the exact SDK behavior it
+        // documents, which is itself the load-bearing artifact — this
+        // mirrors the context.ts/layout.ts overrides above for the same
+        // reason
+        "max-lines": "off"
+      }
     }
   ]
 }
