@@ -23,3 +23,16 @@ export {
   type DispatchResult,
   type ToolCallOutcome,
 } from './result.ts';
+export {
+  constantTimeEquals,
+  extractBearerToken,
+  isAuthorized,
+  isValidBearerToken,
+  type BearerCheck,
+} from './http/auth.ts';
+export {
+  evaluateRequest,
+  type GuardDecision,
+  type IncomingHeaders,
+  type RequestGuardOptions,
+} from './http/request-guard.ts';
