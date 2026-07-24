@@ -26,6 +26,13 @@ describe('classifyAddress', () => {
     ['93.184.216.34', 'public'],
     ['172.32.0.1', 'public'],
     ['100.128.0.1', 'public'],
+    ['192.0.0.1', 'private'], // IETF protocol assignments 192.0.0.0/24
+    ['192.0.2.1', 'private'], // Documentation (TEST-NET-1) 192.0.2.0/24
+    ['198.51.100.1', 'private'], // Documentation (TEST-NET-2) 198.51.100.0/24
+    ['203.0.113.1', 'private'], // Documentation (TEST-NET-3) 203.0.113.0/24
+    ['198.18.0.1', 'private'], // Benchmarking 198.18.0.0/15 (lower half)
+    ['198.19.255.255', 'private'], // Benchmarking 198.18.0.0/15 (upper half)
+    ['192.88.99.1', 'private'], // 6to4 relay anycast 192.88.99.0/24
     ['::1', 'private'],
     ['::', 'private'],
     ['fc00::1', 'private'],
@@ -40,6 +47,28 @@ describe('classifyAddress', () => {
     ['::ffff:a9fe:aa02', 'metadata'],
     ['::ffff:5db8:d822', 'public'],
     ['2606:2800:220:1:248:1893:25c8:1946', 'public'],
+    ['fd00:ec2::254', 'metadata'], // AWS IPv6 IMDS — denied even with --allow-private-network
+    ['ff02::1', 'private'], // IPv6 multicast (was public)
+    ['ff00::', 'private'],
+    ['fd00:ec2::255', 'private'], // Adjacent ULA stays merely private (proves the metadata match is exact)
+    ['100::1', 'private'], // Discard-only 100::/64
+    ['2001:db8::1', 'private'], // Documentation 2001:db8::/32
+    ['2001:2::1', 'private'], // Benchmarking 2001:2::/48
+    ['64:ff9b::a9fe:a9fe', 'metadata'], // Well-known NAT64 embeds AWS IMDS (169.254.169.254) — must decode
+    ['64:ff9b::a00:1', 'private'], // Well-known NAT64 embeds a private address (10.0.0.1) — must decode
+    ['64:ff9b:1::a9fe:a9fe', 'private'], // Local-use NAT64 /48 — NOT decoded, whole prefix denied
+    ['2001::1', 'private'], // Teredo 2001::/32 — undecodable tunnel prefix, fail closed
+    ['2002::1', 'private'], // 6to4 2002::/16 — undecodable tunnel prefix, fail closed
+    ['100:0:0:1::1', 'private'], // Discard-only 100::/8 beyond the decoded 100::/64 — fail-closed fallthrough
+    ['5f00::1', 'private'], // SRv6 SIDs 5f00::/16 — outside global-unicast 2000::/3, fail-closed fallthrough
+    ['5f00::', 'private'], // Same block, network address
+    ['3fff::1', 'private'], // Documentation 3fff::/20 (RFC 9637), over-approximated to 3fff::/16
+    ['3fff:ffff::1', 'private'], // Still within the 3fff::/16 over-approximation
+    ['2001:1::4', 'private'], // IETF protocol assignments 2001::/23 sub-block
+    ['2001:20::1', 'private'], // ORCHID 2001:20::/28, a 2001::/23 sub-block
+    ['2606:4700::1', 'public'], // Genuine global unicast (Cloudflare), outside every carve-out
+    ['2a00:1450::1', 'public'], // Genuine global unicast, outside every carve-out
+    ['2001:4860:4860::8888', 'public'], // Google DNS — 2001::/16 but outside the 2001::/23 carve-out
   ])('classifies %s as %s', (address, expected) => {
     // Hex-group entries are the WHATWG-canonical spellings of mapped literals:
     // ::ffff:7f00:1 = 127.0.0.1, ::ffff:a00:1 = 10.0.0.1,
@@ -89,6 +118,12 @@ describe('assertAllowedRedirectTarget', () => {
         signal,
       ),
     ).rejects.toMatchObject({ message: expect.stringContaining('metadata') as string });
+  });
+
+  it('rejects the AWS IPv6 IMDS even with --allow-private-network', async () => {
+    await expect(
+      assertAllowedRedirectTarget(new URL('http://[fd00:ec2::254]/'), allow, noLookup, signal),
+    ).rejects.toThrow(/metadata/u);
   });
 
   it('always rejects the metadata IP, even with allowPrivateNetwork', async () => {

@@ -5,6 +5,15 @@ import { validationError } from '../errors.ts';
 // redirect targets. The initial --spec URL is operator intent and is not
 // checked here. M3 replaces this post-resolution validation with a DNS-pinning
 // dispatcher that closes the remaining resolve-vs-connect TOCTOU window (§7.4).
+//
+// M5 Task 1 hardening: classifyAddress fails closed on the full set of
+// SSRF-relevant IANA special-purpose ranges (IANA "IPv4 Special-Purpose
+// Address Registry" and "IPv6 Special-Purpose Address Registry"), plus the
+// NAT64 IPv4-embedding rules of RFC 6052. Only the well-known NAT64 prefix
+// 64:ff9b::/96 has a fixed "embedded IPv4 = low 32 bits" layout; the
+// local-use prefix 64:ff9b:1::/48 places the embedded IPv4 at a
+// translator-prefix-dependent bit offset and is classified private WITHOUT
+// decoding (see classifyAddress below).
 
 export type DnsLookup = (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
 
@@ -24,7 +33,7 @@ const classifyIpv4 = (address: string): AddressClass => {
   if (METADATA_IPV4.has(address)) {
     return 'metadata';
   }
-  const [octetA = -1, octetB = -1] = address.split('.').map(Number);
+  const [octetA = -1, octetB = -1, octetC = -1] = address.split('.').map(Number);
   if (
     octetA === 0 || // "This network"
     octetA === 10 || // RFC1918
@@ -33,12 +42,24 @@ const classifyIpv4 = (address: string): AddressClass => {
     (octetA === 169 && octetB === 254) || // Link-local
     (octetA === 172 && octetB >= 16 && octetB <= 31) || // RFC1918
     (octetA === 192 && octetB === 168) || // RFC1918
+    (octetA === 192 && octetB === 0 && octetC === 0) || // IETF protocol assignments 192.0.0.0/24
+    (octetA === 192 && octetB === 0 && octetC === 2) || // Documentation (TEST-NET-1) 192.0.2.0/24
+    (octetA === 198 && octetB === 51 && octetC === 100) || // Documentation (TEST-NET-2) 198.51.100.0/24
+    (octetA === 203 && octetB === 0 && octetC === 113) || // Documentation (TEST-NET-3) 203.0.113.0/24
+    (octetA === 198 && (octetB === 18 || octetB === 19)) || // Benchmarking 198.18.0.0/15
+    (octetA === 192 && octetB === 88 && octetC === 99) || // 6to4 relay anycast 192.88.99.0/24
     octetA >= 224 // Multicast, reserved, broadcast
   ) {
     return 'private';
   }
   return 'public';
 };
+
+// Decodes the low 32 bits of two IPv6 groups into a dotted-quad IPv4 string.
+// Shared by the IPv4-mapped (::ffff:0:0/96) and well-known-NAT64
+// (64:ff9b::/96) decode paths below.
+const ipv4FromGroups = (high: number, low: number): string =>
+  `${Math.floor(high / 256)}.${high % 256}.${Math.floor(low / 256)}.${low % 256}`;
 
 // Parses a valid IPv6 literal (isIP === 6) into its eight 16-bit groups,
 // converting an embedded dotted-IPv4 tail into two hex groups first
@@ -88,9 +109,7 @@ export const classifyAddress = (address: string): AddressClass => {
     if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff) {
       // IPv4-mapped ::ffff:0:0/96 — classify the embedded IPv4 regardless of
       // spelling (WHATWG URLs canonicalize dotted forms to hex groups)
-      return classifyIpv4(
-        `${Math.floor(g6 / 256)}.${g6 % 256}.${Math.floor(g7 / 256)}.${g7 % 256}`,
-      );
+      return classifyIpv4(ipv4FromGroups(g6, g7));
     }
     if (groups.every((value) => value === 0)) {
       // Unspecified ::
@@ -109,11 +128,89 @@ export const classifyAddress = (address: string): AddressClass => {
       // Loopback ::1
       return 'private';
     }
-    if ((g0 >= 0xfc00 && g0 <= 0xfdff) || (g0 >= 0xfe80 && g0 <= 0xfebf)) {
-      // Unique-local fc00::/7, link-local fe80::/10
+    if (g0 === 0x0064 && g1 === 0xff9b) {
+      // NAT64 (RFC 6052; IANA IPv6 Special-Purpose Address Registry). Only
+      // the well-known prefix 64:ff9b::/96 has a fixed "embedded IPv4 = low
+      // 32 bits" layout — decode it and classify with classifyIpv4 so a
+      // NAT64-wrapped metadata/private address is denied rather than passed
+      // as public (round-1 egress-bypass #2). The local-use prefix
+      // 64:ff9b:1::/48 places the embedded IPv4 at a translator-prefix-
+      // dependent bit offset (/32../64, with the reserved "u" octet at bits
+      // 64-71 per RFC 6052 §2.2), so a fixed low-32 decode there is unsound
+      // and could fail OPEN — classify the entire /48 (and any other
+      // unallocated 64:ff9b:x:: prefix) as private WITHOUT decoding.
+      if (g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+        return classifyIpv4(ipv4FromGroups(g6, g7));
+      }
       return 'private';
     }
-    return 'public';
+    if (g0 === 0x2001 && g1 === 0) {
+      // Teredo 2001::/32 (RFC 4380; IANA registry) — a tunneling prefix we
+      // cannot soundly decode; fail closed rather than classify public.
+      return 'private';
+    }
+    if (g0 === 0x2001 && g1 === 0x0db8) {
+      // Documentation 2001:db8::/32 (IANA registry)
+      return 'private';
+    }
+    if (g0 === 0x2001 && g1 === 2 && g2 === 0) {
+      // Benchmarking 2001:2::/48 (IANA registry)
+      return 'private';
+    }
+    if (g0 === 0x2002) {
+      // 6to4 2002::/16 (RFC 3056; IANA registry) — another undecodable
+      // tunneling prefix; fail closed rather than classify public.
+      return 'private';
+    }
+    if (g0 === 0x0100 && g1 === 0 && g2 === 0 && g3 === 0) {
+      // Discard-only 100::/64 (IANA registry)
+      return 'private';
+    }
+    // AWS IPv6 IMDS fd00:ec2::254 — a metadata endpoint (denied even with
+    // --allow-private-network). Matched before the fc00::/7 ULA range below,
+    // which would otherwise class it merely private.
+    if (
+      g0 === 0xfd00 &&
+      g1 === 0x0ec2 &&
+      g2 === 0 &&
+      g3 === 0 &&
+      g4 === 0 &&
+      g5 === 0 &&
+      g6 === 0 &&
+      g7 === 0x0254
+    ) {
+      return 'metadata';
+    }
+    if ((g0 >= 0xfc00 && g0 <= 0xfdff) || (g0 >= 0xfe80 && g0 <= 0xfebf) || g0 >= 0xff00) {
+      // Unique-local fc00::/7, link-local fe80::/10, multicast ff00::/8
+      return 'private';
+    }
+    // Fail-closed allow-list posture (M5 Task 1 review fix): classify public
+    // ONLY within global-unicast 2000::/3 (IANA registry), minus the two
+    // carve-outs below. Every other range (e.g. discard-only 100::/8 beyond
+    // the 100::/64 handled above, SRv6 SIDs 5f00::/16, and any future or
+    // unallocated non-global-unicast block) falls through to private instead
+    // of the previous fail-open "return 'public'" default.
+    if (g0 === 0x3fff) {
+      // Documentation 3fff::/20 (RFC 9637; IANA registry), over-approximated
+      // to the containing 3fff::/16 — no real public address lives here.
+      return 'private';
+    }
+    if (g0 === 0x2001 && g1 <= 0x01ff) {
+      // IETF Protocol Assignments 2001::/23 (IANA registry). Teredo
+      // (2001::/32), benchmarking (2001:2::/48), and documentation
+      // (2001:db8::/32) above are explicit sub-block matches within this
+      // range kept for clarity; this closes the remaining sub-blocks (e.g.
+      // ORCHID 2001:20::/28) fail-closed. Real global-unicast allocations
+      // (2001:4860::, 2606:4700::, 2a00::, ...) all lie outside 2001::/23.
+      return 'private';
+    }
+    if (g0 >= 0x2000 && g0 <= 0x3fff) {
+      // Global unicast 2000::/3 (IANA registry), excluding the
+      // documentation/protocol-assignment carve-outs above.
+      return 'public';
+    }
+    return 'private';
   }
   // Not an IP literal: callers must resolve hostnames via DNS first
   return 'public';
