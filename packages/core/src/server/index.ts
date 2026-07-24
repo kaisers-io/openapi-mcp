@@ -8,3 +8,18 @@ export type {
 } from './types.ts';
 export { createRateLimiter, DEFAULT_RATE_LIMIT } from './rate-limit.ts';
 export type { RateLimiter, RateLimiterOptions } from './rate-limit.ts';
+export {
+  createDispatcher,
+  createMetaExecutor,
+  type CallRequest,
+  type DispatcherDeps,
+  type MetaExecutor,
+  type ToolExecutor,
+} from './dispatch.ts';
+export { executionUnavailable } from './execution-unavailable.ts';
+export {
+  structuredOutcome,
+  textOutcome,
+  type DispatchResult,
+  type ToolCallOutcome,
+} from './result.ts';

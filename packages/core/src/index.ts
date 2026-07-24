@@ -144,11 +144,20 @@ export type {
 } from './toolgen/index.ts';
 export {
   buildSnapshot,
+  createDispatcher,
+  createMetaExecutor,
   createRateLimiter,
   DEFAULT_RATE_LIMIT,
+  executionUnavailable,
   META_TOOL_NAME,
+  structuredOutcome,
+  textOutcome,
 } from './server/index.ts';
 export type {
+  CallRequest,
+  DispatcherDeps,
+  DispatchResult,
+  MetaExecutor,
   MetaSummary,
   RateLimiter,
   RateLimiterOptions,
@@ -156,5 +165,7 @@ export type {
   SnapshotPipelineInput,
   SnapshotTool,
   SnapshotToolKind,
+  ToolCallOutcome,
+  ToolExecutor,
   WireTool,
 } from './server/index.ts';

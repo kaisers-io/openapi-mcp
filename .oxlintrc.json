@@ -74,6 +74,17 @@
       "files": ["**/*.test.ts"],
       "plugins": ["vitest"],
       "rules": {
+        // Off per task-4 brief (M4): "vitest/prefer-called-once" and
+        // "vitest/prefer-called-times" directly contradict each other for a
+        // `toHaveBeenCalledTimes(1)` call site (one demands
+        // `toHaveBeenCalledOnce()`, the other demands `toHaveBeenCalledTimes(1)`
+        // for the exact same assertion) - no rewrite satisfies both
+        // simultaneously. Kept "prefer-called-times" (it matches this
+        // codebase's existing convention, e.g.
+        // context-createexclusive.test.ts's `toHaveBeenCalledTimes(0)`) and
+        // turned the other off here rather than weakening the "style"
+        // category as a whole.
+        "vitest/prefer-called-once": "off",
         "vitest/no-hooks": "off",
         "vitest/max-expects": "off",
         // Off per task-2 brief: spec test file omits explicit assertion counts
