@@ -142,3 +142,12 @@ export type {
   ToolAnnotations,
   WireSchema,
 } from './toolgen/index.ts';
+export { buildSnapshot, META_TOOL_NAME } from './server/index.ts';
+export type {
+  MetaSummary,
+  ServerSnapshot,
+  SnapshotPipelineInput,
+  SnapshotTool,
+  SnapshotToolKind,
+  WireTool,
+} from './server/index.ts';
