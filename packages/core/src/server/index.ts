@@ -6,3 +6,5 @@ export type {
   SnapshotToolKind,
   WireTool,
 } from './types.ts';
+export { createRateLimiter, DEFAULT_RATE_LIMIT } from './rate-limit.ts';
+export type { RateLimiter, RateLimiterOptions } from './rate-limit.ts';

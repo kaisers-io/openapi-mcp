@@ -142,9 +142,16 @@ export type {
   ToolAnnotations,
   WireSchema,
 } from './toolgen/index.ts';
-export { buildSnapshot, META_TOOL_NAME } from './server/index.ts';
+export {
+  buildSnapshot,
+  createRateLimiter,
+  DEFAULT_RATE_LIMIT,
+  META_TOOL_NAME,
+} from './server/index.ts';
 export type {
   MetaSummary,
+  RateLimiter,
+  RateLimiterOptions,
   ServerSnapshot,
   SnapshotPipelineInput,
   SnapshotTool,
