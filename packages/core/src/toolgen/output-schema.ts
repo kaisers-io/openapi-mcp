@@ -21,6 +21,11 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 //   - a 2xx response's content map has ANY non-JSON sibling media type
 //     (e.g. both application/json AND text/plain): content negotiation could
 //     return the unmodelled one, which the envelope would then misrepresent;
+//   - a 2xx response's content map has MORE THAN ONE JSON media type (e.g.
+//     both application/json AND application/problem+json): both pass the
+//     "is this JSON" test, but content negotiation could return EITHER, and
+//     they may carry different schemas — modeling only the first would
+//     misrepresent the second;
 //   - a 2xx response's JSON schema is unrepresentable via convertSchema.
 // A partial envelope that silently drops one of these cases would let
 // `structuredContent` violate the tool's own advertised outputSchema at
@@ -63,9 +68,19 @@ export const deriveOutputSchema = (
     const jsonKeys = contentKeys.filter((type) => isJsonContentType(type));
     // Exactly one JSON media type, and no OTHER (non-JSON) sibling — a 200
     // documenting both application/json and text/plain cannot be uniformly
-    // represented, since either could actually be returned.
+    // represented, since either could actually be returned. The
+    // `jsonKeys.length !== 1` check is what enforces "exactly one": without
+    // it, a 200 documenting BOTH application/json AND
+    // application/problem+json would pass the `jsonKeys.length ===
+    // contentKeys.length` check below (both are JSON, so nothing was
+    // filtered out) and silently model only `jsonKeys[0]`, even though the
+    // other JSON media type could be the one actually returned.
     const [contentType] = jsonKeys;
-    if (contentType === undefined || jsonKeys.length !== contentKeys.length) {
+    if (
+      contentType === undefined ||
+      jsonKeys.length !== 1 ||
+      jsonKeys.length !== contentKeys.length
+    ) {
       return undefined;
     }
     const entry = content[contentType];

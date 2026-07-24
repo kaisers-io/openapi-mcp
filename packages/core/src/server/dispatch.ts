@@ -114,42 +114,59 @@ export const createDispatcher = (
   deps: DispatcherDeps,
 ): { call: (request: CallRequest) => Promise<DispatchResult> } => ({
   call: async (request: CallRequest): Promise<DispatchResult> => {
-    const tool = deps.snapshot.toolsByName.get(request.name);
-    if (tool === undefined) {
-      return { kind: 'unknown-tool', name: request.name };
-    }
-    // Rate consume BEFORE validation: a known-but-invalid call still spends
-    // budget (ordering decision); an unknown tool never does (handled
-    // above, before this point).
-    if (!deps.limiter.consume(deps.now())) {
-      return {
-        kind: 'outcome',
-        outcome: textOutcome('rate limit exceeded — too many tool calls; retry later', true),
-      };
-    }
-    let parsed: Awaited<ReturnType<typeof tool.inputSchema.safeParseAsync>>;
+    // Outer try/catch spanning the ENTIRE method body: the lookup/rate stage
+    // just below (`deps.snapshot.toolsByName.get`, `deps.now()`,
+    // `deps.limiter.consume`) has no inner try/catch of its own, unlike the
+    // parse and executor stages further down. Without this outer boundary, a
+    // throw from a caller-injected `now()`/`consume()` dependency would
+    // propagate raw out of `call()` — carrying whatever message that
+    // dependency's own Error happened to have — straight to the protocol
+    // layer and out to the client. This catch redacts any such throw to the
+    // same generic, stable shape the inner stages already use; it never
+    // interferes with a normal `return` from any branch below.
     try {
-      parsed = await tool.inputSchema.safeParseAsync(request.arguments ?? {});
+      const tool = deps.snapshot.toolsByName.get(request.name);
+      if (tool === undefined) {
+        return { kind: 'unknown-tool', name: request.name };
+      }
+      // Rate consume BEFORE validation: a known-but-invalid call still spends
+      // budget (ordering decision); an unknown tool never does (handled
+      // above, before this point).
+      if (!deps.limiter.consume(deps.now())) {
+        return {
+          kind: 'outcome',
+          outcome: textOutcome('rate limit exceeded — too many tool calls; retry later', true),
+        };
+      }
+      let parsed: Awaited<ReturnType<typeof tool.inputSchema.safeParseAsync>>;
+      try {
+        parsed = await tool.inputSchema.safeParseAsync(request.arguments ?? {});
+      } catch {
+        // See `PARSE_THREW_OUTCOME` above — a rejection here must never reach the
+        // executor and must never surface the thrown value.
+        return { kind: 'outcome', outcome: PARSE_THREW_OUTCOME };
+      }
+      if (!parsed.success) {
+        return { kind: 'outcome', outcome: redactedValidationOutcome(parsed.error.issues) };
+      }
+      let outcome: ToolCallOutcome;
+      try {
+        outcome =
+          tool.kind === 'meta'
+            ? await deps.metaExecutor(deps.snapshot, request.signal)
+            : await deps.executor(tool, parsed.data, request.signal);
+      } catch {
+        // Never surface the raw error — it may carry an upstream secret,
+        // internal path, or stack detail. A generic, stable message only.
+        outcome = textOutcome('tool execution failed unexpectedly', true);
+      }
+      return { kind: 'outcome', outcome };
     } catch {
-      // See `PARSE_THREW_OUTCOME` above — a rejection here must never reach the
-      // executor and must never surface the thrown value.
-      return { kind: 'outcome', outcome: PARSE_THREW_OUTCOME };
+      // Redacts any throw from the lookup/rate stage above (deps.now/consume,
+      // or even deps.snapshot.toolsByName.get) so no raw dependency-failure
+      // message can ever reach the client.
+      return { kind: 'outcome', outcome: textOutcome('tool call failed unexpectedly', true) };
     }
-    if (!parsed.success) {
-      return { kind: 'outcome', outcome: redactedValidationOutcome(parsed.error.issues) };
-    }
-    let outcome: ToolCallOutcome;
-    try {
-      outcome =
-        tool.kind === 'meta'
-          ? await deps.metaExecutor(deps.snapshot, request.signal)
-          : await deps.executor(tool, parsed.data, request.signal);
-    } catch {
-      // Never surface the raw error — it may carry an upstream secret,
-      // internal path, or stack detail. A generic, stable message only.
-      outcome = textOutcome('tool execution failed unexpectedly', true);
-    }
-    return { kind: 'outcome', outcome };
   },
 });
 

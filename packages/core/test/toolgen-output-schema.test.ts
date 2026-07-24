@@ -116,6 +116,30 @@ describe('deriveOutputSchema — the §6.6 object-envelope', () => {
     expect(schema).toBeUndefined();
   });
 
+  it('omits the whole outputSchema when a success response documents TWO JSON media types (e.g. application/json AND application/problem+json) — fail-closed: content negotiation could return either, and they may carry different schemas', () => {
+    // Both are JSON, so a guard that only checked "every content key is
+    // JSON" (jsonKeys.length === contentKeys.length) would pass here and
+    // silently advertise ONLY the first (application/json)'s schema — even
+    // though application/problem+json documents a DIFFERENT, distinct
+    // object schema that could just as well be what is actually returned.
+    const schema = deriveOutputSchema(
+      op({
+        '200': {
+          content: {
+            'application/json': {
+              schema: { type: 'object', properties: { ok: { type: 'boolean' } } },
+            },
+            'application/problem+json': {
+              schema: { type: 'object', properties: { title: { type: 'string' } } },
+            },
+          },
+        },
+      }),
+      '3.1',
+    );
+    expect(schema).toBeUndefined();
+  });
+
   it("accepts a JSON-variant media type like application/problem+json as a success's sole content", () => {
     const schema = deriveOutputSchema(
       op({ '200': { content: { 'application/problem+json': { schema: { type: 'string' } } } } }),

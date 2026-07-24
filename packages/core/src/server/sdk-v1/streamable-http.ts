@@ -99,7 +99,16 @@ const parseJsonBody = (buffer: Buffer): ParsedBodyResult => {
     return { ok: true, body: undefined };
   }
   try {
-    return { ok: true, body: JSON.parse(buffer.toString('utf8')) };
+    // A FATAL UTF-8 decode, not `buffer.toString('utf8')`:
+    // `Buffer#toString('utf8')` lenient-decodes any invalid byte sequence to
+    // U+FFFD instead of throwing, which would let a non-UTF-8 body silently
+    // become valid JS text (and, in principle, valid JSON) here.
+    // `TextDecoder`'s `fatal: true` option throws on invalid UTF-8 instead,
+    // so a malformed-encoding body is rejected by the SAME catch below as
+    // malformed JSON — the deliberate 400/-32700 parse-error path, never a
+    // lenient pass-through.
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+    return { ok: true, body: JSON.parse(text) };
   } catch {
     return { ok: false };
   }

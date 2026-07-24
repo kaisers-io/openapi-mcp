@@ -25,19 +25,26 @@ export const DEFAULT_RATE_LIMIT: RateLimiterOptions = Object.freeze({
 const isPositiveFiniteInteger = (value: number): boolean => Number.isInteger(value) && value > 0;
 
 export const createRateLimiter = (opts: RateLimiterOptions = DEFAULT_RATE_LIMIT): RateLimiter => {
-  if (!isPositiveFiniteInteger(opts.maxCalls)) {
+  // Capture the primitives into the closure FIRST, in one single read, THEN
+  // validate from these captured locals — never by re-reading `opts` again.
+  // `opts` is caller-owned and could be a Proxy/accessor whose getter
+  // returns a DIFFERENT value on a second read of the SAME property (e.g. a
+  // valid 120 the first time, `Infinity` the second) — validating directly
+  // against `opts.maxCalls`/`opts.windowMs` and THEN destructuring would let
+  // such an object pass validation against one value while the closure
+  // silently captures another. Capturing once, up front, closes that gap:
+  // whatever this ONE read yields is both what gets validated below AND
+  // what every later `consume()` call actually uses. Numbers are copied by
+  // value, so no cloning/freezing of `opts` itself is needed to prevent a
+  // later mutation of the SAME object from reaching an already-constructed
+  // limiter either.
+  const { maxCalls, windowMs } = opts;
+  if (!isPositiveFiniteInteger(maxCalls)) {
     throw new Error('rate limiter maxCalls must be a positive finite integer');
   }
-  if (!isPositiveFiniteInteger(opts.windowMs)) {
+  if (!isPositiveFiniteInteger(windowMs)) {
     throw new Error('rate limiter windowMs must be a positive finite integer');
   }
-  // Copy the validated primitives into the closure NOW — every later read
-  // goes through these locals, never back through `opts`. `opts` is
-  // caller-owned; validating it once is worthless if a later mutation of
-  // the SAME object (e.g. `opts.maxCalls = Infinity`) could still reach an
-  // already-constructed limiter. Numbers are copied by value, so this is
-  // sufficient — no cloning/freezing of `opts` itself is needed.
-  const { maxCalls, windowMs } = opts;
   // Sliding-window log of call timestamps, bounded by maxCalls (it never
   // holds more than maxCalls entries), so memory is O(maxCalls) even under
   // sustained abuse.

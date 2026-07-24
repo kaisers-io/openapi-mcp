@@ -293,6 +293,29 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       const badJsonBody = (await badJson.json()) as { error?: { code: number } };
       expect(badJsonBody.error?.code).toBe(-32700);
 
+      // An invalid UTF-8 byte (0xFF, built at runtime, never pasted — never
+      // valid anywhere in a UTF-8 byte sequence) EMBEDDED inside an
+      // otherwise well-formed JSON string literal: `{"a":"<0xFF>"}`. This
+      // shape is deliberate, not incidental — it is what makes the assertion
+      // BINDING rather than vacuous. A body of ONLY invalid bytes (e.g. bare
+      // 0xFF/0xFE) would already 400 either way, since `Buffer#toString('utf8')`
+      // lenient-decoding it to U+FFFD replacement characters does not, by
+      // itself, produce valid JSON SYNTAX — so that case would pass even
+      // without the fix, proving nothing. Here, lenient decoding instead
+      // yields `{"a":"�"}` — syntactically VALID JSON — which a
+      // non-fatal `toString('utf8')` would let straight through to a 200.
+      // `parseJsonBody`'s fatal `TextDecoder` throws on the invalid byte
+      // BEFORE `JSON.parse` ever runs, so this reaches the same deliberate
+      // 400/-32700 parse-error path as malformed JSON syntax.
+      const badUtf8 = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: authHeaders(),
+        body: Buffer.concat([Buffer.from('{"a":"'), Buffer.from([0xff]), Buffer.from('"}')]),
+      });
+      expect(badUtf8.status).toBe(400);
+      const badUtf8Body = (await badUtf8.json()) as { error?: { code: number } };
+      expect(badUtf8Body.error?.code).toBe(-32700);
+
       const notInit = await fetch(urlFor(port), {
         method: 'POST',
         headers: authHeaders(),

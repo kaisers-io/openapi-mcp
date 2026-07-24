@@ -543,6 +543,63 @@ describe('createDispatcher', () => {
     expect(executor.mock.calls[0]?.[1]).toEqual({ id: 'x', flag: true });
   });
 
+  it('redacts a throw from the lookup/rate stage itself (deps.now()) instead of letting it escape raw — the outer boundary covers dependencies with no inner try/catch of their own', async () => {
+    // `deps.now()` and `deps.limiter.consume()` run BEFORE the parse and
+    // executor stages, which each already have their own inner try/catch.
+    // Without an OUTER boundary spanning the whole method, a throw here
+    // would propagate straight out of `dispatcher.call()` unhandled, and —
+    // per the dispatcher's own "any un-redacted error" invariant — could
+    // carry an injected dependency's raw message (built at runtime, never
+    // pasted, per the escape discipline) all the way to the client.
+    const secret = `SECRET-NOW-${String(Date.now())}`;
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: alwaysPermitLimiter(),
+      now: () => {
+        throw new Error(secret);
+      },
+      executor: executionUnavailable,
+      metaExecutor: createMetaExecutor(),
+    });
+    const result = await dispatcher.call({
+      name: 'createThing',
+      arguments: { id: 'x' },
+      signal: noSignal,
+    });
+    expect(result).toEqual({
+      kind: 'outcome',
+      outcome: textOutcome('tool call failed unexpectedly', true),
+    });
+    const text = result.kind === 'outcome' ? (result.outcome.content[0]?.text ?? '') : '';
+    expect(text).not.toContain(secret);
+  });
+
+  it('redacts a throw from the rate limiter itself (deps.limiter.consume()) the same way', async () => {
+    const secret = `SECRET-CONSUME-${String(Date.now())}`;
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: {
+        consume: () => {
+          throw new Error(secret);
+        },
+      },
+      now: () => 0,
+      executor: executionUnavailable,
+      metaExecutor: createMetaExecutor(),
+    });
+    const result = await dispatcher.call({
+      name: 'createThing',
+      arguments: { id: 'x' },
+      signal: noSignal,
+    });
+    expect(result).toEqual({
+      kind: 'outcome',
+      outcome: textOutcome('tool call failed unexpectedly', true),
+    });
+    const text = result.kind === 'outcome' ? (result.outcome.content[0]?.text ?? '') : '';
+    expect(text).not.toContain(secret);
+  });
+
   it('redacts an unexpected executor throw to a stable generic message', async () => {
     const executor = vi.fn<ToolExecutor>(() => {
       throw new Error('leaking an internal upstream secret token abc123');

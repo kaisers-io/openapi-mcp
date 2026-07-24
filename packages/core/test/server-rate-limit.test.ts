@@ -51,6 +51,48 @@ describe('createRateLimiter — sliding window', () => {
     expect(limiter.consume(2)).toBe(false); // Still exhausted — the mutation had no effect
   });
 
+  it('is not bypassable by an opts object whose maxCalls GETTER returns a valid value during validation and a different one on a later read (Proxy/accessor hardening: capture-then-validate, never validate-then-capture)', () => {
+    // A getter that returns a legitimate 120 the FIRST time it is read, then
+    // Infinity on every subsequent read. With the old "validate opts.maxCalls,
+    // THEN destructure opts.maxCalls" order, the first read (validation) would
+    // see 120 and pass, while the second read (the destructure into the
+    // closure) would see Infinity and capture THAT — producing a limiter with
+    // no real cap. Capturing first closes this: whichever value the ONE read
+    // yields is both what gets validated and what the closure keeps.
+    let reads = 0;
+    const opts = {
+      windowMs: 1000,
+      get maxCalls(): number {
+        reads += 1;
+        return reads === 1 ? 120 : Number.POSITIVE_INFINITY;
+      },
+    };
+    let limiter: ReturnType<typeof createRateLimiter> | undefined;
+    let threw = false;
+    try {
+      limiter = createRateLimiter(opts);
+    } catch {
+      threw = true;
+    }
+    if (threw) {
+      // Rejected at construction — the hardened, and simplest, outcome.
+      expect(limiter).toBeUndefined();
+      return;
+    }
+    // Otherwise construction succeeded — the resulting limiter must still
+    // enforce SOME finite cap; it must never behave as "unlimited" (always
+    // returning true). Drive it well past any plausible finite cap and
+    // confirm it eventually denies.
+    let deniedAtLeastOnce = false;
+    for (let index = 0; index < 10_000; index += 1) {
+      if (!(limiter as ReturnType<typeof createRateLimiter>).consume(index)) {
+        deniedAtLeastOnce = true;
+        break;
+      }
+    }
+    expect(deniedAtLeastOnce).toBe(true);
+  });
+
   it('DEFAULT_RATE_LIMIT is frozen — mutating it is a no-op/throws, never affecting a limiter built from it', () => {
     expect(Object.isFrozen(DEFAULT_RATE_LIMIT)).toBe(true);
     expect(() => {
