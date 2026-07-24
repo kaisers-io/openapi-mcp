@@ -34,22 +34,16 @@ export interface ActionResult {
   warnings?: readonly string[] | undefined;
 }
 
-// Frozen call shape: warnings travel inside the result, never as a side channel,
-// so a command cannot produce a warning that silently fails to be rendered.
-export const emit = (ctx: CliContext, opts: OutputOptions, result: ActionResult): void => {
-  const warnings = result.warnings ?? [];
-  if (opts.json) {
-    ctx.out(JSON.stringify({ ok: true, data: result.data, warnings }));
-    return;
-  }
-  for (const line of result.humanLines) {
-    ctx.out(line);
-  }
-  // Warnings go to stderr: stdout stays reserved for the command's own output so
-  // it remains pipeable. Warnings can carry untrusted spec text (omitted paths,
-  // dead filter patterns, cache diagnostics), and a warning must occupy exactly
-  // one line, so the collapsing sanitizer is the correct one here —
-  // sanitizeDisplayText is for rendered errors, where structure must survive.
+// Warnings go to stderr: stdout stays reserved for the command's own output so
+// it remains pipeable. Warnings can carry untrusted spec text (omitted paths,
+// dead filter patterns, cache diagnostics), and a warning must occupy exactly
+// one line, so the collapsing sanitizer is the correct one here —
+// sanitizeDisplayText is for rendered errors, where structure must survive.
+// Extracted out of emit() (Task 6 security fix) so serve.ts — which never
+// calls emit() — can render its own dead-pattern/omission warnings through
+// the identical sanitize-and-frame path `tools` gets via emit(), instead of
+// writing raw, unsanitized warning text to the operator's terminal.
+export const emitWarnings = (ctx: CliContext, warnings: readonly string[]): void => {
   const warningGutter = 'openapi-mcp: warning: ';
   for (const warning of warnings) {
     const single = sanitizeSpecText(warning, WARNING_DISPLAY_MAX);
@@ -68,6 +62,20 @@ export const emit = (ctx: CliContext, opts: OutputOptions, result: ActionResult)
       ctx.errLine(line);
     }
   }
+};
+
+// Frozen call shape: warnings travel inside the result, never as a side channel,
+// so a command cannot produce a warning that silently fails to be rendered.
+export const emit = (ctx: CliContext, opts: OutputOptions, result: ActionResult): void => {
+  const warnings = result.warnings ?? [];
+  if (opts.json) {
+    ctx.out(JSON.stringify({ ok: true, data: result.data, warnings }));
+    return;
+  }
+  for (const line of result.humanLines) {
+    ctx.out(line);
+  }
+  emitWarnings(ctx, warnings);
 };
 
 const ERROR_GUTTER = 'openapi-mcp: | ';

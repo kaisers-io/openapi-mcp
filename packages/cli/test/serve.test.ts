@@ -1,0 +1,313 @@
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it } from 'vitest';
+
+const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
+const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
+
+interface JsonRpcMessage {
+  jsonrpc: '2.0';
+  id?: number;
+  method?: string;
+  params?: unknown;
+  result?: Record<string, unknown>;
+  error?: { code: number; message: string };
+}
+
+// StdioServerTransport frames JSON-RPC messages one-per-line (verified
+// against the SDK's shared/stdio.js ReadBuffer/serializeMessage in Task 5).
+const send = (proc: ReturnType<typeof spawn>, message: JsonRpcMessage): void => {
+  proc.stdin?.write(`${JSON.stringify(message)}\n`);
+};
+
+interface Collected {
+  stdoutLines: string[];
+  stderrLines: string[];
+  // The RAW, un-split accumulation — used for the airtight end-of-process
+  // purity check below, which must see every byte exactly as written,
+  // including a possible unterminated trailing fragment `stdoutLines`
+  // (incremental, newline-delimited) would silently drop.
+  rawStdout: () => string;
+}
+
+const collectLines = (proc: ReturnType<typeof spawn>): Collected => {
+  const stdoutLines: string[] = [];
+  const stderrLines: string[] = [];
+  let stdoutBuf = '';
+  let stderrBuf = '';
+  let rawStdout = '';
+  proc.stdout?.on('data', (chunk: Buffer) => {
+    const text = chunk.toString('utf8');
+    rawStdout += text;
+    stdoutBuf += text;
+    const parts = stdoutBuf.split('\n');
+    stdoutBuf = parts.pop() ?? '';
+    stdoutLines.push(...parts.filter((line) => line !== ''));
+  });
+  proc.stderr?.on('data', (chunk: Buffer) => {
+    stderrBuf += chunk.toString('utf8');
+    const parts = stderrBuf.split('\n');
+    stderrBuf = parts.pop() ?? '';
+    stderrLines.push(...parts.filter((line) => line !== ''));
+  });
+  return { stdoutLines, stderrLines, rawStdout: () => rawStdout };
+};
+
+const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void> => {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('timed out waiting for a condition');
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 20);
+    });
+  }
+};
+
+describe('serve — stdio subprocess E2E', () => {
+  let child: ReturnType<typeof spawn> | undefined;
+
+  afterEach(() => {
+    child?.kill('SIGKILL');
+    child = undefined;
+  });
+
+  it('initialize/list/call(meta)/call(upstream, M5-unavailable)/shutdown, with stdout carrying ONLY JSON-RPC', async () => {
+    child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json'], {
+      cwd: fixturesDir,
+    });
+    const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
+
+    send(child, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'e2e', version: '1.0.0' },
+      },
+    });
+    await waitFor(() => stdoutLines.length > 0);
+    const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(initResponse.result?.['protocolVersion']).toBe('2025-11-25');
+    send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
+
+    send(child, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    await waitFor(() => stdoutLines.length >= 2);
+    const listResponse = JSON.parse(stdoutLines[1] as string) as JsonRpcMessage;
+    const tools = (listResponse.result?.['tools'] as { name: string }[]) ?? [];
+    expect(tools.map((tool) => tool.name)).toEqual(
+      expect.arrayContaining(['openapi_mcp_status', 'listPets']),
+    );
+
+    send(child, {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'openapi_mcp_status', arguments: {} },
+    });
+    await waitFor(() => stdoutLines.length >= 3);
+    const metaResponse = JSON.parse(stdoutLines[2] as string) as JsonRpcMessage;
+    expect(metaResponse.result?.['isError']).not.toBe(true);
+
+    send(child, {
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: { name: 'listPets', arguments: {} },
+    });
+    await waitFor(() => stdoutLines.length >= 4);
+    const upstreamResponse = JSON.parse(stdoutLines[3] as string) as JsonRpcMessage;
+    expect(upstreamResponse.result?.['isError']).toBe(true);
+    const content = upstreamResponse.result?.['content'] as { text: string }[] | undefined;
+    const text = content?.[0]?.text ?? '';
+    expect(text).toMatch(/M5/u);
+
+    child.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      child?.once('exit', () => resolve());
+    });
+
+    // Airtight stdout-purity assertion (the one thing the in-process
+    // InMemory tier in Task 5 cannot catch), evaluated on the RAW
+    // accumulation through process exit — not the incremental
+    // `stdoutLines`, which quietly drops an unterminated trailing fragment:
+    // (1) the raw stream must end with a trailing newline or be empty — no
+    //     residual/unterminated partial bytes left over;
+    // (2) splitting on "\n" and dropping the final empty segment gives
+    //     EXACTLY 4 non-empty lines — the 4 responses sent above, no more,
+    //     no fewer (a stray console.log/warning would add a 5th);
+    // (3) EVERY one of those parses as JSON AND carries `jsonrpc: "2.0"`.
+    const finalRaw = rawStdout();
+    expect(finalRaw === '' || finalRaw.endsWith('\n')).toBe(true);
+    const allLines = finalRaw.split('\n').filter((line) => line !== '');
+    expect(allLines).toHaveLength(4);
+    for (const line of allLines) {
+      const parsed = JSON.parse(line) as JsonRpcMessage; // Throws on anything non-JSON — no swallowed try/catch
+      expect(parsed.jsonrpc).toBe('2.0');
+    }
+    expect(stderrLines.every((line) => !line.includes('{'))).toBe(true); // Stderr carries plain-text diagnostics, not JSON-RPC
+  }, 10000);
+
+  it('a startup failure (missing spec file) goes to stderr as plain text, even with the global --json flag, and never touches stdout', async () => {
+    child = spawn(process.execPath, [bin, '--json', 'serve', '--spec', 'does-not-exist.json'], {
+      cwd: fixturesDir,
+    });
+    const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).not.toBe(0);
+    expect(rawStdout()).toBe(''); // ZERO bytes on stdout, not just zero parsed lines
+    expect(stdoutLines).toEqual([]);
+    expect(stderrLines.join('\n')).not.toMatch(/^\{/mu); // Never the --json envelope shape
+    expect(stderrLines.join('\n').length).toBeGreaterThan(0);
+  });
+
+  it("a PRE-action commander parse failure (missing --spec) with the global --json flag never touches stdout — the failure happens before serve.ts's own action body ever runs", async () => {
+    child = spawn(process.execPath, [bin, '--json', 'serve'], { cwd: fixturesDir }); // No --spec at all
+    const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(2); // EXIT.USAGE
+    expect(rawStdout()).toBe(''); // ZERO bytes on stdout, not just zero parsed lines
+    expect(stdoutLines).toEqual([]);
+    expect(stderrLines.join('\n')).not.toMatch(/^\{/mu); // Never the --json envelope shape
+    expect(stderrLines.join('\n').length).toBeGreaterThan(0);
+  });
+
+  it('a PRE-action commander parse failure (an unknown flag) never touches stdout, even with the global --json flag', async () => {
+    // MUST pass --json here to actually bind the policy this test claims to
+    // exercise: with --json ABSENT (an earlier version of this test),
+    // getGlobalOpts(program) reads json:false regardless of whether
+    // isServeInvocation's own errorOpts branch ever ran, so the assertions
+    // below would stay green even if that branch were deleted entirely —
+    // proving nothing about the fix. --json forces the two code paths to
+    // actually diverge.
+    child = spawn(
+      process.execPath,
+      [bin, '--json', 'serve', '--spec', 'petstore.json', '--bogus-flag'],
+      { cwd: fixturesDir },
+    );
+    const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(2); // EXIT.USAGE
+    expect(rawStdout()).toBe(''); // ZERO bytes on stdout, not just zero parsed lines
+    expect(stdoutLines).toEqual([]);
+    expect(stderrLines.join('\n')).not.toMatch(/^\{/mu);
+    expect(stderrLines.join('\n').length).toBeGreaterThan(0);
+  });
+
+  it('a `--` options terminator before `serve` never touches stdout, even with the global --json flag (security fix)', async () => {
+    // Commander still selects `serve` and throws a parse error (missing
+    // --spec), but `--` is not a GLOBAL_BOOLEAN_FLAGS token — an unguarded
+    // isServeInvocation() scan would stop on `--` itself, misclassify this
+    // as a non-serve invocation, and fall back to getGlobalOpts (json:true),
+    // writing the {"ok":false,...} envelope to stdout.
+    child = spawn(process.execPath, [bin, '--json', '--', 'serve'], { cwd: fixturesDir });
+    const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(2); // EXIT.USAGE
+    expect(rawStdout()).toBe(''); // ZERO bytes on stdout
+    expect(stdoutLines).toEqual([]);
+    expect(stderrLines.join('\n')).not.toMatch(/^\{/mu); // Never the --json envelope shape
+    expect(stderrLines.join('\n').length).toBeGreaterThan(0);
+  });
+
+  it('an unknown flag BEFORE `serve` never touches stdout, even with the global --json flag (security fix)', async () => {
+    // The scanner for the subcommand token must not stop at the first
+    // unrecognized flag it meets: `--bogus` is neither `--` nor a known
+    // global flag, but it DOES start with '-', so it must be skipped just
+    // like `--json` is, leaving `serve` as the first non-option token. An
+    // earlier version of isServeInvocation() only skipped a fixed set of
+    // known global flags (`--json`/`--verbose`) and `--`, so it stopped at
+    // `--bogus`, classified this as a non-serve invocation, and fell back to
+    // getGlobalOpts (json:true) — leaking the {"ok":false,...} envelope to
+    // stdout.
+    child = spawn(process.execPath, [bin, '--json', '--bogus', 'serve'], { cwd: fixturesDir });
+    const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(2); // EXIT.USAGE
+    expect(rawStdout()).toBe(''); // ZERO bytes on stdout
+    expect(stdoutLines).toEqual([]);
+    expect(stderrLines.join('\n')).not.toMatch(/^\{/mu); // Never the --json envelope shape
+    expect(stderrLines.join('\n').length).toBeGreaterThan(0);
+  });
+
+  it('a dead --deny pattern in non-strict mode is reported as a sanitized stderr warning and the server still initializes normally (security fix)', async () => {
+    child = spawn(
+      process.execPath,
+      [bin, 'serve', '--spec', 'petstore.json', '--deny', 'zzz-no-such-op'],
+      { cwd: fixturesDir },
+    );
+    const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
+
+    await waitFor(() => stderrLines.some((line) => line.includes('matches no operation')));
+    expect(stderrLines.join('\n')).toContain(
+      'openapi-mcp: warning: --deny "zzz-no-such-op" matches no operation',
+    );
+
+    send(child, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'e2e', version: '1.0.0' },
+      },
+    });
+    await waitFor(() => stdoutLines.length > 0);
+    const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(initResponse.result?.['protocolVersion']).toBe('2025-11-25');
+
+    child.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      child?.once('exit', () => resolve());
+    });
+    // Stdout stays pure JSON-RPC even though a warning was emitted to stderr
+    const finalRaw = rawStdout();
+    expect(finalRaw === '' || finalRaw.endsWith('\n')).toBe(true);
+    const allLines = finalRaw.split('\n').filter((line) => line !== '');
+    for (const line of allLines) {
+      const parsed = JSON.parse(line) as JsonRpcMessage;
+      expect(parsed.jsonrpc).toBe('2.0');
+    }
+  });
+
+  it('exits 0 on a graceful shutdown when the client closes stdin (stdin EOF), not just on SIGINT/SIGTERM (security fix)', async () => {
+    child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json'], {
+      cwd: fixturesDir,
+    });
+    const { stdoutLines } = collectLines(child);
+
+    send(child, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'e2e', version: '1.0.0' },
+      },
+    });
+    await waitFor(() => stdoutLines.length > 0);
+    const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(initResponse.result?.['protocolVersion']).toBe('2025-11-25');
+
+    child.stdin?.end();
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(0);
+  }, 10000);
+});

@@ -505,6 +505,70 @@ describe('tools command — cache and ttl', () => {
     expect(code).toBe(EXIT.OK);
     expect(lines.join('\n')).toContain('cache: bypassed');
   });
+
+  // Falsification (c) coverage gap: --allow-private-network threads through
+  // parseSpecPipelineArgs into the pipeline options exactly like the other
+  // nine flags, but nothing in this file exercised it before the tools.ts ->
+  // spec-options.ts extraction (Task 6) — a dropped flag in that extraction
+  // would have gone undetected by the rest of this suite. A redirect to a
+  // private-address host is the only place this flag has any effect (the
+  // initial --spec URL itself is never address-checked).
+  it('threads --allow-private-network through to the redirect egress check', async () => {
+    const specText = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Remote', version: '1.0.0' },
+      paths: {
+        '/things': {
+          get: { operationId: 'listThings', responses: { '200': { description: 'ok' } } },
+        },
+      },
+    });
+    const hrefOf = (url: string | URL | Request): string => {
+      if (typeof url === 'string') {
+        return url;
+      }
+      return url instanceof URL ? url.href : url.url;
+    };
+    const fetcher = ((url: string | URL | Request) => {
+      const href = hrefOf(url);
+      if (href === 'https://api.example.com/openapi.json') {
+        return Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: 'https://internal.example.com/openapi.json' },
+          }),
+        );
+      }
+      return Promise.resolve(new Response(specText));
+    }) as typeof fetch;
+    const lookup = (hostname: string): Promise<readonly string[]> =>
+      hostname === 'internal.example.com'
+        ? Promise.resolve(['10.0.0.5'])
+        : Promise.reject(new Error('unexpected host'));
+
+    const denied = fileCtx({ fetcher, lookup });
+    const deniedCode = await run(denied.ctx, [
+      'node',
+      'openapi-mcp',
+      'tools',
+      '--spec',
+      'https://api.example.com/openapi.json',
+    ]);
+    expect(deniedCode).toBe(EXIT.VALIDATION);
+    expect(denied.errLines.join('\n')).toContain('--allow-private-network');
+
+    const allowed = fileCtx({ fetcher, lookup });
+    const allowedCode = await run(allowed.ctx, [
+      'node',
+      'openapi-mcp',
+      'tools',
+      '--spec',
+      'https://api.example.com/openapi.json',
+      '--allow-private-network',
+    ]);
+    expect(allowedCode).toBe(EXIT.OK);
+    expect(allowed.lines.join('\n')).toContain('listThings');
+  });
 });
 
 describe('tools command — toolgen omissions', () => {
