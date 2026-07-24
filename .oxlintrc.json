@@ -209,6 +209,21 @@
       }
     },
     {
+      "files": ["packages/core/src/http/pinned-dispatcher.ts"],
+      "rules": {
+        // Off per task-3 brief (M5): pinnedLookup implements node:net's
+        // LookupFunction / undici's connect.lookup contract, which Node
+        // itself defines as a callback (hostname, options, callback) => void
+        // - there is no async/await form of this external API to refactor to
+        "promise/prefer-await-to-callbacks": "off",
+        // Off per task-3 brief (M5): the LookupFunction callback's first
+        // parameter is typed `NodeJS.ErrnoException | null` (not `| undefined`)
+        // by node:net itself, so the success-path calls must pass the literal
+        // `null` verbatim to satisfy that upstream type
+        "unicorn/no-null": "off"
+      }
+    },
+    {
       "files": ["packages/core/src/toolgen/schema.ts"],
       "rules": {
         // Off per task-1 brief (M3): schema.ts is the full converter framework -
