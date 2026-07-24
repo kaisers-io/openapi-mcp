@@ -33,6 +33,18 @@ export interface ProtocolSessionOptions {
 // cannot inflate a protocol error's size via an absurdly long `name`.
 const MAX_REFLECTED_NAME_LENGTH = 100;
 
+// A GENEROUS pre-sanitize bound on the RAW unknown-tool name, well ABOVE
+// MAX_REFLECTED_NAME_LENGTH: `sanitizeSpecText` below scans its ENTIRE input
+// before applying the 100-char output cap, and unknown tool names bypass the
+// dispatcher's rate limiter (§ dispatch.ts), so a hostile local client could
+// otherwise force large sanitizer allocation/regex work with one absurdly
+// long `name`. Because 1000 >> 100, this bound is NOT output-observable for
+// any realistic name (every name <= 1000 code points reaches sanitizeSpecText
+// completely unmodified, exactly as before this change) — only a
+// >1000-code-point name, which is already hostile for an unknown tool call,
+// has its pre-sanitize scan bounded.
+const RAW_NAME_SCAN_MAX = 1000;
+
 const outcomeToResult = (outcome: ToolCallOutcome): CallToolResult => ({
   isError: outcome.isError,
   // Spread into a MUTABLE array: `ToolCallOutcome.content` is `readonly
@@ -127,9 +139,30 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
         // error-handling example. The raw name is capped before being
         // reflected into the message (defense in depth against an absurdly
         // long name inflating a protocol error).
+        //
+        // Bound the RAW name to RAW_NAME_SCAN_MAX BEFORE sanitizing, using a
+        // surrogate-safe, CODE-POINT-boundary cut. A `for...of` loop over a
+        // string iterates by code point (the string iterator protocol) and is
+        // LAZY, so breaking after RAW_NAME_SCAN_MAX code points reads at most
+        // that many WITHOUT ever materializing the rest of the string —
+        // unlike `[...result.name]`, which spreads the ENTIRE iterator into an
+        // array (and therefore fully allocates a hostile multi-million-code-
+        // point name) before any `.slice()` gets a chance to bound it, which
+        // would defeat the whole point of this guard. This bound is well
+        // above MAX_REFLECTED_NAME_LENGTH, so it never changes the final
+        // message for a realistic name.
+        let boundedName = '';
+        let scannedCodePoints = 0;
+        for (const codePoint of result.name) {
+          if (scannedCodePoints >= RAW_NAME_SCAN_MAX) {
+            break;
+          }
+          boundedName += codePoint;
+          scannedCodePoints += 1;
+        }
         throw new McpError(
           ErrorCode.InvalidParams,
-          `unknown tool "${sanitizeSpecText(result.name, MAX_REFLECTED_NAME_LENGTH)}"`,
+          `unknown tool "${sanitizeSpecText(boundedName, MAX_REFLECTED_NAME_LENGTH)}"`,
         );
       }
       return outcomeToResult(result.outcome);
