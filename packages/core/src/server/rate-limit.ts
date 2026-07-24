@@ -71,8 +71,8 @@ export const createRateLimiter = (opts: RateLimiterOptions = DEFAULT_RATE_LIMIT)
       const effectiveNow = Math.max(nowMs, highWaterMs);
       highWaterMs = effectiveNow;
       const windowStart = effectiveNow - windowMs;
-      // Strictly-less-than-or-equal to windowStart expires an entry exactly
-      // windowMs old, matching the window-boundary test above.
+      // An entry exactly windowMs old is expired: `timestamp <= windowStart`,
+      // matching the window-boundary test above.
       while (timestamps.length > 0 && (timestamps[0] as number) <= windowStart) {
         timestamps.shift();
       }

@@ -66,6 +66,19 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // matches "validated once at CLI startup" rather than discovering
       // the mistake only after paying for a spec fetch.
       let httpConfig: { token: string; port: number } | undefined;
+      // Orphaned HTTP-only flags without --http are a usage error, not a
+      // silent no-op: `--port` carries a default ('3044'), so a plain value
+      // comparison would MISS an explicit `--port 3044`. Commander records
+      // per-option provenance — `getOptionValueSource('port') === 'cli'`
+      // distinguishes "the user actually passed --port" from "the default
+      // applied" regardless of whether the passed value happens to equal
+      // the default.
+      if (
+        cmdOpts.http !== true &&
+        (cmdOpts.httpTokenEnv !== undefined || command.getOptionValueSource('port') === 'cli')
+      ) {
+        throw usageError('--port and --http-token-env require --http');
+      }
       if (cmdOpts.http === true) {
         if (cmdOpts.httpTokenEnv === undefined) {
           throw usageError('--http requires --http-token-env <ENV>');

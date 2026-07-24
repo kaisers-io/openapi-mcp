@@ -252,6 +252,42 @@ describe('serve --http — Streamable HTTP E2E', () => {
     expect(code).toBe(2);
   });
 
+  it('rejects --http-token-env without --http at startup (usage error)', async () => {
+    child = spawn(
+      process.execPath,
+      [bin, 'serve', '--spec', 'petstore.json', '--http-token-env', 'MCP_TOKEN'],
+      { cwd: fixturesDir, env: { ...process.env, MCP_TOKEN: TOKEN } },
+    );
+    const stderrChunks: Buffer[] = [];
+    child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(2);
+    const stderrText = Buffer.concat(stderrChunks).toString('utf8');
+    expect(stderrText).toMatch(/--http/u);
+  });
+
+  it('rejects a non-default --port without --http at startup (usage error)', async () => {
+    child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json', '--port', '4000'], {
+      cwd: fixturesDir,
+    });
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(2);
+  });
+
+  it('rejects an EXPLICIT --port matching the default (3044) without --http — proves getOptionValueSource provenance, not a value comparison against the default', async () => {
+    child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json', '--port', '3044'], {
+      cwd: fixturesDir,
+    });
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(2);
+  });
+
   it('validates HTTP-specific options (a bad --port) BEFORE any spec/cache/network processing — the error is about the port, never about the (nonexistent) spec file', async () => {
     child = spawn(
       process.execPath,
