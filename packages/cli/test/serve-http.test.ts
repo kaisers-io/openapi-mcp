@@ -104,15 +104,51 @@ const spawnServeHttp = async (
   throw new Error('serve --http never came up on any candidate port');
 };
 
-// Sends a raw HTTP/1.1 request over a plain TCP socket — used ONLY for the
-// duplicate-Host test below, since fetch() cannot send two headers with the
-// same name in one request (the very thing that would otherwise make this
-// case untestable at the E2E tier).
-const rawRequest = (port: number, rawHeaderLines: string, body = ''): Promise<{ status: number }> =>
+// Decodes an HTTP/1.1 chunked-transfer body (size-in-hex\r\n<bytes>\r\n,
+// repeated, terminated by a 0-size chunk) back to plain text. Needed
+// because the two competing code paths the T1 test below distinguishes
+// respond with DIFFERENT framing for the exact same raw request — this
+// module's own jsonRpcError() ends up chunked, while the MCP SDK
+// transport's own rejection path sets a plain Content-Length — so the raw
+// response text must be decoded uniformly to compare their JSON bodies.
+const decodeChunkedBody = (raw: string): string => {
+  let decoded = '';
+  let rest = raw;
+  for (;;) {
+    const lineEnd = rest.indexOf('\r\n');
+    if (lineEnd === -1) {
+      break;
+    }
+    const size = Number.parseInt(rest.slice(0, lineEnd), 16);
+    if (!Number.isFinite(size) || size <= 0) {
+      break;
+    }
+    const chunkStart = lineEnd + 2;
+    decoded += rest.slice(chunkStart, chunkStart + size);
+    rest = rest.slice(chunkStart + size + 2); // Skip the chunk's own trailing CRLF
+  }
+  return decoded;
+};
+
+// Sends a raw HTTP/1.1 request over a plain TCP socket — used for the
+// duplicate-Host test and the duplicate-session-id test below, since
+// fetch() cannot send two headers with the same name in one request (the
+// very thing that would otherwise make either case untestable at the E2E
+// tier). `method` defaults to 'POST' to preserve every existing call site.
+// Returns the decoded response BODY alongside the status: the duplicate
+// session-id test needs to inspect the JSON-RPC error message, not just the
+// HTTP status, to actually discriminate the T1 regression (see that test's
+// own comment for why the status code alone is not enough).
+const rawRequest = (
+  port: number,
+  rawHeaderLines: string,
+  body = '',
+  method = 'POST',
+): Promise<{ status: number; body: string }> =>
   new Promise((resolve, reject) => {
     const socket = connect(port, '127.0.0.1', () => {
       socket.write(
-        `POST / HTTP/1.1\r\n${rawHeaderLines}Content-Length: ${String(Buffer.byteLength(body))}\r\nConnection: close\r\n\r\n${body}`,
+        `${method} / HTTP/1.1\r\n${rawHeaderLines}Content-Length: ${String(Buffer.byteLength(body))}\r\nConnection: close\r\n\r\n${body}`,
       );
     });
     let raw = '';
@@ -123,7 +159,14 @@ const rawRequest = (port: number, rawHeaderLines: string, body = ''): Promise<{ 
       const statusLine = raw.split('\r\n')[0] ?? '';
       const match = /^HTTP\/1\.1 (?<status>\d+)/u.exec(statusLine);
       const statusText = match?.groups?.['status'];
-      resolve({ status: statusText === undefined ? 0 : Number(statusText) });
+      const separatorIndex = raw.indexOf('\r\n\r\n');
+      const headerBlock = separatorIndex === -1 ? '' : raw.slice(0, separatorIndex);
+      const rawBody = separatorIndex === -1 ? '' : raw.slice(separatorIndex + 4);
+      const isChunked = /transfer-encoding:\s*chunked/iu.test(headerBlock);
+      resolve({
+        status: statusText === undefined ? 0 : Number(statusText),
+        body: isChunked ? decodeChunkedBody(rawBody) : rawBody,
+      });
     });
     socket.on('error', reject);
   });
@@ -414,6 +457,94 @@ describe('serve --http — Streamable HTTP E2E', () => {
     // wrongly passing the Host guard and letting the request through;
     // req.headersDistinct.host sees BOTH values and fails closed (403).
     expect(result.status).toBe(403);
+  }, 15000);
+
+  it('a duplicated mcp-session-id header (the SAME valid session id sent twice) is rejected by THIS module own 404 gate, not merely by the SDK transport downstream (T1 regression guard)', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+    const sessionId = await initSession(port);
+
+    // DELETE, not POST: a POST with an unresolved session id is, by design,
+    // routed to the fresh-initialize path (it is the only way a client ever
+    // ACQUIRES a session id in the first place), so it cannot discriminate
+    // this case on its own. DELETE has no such special-casing — an
+    // unresolved session id there goes straight to this module's own 404
+    // gate, exactly the code path the strict helper protects. A single
+    // 'mcp-session-id' header with this same id is already proven to
+    // succeed (not 404) by the earlier "reuses the REAL registered session"
+    // test above, so sending it twice is what makes this otherwise-working
+    // request fail.
+    const duplicateSessionHeaders =
+      `Host: 127.0.0.1:${String(port)}\r\n` +
+      `Accept: ${ACCEPT_HEADER}\r\n` +
+      `Authorization: Bearer ${TOKEN}\r\n` +
+      `Mcp-Session-Id: ${sessionId}\r\n` +
+      `Mcp-Session-Id: ${sessionId}\r\n`;
+    const result = await rawRequest(port, duplicateSessionHeaders, '', 'DELETE');
+    expect(result.status).toBe(404);
+    // The status code ALONE does not discriminate the T1 regression: the
+    // MCP SDK transport's OWN session check (webStandardStreamableHttp.js's
+    // validateSession) ALSO independently 404s on ANY duplicated
+    // mcp-session-id — its header read goes through the Web-standard
+    // Headers.get(), which comma-joins repeated headers into one string
+    // that can never equal a real (UUID) session id — so a bare
+    // `expect(status).toBe(404)` would pass EVEN with the loose
+    // `value[0]`-style helper reinstated (verified empirically while
+    // building this test: the loose helper still 404s here, just via a
+    // DIFFERENT layer). What the strict helper actually changes is WHICH
+    // layer answers: this module's OWN 404 gate now fires — with the
+    // message below — strictly BEFORE the request ever reaches
+    // transport.handleRequest, whereas the loose helper would resolve the
+    // duplicate to its real, matching session id, sail past this gate, and
+    // rely ENTIRELY on the SDK's own downstream rejection (message
+    // 'Session not found', not this one) to save it. Asserting the exact
+    // message text is what makes this test bind to the actual T1 change.
+    const parsedBody = JSON.parse(result.body) as { error?: { code: number; message: string } };
+    expect(parsedBody.error?.message).toBe('unknown or expired session');
+  }, 15000);
+
+  it('a POST carrying a DUPLICATED mcp-session-id header plus a valid initialize body is 404d, never fresh-initialized (T1 regression: fresh-init must key on the RAW header being ABSENT, not on the strict helper resolving to undefined)', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+
+    // Two DIFFERENT values, sent as two separate header lines: the strict
+    // helper (`strictSingleHeader`) resolves ANY duplicated header —
+    // matching or not — to `undefined`, same as a genuinely absent header.
+    // Before the fix, `handleRequest` gated the fresh-initialize branch on
+    // that same `sessionId === undefined` value, so a POST + initialize
+    // body with a duplicated header would be MISREAD as "no session id
+    // yet" and fresh-initialize a NEW session (200 + a new
+    // `mcp-session-id`) instead of 404ing. The fix reads the RAW header
+    // (`req.headersDistinct['mcp-session-id']`) for the fresh-init gate
+    // instead: it is PRESENT (length 2) here, so the branch is skipped and
+    // the request falls through to the existing 404 gate below, exactly
+    // like the DELETE case above.
+    const duplicateSessionInitHeaders =
+      `Host: 127.0.0.1:${String(port)}\r\n` +
+      `Accept: ${ACCEPT_HEADER}\r\n` +
+      `Content-Type: application/json\r\n` +
+      `Authorization: Bearer ${TOKEN}\r\n` +
+      `Mcp-Session-Id: id1\r\n` +
+      `Mcp-Session-Id: id2\r\n`;
+    const result = await rawRequest(
+      port,
+      duplicateSessionInitHeaders,
+      JSON.stringify(initializeBody()),
+    );
+    // Falsification: on the PRE-FIX `sessionId === undefined` gate, this
+    // exact request fresh-initializes — status 200, a new `mcp-session-id`
+    // header, and no JSON-RPC error. Confirmed by re-running this test
+    // against the pre-fix code, where it failed with `expected 200 to be
+    // 404`. On the POST-FIX `rawSessionIdHeader === undefined` gate, it
+    // 404s with this module's own "unknown or expired session" gate — the
+    // same message the DELETE-based test above asserts — proving the fix
+    // routes the duplicate to the 404 gate rather than the SDK's own
+    // downstream rejection.
+    expect(result.status).toBe(404);
+    const parsedBody = JSON.parse(result.body) as { error?: { code: number; message: string } };
+    expect(parsedBody.error?.message).toBe('unknown or expired session');
   }, 15000);
 
   it('enforces the 4 MB inbound body cap with a DELIBERATE 400 (not a socket reset/500) — and rejects invalid JSON with a 400 JSON-RPC parse error, not a 500', async () => {
