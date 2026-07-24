@@ -237,8 +237,10 @@ describe('createProtocolSession — InMemory integration', () => {
     // provably truncated away long before it could reach a 100-character
     // message — the resource-bounding itself is not output-observable (see
     // protocol.ts's RAW_NAME_SCAN_MAX comment). What IS observable, and
-    // what this test binds, is that the new code-point-safe pre-cut
-    // (`[...result.name].slice(...).join('')`) composes safely with
+    // what this test binds, is that the bounded, code-point-safe pre-cut
+    // (a `for...of` loop over `result.name` that breaks after
+    // RAW_NAME_SCAN_MAX code points, reading at most that many without ever
+    // materializing the rest of the string) composes safely with
     // `sanitizeSpecText`'s own surrogate-safe truncation: an astral
     // (surrogate-pair) character anywhere in a >1000-code-point name must
     // never surface as a lone (unpaired) surrogate in the final message.

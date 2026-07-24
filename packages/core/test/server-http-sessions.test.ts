@@ -412,6 +412,62 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     }
   }, 15000);
 
+  // `fetch()` cannot send a DUPLICATED header (its Headers object dedupes on
+  // write), so this drives a raw `node:net` socket instead — the same
+  // pattern the mid-body/shutdown-fence tests below use — to put TWO
+  // separate `Mcp-Session-Id` header lines on the wire. This is the only
+  // in-process route to `strictSingleHeader`'s `length !== 1` branch and to
+  // the `rawSessionIdHeader !== undefined` vs `sessionId === undefined`
+  // divergence in streamable-http.ts's fresh-initialize gate: both are
+  // otherwise exercised ONLY by serve-http.test.ts's spawned-subprocess E2E
+  // suite, which vitest's v8 coverage never instruments.
+  it('a POST with a DUPLICATED mcp-session-id header 404s instead of silently resolving to a session (T1 regression, in-process)', async () => {
+    const port = 4621;
+    const server = makeServer(port);
+    await server.listen();
+    const body = Buffer.from(JSON.stringify(initBody(20)), 'utf8');
+    const socket = connect(port, '127.0.0.1');
+    try {
+      const response = await new Promise<{ status: number; raw: string }>((resolve, reject) => {
+        let raw = '';
+        socket.on('data', (chunk: Buffer) => {
+          raw += chunk.toString('utf8');
+        });
+        socket.on('error', reject);
+        socket.once('connect', () => {
+          // Even though the body is a well-formed `initialize` request, the
+          // DUPLICATED session-id header must take priority: the
+          // fresh-initialize branch keys on `rawSessionIdHeader ===
+          // undefined`, which is false here (the raw header IS present,
+          // just invalid), so this never reaches `handleFreshInitialize`.
+          // `strictSingleHeader` then returns undefined for a 2-length
+          // array, so `sessionId` is also undefined — falling through to
+          // the unknown-or-expired-session 404 gate, exactly like a
+          // missing session id would, never like either duplicated value.
+          socket.write(
+            `POST / HTTP/1.1\r\nHost: 127.0.0.1:${String(port)}\r\nAccept: ${ACCEPT_HEADER}\r\n` +
+              `Content-Type: application/json\r\nAuthorization: Bearer ${COVERAGE_TEST_TOKEN}\r\n` +
+              `Mcp-Session-Id: dup-session-a\r\nMcp-Session-Id: dup-session-b\r\n` +
+              `Content-Length: ${String(body.length)}\r\nConnection: close\r\n\r\n${body.toString('utf8')}`,
+          );
+        });
+        socket.on('end', () => {
+          const statusLine = raw.split('\r\n')[0] ?? '';
+          const match = /^HTTP\/1\.1 (?<status>\d+)/u.exec(statusLine);
+          const statusText = match?.groups?.['status'];
+          resolve({ status: statusText === undefined ? 0 : Number(statusText), raw });
+        });
+      });
+      expect(response.status).toBe(404);
+      // No `mcp-session-id` response header — this must never be mistaken
+      // for a freshly-created session.
+      expect(response.raw.toLowerCase()).not.toContain('mcp-session-id:');
+    } finally {
+      socket.destroy();
+      await server.close();
+    }
+  }, 15000);
+
   it('a live session handles tools/list (POST), an SSE stream (GET), body-cap/parse-error POSTs, and DELETE termination', async () => {
     const port = 4615;
     const server = makeServer(port);

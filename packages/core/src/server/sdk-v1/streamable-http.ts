@@ -392,20 +392,23 @@ export const createStreamableHttpServer = (
     });
   });
   // H4 — slow-client LIFETIME hardening (Node's own defaults are 300_000ms
-  // request / 60_000ms headers). Honest framing: these bound how long a
-  // SINGLE incomplete request/header phase can stay open — a stalled client
-  // can no longer pin a pre-session body read open for five minutes — they
-  // do NOT bound the NUMBER of simultaneous pre-session requests or
-  // aggregate buffered memory. The aggregate-memory residual
-  // (~BODY_CAP_BYTES per concurrent connection) is an ACCEPTED
-  // approximation under this project's single-local-client +
+  // request / 60_000ms headers). Honest framing: these are THRESHOLDS Node
+  // checks periodically (via its internal `connectionsCheckingInterval`,
+  // default ~30s), not exact wall-clock deadlines — an incomplete
+  // request/header phase can therefore stay open somewhat longer than the
+  // nominal value before Node notices and closes it, but the values still
+  // give a finite lifetime bound: a stalled client can no longer pin a
+  // pre-session body read open indefinitely. They do NOT bound the NUMBER
+  // of simultaneous pre-session requests or aggregate buffered memory. The
+  // aggregate-memory residual (~BODY_CAP_BYTES per concurrent connection)
+  // is an ACCEPTED approximation under this project's single-local-client +
   // 256-bit-bearer threat model: a semaphore around no-session body reads
   // (a real aggregate bound) and `maxConnections` (a coarse TCP cap) were
   // both deliberately NOT added — the former adds a new rejection failure
   // mode for a trusted-localhost server, the latter risks rejecting the
-  // legitimate 8-session burst. `requestTimeout` stays safely ABOVE
-  // SHUTDOWN_FORCE_MS (5000ms) so it never interferes with the bounded
-  // graceful-shutdown path or the concurrent-burst tests.
+  // legitimate 8-session burst. Both `requestTimeout` and `headersTimeout`
+  // stay safely ABOVE SHUTDOWN_FORCE_MS (5000ms) so it never interferes
+  // with the bounded graceful-shutdown path or the concurrent-burst tests.
   httpServer.requestTimeout = 30_000;
   httpServer.headersTimeout = 10_000;
 
