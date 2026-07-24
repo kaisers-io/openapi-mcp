@@ -48,8 +48,20 @@ const jsonRpcError = (res: ServerResponse, status: number, code: number, message
   );
 };
 
-const singleHeaderValue = (value: string | string[] | undefined): string | undefined =>
-  Array.isArray(value) ? value[0] : value;
+// T1: a STRICT single-header reader for `req.headersDistinct` (`string[] |
+// undefined` only — headersDistinct never yields a plain string, unlike
+// `req.headers`): returns the value ONLY when EXACTLY ONE was actually sent,
+// mirroring request-guard.ts's own fail-closed `singleHeader`. This module
+// used to read the session-id header via `req.headers` through a LOOSE
+// `value[0]`-style helper; that helper is deliberately NOT reused here
+// against `headersDistinct`, since reusing it would ACCEPT a DUPLICATED
+// mcp-session-id as if only the first value had been sent — a regression
+// from the old `req.headers` behavior, where a duplicate comma-joins into
+// `"id1, id2"`, a string that never matches a real session id and so fails
+// closed via the store lookup (404). A duplicated id must keep 404ing
+// exactly like a missing one, never silently resolve to its first value.
+const strictSingleHeader = (value: string[] | undefined): string | undefined =>
+  value !== undefined && value.length === 1 ? value[0] : undefined;
 
 // Reads the body up to capBytes. On overflow this ENDS the read cleanly
 // (does not `req.destroy()` the socket, which a client sees as an abrupt
@@ -121,6 +133,16 @@ export const createStreamableHttpServer = (
     maxSessions: MAX_SESSIONS,
     idleMs: IDLE_MS,
   });
+  // H3: a shutdown admission fence — deliberately CLOSURE-LOCAL (one
+  // instance per createStreamableHttpServer call), NOT module-level. A
+  // module-level flag would be shared across EVERY server instance in the
+  // process, so once any one server closed, every later instance would
+  // reject initialization forever. Flipped true at the very top of close(),
+  // before that method takes its session-drain snapshot; checked again
+  // immediately before the synchronous session-slot reservation in
+  // handleFreshInitialize below, with no await between the check and the
+  // reservation, so the two stay atomic on the event loop.
+  let closing = false;
 
   // Closes and evicts every session idle past IDLE_MS. Called lazily at the
   // top of EVERY request (C3 fix — sweepExpired was previously never
@@ -155,7 +177,11 @@ export const createStreamableHttpServer = (
     res: ServerResponse,
     body: unknown,
   ): Promise<void> => {
-    evictExpiredSessions(opts.now());
+    // Captured ONCE (plan review) and reused below for both the
+    // eviction sweep and the reservation timestamp, rather than calling
+    // opts.now() twice for what is conceptually the same instant.
+    const nowMs = opts.now();
+    evictExpiredSessions(nowMs);
     const sessionId = randomUUID();
     // A mutable holder reserved NOW; `transport`/`server` are filled in
     // below once constructed. Casting past the interface's required fields
@@ -163,7 +189,17 @@ export const createStreamableHttpServer = (
     // `sessions.get`) until AFTER both are assigned, since no `await` runs
     // in between.
     const reserved: Partial<HttpSessionValue> = {};
-    const reservation = sessions.create(sessionId, reserved as HttpSessionValue, opts.now());
+    // H3: the shutdown fence, checked immediately before the reservation
+    // below with no await in between, so the check-and-reserve pair stays
+    // atomic on the event loop — a request racing a concurrent close() can
+    // never slip a session into existence AFTER close()'s own
+    // session-drain snapshot (sessions.values()) has already been taken,
+    // which would otherwise leave that session undrained forever.
+    if (closing) {
+      jsonRpcError(res, 503, -32000, 'server is shutting down');
+      return;
+    }
+    const reservation = sessions.create(sessionId, reserved as HttpSessionValue, nowMs);
     if (!reservation.ok) {
       jsonRpcError(res, 503, -32000, 'session capacity exceeded');
       return;
@@ -290,8 +326,17 @@ export const createStreamableHttpServer = (
       res.writeHead(decision.status).end();
       return;
     }
-    const sessionId = singleHeaderValue(req.headers['mcp-session-id']);
-    if (req.method === 'POST' && sessionId === undefined) {
+    // T1: read via req.headersDistinct through the STRICT helper above, not
+    // req.headers — same discipline as the guard just above, for the same
+    // reason (a duplicated header must fail closed, not silently resolve to
+    // its first value).
+    const rawSessionIdHeader = req.headersDistinct['mcp-session-id'];
+    const sessionId = strictSingleHeader(rawSessionIdHeader);
+    // The fresh-initialize branch keys on the RAW header's absence, not on
+    // sessionId being undefined: a present-but-duplicated header is
+    // present-and-invalid, which must fall through to the 404 gate below,
+    // never be treated as "no session id yet, so start a fresh initialize".
+    if (req.method === 'POST' && rawSessionIdHeader === undefined) {
       const bodyRead = await readBodyCapped(req, BODY_CAP_BYTES);
       if (!bodyRead.ok) {
         jsonRpcError(res, 400, -32600, `request body exceeds the ${BODY_CAP_BYTES}-byte cap`);
@@ -309,12 +354,17 @@ export const createStreamableHttpServer = (
       await handleFreshInitialize(req, res, parsed.body);
       return;
     }
-    if (sessionId === undefined || sessions.get(sessionId, nowMs) === undefined) {
+    // T2: a single sessions.get, captured once and reused below — the two
+    // call sites this replaces (the 404 gate and the subsequent re-fetch)
+    // read the exact same sessionId/nowMs pair with no await in between, so
+    // the second lookup was always redundant with the first.
+    const existingSession = sessionId === undefined ? undefined : sessions.get(sessionId, nowMs);
+    if (sessionId === undefined || existingSession === undefined) {
       jsonRpcError(res, 404, -32001, 'unknown or expired session');
       return;
     }
     sessions.touch(sessionId, nowMs);
-    const { transport } = sessions.get(sessionId, nowMs) as HttpSessionValue;
+    const { transport } = existingSession;
     if (req.method === 'POST') {
       const bodyRead = await readBodyCapped(req, BODY_CAP_BYTES);
       if (!bodyRead.ok) {
@@ -341,6 +391,26 @@ export const createStreamableHttpServer = (
       }
     });
   });
+  // H4 — slow-client LIFETIME hardening (Node's own defaults are 300_000ms
+  // request / 60_000ms headers). Honest framing: these are THRESHOLDS Node
+  // checks periodically (via its internal `connectionsCheckingInterval`,
+  // default ~30s), not exact wall-clock deadlines — an incomplete
+  // request/header phase can therefore stay open somewhat longer than the
+  // nominal value before Node notices and closes it, but the values still
+  // give a finite lifetime bound: a stalled client can no longer pin a
+  // pre-session body read open indefinitely. They do NOT bound the NUMBER
+  // of simultaneous pre-session requests or aggregate buffered memory. The
+  // aggregate-memory residual (~BODY_CAP_BYTES per concurrent connection)
+  // is an ACCEPTED approximation under this project's single-local-client +
+  // 256-bit-bearer threat model: a semaphore around no-session body reads
+  // (a real aggregate bound) and `maxConnections` (a coarse TCP cap) were
+  // both deliberately NOT added — the former adds a new rejection failure
+  // mode for a trusted-localhost server, the latter risks rejecting the
+  // legitimate 8-session burst. Both `requestTimeout` and `headersTimeout`
+  // stay safely ABOVE SHUTDOWN_FORCE_MS (5000ms) so it never interferes
+  // with the bounded graceful-shutdown path or the concurrent-burst tests.
+  httpServer.requestTimeout = 30_000;
+  httpServer.headersTimeout = 10_000;
 
   return {
     listen: () =>
@@ -362,6 +432,12 @@ export const createStreamableHttpServer = (
         httpServer.listen(opts.port, '127.0.0.1');
       }),
     close: async () => {
+      // H3: flip the shutdown admission fence FIRST — synchronously, before
+      // the session-drain snapshot just below is taken — so a fresh
+      // initialize whose body is still arriving right now can no longer
+      // slip a brand-new session into existence after this snapshot has
+      // already been captured (which would leave it permanently undrained).
+      closing = true;
       // C5 fix: close every session's SERVER FIRST (an open SSE response
       // would otherwise keep the LISTENER's own close() pending
       // indefinitely — http.Server#close() waits for existing connections

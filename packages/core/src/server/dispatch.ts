@@ -115,8 +115,8 @@ export const createDispatcher = (
 ): { call: (request: CallRequest) => Promise<DispatchResult> } => ({
   call: async (request: CallRequest): Promise<DispatchResult> => {
     // Outer try/catch spanning the ENTIRE method body: the lookup/rate stage
-    // just below (`deps.snapshot.toolsByName.get`, `deps.now()`,
-    // `deps.limiter.consume`) has no inner try/catch of its own, unlike the
+    // just below (the `Object.hasOwn(deps.snapshot.toolsByName, ...)` lookup,
+    // `deps.now()`, `deps.limiter.consume`) has no inner try/catch of its own, unlike the
     // parse and executor stages further down. Without this outer boundary, a
     // throw from a caller-injected `now()`/`consume()` dependency would
     // propagate raw out of `call()` — carrying whatever message that
@@ -125,7 +125,9 @@ export const createDispatcher = (
     // same generic, stable shape the inner stages already use; it never
     // interferes with a normal `return` from any branch below.
     try {
-      const tool = deps.snapshot.toolsByName.get(request.name);
+      const tool = Object.hasOwn(deps.snapshot.toolsByName, request.name)
+        ? deps.snapshot.toolsByName[request.name]
+        : undefined;
       if (tool === undefined) {
         return { kind: 'unknown-tool', name: request.name };
       }
@@ -163,8 +165,8 @@ export const createDispatcher = (
       return { kind: 'outcome', outcome };
     } catch {
       // Redacts any throw from the lookup/rate stage above (deps.now/consume,
-      // or even deps.snapshot.toolsByName.get) so no raw dependency-failure
-      // message can ever reach the client.
+      // or even the `Object.hasOwn(deps.snapshot.toolsByName, ...)` lookup)
+      // so no raw dependency-failure message can ever reach the client.
       return { kind: 'outcome', outcome: textOutcome('tool call failed unexpectedly', true) };
     }
   },

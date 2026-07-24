@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import {
   buildSnapshot,
   buildTools,
@@ -63,8 +64,8 @@ describe('buildSnapshot', () => {
     });
     const snapshot = buildSnapshot(built, pipelineOf());
     expect(snapshot.tools.map((tool) => tool.name)).toEqual([META_TOOL_NAME, 'getThing']);
-    expect(snapshot.toolsByName.get(META_TOOL_NAME)?.kind).toBe('meta');
-    expect(snapshot.toolsByName.get('getThing')?.kind).toBe('upstream');
+    expect(snapshot.toolsByName[META_TOOL_NAME]?.kind).toBe('meta');
+    expect(snapshot.toolsByName['getThing']?.kind).toBe('upstream');
   });
 
   it('asserts every wire input/output schema is object-rooted', () => {
@@ -138,6 +139,47 @@ describe('buildSnapshot', () => {
     }).toThrow(TypeError);
     expect(snapshot.meta.toolCount).toBe(1);
     expect(upstreamTool.wireTool.name).toBe('getThing');
+  });
+
+  it('makes the toolsByName lookup itself runtime-immutable — a post-build mutation attempt never becomes routable', () => {
+    const built = buildTools([namedOp('getThing', '/things/{id}')], {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    const snapshot = buildSnapshot(built, pipelineOf());
+    const writable = snapshot.toolsByName as Record<string, SnapshotTool | undefined>;
+    // Assembled rather than pasted as a literal, and deliberately a
+    // prototype-flavored key (`__proto__`) — the most adversarial name a
+    // null-prototype record can be handed, exercising the "ordinary own key,
+    // no pollution hazard" claim from snapshot.ts's buildSnapshot comment.
+    const evilName = ['_', '_', 'proto', '_', '_'].join('');
+    const forgedTool: SnapshotTool = {
+      kind: 'upstream',
+      name: evilName,
+      wireTool: {
+        name: evilName,
+        description: 'forged',
+        inputSchema: { type: 'object' },
+        annotations: {},
+      },
+      inputSchema: z.strictObject({}),
+    };
+    // Attempt 1: introduce a brand-new routable name. On a real `Map` this
+    // `.set`-equivalent (direct property assignment) would succeed silently;
+    // on the frozen null-proto record it throws (strict-mode ESM) — either
+    // way, assert the OUTCOME that actually matters: no new name is routable.
+    expect(() => {
+      writable[evilName] = forgedTool;
+    }).toThrow(TypeError);
+    expect(Object.hasOwn(snapshot.toolsByName, evilName)).toBe(false);
+    expect(snapshot.toolsByName[evilName]).toBeUndefined();
+    // Attempt 2: replace an EXISTING entry's tool.
+    const originalGetThing = snapshot.toolsByName['getThing'];
+    expect(() => {
+      writable['getThing'] = forgedTool;
+    }).toThrow(TypeError);
+    expect(snapshot.toolsByName['getThing']).toBe(originalGetThing);
+    expect(snapshot.toolsByName['getThing']?.name).toBe('getThing');
   });
 
   it('sanitizes and caps the omission path/reason and the displaySource copied into the meta summary (hostile control/bidi text never survives)', () => {

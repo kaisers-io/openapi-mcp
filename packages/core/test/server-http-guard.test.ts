@@ -65,11 +65,35 @@ describe('extractBearerToken', () => {
   it('extracts the token from a well-formed Bearer header', () => {
     expect(extractBearerToken(`Bearer ${TOKEN}`)).toBe(TOKEN);
   });
+  it('is case-insensitive on the scheme (RFC 7235 §2.1) and tolerates 1*SP before the credential', () => {
+    expect(extractBearerToken(`bearer ${TOKEN}`)).toBe(TOKEN);
+    expect(extractBearerToken(`Bearer  ${TOKEN}`)).toBe(TOKEN); // Two spaces
+  });
   it('returns undefined for an absent, malformed, or wrong-scheme header', () => {
     expect(extractBearerToken(undefined)).toBeUndefined();
     expect(extractBearerToken('Basic abc')).toBeUndefined();
     expect(extractBearerToken('Bearer')).toBeUndefined();
     expect(extractBearerToken(`Bearer ${TOKEN} extra`)).toBeUndefined();
+  });
+  it('rejects leading/trailing whitespace and non-SP separators — fail-closed', () => {
+    expect(extractBearerToken(` Bearer ${TOKEN}`)).toBeUndefined(); // Leading space
+    expect(extractBearerToken(`Bearer ${TOKEN} `)).toBeUndefined(); // Trailing space
+    // HTAB separator, built at runtime (never typed literally): `\S+`'s
+    // token match would still find `TOKEN`, but the `+` quantifier only
+    // matches SP (0x20) characters, not HTAB (0x09) — so this is rejected.
+    const htab = String.fromCodePoint(9);
+    expect(extractBearerToken(`Bearer${htab}${TOKEN}`)).toBeUndefined();
+  });
+  it('rejects a trailing line terminator — the `$` anchor requires actual end-of-input, not end-of-line', () => {
+    // Built at runtime (never typed/pasted raw): a regex using the `m` flag,
+    // or one that otherwise matched before a trailing newline, would extract
+    // TOKEN here instead of failing closed.
+    const lf = String.fromCodePoint(10);
+    const cr = String.fromCodePoint(13);
+    const crlf = String.fromCodePoint(13, 10);
+    expect(extractBearerToken(`Bearer ${TOKEN}${lf}`)).toBeUndefined();
+    expect(extractBearerToken(`Bearer ${TOKEN}${cr}`)).toBeUndefined();
+    expect(extractBearerToken(`Bearer ${TOKEN}${crlf}`)).toBeUndefined();
   });
 });
 

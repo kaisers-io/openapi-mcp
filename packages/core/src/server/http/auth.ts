@@ -46,7 +46,20 @@ export interface BearerCheck {
   configuredToken: string; // Already validated via isValidBearerToken at startup
 }
 
-const BEARER_RE = /^Bearer (?<token>\S+)$/u;
+// RFC 7235 §2.1: the auth-scheme token is case-insensitive (`i` flag), and
+// RFC 7235's `credentials = auth-scheme [ 1*SP ... ]` allows one-or-more SP
+// before the credentials (`+`, not a fixed single space) — interop with
+// clients that send `bearer <t>` or fold in an extra space. `\S+` is
+// deliberately broader than RFC 6750's stricter `b64token` alphabet: this is
+// NOT an authorization bypass, because the extracted credential is compared
+// by EXACT equality (constantTimeEquals, below) against a configured token
+// that already passed the much stricter `isValidBearerToken` grammar at
+// startup — a `\S+`-but-not-b64token string can never equal it. The goal
+// here is scheme/spacing tolerance, not a strict-grammar parser. Anchored
+// (`^`/`$`) and linear (no nested quantifiers) — no ReDoS — and still
+// fail-closed: rejects `Bearer <t> extra`, `Basic <t>`, bare `Bearer`, and
+// literal leading/trailing whitespace (neither `^` nor `+` matches those).
+const BEARER_RE = /^Bearer +(?<token>\S+)$/iu;
 
 export const extractBearerToken = (authorizationHeader: string | undefined): string | undefined => {
   if (authorizationHeader === undefined) {

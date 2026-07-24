@@ -1,5 +1,6 @@
+import { createServer } from 'node:http';
 import { connect } from 'node:net';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildSnapshot,
   buildTools,
@@ -11,6 +12,27 @@ import {
   type NamedOperation,
   type RequestGuardOptions,
 } from '../src/index.ts';
+
+// H4 coverage (near the bottom of this file) needs to inspect the ACTUAL
+// http.Server instance createStreamableHttpServer builds internally — a
+// value its public StreamableHttpServerHandle deliberately does not expose
+// (there is no reason for a caller to ever reach the raw http.Server; H4
+// only tightens two Node-internal timeout properties on it). Rather than
+// widen that public API for a single property assertion, this WRAPS (never
+// replaces) node:http's own createServer to capture the instance it
+// returns — every call still delegates straight through to the REAL
+// implementation, so this is pure instrumentation: every other test in this
+// file gets a genuine, fully-functional http.Server exactly as before.
+vi.mock(import('node:http'), async (importOriginal) => {
+  const actual = await importOriginal();
+  // `createServer` is overloaded (per-argument-shape return types); `Mock<T>`
+  // cannot structurally satisfy an overloaded signature set on its own, so
+  // the wrapped mock is cast back to the real, overloaded type after
+  // construction — the runtime behavior (delegate-through, single-argument
+  // call shape) is exactly what production code here actually uses.
+  const createServerMock = vi.fn<typeof actual.createServer>(actual.createServer);
+  return { ...actual, createServer: createServerMock as unknown as typeof actual.createServer };
+});
 
 describe('createSessionStore', () => {
   it('creates and retrieves a session', () => {
@@ -390,6 +412,62 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     }
   }, 15000);
 
+  // `fetch()` cannot send a DUPLICATED header (its Headers object dedupes on
+  // write), so this drives a raw `node:net` socket instead — the same
+  // pattern the mid-body/shutdown-fence tests below use — to put TWO
+  // separate `Mcp-Session-Id` header lines on the wire. This is the only
+  // in-process route to `strictSingleHeader`'s `length !== 1` branch and to
+  // the `rawSessionIdHeader !== undefined` vs `sessionId === undefined`
+  // divergence in streamable-http.ts's fresh-initialize gate: both are
+  // otherwise exercised ONLY by serve-http.test.ts's spawned-subprocess E2E
+  // suite, which vitest's v8 coverage never instruments.
+  it('a POST with a DUPLICATED mcp-session-id header 404s instead of silently resolving to a session (T1 regression, in-process)', async () => {
+    const port = 4621;
+    const server = makeServer(port);
+    await server.listen();
+    const body = Buffer.from(JSON.stringify(initBody(20)), 'utf8');
+    const socket = connect(port, '127.0.0.1');
+    try {
+      const response = await new Promise<{ status: number; raw: string }>((resolve, reject) => {
+        let raw = '';
+        socket.on('data', (chunk: Buffer) => {
+          raw += chunk.toString('utf8');
+        });
+        socket.on('error', reject);
+        socket.once('connect', () => {
+          // Even though the body is a well-formed `initialize` request, the
+          // DUPLICATED session-id header must take priority: the
+          // fresh-initialize branch keys on `rawSessionIdHeader ===
+          // undefined`, which is false here (the raw header IS present,
+          // just invalid), so this never reaches `handleFreshInitialize`.
+          // `strictSingleHeader` then returns undefined for a 2-length
+          // array, so `sessionId` is also undefined — falling through to
+          // the unknown-or-expired-session 404 gate, exactly like a
+          // missing session id would, never like either duplicated value.
+          socket.write(
+            `POST / HTTP/1.1\r\nHost: 127.0.0.1:${String(port)}\r\nAccept: ${ACCEPT_HEADER}\r\n` +
+              `Content-Type: application/json\r\nAuthorization: Bearer ${COVERAGE_TEST_TOKEN}\r\n` +
+              `Mcp-Session-Id: dup-session-a\r\nMcp-Session-Id: dup-session-b\r\n` +
+              `Content-Length: ${String(body.length)}\r\nConnection: close\r\n\r\n${body.toString('utf8')}`,
+          );
+        });
+        socket.on('end', () => {
+          const statusLine = raw.split('\r\n')[0] ?? '';
+          const match = /^HTTP\/1\.1 (?<status>\d+)/u.exec(statusLine);
+          const statusText = match?.groups?.['status'];
+          resolve({ status: statusText === undefined ? 0 : Number(statusText), raw });
+        });
+      });
+      expect(response.status).toBe(404);
+      // No `mcp-session-id` response header — this must never be mistaken
+      // for a freshly-created session.
+      expect(response.raw.toLowerCase()).not.toContain('mcp-session-id:');
+    } finally {
+      socket.destroy();
+      await server.close();
+    }
+  }, 15000);
+
   it('a live session handles tools/list (POST), an SSE stream (GET), body-cap/parse-error POSTs, and DELETE termination', async () => {
     const port = 4615;
     const server = makeServer(port);
@@ -554,4 +632,119 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       socket.destroy();
     }
   }, 12000);
+
+  it('a fresh initialize whose body only finishes arriving AFTER shutdown has begun is rejected with 503, never admitted (H3 shutdown admission fence)', async () => {
+    const port = 4619;
+    const server = makeServer(port);
+    await server.listen();
+    const fullBody = Buffer.from(JSON.stringify(initBody(11)), 'utf8');
+    // Held back: the LAST byte of the body, so the request is genuinely
+    // in-flight (readBodyCapped still awaiting more 'data') until the write
+    // below deliberately completes it.
+    const splitAt = fullBody.length - 1;
+    const head = fullBody.subarray(0, splitAt);
+    const tail = fullBody.subarray(splitAt);
+    let closePromise: Promise<void> | undefined;
+    const socket = connect(port, '127.0.0.1');
+    try {
+      const status = await new Promise<number>((resolve, reject) => {
+        let raw = '';
+        socket.on('data', (chunk: Buffer) => {
+          raw += chunk.toString('utf8');
+        });
+        socket.on('error', reject);
+        socket.once('connect', () => {
+          socket.write(
+            `POST / HTTP/1.1\r\nHost: 127.0.0.1:${String(port)}\r\nAccept: ${ACCEPT_HEADER}\r\n` +
+              `Content-Type: application/json\r\nAuthorization: Bearer ${COVERAGE_TEST_TOKEN}\r\n` +
+              `Content-Length: ${String(fullBody.length)}\r\nConnection: close\r\n\r\n${head.toString('utf8')}`,
+          );
+          // Same margin as the "stuck mid-body" test above: gives the
+          // server time to actually register the connection and begin
+          // reading before shutdown starts.
+          setTimeout(() => {
+            // Begin shutdown NOW. `closing` flips to true SYNCHRONOUSLY —
+            // the very first statement in close(), before its own first
+            // await — so by the time this call returns control here,
+            // admission is already fenced off, even though close() itself
+            // is still pending (draining zero sessions, since none exist
+            // yet, then waiting on THIS very connection to finish before
+            // its own httpServer.close() phase can resolve).
+            closePromise = server.close();
+            // NOW complete the body. The request can only reach
+            // handleFreshInitialize's `closing` check once the FULL body
+            // has arrived — which is after this write — so the check
+            // deterministically observes closing === true, not a race.
+            socket.write(tail);
+          }, 200);
+        });
+        socket.on('end', () => {
+          const statusLine = raw.split('\r\n')[0] ?? '';
+          const match = /^HTTP\/1\.1 (?<status>\d+)/u.exec(statusLine);
+          const statusText = match?.groups?.['status'];
+          resolve(statusText === undefined ? 0 : Number(statusText));
+        });
+      });
+      // 503, not 200: removing the `closing` check would let this
+      // late-completing body still finish initialization normally (200 + a
+      // session id) even though close()'s own session-drain snapshot
+      // (sessions.values(), taken before this request ever created one)
+      // would never have included it — leaving it permanently undrained.
+      expect(status).toBe(503);
+    } finally {
+      socket.destroy();
+      await (closePromise ?? server.close());
+    }
+  }, 15000);
+});
+
+describe('createStreamableHttpServer — HTTP request/header timeout hardening (H4)', () => {
+  const now = (): number => Date.now();
+
+  it("sets requestTimeout=30000 and headersTimeout=10000 on the underlying http.Server — both tightened below Node's own 300000/60000 defaults", async () => {
+    const port = 4620;
+    const token = 'h4-test-bearer-token';
+    const createServerMock = vi.mocked(createServer);
+    const callsBefore = createServerMock.mock.results.length;
+    const server = createStreamableHttpServer({
+      name: 'h4-test',
+      version: '1.0.0',
+      snapshot: buildWiringTestSnapshot(),
+      dispatcherDeps: {
+        limiter: { consume: () => true },
+        now,
+        executor: executionUnavailable,
+        metaExecutor: createMetaExecutor(),
+      },
+      guard: {
+        allowedOrigins: new Set(),
+        allowedHost: `127.0.0.1:${String(port)}`,
+        bearer: { configuredToken: token },
+      },
+      port,
+      now,
+    });
+    await server.listen();
+    try {
+      // The createServer call happens exactly once, synchronously, inside
+      // createStreamableHttpServer itself (well before listen() is ever
+      // called) — capturing the result at the call index recorded just
+      // above (rather than always `.at(-1)`) keeps this binding to THIS
+      // server even if another test's createServer call interleaves.
+      const result = createServerMock.mock.results[callsBefore];
+      if (result === undefined || result.type !== 'return') {
+        throw new Error('node:http createServer was not called as expected');
+      }
+      const httpServerInstance = result.value;
+      // Falsification: removing the two assignments in streamable-http.ts
+      // leaves Node's own defaults (300000/60000) — both these exact
+      // equalities AND the below-Node's-defaults assertions would fail.
+      expect(httpServerInstance.requestTimeout).toBe(30_000);
+      expect(httpServerInstance.headersTimeout).toBe(10_000);
+      expect(httpServerInstance.requestTimeout).toBeLessThan(300_000);
+      expect(httpServerInstance.headersTimeout).toBeLessThan(60_000);
+    } finally {
+      await server.close();
+    }
+  }, 15000);
 });

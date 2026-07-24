@@ -239,7 +239,11 @@ const buildTransformSnapshot = (): ServerSnapshot => {
     },
     inputSchema,
   };
-  const toolsByName = new Map<string, SnapshotTool>([[tool.name, tool]]);
+  const toolsByName: Record<string, SnapshotTool | undefined> = Object.create(null) as Record<
+    string,
+    SnapshotTool | undefined
+  >;
+  toolsByName[tool.name] = tool;
   const meta: MetaSummary = {
     specTitle: 't',
     specVersion: '1',
@@ -645,7 +649,7 @@ describe('createDispatcher', () => {
 describe('executionUnavailable', () => {
   it('is a stable "execution lands in M5" isError for every upstream tool call', async () => {
     const outcome = await executionUnavailable(
-      buildTestSnapshot().toolsByName.get('createThing')!,
+      buildTestSnapshot().toolsByName['createThing']!,
       { id: 'x' },
       noSignal,
     );

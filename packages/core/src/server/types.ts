@@ -54,6 +54,13 @@ export interface MetaSummary {
 
 export interface ServerSnapshot {
   readonly tools: readonly SnapshotTool[];
-  readonly toolsByName: ReadonlyMap<string, SnapshotTool>;
+  // A frozen, null-prototype lookup record — NOT a `Map` (see snapshot.ts's
+  // `buildSnapshot` for why: a `Map`'s entries live outside its own
+  // properties, so `Object.freeze` cannot stop `.set()`/`.delete()` on one).
+  // The value type ADMITS MISSES (`| undefined`) because a plain index
+  // signature on an object always can be read for a key that was never
+  // written — reads MUST go through `Object.hasOwn` (see dispatch.ts), never
+  // bare indexing, to distinguish "not present" from a stored `undefined`.
+  readonly toolsByName: Readonly<Record<string, SnapshotTool | undefined>>;
   readonly meta: MetaSummary;
 }
