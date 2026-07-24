@@ -220,7 +220,24 @@
         // parameter is typed `NodeJS.ErrnoException | null` (not `| undefined`)
         // by node:net itself, so the success-path calls must pass the literal
         // `null` verbatim to satisfy that upstream type
-        "unicorn/no-null": "off"
+        "unicorn/no-null": "off",
+        // Off per task-4 brief (M5): the plan's own file layout puts
+        // createPinnedAgent (Task 3) and pinnedRequest (Task 4) — the
+        // DNS-pinning Agent and the shared manual-redirect transport built
+        // directly on it — in this one module by design, with load-bearing
+        // round-1 amendment rationale comments throughout, so it
+        // verbatim exceeds 300 lines (mirrors the pipeline.ts/store.ts/
+        // layout.ts/context.ts overrides above for the same reason)
+        "max-lines": "off",
+        // Off per task-4 brief (M5): TooLargeError (the over-cap sentinel
+        // readCapped throws) and EgressError (the branded error the
+        // DNS-pinning lookup throws so a fetch rejection can be classified
+        // reliably via its cause chain, per the round-1 amendment) are
+        // two small, single-purpose sentinel classes serving two distinct
+        // call sites within this one shared-transport module — splitting
+        // either into its own file would separate a brand from the single
+        // guard it exists to make provable
+        "max-classes-per-file": "off"
       }
     },
     {

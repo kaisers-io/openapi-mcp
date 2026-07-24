@@ -1,5 +1,5 @@
 import { isIP, type LookupFunction } from 'node:net';
-import { Agent } from 'undici';
+import { Agent, type fetch as undiciFetchType } from 'undici';
 import { classifyAddress } from './egress.ts';
 
 // M5 Task 3 (design §2.1-2.3, D1): the SSRF connection-pinning core. undici's
@@ -33,26 +33,60 @@ export type Resolve = (hostname: string) => Promise<readonly string[]>;
 // set, and the size of the address array handed to undici's connector.
 export const MAX_DNS_ANSWERS = 32;
 
+// M5 Task 4 amendment (MED egress-error classification): undici's fetch
+// surfaces a connect-time lookup failure as a generic
+// `TypeError("fetch failed")` whose `.cause` carries the ORIGINAL lookup
+// error (probe-confirmed) — `.message` alone cannot discriminate an egress
+// policy denial from a genuine network failure. Every policy-driven
+// rejection below (zero/too-many/non-IP answers, metadata, private) is
+// thrown as this branded class so pinnedRequest (Task 4) can walk
+// `err.cause`/`err.cause.errors` and classify reliably via `instanceof`
+// rather than matching a message string. A resolver's OWN thrown/rejected
+// error (a genuine DNS/network failure, not a policy decision) stays a
+// plain Error via `asError` below and is classified 'network'.
+export class EgressError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'EgressError';
+  }
+}
+
 const asError = (err: unknown): Error => (err instanceof Error ? err : new Error(String(err)));
 
-// Exported so the lookup contract's edge cases (the options.all fallback,
-// the callback-once latch, and the sync-throw wrapping) can be unit-tested
-// directly — undici's own connector always calls back with options.all ===
-// true, so the fallback branch below is otherwise unreachable through a real
-// fetch.
+// Exported so the lookup contract's edge cases (the options.all fallback and
+// the sync-throw wrapping) can be unit-tested directly — undici's own
+// connector always calls back with options.all === true, so the fallback
+// branch below is otherwise unreachable through a real fetch.
+//
+// M5 Task 4 amendment (round-2 review, restoring a wrongly-removed guard): a
+// callback-once latch was previously removed here on the theory that V8's
+// Promise/thenable dedup already made a second settle call unreachable. That
+// reasoning missed a real path: if the SUCCESS-path settle call itself (the
+// `.then` handler's own `settle(...)`) throws synchronously — e.g. a
+// misbehaving downstream lookup callback — that throw rejects the `.then`'s
+// promise, which is then caught by the trailing `.catch` below, which calls
+// settle a SECOND time with the thrown error. V8's dedup guarantees a
+// thenable settles only once; it says nothing about a handler that settles
+// once successfully and then throws. Reproduced empirically (2 invocations
+// without this latch); the latch below and the accompanying test make the
+// "exactly once" contract real again.
 export const pinnedLookup =
   (policy: PinnedPolicy, resolve: Resolve): LookupFunction =>
   (hostname, options, callback) => {
-    // A callback-once latch (round-1 amendment): the lookup contract
-    // is a single callback invocation; guard defensively so a misbehaving
-    // `resolve` cannot cause a double-invocation even if it violated the
-    // Promise spec's own single-settlement guarantee.
-    let done = false;
-    const finish: typeof callback = (err, address, family) => {
-      if (done) {
+    let settled = false;
+    // Aliased to a non-"callback"-shaped name: calling the LookupFunction's
+    // own `callback` parameter from inside a `.then`/`.catch` handler (below)
+    // is exactly the shape oxlint's promise/no-callback-in-promise flags —
+    // this IS a `.then`/`.catch`-driven settle by design (the lookup
+    // contract itself is a Node-style callback), not the callback-inside-
+    // promise anti-pattern the rule targets. Latched so the underlying
+    // `callback` fires at most once even if the success path itself throws
+    // and re-enters via `.catch` (see the amendment above).
+    const settle: typeof callback = (err, address, family) => {
+      if (settled) {
         return;
       }
-      done = true;
+      settled = true;
       callback(err, address, family);
     };
     // Wrapped in Promise.resolve().then(...) (round-1 amendment) so a
@@ -62,25 +96,28 @@ export const pinnedLookup =
       .then(() => resolve(hostname))
       .then((addresses) => {
         if (addresses.length === 0) {
-          return finish(new Error(`egress: "${hostname}" did not resolve to any address`), []);
+          return settle(
+            new EgressError(`egress: "${hostname}" did not resolve to any address`),
+            [],
+          );
         }
         if (addresses.length > MAX_DNS_ANSWERS) {
-          return finish(new Error(`egress: "${hostname}" returned too many DNS answers`), []);
+          return settle(new EgressError(`egress: "${hostname}" returned too many DNS answers`), []);
         }
         for (const address of addresses) {
           if (isIP(address) === 0) {
-            return finish(new Error(`egress: "${hostname}" returned a non-IP answer`), []);
+            return settle(new EgressError(`egress: "${hostname}" returned a non-IP answer`), []);
           }
           const classification = classifyAddress(address);
           if (classification === 'metadata') {
-            return finish(
-              new Error(`egress: "${hostname}" resolves to a cloud-metadata address`),
+            return settle(
+              new EgressError(`egress: "${hostname}" resolves to a cloud-metadata address`),
               [],
             );
           }
           if (classification === 'private' && !(policy.trusted || policy.allowPrivateNetwork)) {
-            return finish(
-              new Error(`egress: "${hostname}" resolves to a private/loopback address`),
+            return settle(
+              new EgressError(`egress: "${hostname}" resolves to a private/loopback address`),
               [],
             );
           }
@@ -90,7 +127,7 @@ export const pinnedLookup =
         // connector always requests it that way (probe-confirmed), but a
         // defensive single-address fallback keeps the contract honest.
         if (options.all === true) {
-          return finish(
+          return settle(
             null,
             addresses.map((address) => ({ address, family: isIP(address) })),
           );
@@ -98,10 +135,398 @@ export const pinnedLookup =
         const [first] = addresses;
         // Unreachable via undici in practice (it always passes all:true);
         // kept total per the lookup contract's non-`all` form.
-        return finish(null, first ?? '', first === undefined ? undefined : isIP(first));
+        return settle(null, first ?? '', first === undefined ? undefined : isIP(first));
       })
-      .catch((err: unknown) => finish(asError(err), []));
+      .catch((err: unknown) => settle(asError(err), []));
   };
 
 export const createPinnedAgent = (policy: PinnedPolicy, resolve: Resolve): Agent =>
   new Agent({ connect: { lookup: pinnedLookup(policy, resolve) } });
+
+// M5 Task 4 (design §2.1-2.2, §5, D4/D5/D6): the shared, SSRF-safe redirect
+// transport built on top of createPinnedAgent above. Manual redirects capped
+// at MAX_REDIRECTS, a fresh per-hop pinned Agent (never trusted past hop 0),
+// monotonic cross-origin header stripping, a write-method redirect abort, a
+// merged client+timeout deadline, and a decompressed-byte cap. Never
+// produces a ToolCallOutcome (SDK-neutral) — bytes+status+contentType or a
+// typed error the caller maps.
+
+export type PinnedErrorReason =
+  | 'timeout'
+  | 'cancelled'
+  | 'egress'
+  | 'too-large'
+  | 'redirect-loop'
+  | 'redirect-write-method'
+  | 'redirect-invalid'
+  | 'network';
+
+export interface PinnedResponse {
+  kind: 'response';
+  status: number;
+  // Raw response Content-Type header, undefined if absent.
+  contentType?: string;
+  // Decompressed, capped.
+  bodyBytes: Uint8Array;
+}
+
+export type PinnedOutcome =
+  | PinnedResponse
+  | { kind: 'error'; reason: PinnedErrorReason; detail?: string };
+
+export interface HopHeaders {
+  // Sent only while still on the original origin (auth + tool + content).
+  sameOriginHeaders: Record<string, string>;
+  // The minimal safe set for a foreign origin (content only).
+  crossOriginHeaders: Record<string, string>;
+}
+
+export interface PinnedRequestOptions {
+  method: string;
+  headers: HopHeaders;
+  // Already-serialized; never sent on GET/HEAD or after hop 0.
+  body?: Uint8Array;
+  // Hop 0 trust (from --base-url).
+  baseTrusted: boolean;
+  allowPrivateNetwork: boolean;
+  timeoutMs: number;
+  maxResponseBytes: number;
+  // The MCP client-cancel signal (extra.signal).
+  signal: AbortSignal;
+}
+
+// Typed via undici's own fetch, never Node's global fetch (dual-package
+// hazard, probe-confirmed: the global fetch rejects an installed-undici
+// Agent) — a type-only import, so it does not pull in a fetch VALUE and
+// keeps this module free of a module-level singleton.
+type UndiciFetch = typeof undiciFetchType;
+type UndiciResponse = Awaited<ReturnType<UndiciFetch>>;
+
+export interface PinnedDeps {
+  fetch: UndiciFetch;
+  resolve: (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
+  // Default () => AbortSignal.timeout(ms); injectable for tests.
+  timeoutSignal: (ms: number) => AbortSignal;
+}
+
+export const MAX_REDIRECTS = 5;
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const GET_HEAD_METHODS = new Set(['GET', 'HEAD']);
+
+// Mirrors egress.ts's private METADATA_HOSTNAMES set. Kept local rather than
+// imported: this module's synchronous per-hop check (below) is a distinct,
+// self-contained guard against a different gap (IP-literal hosts bypassing
+// createPinnedAgent's connect.lookup), not a caller of egress.ts's async
+// assertAllowedRedirectTarget.
+const METADATA_HOSTNAMES = new Set(['metadata.google.internal', 'metadata.goog']);
+
+// URL.hostname keeps brackets around an IPv6 literal; strip them for isIP()
+// (mirrors egress.ts's private hostnameOf).
+const hostnameOf = (url: URL): string => {
+  const raw = url.hostname;
+  return raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+};
+
+const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+type AbortWinner = 'cancelled' | 'timeout';
+
+// M5 Task 4 amendment (round-2 review, MED fix): discriminates the abort
+// WINNER by which component signal actually fired FIRST, captured at fire
+// time via a `{ once: true }` listener on EACH of the client signal and the
+// timeout signal — never by re-checking `.aborted` at error-handling time.
+// Re-checking `.aborted` later misclassifies a timeout-then-client race: the
+// timeout signal fires and wins first, but by the time the error path reads
+// `opts.signal.aborted` the client signal has ALSO since aborted (e.g. an
+// MCP client cancelling right after a server-side timeout already
+// committed) — the old check would then wrongly report 'cancelled'. A signal
+// already aborted before this function runs never re-fires its 'abort'
+// event, so an already-aborted signal is recorded immediately instead of via
+// a listener. Whichever is recorded FIRST (by call order below, or by
+// firing order once both are live) wins; later recordings are no-ops.
+const trackAbortWinner = (
+  clientSignal: AbortSignal,
+  timeoutSignal: AbortSignal,
+): (() => AbortWinner | undefined) => {
+  let winner: AbortWinner | undefined;
+  const record =
+    (which: AbortWinner): (() => void) =>
+    () => {
+      if (winner === undefined) {
+        winner = which;
+      }
+    };
+  if (clientSignal.aborted) {
+    record('cancelled')();
+  } else {
+    clientSignal.addEventListener('abort', record('cancelled'), { once: true });
+  }
+  if (timeoutSignal.aborted) {
+    record('timeout')();
+  } else {
+    timeoutSignal.addEventListener('abort', record('timeout'), { once: true });
+  }
+  return () => winner;
+};
+
+// Falls back to re-checking `.aborted` only if `trackAbortWinner` somehow
+// recorded neither signal — unreachable in practice (the merged
+// `AbortSignal.any([client, timeout])` firing guarantees at least one
+// component fired before this is ever called), kept only as a defensive,
+// not-modelled-as-reachable fallback per the design note above `AbortWinner`.
+const isCancel = (winner: AbortWinner | undefined, clientSignal: AbortSignal): PinnedErrorReason =>
+  winner ?? (clientSignal.aborted ? 'cancelled' : 'timeout');
+
+// M5 Task 4 amendment (HIGH egress-bypass #1): Node/undici skip
+// connect.lookup ENTIRELY for an IP-literal hostname, so createPinnedAgent's
+// lookup never runs for a hop whose URL is already an IP literal (a
+// redirect target, or even hop 0). This synchronous check closes that gap
+// for EVERY hop, classifying under the SAME trust policy the Agent for that
+// hop would apply, BEFORE any Agent is built or request issued. Returns an
+// error-description string, or undefined when the hop is allowed.
+export const validateHopUrlSync = (url: URL, policy: PinnedPolicy): string | undefined => {
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return `unsupported scheme "${url.protocol}"`;
+  }
+  if (url.username !== '' || url.password !== '') {
+    return 'URL contains userinfo credentials';
+  }
+  const hostname = hostnameOf(url);
+  const lower = hostname.toLowerCase();
+  if (METADATA_HOSTNAMES.has(lower)) {
+    return `"${lower}" is a cloud-metadata endpoint`;
+  }
+  if (isIP(hostname) !== 0) {
+    const classification = classifyAddress(hostname);
+    if (classification === 'metadata') {
+      return `"${lower}" is a cloud-metadata address`;
+    }
+    if (classification === 'private' && !(policy.trusted || policy.allowPrivateNetwork)) {
+      return `"${lower}" is a private/loopback address`;
+    }
+  }
+  return undefined;
+};
+
+// A local sentinel class (not a message match) for the over-cap outcome, so
+// readCapped's caller can discriminate it from any other read failure.
+export class TooLargeError extends Error {
+  public constructor(message: string) {
+    super(message);
+    this.name = 'TooLargeError';
+  }
+}
+
+const isEgressError = (value: unknown): value is EgressError => value instanceof EgressError;
+
+// Bounds a hostile/cyclical cause chain so classification cannot loop
+// forever. undici wraps a connect-time lookup failure as a generic
+// TypeError("fetch failed") whose `.cause` carries the ORIGINAL EgressError
+// (probe-confirmed); an AggregateError-shaped cause (an `.errors` array) is
+// also walked, since some Node error aggregation paths use that shape
+// without literally being an AggregateError instance.
+const MAX_CAUSE_DEPTH = 8;
+const containsEgressError = (err: unknown, depth = 0): boolean => {
+  if (depth > MAX_CAUSE_DEPTH || err === null || typeof err !== 'object') {
+    return false;
+  }
+  if (isEgressError(err)) {
+    return true;
+  }
+  const { errors } = err as { errors?: unknown };
+  if (Array.isArray(errors) && errors.some((sub) => containsEgressError(sub, depth + 1))) {
+    return true;
+  }
+  const { cause } = err as { cause?: unknown };
+  return cause === undefined ? false : containsEgressError(cause, depth + 1);
+};
+
+// (MED) egress-error classification (round-1 amendment): never read
+// err.message (undici's generic "fetch failed" TypeError tells us nothing);
+// walk the cause chain for the branded EgressError instead. Anything else is
+// a genuine network failure.
+const classifyFetchError = (err: unknown): PinnedErrorReason =>
+  containsEgressError(err) ? 'egress' : 'network';
+
+// (LOW) content-length fast-reject applies when content-encoding is ABSENT
+// or normalizes to 'identity' — not only absent (round-1 amendment):
+// an encoded response's declared length describes the WIRE size, not the
+// decompressed size the cap is measured against.
+const isIdentityEncoding = (value: string | null): boolean =>
+  value === null || value.trim().toLowerCase() === 'identity';
+
+// Reads response.body via getReader(), counting DECOMPRESSED bytes. Mirrors
+// spec/fetch.ts's readBodyCapped, adapted to a content-encoding-aware
+// pre-check (D6) and a local TooLargeError sentinel (not a message
+// match). Cancels the reader/body for any incompletely-consumed body — the
+// fast-reject, the over-cap stream, and an unexpected reader error alike
+// (round-1 Agent-lifecycle amendment) — before this function returns
+// or throws, so the caller's Agent teardown never races a live response.
+const readCapped = async (
+  response: UndiciResponse,
+  maxBytes: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> => {
+  const contentLength = response.headers.get('content-length');
+  if (isIdentityEncoding(response.headers.get('content-encoding')) && contentLength !== null) {
+    const declared = Number(contentLength);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new TooLargeError(
+        `declared content-length ${declared} exceeds the ${maxBytes}-byte budget`,
+      );
+    }
+  }
+  if (response.body === null) {
+    return new Uint8Array(0);
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  // Defensive belt-and-suspenders alongside the `signal` already bound to
+  // the fetch() call itself: forces the pending read to unblock even if a
+  // given undici version does not error an in-flight body stream promptly
+  // on abort.
+  let aborted = false;
+  const onAbort = (): void => {
+    aborted = true;
+    reader.cancel().catch(() => undefined);
+  };
+  if (signal.aborted) {
+    onAbort();
+  } else {
+    signal.addEventListener('abort', onAbort, { once: true });
+  }
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (aborted || signal.aborted) {
+        throw new Error('response body read aborted');
+      }
+      if (done) {
+        break;
+      }
+      received += value.byteLength;
+      if (received > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new TooLargeError(`decompressed body exceeds the ${maxBytes}-byte budget`);
+      }
+      chunks.push(value);
+    }
+  } catch (err) {
+    if (!(err instanceof TooLargeError)) {
+      await reader.cancel().catch(() => undefined);
+    }
+    throw err;
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+  return Buffer.concat(chunks);
+};
+
+export const pinnedRequest = async (
+  initialUrl: URL,
+  opts: PinnedRequestOptions,
+  deps: PinnedDeps,
+): Promise<PinnedOutcome> => {
+  const timeoutSig = deps.timeoutSignal(opts.timeoutMs);
+  // AbortSignal.any keeps a strong reference to timeoutSig for as long as
+  // `signal` is reachable, so its timer is not eligible for GC before it
+  // fires.
+  const signal = AbortSignal.any([opts.signal, timeoutSig]);
+  // Set up BEFORE any request is issued so both component signals have a
+  // live listener for the whole call (see trackAbortWinner's design note).
+  const getAbortWinner = trackAbortWinner(opts.signal, timeoutSig);
+  const originalOrigin = initialUrl.origin;
+  let url = initialUrl;
+  let crossed = false;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    // Redirect hops are never trusted — only hop 0 (--base-url) carries the
+    // caller's trust.
+    const trusted = hop === 0 ? opts.baseTrusted : false;
+    const policy: PinnedPolicy = { allowPrivateNetwork: opts.allowPrivateNetwork, trusted };
+    const sync = validateHopUrlSync(url, policy);
+    if (sync !== undefined) {
+      return { kind: 'error', reason: 'egress', detail: sync };
+    }
+    const agent = createPinnedAgent(policy, (hostname) => deps.resolve(hostname, signal));
+    // MONOTONIC: once the chain has left the original origin, it never
+    // regains credentials, even bouncing back to the original origin later.
+    const onOriginalOrigin = url.origin === originalOrigin && !crossed;
+    const headers = onOriginalOrigin
+      ? opts.headers.sameOriginHeaders
+      : opts.headers.crossOriginHeaders;
+    const { method } = opts;
+    const sendBody =
+      hop === 0 && opts.body !== undefined && !GET_HEAD_METHODS.has(method.toUpperCase());
+    let response: UndiciResponse;
+    try {
+      response = await deps.fetch(url, {
+        method,
+        headers,
+        ...(sendBody ? { body: opts.body } : {}),
+        dispatcher: agent,
+        redirect: 'manual',
+        signal,
+      });
+    } catch (err) {
+      // Exceptional path (round-1 Agent-lifecycle amendment):
+      // destroy(), never the graceful close() that may await a live
+      // response.
+      await agent.destroy().catch(() => undefined);
+      if (signal.aborted) {
+        return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
+      }
+      return { kind: 'error', reason: classifyFetchError(err), detail: describeCause(err) };
+    }
+    let exceptional = false;
+    try {
+      if (REDIRECT_STATUSES.has(response.status)) {
+        await response.body?.cancel().catch(() => undefined);
+        if (WRITE_METHODS.has(method.toUpperCase())) {
+          return { kind: 'error', reason: 'redirect-write-method' };
+        }
+        const location = response.headers.get('location');
+        if (location === null) {
+          return { kind: 'error', reason: 'redirect-invalid', detail: 'no Location header' };
+        }
+        let next: URL;
+        try {
+          next = new URL(location, url);
+        } catch {
+          return { kind: 'error', reason: 'redirect-invalid', detail: 'invalid Location header' };
+        }
+        if (next.origin !== originalOrigin) {
+          crossed = true;
+        }
+        url = next;
+        continue;
+      }
+      const bodyBytes = await readCapped(response, opts.maxResponseBytes, signal);
+      const contentType = response.headers.get('content-type');
+      return {
+        kind: 'response',
+        status: response.status,
+        ...(contentType === null ? {} : { contentType }),
+        bodyBytes,
+      };
+    } catch (capErr) {
+      exceptional = true;
+      if (signal.aborted) {
+        return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
+      }
+      if (capErr instanceof TooLargeError) {
+        return { kind: 'error', reason: 'too-large' };
+      }
+      return { kind: 'error', reason: 'network', detail: describeCause(capErr) };
+    } finally {
+      // Every non-exceptional path (a plain 200, or a redirect hop whose
+      // body was already cancelled above) closes gracefully; every
+      // exceptional path above already destroyed. Runs even on `continue`.
+      await (exceptional ? agent.destroy() : agent.close()).catch(() => undefined);
+    }
+  }
+  return { kind: 'error', reason: 'redirect-loop' };
+};
