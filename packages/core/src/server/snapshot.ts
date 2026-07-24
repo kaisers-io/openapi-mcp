@@ -139,13 +139,17 @@ export interface SnapshotPipelineInput {
 // `'object'`) — deliberately: nothing in this codebase ever reassigns a
 // property on a function object, and freezing would not change whether the
 // function itself can be CALLED, so there is nothing worth protecting there.
-// `toolsByName` (a `Map` instance) IS visited and frozen as an object, but
-// `Object.freeze` on a `Map` does NOT block its `.set()`/`.delete()` methods
-// (a well-known JS limitation — freezing only stops own-property
-// reassignment, and a Map's entries live outside its own properties); the
-// STATIC `ReadonlyMap<string, SnapshotTool>` type is what stops a
-// `ServerSnapshot`-typed caller from calling `.set()` in the first place —
-// consistent with how `readonly` fields are enforced elsewhere in this file.
+// `toolsByName` is deliberately NOT a `Map`: `Object.freeze` on a `Map`
+// does not block its `.set()`/`.delete()` methods (a well-known JS
+// limitation — freezing only stops own-property reassignment, and a Map's
+// entries live outside its own properties), so a frozen Map's routing table
+// would still be mutable at runtime even though the TS `ReadonlyMap` type
+// stopped a typed caller from calling `.set()` at compile time only.
+// `toolsByName` is instead a null-prototype, own-property RECORD (built via
+// `Object.create(null)` below) — its entries genuinely ARE its own
+// properties, so this same `deepFreeze` walk that freezes every other plain
+// object in the snapshot also genuinely blocks add/replace/delete on it,
+// closing the gap at runtime, not just in the types.
 const deepFreeze = <T>(value: T, seen = new WeakSet<object>()): T => {
   if (value === null || typeof value !== 'object') {
     return value;
@@ -184,12 +188,20 @@ export const buildSnapshot = (
   // Meta tool first: a stable, predictable tools/list order that does not
   // depend on operation ordering in the spec.
   const all = [metaTool, ...upstreamTools];
-  const toolsByName = new Map<string, SnapshotTool>();
+  // Null-prototype: tool names are sanitized identifiers already, but a null
+  // prototype is the safe default regardless — `__proto__`/`constructor` are
+  // just ordinary own keys here, never a prototype-pollution vector, and
+  // `Object.hasOwn` below never needs to distinguish an own key from an
+  // inherited one.
+  const toolsByName: Record<string, SnapshotTool | undefined> = Object.create(null) as Record<
+    string,
+    SnapshotTool | undefined
+  >;
   for (const tool of all) {
-    if (toolsByName.has(tool.name)) {
+    if (Object.hasOwn(toolsByName, tool.name)) {
       throw validationError(`duplicate tool name "${tool.name}" in the server snapshot`);
     }
-    toolsByName.set(tool.name, tool);
+    toolsByName[tool.name] = tool;
   }
   for (const tool of all) {
     assertObjectRoot(tool.name, 'inputSchema', tool.wireTool.inputSchema);

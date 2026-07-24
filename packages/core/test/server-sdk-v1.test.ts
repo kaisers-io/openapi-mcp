@@ -247,7 +247,7 @@ describe('createProtocolSession — InMemory integration', () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     const list = await client.listTools();
     const wireTool = list.tools.find((tool) => tool.name === 'createThing');
-    const expected = snapshot.toolsByName.get('createThing')?.wireTool;
+    const expected = snapshot.toolsByName['createThing']?.wireTool;
     expect(wireTool?.inputSchema).toEqual(expected?.inputSchema);
     expect(wireTool?.description).toEqual(expected?.description);
     expect(wireTool?.annotations).toEqual(expected?.annotations);
