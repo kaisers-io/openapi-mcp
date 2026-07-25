@@ -1,32 +1,44 @@
 name: ci
-
 on:
-  push:
-    branches: [main]
+  push: { branches: [main] }
   pull_request:
-
+# PR-controlled code runs in every job (install/build/test) — keep the ambient token read-only.
 permissions:
   contents: read
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  checks:
+  check:
     strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
+      matrix: { os: [ubuntu-latest, macos-latest] }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version-file: .node-version, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - run: pnpm build
-      - name: Smoke-test the built bundle
-        run: node packages/cli/bin/openapi-mcp.mjs --json doctor
+  bundle-determinism:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version-file: .node-version, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/check-bundle-determinism.sh
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version-file: .node-version, cache: pnpm }
+      - run: pnpm install --frozen-lockfile && pnpm build
+      - name: smoke-test the globally-installed bin
+        run: |
+          set -euo pipefail
+          npm pack ./packages/cli --pack-destination /tmp
+          npm install -g /tmp/kaisers-io-openapi-mcp-*.tgz
+          openapi-mcp --version
+          openapi-mcp --json doctor
+# NOTE: no publish job here — publishing lives in release.yml (tag-triggered, OIDC).
