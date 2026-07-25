@@ -29,8 +29,14 @@ export type AddressClass = 'public' | 'private' | 'metadata';
 
 // Cloud metadata/credential endpoints: denied even with --allow-private-network.
 // Maintained deny set (D4): IMDS at 169.254.169.254 (AWS/GCP/Azure/OpenStack/
-// DigitalOcean), AWS ECS task credentials, Alibaba Cloud metadata, GCP hostnames.
-const METADATA_IPV4 = new Set(['169.254.169.254', '169.254.170.2', '100.100.100.200']);
+// DigitalOcean), AWS ECS task credentials, AWS EKS Pod Identity Agent
+// (169.254.170.23), Alibaba Cloud metadata, GCP hostnames.
+const METADATA_IPV4 = new Set([
+  '169.254.169.254',
+  '169.254.170.2',
+  '169.254.170.23',
+  '100.100.100.200',
+]);
 const METADATA_HOSTNAMES = new Set(['metadata.google.internal', 'metadata.goog']);
 
 const classifyIpv4 = (address: string): AddressClass => {
@@ -183,12 +189,27 @@ export const classifyAddress = (address: string): AddressClass => {
       // Discard-only 100::/64 (IANA registry)
       return 'private';
     }
-    // AWS IPv6 IMDS fd00:ec2::254 — a metadata endpoint (denied even with
+    // AWS IPv6 IMDS fd00:ec2::254 and AWS EKS Pod Identity Agent fd00:ec2::23
+    // — metadata/credential endpoints (denied even with
     // --allow-private-network). Matched before the fc00::/7 ULA range below,
-    // which would otherwise class it merely private.
+    // which would otherwise class them merely private.
     if (
       g0 === 0xfd00 &&
       g1 === 0x0ec2 &&
+      g2 === 0 &&
+      g3 === 0 &&
+      g4 === 0 &&
+      g5 === 0 &&
+      g6 === 0 &&
+      (g7 === 0x0254 || g7 === 0x0023)
+    ) {
+      return 'metadata';
+    }
+    // GCP Compute metadata server (IPv6) fd20:ce::254 — same rationale as
+    // above; matched before the fc00::/7 ULA range.
+    if (
+      g0 === 0xfd20 &&
+      g1 === 0x00ce &&
       g2 === 0 &&
       g3 === 0 &&
       g4 === 0 &&

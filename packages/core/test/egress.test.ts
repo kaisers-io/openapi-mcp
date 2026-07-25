@@ -22,6 +22,8 @@ describe('classifyAddress', () => {
     ['255.255.255.255', 'private'],
     ['169.254.169.254', 'metadata'],
     ['169.254.170.2', 'metadata'],
+    ['169.254.170.23', 'metadata'], // AWS EKS Pod Identity Agent (IPv4)
+    ['169.254.170.24', 'private'], // Adjacent address stays private (proves the metadata match is exact)
     ['100.100.100.200', 'metadata'],
     ['93.184.216.34', 'public'],
     ['172.32.0.1', 'public'],
@@ -48,6 +50,11 @@ describe('classifyAddress', () => {
     ['::ffff:5db8:d822', 'public'],
     ['2606:2800:220:1:248:1893:25c8:1946', 'public'],
     ['fd00:ec2::254', 'metadata'], // AWS IPv6 IMDS — denied even with --allow-private-network
+    ['fd00:ec2::23', 'metadata'], // AWS EKS Pod Identity Agent (IPv6)
+    ['fd00:ec2::24', 'private'], // Adjacent ULA stays merely private (proves the metadata match is exact)
+    ['fd20:ce::254', 'metadata'], // GCP Compute metadata server (IPv6)
+    ['fd20:ce::255', 'private'], // Adjacent ULA stays merely private (proves the metadata match is exact)
+    ['fd20:ce::1', 'private'], // Different tail within the same ULA prefix stays merely private
     ['ff02::1', 'private'], // IPv6 multicast (was public)
     ['ff00::', 'private'],
     ['fd00:ec2::255', 'private'], // Adjacent ULA stays merely private (proves the metadata match is exact)
@@ -131,6 +138,15 @@ describe('assertAllowedRedirectTarget', () => {
     ).rejects.toThrow(/metadata/u);
   });
 
+  it.each(['fd00:ec2::23', 'fd20:ce::254'])(
+    'rejects the IPv6 cloud credential endpoint %s even with --allow-private-network',
+    async (address) => {
+      await expect(
+        assertAllowedRedirectTarget(new URL(`http://[${address}]/`), allow, noLookup, signal),
+      ).rejects.toThrow(/metadata/u);
+    },
+  );
+
   it('rejects the local-use NAT64 /48 even with --allow-private-network (final-review fix)', async () => {
     await expect(
       assertAllowedRedirectTarget(
@@ -153,7 +169,7 @@ describe('assertAllowedRedirectTarget', () => {
     ).rejects.toMatchObject({ message: expect.stringContaining('metadata') as string });
   });
 
-  it.each(['169.254.170.2', '100.100.100.200'])(
+  it.each(['169.254.170.2', '169.254.170.23', '100.100.100.200'])(
     'always rejects the cloud credential endpoint %s, even with allowPrivateNetwork',
     async (address) => {
       await expect(
