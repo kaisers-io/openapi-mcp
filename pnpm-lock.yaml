@@ -47,6 +47,9 @@ importers:
       commander:
         specifier: 15.0.0
         version: 15.0.0
+      undici:
+        specifier: 8.8.0
+        version: 8.8.0
 
   packages/core:
     dependencies:

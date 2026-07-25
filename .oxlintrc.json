@@ -396,6 +396,22 @@
         // exceeds 300 lines
         "max-lines": "off"
       }
+    },
+    {
+      "files": ["packages/cli/src/commands/serve.ts"],
+      "rules": {
+        // Off per task-11 brief (M5, the milestone's activation): resolving
+        // the API base URL (resolveBaseUrl + assertBaseUrlShape), building
+        // the process-wide redactor, eager-compiling the per-tool output
+        // validators (D7), and constructing the ONE shared createExecutor
+        // instance all belong in this single startup action alongside the
+        // pre-existing HTTP-option/spec-pipeline wiring - splitting them into
+        // a separate module would only hide the ordering constraints the
+        // brief itself specifies (apiConfig before buildTools, base-url
+        // resolution before the executor, etc.), so it verbatim exceeds 300
+        // lines
+        "max-lines": "off"
+      }
     }
   ]
 }

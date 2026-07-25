@@ -16,7 +16,13 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { cachePathTypeError, type CacheFs, validationError } from '@kaisers-io/openapi-mcp-core';
+import {
+  cachePathTypeError,
+  type CacheFs,
+  type PinnedDeps,
+  validationError,
+} from '@kaisers-io/openapi-mcp-core';
+import { fetch as undiciFetch } from 'undici';
 
 export interface CliContext {
   env: Readonly<Record<string, string | undefined>>;
@@ -36,6 +42,12 @@ export interface CliContext {
   cwd: () => string;
   lookup: (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
   cacheFs: CacheFs;
+  // M5 Task 11: the narrow, project-owned transport `pinnedRequest` needs for
+  // the real upstream API executor — undici's OWN `fetch` (never Node's
+  // global one, which cannot be paired with an installed-undici `Agent` —
+  // the dual-package hazard probed in Task 3), `resolve` bound to this same
+  // `lookup`, and a real per-call timeout signal factory.
+  transport: PinnedDeps;
 }
 
 const CACHE_FS_ERROR = 'no cache filesystem configured in testContext';
@@ -285,6 +297,28 @@ export const resolveErrWidth = (
   return columns !== undefined && columns > 0 ? columns : STDERR_FALLBACK_WIDTH;
 };
 
+const realLookup = async (hostname: string, signal: AbortSignal): Promise<readonly string[]> => {
+  signal.throwIfAborted();
+  const pending = dnsLookup(hostname, { all: true });
+  pending.catch(() => {
+    // Consume a late rejection if the race below is lost to the deadline
+  });
+  const aborted = new Promise<never>((_resolve, reject) => {
+    signal.addEventListener(
+      'abort',
+      () => {
+        reject(new Error('DNS lookup aborted by the fetch deadline'));
+      },
+      { once: true },
+    );
+  });
+  aborted.catch(() => {
+    // Consume the deadline rejection if the lookup won the race
+  });
+  const entries = await Promise.race([pending, aborted]);
+  return entries.map((entry) => entry.address);
+};
+
 export const realContext = (): CliContext => ({
   env: process.env,
   out: (line) => {
@@ -305,28 +339,13 @@ export const realContext = (): CliContext => ({
     return stats.size;
   },
   cwd: () => process.cwd(),
-  lookup: async (hostname, signal) => {
-    signal.throwIfAborted();
-    const pending = dnsLookup(hostname, { all: true });
-    pending.catch(() => {
-      // Consume a late rejection if the race below is lost to the deadline
-    });
-    const aborted = new Promise<never>((_resolve, reject) => {
-      signal.addEventListener(
-        'abort',
-        () => {
-          reject(new Error('DNS lookup aborted by the fetch deadline'));
-        },
-        { once: true },
-      );
-    });
-    aborted.catch(() => {
-      // Consume the deadline rejection if the lookup won the race
-    });
-    const entries = await Promise.race([pending, aborted]);
-    return entries.map((entry) => entry.address);
-  },
+  lookup: realLookup,
   cacheFs: realCacheFs(),
+  transport: {
+    fetch: undiciFetch,
+    resolve: realLookup,
+    timeoutSignal: (ms) => AbortSignal.timeout(ms),
+  },
 });
 
 export interface TestContextOverrides extends Partial<CliContext> {
@@ -354,6 +373,11 @@ export const testContext = (overrides: TestContextOverrides = {}): CliContext =>
     fileSizeBytes: () => Promise.reject(new Error('no file access configured in testContext')),
     cwd: () => '/test-cwd',
     lookup: () => Promise.reject(new Error('no dns lookup configured in testContext')),
+    transport: {
+      fetch: () => Promise.reject(new Error('no transport configured in testContext')),
+      resolve: () => Promise.reject(new Error('no transport configured in testContext')),
+      timeoutSignal: () => AbortSignal.timeout(0),
+    },
     cacheFs: {
       mkdirSecure: () => Promise.reject(new Error(CACHE_FS_ERROR)),
       writeFileAtomic: () => Promise.reject(new Error(CACHE_FS_ERROR)),

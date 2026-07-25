@@ -1,6 +1,46 @@
 import { spawn } from 'node:child_process';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+
+// A real, local upstream (127.0.0.1, ephemeral port) that the M5 executor
+// actually calls through — no more asserting an "execution lands in M5"
+// stub. GET /pets -> a real JSON array (a structuredContent envelope);
+// anything else -> 404. Records the LAST Authorization header it saw so a
+// secret --header-env can be proven to have reached the upstream without
+// ever asserting on the outcome (which must never contain it).
+const startUpstream = (): Promise<{
+  server: Server;
+  port: number;
+  lastAuthHeader: () => string | undefined;
+  close: () => Promise<void>;
+}> =>
+  new Promise((resolve) => {
+    let lastAuth: string | undefined;
+    const server = createServer((req, res) => {
+      lastAuth = req.headers.authorization;
+      if (req.url === '/pets' && req.method === 'GET') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify([{ id: 1, name: 'Rex' }]));
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('not found');
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo;
+      resolve({
+        server,
+        port,
+        lastAuthHeader: () => lastAuth,
+        close: () =>
+          new Promise<void>((_resolve) => {
+            server.close(() => _resolve());
+          }),
+      });
+    });
+  });
 
 const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
@@ -73,10 +113,33 @@ describe('serve — stdio subprocess E2E', () => {
     child = undefined;
   });
 
-  it('initialize/list/call(meta)/call(upstream, M5-unavailable)/shutdown, with stdout carrying ONLY JSON-RPC', async () => {
-    child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json'], {
-      cwd: fixturesDir,
-    });
+  it('initialize/list/call(meta)/call(upstream, REAL execution against a local server)/shutdown, with stdout carrying ONLY JSON-RPC', async () => {
+    const upstream = await startUpstream();
+    const SECRET = 'sk-e2e-secret-01234567890123456789';
+    child = spawn(
+      process.execPath,
+      [
+        bin,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        `http://127.0.0.1:${String(upstream.port)}`,
+        '--header-env',
+        'Authorization=UPSTREAM_TOKEN',
+        // The on-disk fixture content can differ from a PRIOR run's accepted
+        // cache entry at ~/.kaisers-io/openapi-mcp/cache (trust-on-first-use,
+        // keyed by file path — see M2b) — auto-accept here so this test
+        // never depends on cache history left over from an earlier run.
+        '--trust-spec-updates',
+        // Spec §3.2 rule 3: with no --allow, only read-only methods are
+        // exposed — createPet (POST) needs an explicit allow to be callable
+        // (this test needs it for the 404 case below).
+        '--allow',
+        '**',
+      ],
+      { cwd: fixturesDir, env: { ...process.env, UPSTREAM_TOKEN: `Bearer ${SECRET}` } },
+    );
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
 
     send(child, {
@@ -120,12 +183,36 @@ describe('serve — stdio subprocess E2E', () => {
     });
     await waitFor(() => stdoutLines.length >= 4);
     const upstreamResponse = JSON.parse(stdoutLines[3] as string) as JsonRpcMessage;
-    expect(upstreamResponse.result?.['isError']).toBe(true);
-    const content = upstreamResponse.result?.['content'] as { text: string }[] | undefined;
-    const text = content?.[0]?.text ?? '';
-    expect(text).toMatch(/M5/u);
+    // REAL execution: a genuine structuredContent envelope from the local
+    // upstream, not the old "execution lands in M5" stub text.
+    expect(upstreamResponse.result?.['isError']).not.toBe(true);
+    const structured = upstreamResponse.result?.['structuredContent'] as
+      | { status: number; contentType: string; data: unknown }
+      | undefined;
+    expect(structured?.status).toBe(200);
+    expect(structured?.data).toEqual([{ id: 1, name: 'Rex' }]);
+    // The secret header actually reached the upstream...
+    expect(upstream.lastAuthHeader()).toBe(`Bearer ${SECRET}`);
+    // ...but never appears anywhere in the JSON-RPC response sent to the client.
+    expect(JSON.stringify(upstreamResponse)).not.toContain(SECRET);
+
+    // A 404 from the same upstream (the local server only handles GET
+    // /pets — createPet's POST /pets falls through to its 404 branch) maps
+    // to a redacted isError, never a structuredContent envelope.
+    send(child, {
+      jsonrpc: '2.0',
+      id: 5,
+      method: 'tools/call',
+      params: { name: 'createPet', arguments: { name: 'Rex' } },
+    });
+    await waitFor(() => stdoutLines.length >= 5);
+    const notFoundResponse = JSON.parse(stdoutLines[4] as string) as JsonRpcMessage;
+    expect(notFoundResponse.result?.['isError']).toBe(true);
+    expect(notFoundResponse.result?.['structuredContent']).toBeUndefined();
+    expect(JSON.stringify(notFoundResponse)).not.toContain(SECRET);
 
     child.kill('SIGTERM');
+    await upstream.close();
     await new Promise<void>((resolve) => {
       child?.once('exit', () => resolve());
     });
@@ -137,19 +224,66 @@ describe('serve — stdio subprocess E2E', () => {
     // (1) the raw stream must end with a trailing newline or be empty — no
     //     residual/unterminated partial bytes left over;
     // (2) splitting on "\n" and dropping the final empty segment gives
-    //     EXACTLY 4 non-empty lines — the 4 responses sent above, no more,
-    //     no fewer (a stray console.log/warning would add a 5th);
+    //     EXACTLY 5 non-empty lines — the 5 responses sent above, no more,
+    //     no fewer (a stray console.log/warning would add a 6th);
     // (3) EVERY one of those parses as JSON AND carries `jsonrpc: "2.0"`.
     const finalRaw = rawStdout();
     expect(finalRaw === '' || finalRaw.endsWith('\n')).toBe(true);
     const allLines = finalRaw.split('\n').filter((line) => line !== '');
-    expect(allLines).toHaveLength(4);
+    expect(allLines).toHaveLength(5);
     for (const line of allLines) {
       const parsed = JSON.parse(line) as JsonRpcMessage; // Throws on anything non-JSON — no swallowed try/catch
       expect(parsed.jsonrpc).toBe('2.0');
     }
     expect(stderrLines.every((line) => !line.includes('{'))).toBe(true); // Stderr carries plain-text diagnostics, not JSON-RPC
   }, 10000);
+
+  // FALSIFICATION target (task-11 brief step 5): pointing buildTools back at
+  // SYSTEM_HEADERS only (dropping the `...apiConfig.reservedHeaderNames`
+  // union) makes exactly this test fail — the spec's own "X-Trace" header
+  // parameter would reappear as a caller-settable tool input even though
+  // --header-env configures a SAME-NAMED operator auth header, which the
+  // executor injects and the caller must never be able to override.
+  it('unions apiConfig.reservedHeaderNames into buildTools: a spec header param colliding with a configured --header-env name is dropped from the tool input schema', async () => {
+    child = spawn(
+      process.execPath,
+      [
+        bin,
+        'serve',
+        '--spec',
+        'header-collision.json',
+        '--base-url',
+        'http://127.0.0.1:1',
+        '--header-env',
+        'X-Trace=TRACE_ENV',
+      ],
+      { cwd: fixturesDir, env: { ...process.env, TRACE_ENV: 'operator-trace-value' } },
+    );
+    const { stdoutLines } = collectLines(child);
+    send(child, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'e2e', version: '1.0.0' },
+      },
+    });
+    await waitFor(() => stdoutLines.length > 0);
+    send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
+    send(child, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    await waitFor(() => stdoutLines.length >= 2);
+    const listResponse = JSON.parse(stdoutLines[1] as string) as JsonRpcMessage;
+    const tools =
+      (listResponse.result?.['tools'] as { name: string; inputSchema: unknown }[]) ?? [];
+    const getTrace = tools.find((tool) => tool.name === 'getTrace');
+    const properties = (
+      getTrace?.inputSchema as { properties?: Record<string, unknown> } | undefined
+    )?.properties;
+    expect(properties).toBeDefined();
+    expect(Object.keys(properties ?? {})).not.toContain('X-Trace');
+  });
 
   it('a startup failure (missing spec file) goes to stderr as plain text, even with the global --json flag, and never touches stdout', async () => {
     child = spawn(process.execPath, [bin, '--json', 'serve', '--spec', 'does-not-exist.json'], {
@@ -246,7 +380,16 @@ describe('serve — stdio subprocess E2E', () => {
   it('a dead --deny pattern in non-strict mode is reported as a sanitized stderr warning and the server still initializes normally (security fix)', async () => {
     child = spawn(
       process.execPath,
-      [bin, 'serve', '--spec', 'petstore.json', '--deny', 'zzz-no-such-op'],
+      [
+        bin,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        'http://127.0.0.1:1',
+        '--deny',
+        'zzz-no-such-op',
+      ],
       { cwd: fixturesDir },
     );
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
@@ -285,9 +428,11 @@ describe('serve — stdio subprocess E2E', () => {
   });
 
   it('exits 0 on a graceful shutdown when the client closes stdin (stdin EOF), not just on SIGINT/SIGTERM (security fix)', async () => {
-    child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json'], {
-      cwd: fixturesDir,
-    });
+    child = spawn(
+      process.execPath,
+      [bin, 'serve', '--spec', 'petstore.json', '--base-url', 'http://127.0.0.1:1'],
+      { cwd: fixturesDir },
+    );
     const { stdoutLines } = collectLines(child);
 
     send(child, {

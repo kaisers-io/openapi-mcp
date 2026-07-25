@@ -177,7 +177,6 @@ export {
   createSessionStore,
   DEFAULT_RATE_LIMIT,
   evaluateRequest,
-  executionUnavailable,
   extractBearerToken,
   isAuthorized,
   isValidBearerToken,

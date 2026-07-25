@@ -22,7 +22,8 @@
   "devDependencies": {
     "@commander-js/extra-typings": "15.0.0",
     "@kaisers-io/openapi-mcp-core": "workspace:*",
-    "commander": "15.0.0"
+    "commander": "15.0.0",
+    "undici": "8.8.0"
   },
   "engines": {
     "node": ">=24.12"
