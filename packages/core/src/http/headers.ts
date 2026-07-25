@@ -1,7 +1,7 @@
 import { usageError } from '../errors.ts';
 
 // RFC 9110 token grammar for header field names
-const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
+export const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const ENV_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 // Any C0 control or DEL in a header value is a request-smuggling vector
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;

@@ -5,7 +5,8 @@ import {
   buildTools,
   createDispatcher,
   createMetaExecutor,
-  executionUnavailable,
+  createRedactor,
+  structuredOutcome,
   SYSTEM_HEADERS,
   textOutcome,
   TRUNCATION_MARKER,
@@ -15,6 +16,14 @@ import {
   type SnapshotTool,
   type ToolExecutor,
 } from '../src/index.ts';
+
+// A local fake standing in for the M5 upstream executor (this suite tests
+// dispatch wiring/validation/redaction, not real upstream execution — that
+// is server-execute-executor.test.ts's job) + a neutral redactor used
+// everywhere this suite does not itself exercise the boundary redaction.
+const noopExecutor: ToolExecutor = () =>
+  Promise.resolve(textOutcome('no upstream executor configured in this test', true));
+const NOOP_REDACTOR = createRedactor([]);
 
 // A real buildTools fixture: an optional flattened body with a required `id`
 // and an optional `note` — the same all-or-nothing shape the M3 obligation
@@ -264,8 +273,9 @@ describe('createDispatcher', () => {
       snapshot: buildTestSnapshot(),
       limiter: { consume },
       now: () => 0,
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({ name: 'nope', arguments: {}, signal: noSignal });
     expect(result).toEqual({ kind: 'unknown-tool', name: 'nope' });
@@ -278,8 +288,9 @@ describe('createDispatcher', () => {
       snapshot: buildTestSnapshot(),
       limiter: { consume },
       now: () => 0,
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     await dispatcher.call({
       name: 'createThing',
@@ -299,6 +310,7 @@ describe('createDispatcher', () => {
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({ name: 'createThing', arguments: {}, signal: noSignal });
     expect(result).toEqual({
@@ -316,6 +328,7 @@ describe('createDispatcher', () => {
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       name: 'createThing',
@@ -341,6 +354,7 @@ describe('createDispatcher', () => {
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const hostileArguments: Record<string, unknown> = {};
     Object.defineProperty(hostileArguments, 'id', {
@@ -375,8 +389,9 @@ describe('createDispatcher', () => {
       snapshot: buildTestSnapshot(),
       limiter: alwaysPermitLimiter(),
       now: () => 0,
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       name: 'createThing',
@@ -395,8 +410,9 @@ describe('createDispatcher', () => {
       snapshot: buildSnapshotFor(namedOpWithEnum),
       limiter: alwaysPermitLimiter(),
       now: () => 0,
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       name: 'setStatus',
@@ -423,8 +439,9 @@ describe('createDispatcher', () => {
       snapshot: buildSnapshotFor(namedOpWithCatchall),
       limiter: alwaysPermitLimiter(),
       now: () => 0,
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       name: 'setMetadata',
@@ -448,8 +465,9 @@ describe('createDispatcher', () => {
       snapshot: buildSnapshotFor(namedOpWithCatchall),
       limiter: alwaysPermitLimiter(),
       now: () => 0,
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       name: 'setMetadata',
@@ -477,8 +495,9 @@ describe('createDispatcher', () => {
       snapshot: buildSnapshotFor(namedOpWithDeeplyNested),
       limiter: alwaysPermitLimiter(),
       now: () => 0,
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       // The deepest leaf must be a string; 123 (a number) trips exactly ONE
@@ -500,8 +519,9 @@ describe('createDispatcher', () => {
       snapshot: buildSnapshotFor(namedOpWithManyFields),
       limiter: alwaysPermitLimiter(),
       now: () => 0,
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const args = Object.fromEntries(
       Array.from({ length: 21 }, (_, index) => [`field${index}`, index]),
@@ -541,6 +561,7 @@ describe('createDispatcher', () => {
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     await dispatcher.call({ name: 'transformThing', arguments: { id: 'x' }, signal: noSignal });
     expect(executor).toHaveBeenCalledTimes(1);
@@ -562,8 +583,9 @@ describe('createDispatcher', () => {
       now: () => {
         throw new Error(secret);
       },
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       name: 'createThing',
@@ -588,8 +610,9 @@ describe('createDispatcher', () => {
         },
       },
       now: () => 0,
-      executor: executionUnavailable,
+      executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       name: 'createThing',
@@ -614,6 +637,7 @@ describe('createDispatcher', () => {
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       name: 'createThing',
@@ -634,6 +658,7 @@ describe('createDispatcher', () => {
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
     });
     const result = await dispatcher.call({
       name: 'openapi_mcp_status',
@@ -646,14 +671,142 @@ describe('createDispatcher', () => {
   });
 });
 
-describe('executionUnavailable', () => {
-  it('is a stable "execution lands in M5" isError for every upstream tool call', async () => {
-    const outcome = await executionUnavailable(
-      buildTestSnapshot().toolsByName['createThing']!,
-      { id: 'x' },
-      noSignal,
-    );
-    expect(outcome.isError).toBe(true);
-    expect(outcome.content[0]?.text).toMatch(/M5/u);
+// plan-review H4 (M5 Task 11): the dispatcher itself must scrub the
+// LAST hop before an outcome reaches the client — this covers the meta
+// executor and any future executor, not just the M5 upstream one, so a bug
+// in a single executor's own redaction can never alone leak a secret.
+describe('dispatch-boundary redaction', () => {
+  const SECRET = 'sk-live-boundary-secret-01234567';
+  const boundaryRedactor = createRedactor([SECRET]);
+
+  it('redacts a secret in a text outcome returned by the executor, at the dispatcher boundary', async () => {
+    const executor: ToolExecutor = () =>
+      Promise.resolve(textOutcome(`upstream said: ${SECRET}`, true));
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: alwaysPermitLimiter(),
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor: boundaryRedactor,
+    });
+    const result = await dispatcher.call({
+      name: 'createThing',
+      arguments: { id: 'x' },
+      signal: noSignal,
+    });
+    expect(result.kind).toBe('outcome');
+    const text = result.kind === 'outcome' ? result.outcome.content[0]?.text : undefined;
+    expect(text).not.toContain(SECRET);
+    expect(text).toContain('[redacted]');
+  });
+
+  it('drops structuredContent and returns a generic isError when a secret is found in it, never a redacted-but-successful envelope', async () => {
+    const executor: ToolExecutor = () =>
+      Promise.resolve(
+        structuredOutcome(
+          JSON.stringify({ status: 200, contentType: 'application/json', data: { token: SECRET } }),
+          { status: 200, contentType: 'application/json', data: { token: SECRET } },
+        ),
+      );
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: alwaysPermitLimiter(),
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor: boundaryRedactor,
+    });
+    const result = await dispatcher.call({
+      name: 'createThing',
+      arguments: { id: 'x' },
+      signal: noSignal,
+    });
+    expect(result.kind).toBe('outcome');
+    if (result.kind !== 'outcome') {
+      throw new Error('unreachable');
+    }
+    expect(result.outcome.isError).toBe(true);
+    expect(result.outcome.structuredContent).toBeUndefined();
+    expect(JSON.stringify(result.outcome)).not.toContain(SECRET);
+  });
+
+  // Final-review Fix 4 (MED — rescan after redaction): redactString's
+  // single ordered (longest-needle-first) pass checks each registered needle
+  // exactly once. Registering a SHORT secret (REAL_SECRET) alongside a LONGER
+  // secret (SYNTHESIZED_SECRET) that happens to equal "[redacted]" (the
+  // marker) immediately followed by the literal suffix text that sits right
+  // after REAL_SECRET in the body means: SYNTHESIZED_SECRET's turn in the
+  // ordered pass comes FIRST (it is longer) and finds no match yet (the body
+  // still has the RAW REAL_SECRET, not the marker); THEN REAL_SECRET's turn
+  // replaces it with "[redacted]", which — followed by that same suffix text
+  // — now spells out SYNTHESIZED_SECRET exactly, but its needle-check has
+  // already passed and is never re-run within this one pass. Without a
+  // rescan, that composed residue — a string that IS itself a registered
+  // secret — would ship verbatim. (Neither needle is itself a substring of
+  // the bare marker, so createRedactor's own construction-time guard against
+  // trivial marker collisions does not fire here — this is a genuine
+  // COMPOSITION the single pass cannot see, not a construction-time footgun.)
+  it('downgrades to the generic boundary error when redaction COMPOSES a registered secret it cannot see within its own single pass', async () => {
+    const REAL_SECRET = 'fooBAR12'; // 8 chars — replaced AFTER the longer needle below is checked
+    const SYNTHESIZED_SECRET = '[redacted]XYZ'; // 13 chars — never present until REAL_SECRET is redacted
+    const residueRedactor = createRedactor([SYNTHESIZED_SECRET, REAL_SECRET]);
+    const executor: ToolExecutor = () =>
+      Promise.resolve(textOutcome(`upstream said: ${REAL_SECRET}XYZ`, true));
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: alwaysPermitLimiter(),
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor: residueRedactor,
+    });
+    const result = await dispatcher.call({
+      name: 'createThing',
+      arguments: { id: 'x' },
+      signal: noSignal,
+    });
+    expect(result.kind).toBe('outcome');
+    if (result.kind !== 'outcome') {
+      throw new Error('unreachable');
+    }
+    expect(result.outcome.isError).toBe(true);
+    const text = result.outcome.content[0]?.text ?? '';
+    expect(text).not.toContain(REAL_SECRET);
+    expect(text).not.toContain(SYNTHESIZED_SECRET);
+  });
+
+  it('passes an outcome with no secret through unchanged (aside from the redact pass being a no-op)', async () => {
+    const executor: ToolExecutor = () =>
+      Promise.resolve(
+        structuredOutcome(
+          JSON.stringify({ status: 200, contentType: 'application/json', data: {} }),
+          {
+            status: 200,
+            contentType: 'application/json',
+            data: {},
+          },
+        ),
+      );
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: alwaysPermitLimiter(),
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor: boundaryRedactor,
+    });
+    const result = await dispatcher.call({
+      name: 'createThing',
+      arguments: { id: 'x' },
+      signal: noSignal,
+    });
+    expect(result.kind).toBe('outcome');
+    expect(result.kind === 'outcome' && result.outcome.isError).toBe(false);
+    expect(result.kind === 'outcome' && result.outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: {},
+    });
   });
 });

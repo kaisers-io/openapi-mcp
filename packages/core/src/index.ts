@@ -9,7 +9,15 @@ export {
   validationError,
 } from './errors.ts';
 export type { ExitCode, RenderedError } from './errors.ts';
-export { MAX_DURATION_MS, parseDuration, zDuration } from './schemas/primitives.ts';
+export { createRedactor } from './redact.ts';
+export type { Redactor } from './redact.ts';
+export {
+  MAX_DURATION_MS,
+  parseByteSize,
+  parseDuration,
+  zByteSize,
+  zDuration,
+} from './schemas/primitives.ts';
 export { SPEC_BUDGETS } from './spec/budgets.ts';
 export type { SpecBudgets } from './spec/budgets.ts';
 export {
@@ -27,12 +35,29 @@ export {
   type GutterFrameOptions,
   type GutteredBody,
 } from './spec/display.ts';
-export { parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
+export { HEADER_NAME_RE, parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
 export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';
 export { hashContent, loadSpecFromFile, parseSpecSource } from './spec/load.ts';
 export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
 export { assertAllowedRedirectTarget, classifyAddress } from './http/egress.ts';
 export type { AddressClass, DnsLookup, EgressPolicyOptions } from './http/egress.ts';
+export { pinnedRequest } from './http/pinned-dispatcher.ts';
+export type {
+  HopHeaders,
+  PinnedDeps,
+  PinnedErrorReason,
+  PinnedOutcome,
+  PinnedRequestOptions,
+  PinnedResponse,
+} from './http/pinned-dispatcher.ts';
+export { buildRequest } from './server/execute/request.ts';
+export type {
+  BuildRequestResult,
+  BuiltRequest,
+  OutboundBudgets,
+} from './server/execute/request.ts';
+export { compileEnvelopeValidator, mapResponse } from './server/execute/response.ts';
+export type { EnvelopeValidator, MapResponseOptions } from './server/execute/response.ts';
 export { MAX_REDIRECTS, fetchSpec, fetchSpecConditional } from './spec/fetch.ts';
 export type { ConditionalFetchResult, FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
 export { parseSpecText } from './spec/parse.ts';
@@ -146,12 +171,12 @@ export {
   buildSnapshot,
   constantTimeEquals,
   createDispatcher,
+  createExecutor,
   createMetaExecutor,
   createRateLimiter,
   createSessionStore,
   DEFAULT_RATE_LIMIT,
   evaluateRequest,
-  executionUnavailable,
   extractBearerToken,
   isAuthorized,
   isValidBearerToken,
@@ -164,6 +189,8 @@ export type {
   CallRequest,
   DispatcherDeps,
   DispatchResult,
+  ExecutorConfig,
+  ExecutorDeps,
   GuardDecision,
   IncomingHeaders,
   MetaExecutor,

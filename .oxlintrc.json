@@ -209,6 +209,38 @@
       }
     },
     {
+      "files": ["packages/core/src/http/pinned-dispatcher.ts"],
+      "rules": {
+        // Off per task-3 brief (M5): pinnedLookup implements node:net's
+        // LookupFunction / undici's connect.lookup contract, which Node
+        // itself defines as a callback (hostname, options, callback) => void
+        // - there is no async/await form of this external API to refactor to
+        "promise/prefer-await-to-callbacks": "off",
+        // Off per task-3 brief (M5): the LookupFunction callback's first
+        // parameter is typed `NodeJS.ErrnoException | null` (not `| undefined`)
+        // by node:net itself, so the success-path calls must pass the literal
+        // `null` verbatim to satisfy that upstream type
+        "unicorn/no-null": "off",
+        // Off per task-4 brief (M5): the plan's own file layout puts
+        // createPinnedAgent (Task 3) and pinnedRequest (Task 4) — the
+        // DNS-pinning Agent and the shared manual-redirect transport built
+        // directly on it — in this one module by design, with load-bearing
+        // round-1 amendment rationale comments throughout, so it
+        // verbatim exceeds 300 lines (mirrors the pipeline.ts/store.ts/
+        // layout.ts/context.ts overrides above for the same reason)
+        "max-lines": "off",
+        // Off per task-4 brief (M5): TooLargeError (the over-cap sentinel
+        // readCapped throws) and EgressError (the branded error the
+        // DNS-pinning lookup throws so a fetch rejection can be classified
+        // reliably via its cause chain, per the round-1 amendment) are
+        // two small, single-purpose sentinel classes serving two distinct
+        // call sites within this one shared-transport module — splitting
+        // either into its own file would separate a brand from the single
+        // guard it exists to make provable
+        "max-classes-per-file": "off"
+      }
+    },
+    {
       "files": ["packages/core/src/toolgen/schema.ts"],
       "rules": {
         // Off per task-1 brief (M3): schema.ts is the full converter framework -
@@ -317,6 +349,98 @@
         // documents, which is itself the load-bearing artifact — this
         // mirrors the context.ts/layout.ts overrides above for the same
         // reason
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/http/egress.ts"],
+      "rules": {
+        // Off per the M5 final-review fix wave: classifyAddress's IPv6 arm
+        // already fails closed on the full set of SSRF-relevant IANA
+        // special-purpose ranges (Task 1) plus RFC 6052/8215's NAT64
+        // IPv4-embedding rules; the final-review fix additionally reclassifies
+        // the local-use NAT64 prefix 64:ff9b:1::/48 as metadata (a /96
+        // translator inside it can wrap the metadata address), which pushed
+        // the file's load-bearing rationale comments verbatim past 300 lines
+        // (mirrors the pipeline.ts/store.ts/layout.ts/pinned-dispatcher.ts/
+        // request.ts/response.ts overrides above for the same reason)
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/server/execute/executor.ts"],
+      "rules": {
+        // Off per the M5 final-review fix wave: executor.ts is the whole
+        // integration point wiring request-building + the pinned transport +
+        // response-mapping + redaction + the concurrency semaphore; two
+        // final-review findings (sanitizing a buildRequest error's
+        // spec-derived wireName, and reordering assembleHeaders's write order
+        // to match design §4 precedence) each added load-bearing rationale
+        // comments in place rather than splitting this one cohesive module,
+        // pushing it verbatim past 300 lines (mirrors the pipeline.ts/
+        // store.ts/layout.ts/pinned-dispatcher.ts/request.ts/response.ts
+        // overrides above for the same reason)
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/server/execute/request.ts"],
+      "rules": {
+        // Off per task-7 brief (M5): request.ts is the whole request-building
+        // module — the value-shape guard, per-leaf percent-encoding, the
+        // path-traversal reject, query/header/body serialization for every
+        // style x explode combination the mapper can emit, and the outbound
+        // budget checks live together by design, with load-bearing
+        // research-citation and round-1 amendment rationale comments
+        // throughout, so it verbatim exceeds 300 lines (mirrors the
+        // pipeline.ts/store.ts/layout.ts/pinned-dispatcher.ts overrides above
+        // for the same reason)
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/server/execute/response.ts"],
+      "rules": {
+        // Off per task-8 brief (M5): response.ts is the whole response-mapping
+        // module — the local Ajv2020 envelope-validator compiler, the fixed
+        // PinnedOutcome-error text table, the byte-safe UTF-8 decode/redact/
+        // sanitize/truncate/scan pipeline shared by the error-excerpt and
+        // no-outputSchema text paths, and the schema-branch envelope builder
+        // live together by design, with load-bearing research-citation and
+        // round-1 amendment rationale comments throughout (see the
+        // file's own comments), so it verbatim exceeds 300 lines (mirrors the
+        // pipeline.ts/store.ts/layout.ts/pinned-dispatcher.ts/request.ts
+        // overrides above for the same reason)
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/cli/src/api-options.ts"],
+      "rules": {
+        // Off per task-9 review-fix amendment (M5): the file was an exact
+        // 300-line fit before two credential-leak/usability findings
+        // (--base-url and --header rejections echoed raw secret
+        // values; RFC 9110 OWS trimming) added redactedBaseUrl,
+        // trimOptionalSpace, and an empty-after-trim guard in place - these
+        // stay in this module by design (they are one cohesive parse/
+        // validate pass over the same two flags), so it now verbatim
+        // exceeds 300 lines
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/cli/src/commands/serve.ts"],
+      "rules": {
+        // Off per task-11 brief (M5, the milestone's activation): resolving
+        // the API base URL (resolveBaseUrl + assertBaseUrlShape), building
+        // the process-wide redactor, eager-compiling the per-tool output
+        // validators (D7), and constructing the ONE shared createExecutor
+        // instance all belong in this single startup action alongside the
+        // pre-existing HTTP-option/spec-pipeline wiring - splitting them into
+        // a separate module would only hide the ordering constraints the
+        // brief itself specifies (apiConfig before buildTools, base-url
+        // resolution before the executor, etc.), so it verbatim exceeds 300
+        // lines
         "max-lines": "off"
       }
     }

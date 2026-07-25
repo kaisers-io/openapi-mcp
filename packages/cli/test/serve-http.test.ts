@@ -85,6 +85,13 @@ const spawnServeHttp = async (
         'serve',
         '--spec',
         'petstore.json',
+        // Petstore.json has no `servers` entry (M5 Task 5/11: a file spec
+        // with no absolute server needs an explicit --base-url) — this
+        // fixture never actually calls an upstream tool, so any
+        // syntactically valid, non-listening address is fine unless a test
+        // overrides it via extraArgs.
+        '--base-url',
+        'http://127.0.0.1:1',
         '--http',
         '--port',
         String(port),

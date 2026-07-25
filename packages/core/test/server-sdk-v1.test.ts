@@ -7,10 +7,14 @@ import {
   buildTools,
   createMetaExecutor,
   createProtocolSession,
+  createRedactor,
   SYSTEM_HEADERS,
   type NamedOperation,
   type ToolExecutor,
 } from '../src/index.ts';
+
+// A neutral redactor: this suite never exercises redaction itself.
+const NOOP_REDACTOR = createRedactor([]);
 
 // The mandatory M4 integration test (exact fixture shape): an
 // optional flattened body with a required `id` and an optional `note`.
@@ -128,6 +132,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor,
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -160,6 +165,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor,
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -184,6 +190,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor: () => Promise.resolve({ isError: false, content: [] }),
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -212,6 +219,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor: () => Promise.resolve({ isError: false, content: [] }),
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -254,6 +262,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor: () => Promise.resolve({ isError: false, content: [] }),
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -290,6 +299,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor,
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -324,6 +334,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor: () => Promise.resolve({ isError: false, content: [] }),
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -345,6 +356,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor: () => Promise.resolve({ isError: false, content: [] }),
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     // The returned value IS the SDK's raw `Server`, which still exposes
@@ -383,6 +395,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor: () => Promise.resolve({ isError: false, content: [] }),
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -423,6 +436,7 @@ describe('createProtocolSession — InMemory integration', () => {
         now: () => 0,
         executor,
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
     });
     const client = new Client({ name: 'test-client', version: '1.0.0' });

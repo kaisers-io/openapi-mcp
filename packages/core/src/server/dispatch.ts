@@ -1,4 +1,5 @@
 import type { RateLimiter } from './rate-limit.ts';
+import type { Redactor } from '../redact.ts';
 import { sanitizeDisplayText, sanitizeSpecText } from '../spec/sanitize.ts';
 import {
   structuredOutcome,
@@ -44,6 +45,11 @@ export interface DispatcherDeps {
   now: () => number;
   executor: ToolExecutor;
   metaExecutor: MetaExecutor;
+  // M5 Task 11 (plan-review H4): the dispatch-boundary redactor. Every
+  // outcome this dispatcher returns is finalized through it as the LAST step
+  // before returning — the meta executor and any future executor get the
+  // same defense, not just the M5 upstream one.
+  redactor: Redactor;
 }
 
 export interface CallRequest {
@@ -110,6 +116,63 @@ const PARSE_THREW_OUTCOME: ToolCallOutcome = textOutcome(
   true,
 );
 
+// A single, generic, stable message — never the structured content itself —
+// for the case a secret is found anywhere inside it. Mirrors
+// server/execute/response.ts's own GENERIC_UNSAFE_TEXT wording.
+const BOUNDARY_UNSAFE_TEXT = 'tool execution result could not be returned safely';
+
+// The dispatch-boundary finalizer (plan-review H4): runs as the LAST
+// step before ANY outcome leaves createDispatcher.call. Every content[].text
+// block is redacted; if structuredContent is present and a secret is found
+// ANYWHERE inside it, the whole structuredContent is dropped and a generic
+// isError is returned instead — never a redacted-but-successful envelope,
+// and never a partially-redacted structuredContent (redactJson is NOT used
+// here: rewriting structured data invites subtly-wrong reserialization; the
+// only safe move on a hit is to withhold the data entirely). This runs for
+// EVERY outcome, from the meta executor and from any future executor, not
+// only the M5 upstream one — a bug in a single executor's own redaction can
+// never alone leak a secret past this boundary.
+const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOutcome => {
+  if (outcome.structuredContent !== undefined) {
+    let leaks: boolean;
+    try {
+      leaks = redactor.scanForSecret(outcome.structuredContent);
+    } catch {
+      // Fail closed, matching response.ts's own scanSafely contract.
+      leaks = true;
+    }
+    if (leaks) {
+      return textOutcome(BOUNDARY_UNSAFE_TEXT, true);
+    }
+  }
+  const redactedContent = outcome.content.map((block) => ({
+    ...block,
+    text: redactor.redactString(block.text),
+  }));
+  // Final-review Fix 4 (MED — rescan after redaction): redactString's
+  // single ordered replacement pass can, in composition, still leave or
+  // synthesize a registered secret in its own output (e.g. an earlier,
+  // longer needle's replacement text can go unchecked against a shorter
+  // needle whose turn in the pass already came and went). Rescan the
+  // REDACTED text itself before returning it — a hit, or the scan itself
+  // throwing, downgrades the whole outcome to the same generic boundary
+  // error as the structuredContent branch above, rather than ever returning
+  // text that still matches a registered secret.
+  let residue: boolean;
+  try {
+    residue = redactedContent.some((block) => redactor.scanForSecret(block.text));
+  } catch {
+    residue = true;
+  }
+  if (residue) {
+    return textOutcome(BOUNDARY_UNSAFE_TEXT, true);
+  }
+  return {
+    ...outcome,
+    content: redactedContent,
+  };
+};
+
 export const createDispatcher = (
   deps: DispatcherDeps,
 ): { call: (request: CallRequest) => Promise<DispatchResult> } => ({
@@ -137,7 +200,10 @@ export const createDispatcher = (
       if (!deps.limiter.consume(deps.now())) {
         return {
           kind: 'outcome',
-          outcome: textOutcome('rate limit exceeded — too many tool calls; retry later', true),
+          outcome: finalizeOutcome(
+            textOutcome('rate limit exceeded — too many tool calls; retry later', true),
+            deps.redactor,
+          ),
         };
       }
       let parsed: Awaited<ReturnType<typeof tool.inputSchema.safeParseAsync>>;
@@ -146,10 +212,13 @@ export const createDispatcher = (
       } catch {
         // See `PARSE_THREW_OUTCOME` above — a rejection here must never reach the
         // executor and must never surface the thrown value.
-        return { kind: 'outcome', outcome: PARSE_THREW_OUTCOME };
+        return { kind: 'outcome', outcome: finalizeOutcome(PARSE_THREW_OUTCOME, deps.redactor) };
       }
       if (!parsed.success) {
-        return { kind: 'outcome', outcome: redactedValidationOutcome(parsed.error.issues) };
+        return {
+          kind: 'outcome',
+          outcome: finalizeOutcome(redactedValidationOutcome(parsed.error.issues), deps.redactor),
+        };
       }
       let outcome: ToolCallOutcome;
       try {
@@ -162,12 +231,15 @@ export const createDispatcher = (
         // internal path, or stack detail. A generic, stable message only.
         outcome = textOutcome('tool execution failed unexpectedly', true);
       }
-      return { kind: 'outcome', outcome };
+      return { kind: 'outcome', outcome: finalizeOutcome(outcome, deps.redactor) };
     } catch {
       // Redacts any throw from the lookup/rate stage above (deps.now/consume,
       // or even the `Object.hasOwn(deps.snapshot.toolsByName, ...)` lookup)
       // so no raw dependency-failure message can ever reach the client.
-      return { kind: 'outcome', outcome: textOutcome('tool call failed unexpectedly', true) };
+      return {
+        kind: 'outcome',
+        outcome: finalizeOutcome(textOutcome('tool call failed unexpectedly', true), deps.redactor),
+      };
     }
   },
 });

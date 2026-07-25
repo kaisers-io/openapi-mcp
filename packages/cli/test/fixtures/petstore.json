@@ -6,7 +6,22 @@
       "get": {
         "operationId": "listPets",
         "summary": "List all pets",
-        "responses": { "200": { "description": "ok" } }
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }
+                  }
+                }
+              }
+            }
+          }
+        }
       },
       "post": {
         "operationId": "createPet",

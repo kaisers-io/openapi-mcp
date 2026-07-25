@@ -217,3 +217,146 @@ describe('normalizeSpec — omissions (never silent)', () => {
     expect(spec.omitted[0]?.reason).toContain('not an object');
   });
 });
+
+describe('normalizeSpec — server URL extraction', () => {
+  it('extracts an absolute server URL from servers[0]', () => {
+    const spec = normalizeSpec(
+      doc(
+        { '/pets': { get: { responses: okResponses } } },
+        { servers: [{ url: 'https://api.example.com/v1' }] },
+      ),
+      '3.1',
+    );
+    expect(spec.serverUrl).toBe('https://api.example.com/v1');
+    expect(spec.serverUrlIsRelative).toBeUndefined();
+  });
+
+  it('expands a server variable using its default', () => {
+    const spec = normalizeSpec(
+      doc(
+        { '/pets': { get: { responses: okResponses } } },
+        {
+          servers: [
+            { url: 'https://{host}/v1', variables: { host: { default: 'api.example.com' } } },
+          ],
+        },
+      ),
+      '3.1',
+    );
+    expect(spec.serverUrl).toBe('https://api.example.com/v1');
+  });
+
+  it('leaves serverUrl undefined when a variable has no matching default (operations unaffected)', () => {
+    const spec = normalizeSpec(
+      doc(
+        { '/pets': { get: { responses: okResponses } } },
+        { servers: [{ url: 'https://{host}/v1', variables: {} }] },
+      ),
+      '3.1',
+    );
+    expect(spec.serverUrl).toBeUndefined();
+    expect(spec.operations).toHaveLength(1);
+  });
+
+  it('classifies a relative server URL', () => {
+    const spec = normalizeSpec(
+      doc({ '/pets': { get: { responses: okResponses } } }, { servers: [{ url: '/v2' }] }),
+      '3.1',
+    );
+    expect(spec.serverUrl).toBe('/v2');
+    expect(spec.serverUrlIsRelative).toBe(true);
+  });
+
+  it('leaves serverUrl undefined when there is no servers key', () => {
+    const spec = normalizeSpec(doc({ '/pets': { get: { responses: okResponses } } }), '3.1');
+    expect(spec.serverUrl).toBeUndefined();
+    expect(spec.serverUrlIsRelative).toBeUndefined();
+  });
+
+  it('leaves serverUrl undefined when servers is empty', () => {
+    const spec = normalizeSpec(
+      doc({ '/pets': { get: { responses: okResponses } } }, { servers: [] }),
+      '3.1',
+    );
+    expect(spec.serverUrl).toBeUndefined();
+  });
+
+  it('leaves serverUrl undefined on a malformed servers[0].url (fail-closed, no throw)', () => {
+    const build = () =>
+      normalizeSpec(
+        doc({ '/pets': { get: { responses: okResponses } } }, { servers: [{ url: 42 }] }),
+        '3.1',
+      );
+    expect(build).not.toThrow();
+    expect(build().serverUrl).toBeUndefined();
+  });
+
+  it('expands multiple variables in a single template', () => {
+    const spec = normalizeSpec(
+      doc(
+        { '/pets': { get: { responses: okResponses } } },
+        {
+          servers: [
+            {
+              url: 'https://{host}:{port}/v1',
+              variables: {
+                host: { default: 'api.example.com' },
+                port: { default: '8443' },
+              },
+            },
+          ],
+        },
+      ),
+      '3.1',
+    );
+    expect(spec.serverUrl).toBe('https://api.example.com:8443/v1');
+  });
+
+  it('leaves serverUrl undefined on an unmatched brace in the template', () => {
+    const spec = normalizeSpec(
+      doc(
+        { '/pets': { get: { responses: okResponses } } },
+        { servers: [{ url: 'https://{host/v1', variables: { host: { default: 'x' } } }] },
+      ),
+      '3.1',
+    );
+    // The unbalanced brace never matches the placeholder regex, so the raw
+    // `{` survives the single pass — the residual-brace guard rejects it.
+    expect(spec.serverUrl).toBeUndefined();
+  });
+
+  it('leaves serverUrl undefined when a default itself injects a brace', () => {
+    const spec = normalizeSpec(
+      doc(
+        { '/pets': { get: { responses: okResponses } } },
+        {
+          servers: [{ url: 'https://{host}/v1', variables: { host: { default: '{host}' } } }],
+        },
+      ),
+      '3.1',
+    );
+    expect(spec.serverUrl).toBeUndefined();
+  });
+
+  it('resolves an amplifying-default template fast with serverUrl undefined (DoS guard)', () => {
+    // Hostile case: a placeholder repeated k times whose OWN default
+    // reintroduces the placeholder. A per-match split/join loop on the
+    // accumulator would double the placeholder count on every one of the k
+    // iterations (~k*2^k blowup). The single-pass implementation scans the
+    // ORIGINAL template exactly once, so this must both resolve to
+    // `undefined` (residual braces survive the one pass) AND return fast.
+    const repeats = 30;
+    const url = '{x}'.repeat(repeats);
+    const start = performance.now();
+    const spec = normalizeSpec(
+      doc(
+        { '/pets': { get: { responses: okResponses } } },
+        { servers: [{ url, variables: { x: { default: '{x}{x}' } } }] },
+      ),
+      '3.1',
+    );
+    const elapsedMs = performance.now() - start;
+    expect(spec.serverUrl).toBeUndefined();
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+});

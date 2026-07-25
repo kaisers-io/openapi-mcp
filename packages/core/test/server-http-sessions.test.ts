@@ -5,13 +5,20 @@ import {
   buildSnapshot,
   buildTools,
   createMetaExecutor,
+  createRedactor,
   createSessionStore,
   createStreamableHttpServer,
-  executionUnavailable,
   SYSTEM_HEADERS,
+  textOutcome,
   type NamedOperation,
   type RequestGuardOptions,
 } from '../src/index.ts';
+
+// A local fake standing in for the M5 upstream executor (this suite tests
+// HTTP session lifecycle, not execution) + a neutral redactor.
+const noopExecutor = () =>
+  Promise.resolve(textOutcome('no upstream executor configured in this test', true));
+const NOOP_REDACTOR = createRedactor([]);
 
 // H4 coverage (near the bottom of this file) needs to inspect the ACTUAL
 // http.Server instance createStreamableHttpServer builds internally — a
@@ -148,8 +155,9 @@ describe('createStreamableHttpServer wiring — idle-expiry sweep bound to the H
       dispatcherDeps: {
         limiter: { consume: () => true },
         now,
-        executor: executionUnavailable,
+        executor: noopExecutor,
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
       guard,
       port: WIRING_TEST_PORT,
@@ -239,8 +247,9 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       dispatcherDeps: {
         limiter: { consume: () => true },
         now,
-        executor: executionUnavailable,
+        executor: noopExecutor,
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
       guard: {
         allowedOrigins: new Set(),
@@ -713,8 +722,9 @@ describe('createStreamableHttpServer — HTTP request/header timeout hardening (
       dispatcherDeps: {
         limiter: { consume: () => true },
         now,
-        executor: executionUnavailable,
+        executor: noopExecutor,
         metaExecutor: createMetaExecutor(),
+        redactor: NOOP_REDACTOR,
       },
       guard: {
         allowedOrigins: new Set(),
