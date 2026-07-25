@@ -35,6 +35,13 @@ export interface NormalizedSpec {
   openapiVersion: OpenapiVersion;
   operations: readonly OperationRecord[];
   omitted: readonly OmittedOperation[];
+  // The resolved-or-absolute base-URL candidate from root `document.servers[0]`
+  // (variable-default expanded). Undefined when unresolvable — fail-closed,
+  // never throws. See `extractServerUrl`.
+  serverUrl?: string;
+  // True when `serverUrl` is a relative reference (no scheme) that still
+  // needs a document base to resolve into an absolute URL.
+  serverUrlIsRelative?: boolean;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -113,6 +120,68 @@ const buildOperation = (
   };
 };
 
+// Absolute iff the candidate URL has a leading URI scheme (RFC 3986 §3.1).
+const ABSOLUTE_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/iu;
+
+// Substitute every `{name}` placeholder in a server URL template with
+// `variables[name].default`. Returns undefined (unresolvable) if any
+// placeholder lacks a matching `variables` entry with a string default.
+//
+// Single-pass only: `String.replace` with a global regex scans the ORIGINAL
+// template left-to-right exactly once and never re-scans replacement text.
+// A prior per-match `split(placeholder).join(defaultValue)` loop re-scanned
+// the growing ACCUMULATOR on every iteration; a hostile spec with a
+// placeholder repeated k times whose own default re-injects that placeholder
+// (e.g. `url: "{x}{x}...{x}"`, `variables.x.default = "{x}{x}"`) doubled the
+// placeholder count each iteration, an exponential (~k*2^k) CPU/memory DoS
+// at spec-normalization time on untrusted spec content. A residual `{`/`}`
+// after the single pass (malformed template, or a default that itself
+// injected a brace) is fail-closed to undefined rather than resolved.
+const expandServerUrlTemplate = (
+  template: string,
+  variables: Record<string, unknown>,
+): string | undefined => {
+  let failed = false;
+  const expanded = template.replaceAll(/\{(?<name>[^{}]+)\}/gu, (whole: string, name: string) => {
+    const variable = variables[name];
+    const defaultValue = isRecord(variable) ? variable['default'] : undefined;
+    if (typeof defaultValue !== 'string') {
+      failed = true;
+      return whole;
+    }
+    return defaultValue;
+  });
+  if (failed || expanded.includes('{') || expanded.includes('}')) {
+    return undefined;
+  }
+  return expanded;
+};
+
+// Extracts the base-URL candidate from ROOT `document.servers[0]` only
+// (path/operation-level `servers` overrides stay omitted elsewhere in this
+// module). Fail-closed: any malformed shape yields `{}` rather than
+// throwing, and never affects the generated operation set.
+const extractServerUrl = (
+  document: Record<string, unknown>,
+): Pick<NormalizedSpec, 'serverUrl' | 'serverUrlIsRelative'> => {
+  const { servers } = document;
+  if (!Array.isArray(servers) || servers.length === 0) {
+    return {};
+  }
+  const [first] = servers;
+  if (!isRecord(first) || typeof first['url'] !== 'string') {
+    return {};
+  }
+  const variables = isRecord(first['variables']) ? first['variables'] : {};
+  const serverUrl = expandServerUrlTemplate(first['url'], variables);
+  if (serverUrl === undefined) {
+    return {};
+  }
+  return ABSOLUTE_SCHEME_PATTERN.test(serverUrl)
+    ? { serverUrl }
+    : { serverUrl, serverUrlIsRelative: true };
+};
+
 export const normalizeSpec = (
   document: Record<string, unknown>,
   version: OpenapiVersion,
@@ -174,5 +243,12 @@ export const normalizeSpec = (
   for (const name of Object.keys(webhooks)) {
     omitted.push({ method: '*', path: `webhook:${name}`, reason: 'webhooks are not supported' });
   }
-  return { title, specVersion, openapiVersion: version, operations, omitted };
+  return {
+    title,
+    specVersion,
+    openapiVersion: version,
+    operations,
+    omitted,
+    ...extractServerUrl(document),
+  };
 };
