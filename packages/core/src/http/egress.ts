@@ -43,7 +43,7 @@ const METADATA_IPV4 = new Set([
 // GCP metadata hostnames, plus the Tencent Cloud CAM/STS credential endpoint
 // hostname (metadata.tencentyun.com) — no reliable Tencent IP is added here
 // (sources conflict and both candidates already classify 'private').
-const METADATA_HOSTNAMES = new Set([
+export const METADATA_HOSTNAMES = new Set([
   'metadata.google.internal',
   'metadata.goog',
   'metadata.tencentyun.com',

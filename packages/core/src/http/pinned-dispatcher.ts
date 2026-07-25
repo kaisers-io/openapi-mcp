@@ -1,6 +1,6 @@
 import { isIP, type LookupFunction } from 'node:net';
 import { Agent, type fetch as undiciFetchType } from 'undici';
-import { classifyAddress } from './egress.ts';
+import { classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
 
 // M5 Task 3 (design §2.1-2.3, D1): the SSRF connection-pinning core. undici's
 // custom connect.lookup resolves the hostname exactly once via the injected
@@ -215,12 +215,9 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const GET_HEAD_METHODS = new Set(['GET', 'HEAD']);
 
-// Mirrors egress.ts's private METADATA_HOSTNAMES set. Kept local rather than
-// imported: this module's synchronous per-hop check (below) is a distinct,
-// self-contained guard against a different gap (IP-literal hosts bypassing
-// createPinnedAgent's connect.lookup), not a caller of egress.ts's async
-// assertAllowedRedirectTarget.
-const METADATA_HOSTNAMES = new Set(['metadata.google.internal', 'metadata.goog']);
+// The cloud-metadata hostname set is imported from egress.ts (single source
+// of truth) so this guard and egress.ts's async assertAllowedRedirectTarget
+// can never diverge.
 
 // URL.hostname keeps brackets around an IPv6 literal; strip them for isIP()
 // (mirrors egress.ts's private hostnameOf).
