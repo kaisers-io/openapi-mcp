@@ -9,7 +9,14 @@ import {
   runSpecPipeline,
   type CacheFs,
   type CacheMeta,
+  type SpecPipelineDeps,
 } from '../src/index.ts';
+
+// M6 Task 6 (DNS-pin stretch): SpecPipelineDeps.fetcher is now typed via
+// undici's own fetch (see fetch.test.ts's identical note). None of the fakes
+// below touch `dispatcher`; the cast bridges the two fetch type
+// declarations, not a claim about live pinning.
+type SpecFetcher = SpecPipelineDeps['fetcher'];
 
 const fixture = (name: string): string =>
   fileURLToPath(new URL(`fixtures/${name}`, import.meta.url));
@@ -33,7 +40,7 @@ const fileDeps = {
     const stats = await stat(path);
     return stats.size;
   },
-  fetcher: (() => Promise.reject(new Error('no network in this test'))) as typeof fetch,
+  fetcher: (() => Promise.reject(new Error('no network in this test'))) as unknown as SpecFetcher,
   lookup: (): Promise<readonly string[]> => Promise.reject(new Error('no dns in this test')),
   // Proves every case below reaches no filesystem: cacheRoot is undefined in baseOpts
   cacheFs: rejectingCacheFs,
@@ -151,7 +158,7 @@ describe('runSpecPipeline — file sources', () => {
 describe('runSpecPipeline — URL sources', () => {
   const urlDeps = (text: string) => ({
     ...fileDeps,
-    fetcher: (() => Promise.resolve(new Response(text))) as typeof fetch,
+    fetcher: (() => Promise.resolve(new Response(text))) as unknown as SpecFetcher,
   });
 
   it('fetches and processes a spec from a URL', async () => {
@@ -174,7 +181,7 @@ describe('runSpecPipeline — URL sources', () => {
       fetcher: (() => {
         fetched = true;
         return Promise.resolve(new Response('{}'));
-      }) as typeof fetch,
+      }) as unknown as SpecFetcher,
     };
     await expect(
       runSpecPipeline('https://api.example.com/openapi.json?api_key=QUERY-SECRET', baseOpts, deps),
@@ -208,7 +215,8 @@ describe('runSpecPipeline — URL sources', () => {
   it('propagates fetch failures as validation errors', async () => {
     const failing = {
       ...fileDeps,
-      fetcher: (() => Promise.resolve(new Response('down', { status: 503 }))) as typeof fetch,
+      fetcher: (() =>
+        Promise.resolve(new Response('down', { status: 503 }))) as unknown as SpecFetcher,
     };
     await expect(
       runSpecPipeline('https://api.example.com/spec.json', baseOpts, failing),
@@ -329,14 +337,14 @@ describe('runSpecPipeline — cache', () => {
   const countingFetcher = (
     text: string,
     headers: Record<string, string> = {},
-  ): { fetcher: typeof fetch; calls: () => number } => {
+  ): { fetcher: SpecFetcher; calls: () => number } => {
     let calls = 0;
     return {
       calls: () => calls,
       fetcher: (() => {
         calls += 1;
         return Promise.resolve(new Response(text, { headers }));
-      }) as typeof fetch,
+      }) as unknown as SpecFetcher,
     };
   };
 
@@ -442,7 +450,7 @@ describe('runSpecPipeline — cache', () => {
       return calls === 1
         ? Promise.resolve(new Response(remoteSpec('Remote'), { headers: { etag: '"v1"' } }))
         : Promise.resolve(new Response(null, { status: 304, headers: { etag: '"v1"' } }));
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     const later = 3_600_001;
     const second = await runSpecPipeline(
@@ -463,7 +471,7 @@ describe('runSpecPipeline — cache', () => {
       return Promise.resolve(
         new Response(calls === 1 ? remoteSpec('Remote') : remoteSpec('Remote', '/extra')),
       );
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     const second = await runSpecPipeline(
       specUrl,
@@ -491,7 +499,7 @@ describe('runSpecPipeline — cache', () => {
       return Promise.resolve(
         new Response(calls === 1 ? remoteSpec('Remote') : remoteSpec('Remote', '/extra')),
       );
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     const created = await runSpecPipeline(
       specUrl,
@@ -531,7 +539,7 @@ describe('runSpecPipeline — cache', () => {
         );
       }
       return Promise.resolve(new Response(null, { status: 304, headers: { etag: '"v2"' } }));
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     const created = await runSpecPipeline(
       specUrl,
@@ -571,7 +579,7 @@ describe('runSpecPipeline — cache', () => {
         );
       }
       return Promise.resolve(new Response(null, { status: 304, headers: { etag: '"v2"' } }));
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     const created = await runSpecPipeline(
       specUrl,
@@ -613,7 +621,7 @@ describe('runSpecPipeline — cache', () => {
         );
       }
       return Promise.resolve(new Response(null, { status: 304, headers: { etag: '"v2"' } }));
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     await runSpecPipeline(
       specUrl,
@@ -642,7 +650,7 @@ describe('runSpecPipeline — cache', () => {
         return Promise.resolve(new Response(remoteSpec('Remote', '/extra')));
       }
       return Promise.resolve(new Response('down', { status: 503 }));
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     const created = await runSpecPipeline(
       specUrl,
@@ -667,7 +675,7 @@ describe('runSpecPipeline — cache', () => {
       return Promise.resolve(
         new Response(calls === 1 ? remoteSpec('Remote') : remoteSpec('Remote', '/extra')),
       );
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     // Task-9 finding (round 9): the brief's own draft added `cacheKey: 'prod'`
     // ONLY on this second call. cacheNamespace binds the namespace to the key
@@ -697,7 +705,7 @@ describe('runSpecPipeline — cache', () => {
       return calls === 1
         ? Promise.resolve(new Response(remoteSpec('Remote')))
         : Promise.resolve(new Response('down', { status: 503 }));
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     const second = await runSpecPipeline(
       specUrl,
@@ -717,7 +725,7 @@ describe('runSpecPipeline — cache', () => {
       return Promise.resolve(
         new Response(calls === 1 ? remoteSpec('Remote') : '{"openapi":"3.1.0"}'),
       );
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     const second = await runSpecPipeline(
       specUrl,
@@ -731,7 +739,8 @@ describe('runSpecPipeline — cache', () => {
 
   it('propagates the failure when a refresh fails with no accepted baseline', async () => {
     const cacheFs = memoryCacheFs();
-    const fetcher = (() => Promise.resolve(new Response('down', { status: 503 }))) as typeof fetch;
+    const fetcher = (() =>
+      Promise.resolve(new Response('down', { status: 503 }))) as unknown as SpecFetcher;
     await expect(
       runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs }),
     ).rejects.toMatchObject({ code: 'validation' });
@@ -770,7 +779,7 @@ describe('runSpecPipeline — cache', () => {
       return Promise.resolve(
         new Response(calls === 1 ? remoteSpec('Remote') : remoteSpec('Evil', '/backdoor')),
       );
-    }) as typeof fetch;
+    }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
     const acceptedBefore = metaOf(cacheFs).acceptedContentHash;
     // An attacker who can write into the cache directory corrupts the anchor
@@ -1020,7 +1029,7 @@ describe('runSpecPipeline — filters', () => {
     const big = JSON.stringify({ openapi: '3.1.0', info: { title: 'Big', version: '1' }, paths });
     const deps = {
       ...fileDeps,
-      fetcher: (() => Promise.resolve(new Response(big))) as typeof fetch,
+      fetcher: (() => Promise.resolve(new Response(big))) as unknown as SpecFetcher,
     };
     // Every operation is a POST the read-only default would drop: the budget
     // still fires, because filters must never smuggle an oversized spec past §4.1

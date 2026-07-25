@@ -139,7 +139,7 @@ const cacheCtx = (
       const body = bodies[Math.min(call, bodies.length - 1)]!;
       call += 1;
       return Promise.resolve(new Response(body));
-    }) as typeof fetch,
+    }) as unknown as CliContext['fetcher'],
     ...overrides,
   });
   return { lines, errLines, cacheFs, ctx };

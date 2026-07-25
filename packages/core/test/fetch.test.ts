@@ -1,15 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_REDIRECTS, fetchSpec, fetchSpecConditional, hashContent } from '../src/index.ts';
+import {
+  MAX_REDIRECTS,
+  fetchSpec,
+  fetchSpecConditional,
+  hashContent,
+  type FetchSpecDeps,
+} from '../src/index.ts';
+// Module-internal helpers, not part of the public barrel: imported directly
+// (same pattern as http-pinned-dispatcher.test.ts) so their own trivial
+// bodies are unit-tested rather than relying on a live pinned Agent
+// rejection a fake-fetcher test can never produce (see the coverage note by
+// their definitions in fetch.ts).
+import { chainResolve, ignoreError } from '../src/spec/fetch.ts';
 
 interface RecordedCall {
   url: string;
   headers: Headers;
 }
 
+// M6 Task 6 (DNS-pin stretch): `FetchSpecDeps.fetcher` is now typed via
+// undici's own fetch (never a real network call in these tests either way).
+// The fake never touches `dispatcher` — it records the call and returns a
+// canned, native `Response`, which satisfies the real interface at runtime
+// (both are Fetch-API-compliant); the cast bridges the two fetch type
+// declarations (Node's global lib.dom types vs undici's own .d.ts) rather
+// than proving anything about live pinning.
+type SpecFetcher = FetchSpecDeps['fetcher'];
+
 // Builds a fetcher that pops queued responses and records every request
 const fakeFetcher = (
   responses: readonly Response[],
-): { fetcher: typeof fetch; calls: RecordedCall[] } => {
+): { fetcher: SpecFetcher; calls: RecordedCall[] } => {
   const calls: RecordedCall[] = [];
   const queue = [...responses];
   const fetcher = ((input: string | URL | Request, init?: RequestInit) => {
@@ -19,7 +40,7 @@ const fakeFetcher = (
       return Promise.reject(new Error('fake fetcher exhausted'));
     }
     return Promise.resolve(next);
-  }) as typeof fetch;
+  }) as unknown as SpecFetcher;
   return { fetcher, calls };
 };
 
@@ -85,19 +106,25 @@ describe('fetchSpec', () => {
     expect(calls[1]?.headers.get('accept')).not.toBeNull();
   });
 
-  it('re-sends auth headers when a chain returns to the original origin', async () => {
+  it('never regains auth headers or cache validators once a chain has left the original origin (monotonic)', async () => {
     const { fetcher, calls } = fakeFetcher([
       redirectTo('https://cdn.example.net/spec.json'),
       redirectTo('https://api.example.com/final.json'),
       new Response('{}'),
     ]);
-    await fetchSpec(
+    await fetchSpecConditional(
       new URL('https://api.example.com/openapi.json'),
-      { headers: AUTH },
+      { headers: AUTH, etag: '"v1"', lastModified: 'Wed, 21 Oct 2026 07:28:00 GMT' },
       { fetcher, lookup: publicLookup },
     );
+    // Hop 1 (foreign): stripped
     expect(calls[1]?.headers.get('authorization')).toBeNull();
-    expect(calls[2]?.headers.get('authorization')).toBe('Bearer secret-token');
+    // Hop 2 (back on the original origin, but the chain already crossed away):
+    // MUST stay stripped — an origin -> foreign -> origin bounce must never
+    // regain credentials or cache validators
+    expect(calls[2]?.headers.get('authorization')).toBeNull();
+    expect(calls[2]?.headers.get('if-none-match')).toBeNull();
+    expect(calls[2]?.headers.get('if-modified-since')).toBeNull();
   });
 
   it('rejects a redirect to a private IP literal', async () => {
@@ -208,6 +235,35 @@ describe('fetchSpec', () => {
         { fetcher: metadataFetcher, lookup: publicLookup },
       ),
     ).rejects.toMatchObject({ message: expect.stringContaining('metadata') as string });
+  });
+
+  it('rejects a redirect to a cloud-metadata IP LITERAL via the synchronous pre-fetch guard, before any request to it (Step 7 falsification)', async () => {
+    // Undici SKIPS connect.lookup entirely for an IP-literal hostname, so a
+    // live pinned Agent's lookup would never even run for this target — the
+    // only thing that can reject it is the synchronous, pre-fetch
+    // `validateHopUrlSync` check. `lookup` here is `rejectingLookup`, and the
+    // redirect target is deliberately routed AWAY from
+    // `assertAllowedRedirectTarget` (that async path is reserved for
+    // non-literal hostnames — see fetch.ts), so a real regression that
+    // dropped the sync guard would have NOTHING left to catch this and the
+    // fake would happily "fetch" the metadata hop.
+    const { fetcher, calls } = fakeFetcher([
+      redirectTo('http://169.254.169.254/'),
+      new Response('should never be reached'),
+    ]);
+    await expect(
+      fetchSpec(
+        new URL('https://api.example.com/a'),
+        { headers: [] },
+        { fetcher, lookup: rejectingLookup },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('metadata') as string,
+    });
+    // The metadata hop itself was never requested — rejected synchronously,
+    // pre-fetch, not by reading (and rejecting) an actual response from it.
+    expect(calls).toHaveLength(1);
   });
 
   it(`rejects after ${MAX_REDIRECTS} redirects`, async () => {
@@ -361,7 +417,9 @@ describe('fetchSpec', () => {
 
   it('maps an abort/timeout rejection to a timeout validation error', async () => {
     const fetcher = (() =>
-      Promise.reject(new DOMException('The operation timed out', 'TimeoutError'))) as typeof fetch;
+      Promise.reject(
+        new DOMException('The operation timed out', 'TimeoutError'),
+      )) as unknown as SpecFetcher;
     await expect(
       fetchSpec(
         new URL('https://api.example.com/a'),
@@ -375,7 +433,7 @@ describe('fetchSpec', () => {
   });
 
   it('maps network failures to validation errors without dropping the cause', async () => {
-    const fetcher = (() => Promise.reject(new TypeError('fetch failed'))) as typeof fetch;
+    const fetcher = (() => Promise.reject(new TypeError('fetch failed'))) as unknown as SpecFetcher;
     await expect(
       fetchSpec(
         new URL('https://api.example.com/a'),
@@ -635,5 +693,30 @@ describe('fetchSpec and 304', () => {
       code: 'validation',
       message: expect.stringContaining('304') as string,
     });
+  });
+});
+
+// M6 Task 6: `fetchChain`'s per-hop Agent lifecycle uses two small, named
+// closures (`ignoreError`, `chainResolve`) instead of bare inline ones,
+// specifically so they are unit-testable directly — a fake fetcher never
+// touches `dispatcher`, so a live pinned Agent never actually rejects
+// destroy()/close() in these tests, and createPinnedAgent's connect-time
+// lookup never runs. Both are exercised end-to-end elsewhere in this file
+// through the fake transport; these prove their own bodies directly.
+describe('fetchChain internal transport helpers', () => {
+  it('ignoreError swallows any input and returns undefined', () => {
+    expect(ignoreError()).toBeUndefined();
+  });
+
+  it('chainResolve forwards the hostname and binds the chain signal', async () => {
+    const controller = new AbortController();
+    const seen: { hostname: string; signal: AbortSignal }[] = [];
+    const lookup = (hostname: string, signal: AbortSignal): Promise<readonly string[]> => {
+      seen.push({ hostname, signal });
+      return Promise.resolve(['203.0.113.7']);
+    };
+    const resolve = chainResolve(lookup, controller.signal);
+    await expect(resolve('api.example.com')).resolves.toEqual(['203.0.113.7']);
+    expect(seen).toEqual([{ hostname: 'api.example.com', signal: controller.signal }]);
   });
 });

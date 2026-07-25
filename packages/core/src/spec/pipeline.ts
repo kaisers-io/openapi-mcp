@@ -17,7 +17,7 @@ import type { ResolvedHeader } from '../http/headers.ts';
 import { assignToolNames, type NamedOperation } from '../toolgen/naming.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 import { dereference } from './dereference.ts';
-import { fetchSpecConditional } from './fetch.ts';
+import { fetchSpecConditional, type FetchSpecDeps } from './fetch.ts';
 import { loadSpecFromFile, parseSpecSource, type LoadedSpecText } from './load.ts';
 import { normalizeSpec, type NormalizedSpec } from './normalize.ts';
 import { parseSpecText } from './parse.ts';
@@ -38,7 +38,10 @@ export interface SpecPipelineOptions {
 }
 
 export interface SpecPipelineDeps {
-  fetcher: typeof fetch;
+  // M6 Task 6 (DNS-pin stretch): matches FetchSpecDeps.fetcher — undici's own
+  // fetch, never Node's global fetch (dual-package hazard: the global fetch
+  // rejects an installed-undici Agent as its dispatcher).
+  fetcher: FetchSpecDeps['fetcher'];
   lookup: DnsLookup;
   readFileText: (path: string) => Promise<string>;
   fileSizeBytes: (path: string) => Promise<number>;

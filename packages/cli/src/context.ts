@@ -32,7 +32,12 @@ export interface CliContext {
   // downstream). The error framing hard-wraps to this to keep hostile spec
   // text from reaching visual column zero on a dumb terminal.
   errWidth: () => number | undefined;
-  fetcher: typeof fetch;
+  // M6 Task 6 (DNS-pin stretch): undici's OWN fetch, matching `transport.fetch`
+  // below — spec-fetch is now wired onto the same pinned transport the
+  // upstream API executor uses (never Node's global fetch, which cannot be
+  // paired with an installed-undici `Agent`; dual-package hazard, probed in
+  // M5 Task 3).
+  fetcher: PinnedDeps['fetch'];
   now: () => number;
   nodeVersion: string;
   homeDir: () => string | undefined;
@@ -328,7 +333,7 @@ export const realContext = (): CliContext => ({
     process.stderr.write(`${line}\n`);
   },
   errWidth: () => resolveErrWidth(process.stderr.isTTY === true, process.stderr.columns),
-  fetcher: fetch,
+  fetcher: undiciFetch,
   now: () => Date.now(),
   nodeVersion: process.versions.node,
   homeDir: () => homedir(),
