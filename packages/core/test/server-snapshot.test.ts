@@ -13,6 +13,18 @@ import {
 
 const RLO = String.fromCodePoint(0x202e); // Right-to-Left Override — never paste raw
 
+// Task 6's build-time path-template consistency guard omits an operation
+// whose `{...}` placeholders don't exactly match its path parameters — derive
+// a matching required path parameter per placeholder so this fixture keeps
+// building a REPRESENTABLE operation regardless of which path it is given.
+const pathParams = (path: string): Record<string, unknown>[] =>
+  [...path.matchAll(/\{(?<name>[^{}]+)\}/gu)].map((match) => ({
+    name: match.groups?.['name'],
+    in: 'path',
+    required: true,
+    schema: { type: 'string' },
+  }));
+
 const namedOp = (toolName: string, path: string): NamedOperation => ({
   toolName,
   operation: {
@@ -21,7 +33,7 @@ const namedOp = (toolName: string, path: string): NamedOperation => ({
     tags: [],
     summary: 'A thing',
     deprecated: false,
-    parameters: [],
+    parameters: pathParams(path),
     responses: { '200': { content: { 'application/json': { schema: { type: 'string' } } } } },
   },
 });

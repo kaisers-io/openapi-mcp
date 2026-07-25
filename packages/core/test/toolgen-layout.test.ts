@@ -507,3 +507,147 @@ describe('buildLayout — collisions and optional body', () => {
     expect(l.inputSchema.safeParse({ note: 'b' }).success).toBe(false);
   });
 });
+
+const pathOp = (
+  path: string,
+  parameters: readonly Record<string, unknown>[] = [],
+): OperationRecord => ({ ...bodyOp(undefined, parameters), path });
+
+describe('buildLayout — path template consistency', () => {
+  it('is representable when the placeholder set matches the path-param set exactly', () => {
+    const l = layout(
+      buildLayout(
+        pathOp('/pets/{petId}', [
+          { name: 'petId', in: 'path', required: true, schema: { type: 'string' } },
+        ]),
+        new Set(),
+      ),
+    );
+    expect(l.mapper.fields['petId']).toEqual({
+      destination: 'path',
+      wireName: 'petId',
+      style: 'simple',
+      explode: false,
+      required: true,
+    });
+  });
+
+  it('omits when a placeholder has no matching path parameter', () => {
+    expect('unrepresentable' in buildLayout(pathOp('/pets/{petId}', []), new Set())).toBe(true);
+  });
+
+  it('omits when a path parameter has no matching placeholder', () => {
+    expect(
+      'unrepresentable' in
+        buildLayout(
+          pathOp('/pets', [
+            { name: 'petId', in: 'path', required: true, schema: { type: 'string' } },
+          ]),
+          new Set(),
+        ),
+    ).toBe(true);
+  });
+
+  it.each([['/pets/{petId'], ['/pets/{}'], ['/a/{}/b'], ['/pets/{{petId}}']])(
+    'omits on a malformed placeholder brace: %s',
+    (path) => {
+      expect(
+        'unrepresentable' in
+          buildLayout(
+            pathOp(path, [
+              { name: 'petId', in: 'path', required: true, schema: { type: 'string' } },
+            ]),
+            new Set(),
+          ),
+      ).toBe(true);
+    },
+  );
+
+  it.each([['/a/../b'], ['/a/%2e%2e/b'], ['/a/%2E%2E/b'], ['/a/%2F/b'], ['/a/%5C/b'], ['/a/./b']])(
+    'omits an operation with a dangerous static path segment: %s',
+    (path) => {
+      expect('unrepresentable' in buildLayout(pathOp(path, []), new Set())).toBe(true);
+    },
+  );
+
+  it('does not flag a static segment that merely contains dots or slashes when decoded safely', () => {
+    // "a..b" and "a%2Fb"-free segments are ordinary literal text — only an EXACT
+    // "." / ".." decode, or a decoded "/" or "\", is dangerous.
+    const l = layout(buildLayout(pathOp('/a..b/c', []), new Set()));
+    expect(l.mapper.bodyMode).toBe('none');
+  });
+
+  it('omits an operation with a malformed percent-encoding in a static segment', () => {
+    // decodeURIComponent throws on an incomplete escape ("%" with no following
+    // two hex digits) — that must fail closed too, not bubble the exception.
+    expect('unrepresentable' in buildLayout(pathOp('/a/%/b', []), new Set())).toBe(true);
+  });
+
+  it('omits a mixed segment where static text baked AROUND a placeholder decodes to a traversal', () => {
+    // "/x/{id}%2F..%2Fadmin" is ONE segment ("{id}%2F..%2Fadmin"). It contains
+    // "{" so a guard that skips any segment with a placeholder never validates
+    // it — its literal "%2F..%2Fadmin" would reach the wire and decode at the
+    // origin to "/../admin". Stripping the "{id}" run first must still catch it.
+    expect(
+      'unrepresentable' in
+        buildLayout(
+          pathOp('/x/{id}%2F..%2Fadmin', [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          ]),
+          new Set(),
+        ),
+    ).toBe(true);
+  });
+
+  it('omits a mixed segment whose static remainder decodes to exactly ".."', () => {
+    expect(
+      'unrepresentable' in
+        buildLayout(
+          pathOp('/a/{id}%2e%2e', [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          ]),
+          new Set(),
+        ),
+    ).toBe(true);
+  });
+
+  it('omits a mixed segment with an encoded backslash in the static remainder', () => {
+    expect(
+      'unrepresentable' in
+        buildLayout(
+          pathOp('/x/{id}%5Cthing', [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+          ]),
+          new Set(),
+        ),
+    ).toBe(true);
+  });
+
+  it('still allows a mixed segment whose static suffix is safe (does not over-block)', () => {
+    // A normal mixed segment like "{id}.json" must remain representable — the
+    // fix strips only the placeholder run, not the whole segment.
+    const l = layout(
+      buildLayout(
+        pathOp('/files/{id}.json', [
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ]),
+        new Set(),
+      ),
+    );
+    expect(l.mapper.fields['id']?.destination).toBe('path');
+  });
+
+  it('omits on a lone closing brace with no opener (malformed, no "{" anywhere)', () => {
+    // Binds the pathPlaceholders branch for a bare "}" that never saw an
+    // opening "{" — distinct from the unclosed/empty/nested cases above.
+    expect(
+      'unrepresentable' in
+        buildLayout(
+          pathOp('/pets/petId}', [
+            { name: 'petId', in: 'path', required: true, schema: { type: 'string' } },
+          ]),
+          new Set(),
+        ),
+    ).toBe(true);
+  });
+});

@@ -272,6 +272,54 @@ const bodyFields = (
   };
 };
 
+// Scans a path template's `{...}` runs into a placeholder-name set. Rejects an
+// empty `{}`, a nested/unclosed brace, and a lone `}` with no matching `{` as
+// malformed — the caller omits the operation fail-closed rather than guessing
+// a name.
+const pathPlaceholders = (path: string): { names: Set<string> } | { malformed: true } => {
+  const names = new Set<string>();
+  let inBrace = false;
+  let current = '';
+  for (const char of path) {
+    if (char === '{') {
+      if (inBrace) {
+        return { malformed: true };
+      }
+      inBrace = true;
+      current = '';
+    } else if (char === '}') {
+      if (!inBrace || current === '') {
+        return { malformed: true };
+      }
+      names.add(current);
+      inBrace = false;
+    } else if (inBrace) {
+      current += char;
+    }
+  }
+  if (inBrace) {
+    return { malformed: true };
+  }
+  return { names };
+};
+
+// The STATIC text of a path segment (a whole segment with no placeholder, or
+// the literal text left over once every `{...}` placeholder run has been
+// stripped from a mixed segment) is dangerous once decoded if it resolves to
+// a dot-segment or smuggles a path separator: `.`/`..` (traversal), or a
+// decoded `/`/`\` (an encoded separator baked into the spec's path template,
+// which could re-emerge once the upstream origin decodes it and escape the
+// intended base path). Malformed percent-encoding fails closed too.
+const isDangerousStaticSegment = (segment: string): boolean => {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    return true;
+  }
+  return decoded === '.' || decoded === '..' || decoded.includes('/') || decoded.includes('\\');
+};
+
 const resolveCollisions = (fields: Field[]): { ok: Field[] } | { unrepresentable: string } => {
   const preferredCounts = new Map<string, number>();
   for (const field of fields) {
@@ -311,6 +359,43 @@ export const buildLayout = (
   const resolved = resolveCollisions([...params.ok, ...body.ok.fields]);
   if (!('ok' in resolved)) {
     return resolved;
+  }
+  // Build-time path-template consistency guard (fail-closed): the executor
+  // later builds the request URL by substituting every `destination:'path'`
+  // wireName into `operation.path`'s `{...}` placeholders. A mismatch in
+  // either direction — a placeholder with no path param, or a path param with
+  // no placeholder — would build a broken (or, worse, silently wrong) URL, so
+  // omit the operation here instead of at call time.
+  for (const segment of operation.path.split('/')) {
+    // Strip every well-formed `{...}` run before checking: static text baked
+    // AROUND a placeholder in the SAME segment (e.g. `{id}.json`, or a
+    // hostile `{id}%2F..%2Fadmin`) must still be validated as static text. A
+    // segment that is ONLY a placeholder strips to '' (never dangerous). A
+    // malformed brace (unclosed, empty, nested, or a lone `}`) does not match
+    // the strip pattern and is left in place for `pathPlaceholders` below to
+    // reject fail-closed.
+    const staticText = segment.replaceAll(/\{[^{}]+\}/gu, '');
+    if (isDangerousStaticSegment(staticText)) {
+      return { unrepresentable: `the path template has an unsafe static segment "${segment}"` };
+    }
+  }
+  const placeholders = pathPlaceholders(operation.path);
+  if ('malformed' in placeholders) {
+    return { unrepresentable: 'the path template has a malformed "{...}" placeholder' };
+  }
+  const pathWireNames = new Set<string>();
+  for (const field of resolved.ok) {
+    if (field.mapping.destination === 'path') {
+      pathWireNames.add(field.mapping.wireName);
+    }
+  }
+  const placeholdersMatch =
+    placeholders.names.size === pathWireNames.size &&
+    [...placeholders.names].every((name) => pathWireNames.has(name));
+  if (!placeholdersMatch) {
+    return {
+      unrepresentable: 'the path template placeholders do not match its path parameters',
+    };
   }
   // A field whose preferred (wire) name is prototype-hazardous omits the
   // operation (fail-closed). Location prefixing never produces such a name, so
