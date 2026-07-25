@@ -186,6 +186,22 @@ describe('mapResponse — HTTP error status (>=400)', () => {
     }
   });
 
+  // Final-review Fix 2: the same escaped-JSON-secret leak
+  // Task 8's Fix A closed on the no-outputSchema SUCCESS path (see the
+  // matching test below) exists on the 4xx/5xx error path too, since
+  // mapHttpError used to redact the raw body text only.
+  it('a 500 application/json body with a secret escaped as `\\/` never leaks via the error path', () => {
+    const secret = 'ab/cd/ef/gh'; // Registered secret containing `/`
+    const escapedSecret = 'ab\\/cd\\/ef\\/gh'; // Runtime value: ab\/cd\/ef\/gh (literal backslashes)
+    const body = `{"error":"${escapedSecret}"}`;
+    const outcome = response(500, 'application/json', body);
+    const redactor = createRedactor([secret]);
+    const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
+    expect(text).toBe('upstream request failed with status 500');
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain(escapedSecret);
+  });
+
   it('drops the excerpt entirely if scanForSecret finds residue after redaction', () => {
     const outcome = response(500, 'text/plain', 'harmless body text');
     const forcedResidue: Redactor = {

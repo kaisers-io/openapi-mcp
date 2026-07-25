@@ -9,11 +9,15 @@ import { validationError } from '../errors.ts';
 // M5 Task 1 hardening: classifyAddress fails closed on the full set of
 // SSRF-relevant IANA special-purpose ranges (IANA "IPv4 Special-Purpose
 // Address Registry" and "IPv6 Special-Purpose Address Registry"), plus the
-// NAT64 IPv4-embedding rules of RFC 6052. Only the well-known NAT64 prefix
-// 64:ff9b::/96 has a fixed "embedded IPv4 = low 32 bits" layout; the
-// local-use prefix 64:ff9b:1::/48 places the embedded IPv4 at a
-// translator-prefix-dependent bit offset and is classified private WITHOUT
-// decoding (see classifyAddress below).
+// NAT64 IPv4-embedding rules of RFC 6052/8215. Only the well-known NAT64
+// prefix 64:ff9b::/96 has a fixed "embedded IPv4 = low 32 bits" layout; every
+// OTHER 64:ff9b:x:: prefix (incl. the RFC 8215 local-use 64:ff9b:1::/48)
+// places the embedded IPv4 at a translator-prefix-dependent bit offset that
+// cannot be soundly decoded and is classified metadata (always denied,
+// non-overridable) WITHOUT decoding — final-review fix (HIGH): a
+// merely-private classification there would still be allowed under
+// --allow-private-network/baseTrusted, and a /96 translator inside that
+// prefix can map onto the metadata address (see classifyAddress below).
 
 export type DnsLookup = (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
 
@@ -129,20 +133,33 @@ export const classifyAddress = (address: string): AddressClass => {
       return 'private';
     }
     if (g0 === 0x0064 && g1 === 0xff9b) {
-      // NAT64 (RFC 6052; IANA IPv6 Special-Purpose Address Registry). Only
-      // the well-known prefix 64:ff9b::/96 has a fixed "embedded IPv4 = low
-      // 32 bits" layout — decode it and classify with classifyIpv4 so a
+      // NAT64 (RFC 6052/8215; IANA IPv6 Special-Purpose Address Registry).
+      // Only the well-known prefix 64:ff9b::/96 has a fixed "embedded IPv4 =
+      // low 32 bits" layout — decode it and classify with classifyIpv4 so a
       // NAT64-wrapped metadata/private address is denied rather than passed
-      // as public (round-1 egress-bypass #2). The local-use prefix
-      // 64:ff9b:1::/48 places the embedded IPv4 at a translator-prefix-
-      // dependent bit offset (/32../64, with the reserved "u" octet at bits
-      // 64-71 per RFC 6052 §2.2), so a fixed low-32 decode there is unsound
-      // and could fail OPEN — classify the entire /48 (and any other
-      // unallocated 64:ff9b:x:: prefix) as private WITHOUT decoding.
+      // as public (round-1 egress-bypass #2).
       if (g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
         return classifyIpv4(ipv4FromGroups(g6, g7));
       }
-      return 'private';
+      // Final-review fix (HIGH — NAT64 metadata bypass): every OTHER
+      // 64:ff9b:x:: prefix — including the RFC 8215 local-use 64:ff9b:1::/48
+      // — places the embedded IPv4 at a translator-prefix-dependent bit
+      // offset (/32../64, with the reserved "u" octet at bits 64-71 per
+      // RFC 6052 §2.2), so a fixed low-32 decode there is unsound and a /96
+      // translator inside the prefix could map e.g.
+      // 64:ff9b:1:...:a9fe:a9fe onto the metadata address 169.254.169.254.
+      // A merely-'private' classification here would still be ALLOWED under
+      // --allow-private-network/baseTrusted, breaking the "metadata always
+      // denied" invariant, so this undecodable prefix is classified
+      // 'metadata' (always denied, non-overridable) WITHOUT decoding rather
+      // than 'private'. KNOWN LIMITATION: an arbitrary RFC 8215
+      // network-specific NAT64 prefix living INSIDE ordinary global unicast
+      // (a provider's own /32../64 unrelated to the 64:ff9b::/16 block) is
+      // indistinguishable client-side from a normal global-unicast address
+      // and cannot be identified here at all — closing that gap requires an
+      // OS/network-layer metadata deny, out of scope for this client-side
+      // egress guard.
+      return 'metadata';
     }
     if (g0 === 0x2001 && g1 === 0) {
       // Teredo 2001::/32 (RFC 4380; IANA registry) — a tunneling prefix we

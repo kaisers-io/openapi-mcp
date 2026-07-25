@@ -731,6 +731,51 @@ describe('dispatch-boundary redaction', () => {
     expect(JSON.stringify(result.outcome)).not.toContain(SECRET);
   });
 
+  // Final-review Fix 4 (MED — rescan after redaction): redactString's
+  // single ordered (longest-needle-first) pass checks each registered needle
+  // exactly once. Registering a SHORT secret (REAL_SECRET) alongside a LONGER
+  // secret (SYNTHESIZED_SECRET) that happens to equal "[redacted]" (the
+  // marker) immediately followed by the literal suffix text that sits right
+  // after REAL_SECRET in the body means: SYNTHESIZED_SECRET's turn in the
+  // ordered pass comes FIRST (it is longer) and finds no match yet (the body
+  // still has the RAW REAL_SECRET, not the marker); THEN REAL_SECRET's turn
+  // replaces it with "[redacted]", which — followed by that same suffix text
+  // — now spells out SYNTHESIZED_SECRET exactly, but its needle-check has
+  // already passed and is never re-run within this one pass. Without a
+  // rescan, that composed residue — a string that IS itself a registered
+  // secret — would ship verbatim. (Neither needle is itself a substring of
+  // the bare marker, so createRedactor's own construction-time guard against
+  // trivial marker collisions does not fire here — this is a genuine
+  // COMPOSITION the single pass cannot see, not a construction-time footgun.)
+  it('downgrades to the generic boundary error when redaction COMPOSES a registered secret it cannot see within its own single pass', async () => {
+    const REAL_SECRET = 'fooBAR12'; // 8 chars — replaced AFTER the longer needle below is checked
+    const SYNTHESIZED_SECRET = '[redacted]XYZ'; // 13 chars — never present until REAL_SECRET is redacted
+    const residueRedactor = createRedactor([SYNTHESIZED_SECRET, REAL_SECRET]);
+    const executor: ToolExecutor = () =>
+      Promise.resolve(textOutcome(`upstream said: ${REAL_SECRET}XYZ`, true));
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: alwaysPermitLimiter(),
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor: residueRedactor,
+    });
+    const result = await dispatcher.call({
+      name: 'createThing',
+      arguments: { id: 'x' },
+      signal: noSignal,
+    });
+    expect(result.kind).toBe('outcome');
+    if (result.kind !== 'outcome') {
+      throw new Error('unreachable');
+    }
+    expect(result.outcome.isError).toBe(true);
+    const text = result.outcome.content[0]?.text ?? '';
+    expect(text).not.toContain(REAL_SECRET);
+    expect(text).not.toContain(SYNTHESIZED_SECRET);
+  });
+
   it('passes an outcome with no secret through unchanged (aside from the redact pass being a no-op)', async () => {
     const executor: ToolExecutor = () =>
       Promise.resolve(

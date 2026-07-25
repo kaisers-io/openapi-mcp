@@ -352,6 +352,38 @@ describe('createExecutor — header assembly', () => {
     expect(outcome.content[0]?.text).toMatch(/reserved header/u);
     expect(calls).toHaveLength(0);
   });
+
+  // Final-review Fix 6 (finding 5): assembleHeaders now writes content/tool-arg
+  // headers FIRST, then --header, then --header-env LAST, so a same-name
+  // secret header always wins over a static one, which always wins over a
+  // tool-argument one — design §4's precedence content < tool < --header <
+  // --header-env. Unreachable through the real pipeline (the reserved-name
+  // gate above always rejects a tool-arg name colliding with an
+  // operator-configured header before assembleHeaders ever runs), so this
+  // test reaches the fallback path the same way the mixed-case test above
+  // does: a `buildRequest` spy injects a built header name that the
+  // reservedHeaderNames set does NOT cover.
+  it('secretHeaders win over staticHeaders, which win over a colliding tool-arg header (precedence fallback)', async () => {
+    const snapshot = buildToolSnapshot([pingOp]);
+    const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    vi.mocked(buildRequest).mockReturnValueOnce({
+      ok: { pathname: '/ping', query: '', headers: { 'x-dup': 'tool-value' } },
+    });
+    const executor = createExecutor(
+      baseConfig({
+        staticHeaders: [{ name: 'X-Dup', value: 'static-value' }],
+        secretHeaders: [{ name: 'X-Dup', value: 'secret-value', envVar: 'API_TOKEN' }],
+        validators: validatorsFor(snapshot),
+      }),
+      deps,
+    );
+    const outcome = await executor(tool, {}, freshSignal());
+    expect(outcome.isError).toBe(false);
+    expect(calls).toHaveLength(1);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['x-dup']).toBe('secret-value');
+  });
 });
 
 describe('createExecutor — cleartext gate', () => {
@@ -483,6 +515,46 @@ describe('createExecutor — fail-closed wiring', () => {
     // Missing the required "id" path value.
     const outcome = await executor(tool, {}, freshSignal());
     expect(outcome.isError).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+
+  // Final-review Fix 3 (Important — unsanitized spec wireName):
+  // buildRequest's own `{error}` strings embed a header/path/query param's
+  // spec-derived `wireName` verbatim (request.ts's serializeHeaderValue,
+  // e.g. an invalid-header-name message). finalizeOutcome (dispatch.ts) only
+  // redacts SECRETS, never control/bidi characters, so a hostile spec field
+  // named with an RLO (right-to-left override, U+202E) would otherwise
+  // reach the client raw. Built via String.fromCodePoint per the
+  // escape-sequence discipline — never pasted.
+  it('sanitizes a spec-derived wireName containing an RLO out of the buildRequest error text', async () => {
+    const rlo = String.fromCodePoint(0x202e);
+    const hostileName = `x-hdr${rlo}evil`;
+    const hostileOp: NamedOperation = {
+      toolName: 'hostileThing',
+      operation: {
+        method: 'get',
+        path: '/hostile',
+        tags: [],
+        deprecated: false,
+        parameters: [
+          { name: hostileName, in: 'header', required: true, schema: { type: 'string' } },
+        ],
+        responses: { '204': { description: 'no content' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([hostileOp]);
+    const tool = snapshot.toolsByName['hostileThing'] as SnapshotTool;
+    const fieldName = fieldNameFor(
+      (tool.generated as NonNullable<SnapshotTool['generated']>).mapper,
+      'header',
+      hostileName,
+    );
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { [fieldName]: 'value' }, freshSignal());
+    expect(outcome.isError).toBe(true);
+    const text = outcome.content[0]?.text ?? '';
+    expect(text).not.toContain(rlo);
     expect(calls).toHaveLength(0);
   });
 

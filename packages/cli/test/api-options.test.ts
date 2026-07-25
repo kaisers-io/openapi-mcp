@@ -236,6 +236,24 @@ describe('resolveApiConfig — secretValues (round-1 amendment)', () => {
   it('is empty when no headers are configured', () => {
     expect(resolve([]).secretValues).toEqual([]);
   });
+
+  // Final-review Fix 5 (finding 3 — marker-collision startup footgun): a short
+  // static --header value used to be registered unconditionally, which could
+  // make createRedactor throw at startup for an entirely legitimate,
+  // non-secret value that happens to be a substring of the '[redacted]'
+  // marker (e.g. "da"). resolveApiConfig itself must not throw here, and the
+  // short value must not be registered at all (it buys no redaction
+  // coverage below the 8-char variant floor anyway).
+  it('does not register a short static --header value (no startup throw, e.g. a value that is a substring of the marker)', () => {
+    const config = resolve(['--header', 'Accept-Language:da']);
+    expect(config.staticHeaders).toEqual([{ name: 'Accept-Language', value: 'da' }]);
+    expect(config.secretValues).toEqual([]);
+  });
+
+  it('still registers a long (>= 8 char) static --header value', () => {
+    const config = resolve(['--header', 'X-Custom:a-long-static-value']);
+    expect(config.secretValues).toEqual(['a-long-static-value']);
+  });
 });
 
 describe('resolveApiConfig — --base-url', () => {

@@ -309,7 +309,13 @@ const pathPlaceholders = (path: string): { names: Set<string> } | { malformed: t
 // a dot-segment or smuggles a path separator: `.`/`..` (traversal), or a
 // decoded `/`/`\` (an encoded separator baked into the spec's path template,
 // which could re-emerge once the upstream origin decodes it and escape the
-// intended base path). Malformed percent-encoding fails closed too.
+// intended base path). A decoded `?` or `#` is equally dangerous (final-review
+// Fix 7, finding 6): joinFinalUrl (executor.ts) assembles the final URL by
+// STRING CONCATENATION of the built pathname + `?` + query, so a static `?`
+// baked into the path template would either truncate/inject the real query
+// string or introduce a spec-baked query the caller never asked for, and a
+// static `#` would smuggle a fragment into what should be plain path text.
+// Malformed percent-encoding fails closed too.
 const isDangerousStaticSegment = (segment: string): boolean => {
   let decoded: string;
   try {
@@ -317,7 +323,14 @@ const isDangerousStaticSegment = (segment: string): boolean => {
   } catch {
     return true;
   }
-  return decoded === '.' || decoded === '..' || decoded.includes('/') || decoded.includes('\\');
+  return (
+    decoded === '.' ||
+    decoded === '..' ||
+    decoded.includes('/') ||
+    decoded.includes('\\') ||
+    decoded.includes('?') ||
+    decoded.includes('#')
+  );
 };
 
 const resolveCollisions = (fields: Field[]): { ok: Field[] } | { unrepresentable: string } => {

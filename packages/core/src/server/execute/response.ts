@@ -205,6 +205,7 @@ const scanSafely = (redactor: Redactor, value: unknown): boolean => {
 
 const mapHttpError = (
   status: number,
+  contentType: string | undefined,
   bodyBytes: Uint8Array,
   redactor: Redactor,
   envVarHint: string | undefined,
@@ -219,6 +220,27 @@ const mapHttpError = (
   const decoded = decodeUtf8(bodyBytes);
   if ('error' in decoded) {
     return textOutcome(`upstream request failed with status ${status}`, true);
+  }
+  // Final-review Fix 2 (HIGH/Important): mirror mapNoSchemaSuccess's
+  // Round-2 fix A below — string-only redaction on the raw body text cannot
+  // see a secret that is present in the decoded JSON STRUCTURE but escaped
+  // differently in its serialized form (e.g. a secret containing `/`
+  // rendered `\/`, or a `\uXXXX` escape). Parse the JSON and scan the
+  // resulting STRUCTURE first; on a hit, drop straight to the status-only
+  // message with NO excerpt at all (never fall through to the string-redacted
+  // excerpt below, which could still echo the escaped form verbatim).
+  const essence = mediaEssence(contentType);
+  if (essence !== undefined && JSON_ESSENCE_RE.test(essence)) {
+    let parsed: unknown;
+    let parsedOk = true;
+    try {
+      parsed = JSON.parse(decoded.ok);
+    } catch {
+      parsedOk = false;
+    }
+    if (parsedOk && scanSafely(redactor, parsed)) {
+      return textOutcome(`upstream request failed with status ${status}`, true);
+    }
   }
   // Redact BEFORE truncating (round-1 amendment): sanitizeSpecText's
   // own truncation runs AFTER this redaction, over the already-secret-free
@@ -353,7 +375,7 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
   }
   const { status, contentType, bodyBytes } = outcome;
   if (status >= 400) {
-    return mapHttpError(status, bodyBytes, opts.redactor, opts.envVarHint);
+    return mapHttpError(status, contentType, bodyBytes, opts.redactor, opts.envVarHint);
   }
   if (opts.validator === undefined) {
     return mapNoSchemaSuccess(status, contentType, bodyBytes, opts.redactor, opts.maxTextBytes);

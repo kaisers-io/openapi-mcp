@@ -563,12 +563,25 @@ describe('buildLayout — path template consistency', () => {
     },
   );
 
-  it.each([['/a/../b'], ['/a/%2e%2e/b'], ['/a/%2E%2E/b'], ['/a/%2F/b'], ['/a/%5C/b'], ['/a/./b']])(
-    'omits an operation with a dangerous static path segment: %s',
-    (path) => {
-      expect('unrepresentable' in buildLayout(pathOp(path, []), new Set())).toBe(true);
-    },
-  );
+  it.each([
+    ['/a/../b'],
+    ['/a/%2e%2e/b'],
+    ['/a/%2E%2E/b'],
+    ['/a/%2F/b'],
+    ['/a/%5C/b'],
+    ['/a/./b'],
+    // Final-review Fix 7 (finding 6): a static `?`/`#` baked into the path
+    // template is dangerous once decoded — joinFinalUrl (executor.ts)
+    // assembles the final URL by string concatenation of the built pathname
+    // + `?` + query, so a decoded `?`/`#` here could truncate/inject the
+    // real query string or smuggle a fragment into path text.
+    ['/a/%3F/b'], // Decoded: "?"
+    ['/a/%23/b'], // Decoded: "#"
+    ['/a/?abc/b'], // A literal "?" needs no percent-encoding to reach this check
+    ['/a/abc#/b'], // A literal "#" likewise
+  ])('omits an operation with a dangerous static path segment: %s', (path) => {
+    expect('unrepresentable' in buildLayout(pathOp(path, []), new Set())).toBe(true);
+  });
 
   it('does not flag a static segment that merely contains dots or slashes when decoded safely', () => {
     // "a..b" and "a%2Fb"-free segments are ordinary literal text — only an EXACT

@@ -6,7 +6,7 @@ import {
   type PinnedRequestOptions,
 } from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
-import { DISPLAY_TEXT_MAX } from '../../spec/sanitize.ts';
+import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
 import { textOutcome, type ToolCallOutcome } from '../result.ts';
 import type { SnapshotTool } from '../types.ts';
@@ -122,6 +122,13 @@ const withinBasePath = (finalPath: string, basePath: string): boolean =>
 // cross-origin carries only content-type — the minimal safe set for a
 // redirect that has left the base origin (pinnedRequest itself enforces the
 // monotonic origin-crossing switch; this module only supplies the two sets).
+// Write order fixes precedence on a name collision (later write wins):
+// content-type/tool-arg headers FIRST, then --header, then --header-env
+// LAST — design §4's content < tool < --header < --header-env (final-review
+// Fix 6, finding 5). Unreachable while the reserved-name gate in
+// runUpstreamCall holds (a tool argument can never map onto a reserved
+// name), but this ordering makes the fallback correct rather than inverted
+// should that gate ever regress.
 const assembleHeaders = (
   config: ExecutorConfig,
   contentType: string | undefined,
@@ -131,14 +138,14 @@ const assembleHeaders = (
   if (contentType !== undefined) {
     sameOriginHeaders['content-type'] = contentType;
   }
+  for (const [name, value] of Object.entries(toolHeaders)) {
+    sameOriginHeaders[name] = value;
+  }
   for (const header of config.staticHeaders) {
     sameOriginHeaders[header.name.toLowerCase()] = header.value;
   }
   for (const header of config.secretHeaders) {
     sameOriginHeaders[header.name.toLowerCase()] = header.value;
-  }
-  for (const [name, value] of Object.entries(toolHeaders)) {
-    sameOriginHeaders[name] = value;
   }
   const crossOriginHeaders: Record<string, string> =
     contentType === undefined ? {} : { 'content-type': contentType };
@@ -209,7 +216,17 @@ const runUpstreamCall = async (
     config.outboundBudgets,
   );
   if ('error' in built) {
-    return isError(built.error);
+    // Final-review Fix 3 (Important — unsanitized spec wireName):
+    // buildRequest's `{error}` strings embed spec-derived text verbatim
+    // (e.g. `mapping.wireName`, a hostile spec's own param name) — see
+    // request.ts's own comment on wireName being untrusted text. The
+    // dispatcher's finalizeOutcome redacts SECRETS but never strips
+    // control/bidi characters, so a spec field named with e.g. an RLO
+    // (U+202E) would otherwise echo raw in this outcome's text. This is the
+    // single choke point where every buildRequest error becomes a tool
+    // outcome, so sanitizeSpecText here (the untrusted-text rule) covers
+    // every wireName-bearing message from this module in one place.
+    return isError(sanitizeSpecText(built.error, DISPLAY_TEXT_MAX));
   }
   // DEFENSIVE reserved-name check (mandatory per D3, not merely defensive in
   // effect): toolgen/layout.ts already drops any reserved header name from a

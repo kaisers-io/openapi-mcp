@@ -353,6 +353,37 @@
       }
     },
     {
+      "files": ["packages/core/src/http/egress.ts"],
+      "rules": {
+        // Off per the M5 final-review fix wave: classifyAddress's IPv6 arm
+        // already fails closed on the full set of SSRF-relevant IANA
+        // special-purpose ranges (Task 1) plus RFC 6052/8215's NAT64
+        // IPv4-embedding rules; the final-review fix additionally reclassifies
+        // the local-use NAT64 prefix 64:ff9b:1::/48 as metadata (a /96
+        // translator inside it can wrap the metadata address), which pushed
+        // the file's load-bearing rationale comments verbatim past 300 lines
+        // (mirrors the pipeline.ts/store.ts/layout.ts/pinned-dispatcher.ts/
+        // request.ts/response.ts overrides above for the same reason)
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/server/execute/executor.ts"],
+      "rules": {
+        // Off per the M5 final-review fix wave: executor.ts is the whole
+        // integration point wiring request-building + the pinned transport +
+        // response-mapping + redaction + the concurrency semaphore; two
+        // final-review findings (sanitizing a buildRequest error's
+        // spec-derived wireName, and reordering assembleHeaders's write order
+        // to match design §4 precedence) each added load-bearing rationale
+        // comments in place rather than splitting this one cohesive module,
+        // pushing it verbatim past 300 lines (mirrors the pipeline.ts/
+        // store.ts/layout.ts/pinned-dispatcher.ts/request.ts/response.ts
+        // overrides above for the same reason)
+        "max-lines": "off"
+      }
+    },
+    {
       "files": ["packages/core/src/server/execute/request.ts"],
       "rules": {
         // Off per task-7 brief (M5): request.ts is the whole request-building

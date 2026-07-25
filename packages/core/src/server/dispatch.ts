@@ -145,12 +145,31 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
       return textOutcome(BOUNDARY_UNSAFE_TEXT, true);
     }
   }
+  const redactedContent = outcome.content.map((block) => ({
+    ...block,
+    text: redactor.redactString(block.text),
+  }));
+  // Final-review Fix 4 (MED — rescan after redaction): redactString's
+  // single ordered replacement pass can, in composition, still leave or
+  // synthesize a registered secret in its own output (e.g. an earlier,
+  // longer needle's replacement text can go unchecked against a shorter
+  // needle whose turn in the pass already came and went). Rescan the
+  // REDACTED text itself before returning it — a hit, or the scan itself
+  // throwing, downgrades the whole outcome to the same generic boundary
+  // error as the structuredContent branch above, rather than ever returning
+  // text that still matches a registered secret.
+  let residue: boolean;
+  try {
+    residue = redactedContent.some((block) => redactor.scanForSecret(block.text));
+  } catch {
+    residue = true;
+  }
+  if (residue) {
+    return textOutcome(BOUNDARY_UNSAFE_TEXT, true);
+  }
   return {
     ...outcome,
-    content: outcome.content.map((block) => ({
-      ...block,
-      text: redactor.redactString(block.text),
-    })),
+    content: redactedContent,
   };
 };
 
