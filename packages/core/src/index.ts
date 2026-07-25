@@ -44,6 +44,12 @@ export type {
   PinnedRequestOptions,
   PinnedResponse,
 } from './http/pinned-dispatcher.ts';
+export { buildRequest } from './server/execute/request.ts';
+export type {
+  BuildRequestResult,
+  BuiltRequest,
+  OutboundBudgets,
+} from './server/execute/request.ts';
 export { MAX_REDIRECTS, fetchSpec, fetchSpecConditional } from './spec/fetch.ts';
 export type { ConditionalFetchResult, FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
 export { parseSpecText } from './spec/parse.ts';

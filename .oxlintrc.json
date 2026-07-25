@@ -351,6 +351,21 @@
         // reason
         "max-lines": "off"
       }
+    },
+    {
+      "files": ["packages/core/src/server/execute/request.ts"],
+      "rules": {
+        // Off per task-7 brief (M5): request.ts is the whole request-building
+        // module — the value-shape guard, per-leaf percent-encoding, the
+        // path-traversal reject, query/header/body serialization for every
+        // style x explode combination the mapper can emit, and the outbound
+        // budget checks live together by design, with load-bearing
+        // research-citation and round-1 amendment rationale comments
+        // throughout, so it verbatim exceeds 300 lines (mirrors the
+        // pipeline.ts/store.ts/layout.ts/pinned-dispatcher.ts overrides above
+        // for the same reason)
+        "max-lines": "off"
+      }
     }
   ]
 }
