@@ -11,7 +11,13 @@ export {
 export type { ExitCode, RenderedError } from './errors.ts';
 export { createRedactor } from './redact.ts';
 export type { Redactor } from './redact.ts';
-export { MAX_DURATION_MS, parseDuration, zDuration } from './schemas/primitives.ts';
+export {
+  MAX_DURATION_MS,
+  parseByteSize,
+  parseDuration,
+  zByteSize,
+  zDuration,
+} from './schemas/primitives.ts';
 export { SPEC_BUDGETS } from './spec/budgets.ts';
 export type { SpecBudgets } from './spec/budgets.ts';
 export {
@@ -29,7 +35,7 @@ export {
   type GutterFrameOptions,
   type GutteredBody,
 } from './spec/display.ts';
-export { parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
+export { HEADER_NAME_RE, parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
 export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';
 export { hashContent, loadSpecFromFile, parseSpecSource } from './spec/load.ts';
 export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';

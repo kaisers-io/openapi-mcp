@@ -382,6 +382,20 @@
         // overrides above for the same reason)
         "max-lines": "off"
       }
+    },
+    {
+      "files": ["packages/cli/src/api-options.ts"],
+      "rules": {
+        // Off per task-9 review-fix amendment (M5): the file was an exact
+        // 300-line fit before two credential-leak/usability findings
+        // (--base-url and --header rejections echoed raw secret
+        // values; RFC 9110 OWS trimming) added redactedBaseUrl,
+        // trimOptionalSpace, and an empty-after-trim guard in place - these
+        // stay in this module by design (they are one cohesive parse/
+        // validate pass over the same two flags), so it now verbatim
+        // exceeds 300 lines
+        "max-lines": "off"
+      }
     }
   ]
 }

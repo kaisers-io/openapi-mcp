@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_DURATION_MS, OpenapiMcpError, parseDuration, zDuration } from '../src/index.ts';
+import {
+  MAX_DURATION_MS,
+  OpenapiMcpError,
+  parseByteSize,
+  parseDuration,
+  zByteSize,
+  zDuration,
+} from '../src/index.ts';
 
 describe('zDuration', () => {
   it.each([
@@ -64,5 +71,47 @@ describe('parseDuration', () => {
 
   it('throws a usage error on overflow', () => {
     expect(() => parseDuration('9999999d')).toThrowError(OpenapiMcpError);
+  });
+});
+
+describe('zByteSize', () => {
+  it.each([
+    ['1', 1],
+    ['1024', 1024],
+    ['10B', 10],
+    ['5KB', 5 * 1024],
+    ['10MB', 10 * 1024 * 1024],
+  ])('parses %s to %d bytes', (raw, bytes) => {
+    expect(zByteSize.parse(raw)).toBe(bytes);
+  });
+
+  it.each(['', '0', '-5', '1.5MB', '10 MB', '10GB', 'MB', '10mb'])('rejects %j', (raw) => {
+    expect(zByteSize.safeParse(raw).success).toBe(false);
+  });
+
+  it('rejects a magnitude too large to represent safely', () => {
+    const huge = `${'9'.repeat(300)}MB`;
+    expect(zByteSize.safeParse(huge).success).toBe(false);
+  });
+});
+
+describe('parseByteSize', () => {
+  it('returns bytes for valid input', () => {
+    expect(parseByteSize('10MB')).toBe(10 * 1024 * 1024);
+  });
+
+  it('throws a usage error naming the invalid input', () => {
+    expect(() => parseByteSize('10GB')).toThrowError(OpenapiMcpError);
+    try {
+      parseByteSize('10GB');
+    } catch (err) {
+      expect((err as OpenapiMcpError).code).toBe('usage');
+      expect((err as OpenapiMcpError).message).toContain('10GB');
+    }
+  });
+
+  it('throws a usage error on overflow', () => {
+    const huge = `${'9'.repeat(300)}MB`;
+    expect(() => parseByteSize(huge)).toThrowError(OpenapiMcpError);
   });
 });
