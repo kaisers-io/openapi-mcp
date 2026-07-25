@@ -17,6 +17,8 @@ export {
   type ToolExecutor,
 } from './dispatch.ts';
 export { executionUnavailable } from './execution-unavailable.ts';
+export { createExecutor } from './execute/executor.ts';
+export type { ExecutorConfig, ExecutorDeps } from './execute/executor.ts';
 export {
   structuredOutcome,
   textOutcome,
