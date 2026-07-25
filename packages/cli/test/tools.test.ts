@@ -159,7 +159,7 @@ describe('tools command — URL specs', () => {
     const fetcher = ((_url: string | URL | Request, init?: RequestInit) => {
       seen.push(new Headers(init?.headers));
       return Promise.resolve(new Response(specText));
-    }) as typeof fetch;
+    }) as unknown as CliContext['fetcher'];
     const { lines, ctx } = fileCtx({ fetcher, env: { SPEC_TOKEN: 'Bearer super-secret' } });
     const code = await run(ctx, [
       'node',
@@ -195,7 +195,7 @@ describe('tools command — URL specs', () => {
   it('never leaks the secret value into any output channel', async () => {
     const secret = 'super-secret-value-9000';
     const fetcher = (() =>
-      Promise.resolve(new Response('denied', { status: 401 }))) as typeof fetch;
+      Promise.resolve(new Response('denied', { status: 401 }))) as unknown as CliContext['fetcher'];
     const { lines, errLines, ctx } = fileCtx({ fetcher, env: { SPEC_TOKEN: secret } });
     const code = await run(ctx, [
       'node',
@@ -464,7 +464,7 @@ describe('tools command — cache and ttl', () => {
   });
 
   it('rejects an authenticated spec with no cache decision with exit 2 (D13)', async () => {
-    const fetcher = (() => Promise.resolve(new Response('{}'))) as typeof fetch;
+    const fetcher = (() => Promise.resolve(new Response('{}'))) as unknown as CliContext['fetcher'];
     const { errLines, ctx } = fileCtx({ fetcher, env: { SPEC_TOKEN: 'Bearer x' } });
     const code = await run(ctx, [
       'node',
@@ -490,7 +490,8 @@ describe('tools command — cache and ttl', () => {
         },
       },
     });
-    const fetcher = (() => Promise.resolve(new Response(specText))) as typeof fetch;
+    const fetcher = (() =>
+      Promise.resolve(new Response(specText))) as unknown as CliContext['fetcher'];
     const { lines, ctx } = fileCtx({ fetcher, env: { SPEC_TOKEN: 'Bearer x' } });
     const code = await run(ctx, [
       'node',
@@ -540,7 +541,7 @@ describe('tools command — cache and ttl', () => {
         );
       }
       return Promise.resolve(new Response(specText));
-    }) as typeof fetch;
+    }) as unknown as CliContext['fetcher'];
     const lookup = (hostname: string): Promise<readonly string[]> =>
       hostname === 'internal.example.com'
         ? Promise.resolve(['10.0.0.5'])
@@ -595,7 +596,8 @@ describe('tools command — toolgen omissions', () => {
         },
       },
     });
-    const fetcher = (() => Promise.resolve(new Response(specText))) as typeof fetch;
+    const fetcher = (() =>
+      Promise.resolve(new Response(specText))) as unknown as CliContext['fetcher'];
     const { lines, ctx } = fileCtx({ fetcher });
     const code = await run(ctx, [
       'node',
@@ -644,7 +646,8 @@ describe('tools command — toolgen omissions', () => {
         },
       },
     });
-    const fetcher = (() => Promise.resolve(new Response(specText))) as typeof fetch;
+    const fetcher = (() =>
+      Promise.resolve(new Response(specText))) as unknown as CliContext['fetcher'];
     const { errLines, ctx } = fileCtx({ fetcher });
     const code = await run(ctx, [
       'node',

@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "Turn any OpenAPI spec into a strict, locally running MCP server",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kaisers-io/openapi-mcp.git"
+  },
   "bin": {
     "openapi-mcp": "./bin/openapi-mcp.mjs"
   },

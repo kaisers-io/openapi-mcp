@@ -455,4 +455,116 @@ describe('serve — stdio subprocess E2E', () => {
     });
     expect(code).toBe(0);
   }, 10000);
+
+  // Task 5 (M6): the executor's cleartext gate (executor.ts's
+  // `cleartextBlocked` — a secret `--header-env` header over a cleartext
+  // http: origin to a NON-loopback host is refused unless
+  // --allow-insecure-http) is checked PER-CALL, inside runUpstreamCall, not
+  // at startup — it only ever runs in response to a real tools/call
+  // dispatch, so (unlike the startup egress check in serve-egress.test.ts)
+  // there is no way to reach it without a live, running server: a genuine
+  // subprocess-E2E seam, not an in-process one (the gate ITSELF already has
+  // in-process unit coverage at core/test/server-execute-executor.test.ts,
+  // and --allow-insecure-http's CLI parsing/threading already has coverage
+  // at cli/test/api-options.test.ts — this is the missing END-TO-END wire-up
+  // proof through a real `serve` invocation). KNOWN FLAKE: this suite's own
+  // "a dead --deny pattern..." case above has been observed to time out
+  // under parallel full-suite load (confirmed environmental, not a real
+  // regression, by re-running the file in isolation) — the same
+  // spawn+stdio-JSON-RPC harness is reused here, so this new case shares
+  // that exposure.
+  //
+  // `--base-url http://0.0.0.0:1/` needs no real upstream at all: 0.0.0.0 is
+  // NOT loopback per executor.ts's own narrow `isLoopbackHost` (only
+  // 127.0.0.0/8 / ::1 / *.localhost are exempt), so the gate applies; a
+  // `--base-url` is always TRUSTED (serve.ts's resolveBaseUrl), so the
+  // startup egress check never even looks at it. When the gate is bypassed
+  // (--allow-insecure-http), the real dispatch attempt to 0.0.0.0:1 fails
+  // fast and deterministically (verified empirically: a local `fetch` to
+  // that address rejects in single-digit milliseconds, no network
+  // dependency) with a DIFFERENT, specific "upstream server failed" message
+  // (response.ts's PINNED_ERROR_TEXT.network) — never the cleartext wording
+  // — which is what proves the gate did NOT fire that time, not merely that
+  // "some error" occurred either way.
+  it('the cleartext gate refuses a --header-env secret over http to a non-loopback origin without --allow-insecure-http, and lets the real dispatch attempt through with the flag (security fix)', async () => {
+    const SECRET = 'sk-cleartext-e2e-secret-0123456789';
+    const spawnServe = (extraArgs: readonly string[]): ReturnType<typeof spawn> =>
+      spawn(
+        process.execPath,
+        [
+          bin,
+          'serve',
+          '--spec',
+          'petstore.json',
+          '--base-url',
+          'http://0.0.0.0:1/',
+          '--header-env',
+          'Authorization=CLEARTEXT_TOKEN',
+          ...extraArgs,
+        ],
+        {
+          cwd: fixturesDir,
+          env: { ...process.env, CLEARTEXT_TOKEN: `Bearer ${SECRET}` },
+        },
+      );
+
+    const callListPets = async (
+      proc: ReturnType<typeof spawn>,
+    ): Promise<{ isError: boolean; text: string | undefined }> => {
+      const { stdoutLines } = collectLines(proc);
+      send(proc, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-11-25',
+          capabilities: {},
+          clientInfo: { name: 'e2e', version: '1.0.0' },
+        },
+      });
+      await waitFor(() => stdoutLines.length > 0);
+      send(proc, { jsonrpc: '2.0', method: 'notifications/initialized' });
+      send(proc, {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'listPets', arguments: {} },
+      });
+      await waitFor(() => stdoutLines.length >= 2);
+      const response = JSON.parse(stdoutLines[1] as string) as JsonRpcMessage;
+      const content = response.result?.['content'] as { type: string; text?: string }[] | undefined;
+      return {
+        isError: response.result?.['isError'] === true,
+        text: content?.[0]?.text,
+      };
+    };
+
+    const denied = spawnServe([]);
+    child = denied;
+    const deniedResult = await callListPets(denied);
+    expect(deniedResult.isError).toBe(true);
+    expect(deniedResult.text).toContain('cleartext');
+    expect(deniedResult.text).toContain('--allow-insecure-http');
+    expect(deniedResult.text).not.toContain(SECRET);
+    denied.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      denied.once('exit', () => resolve());
+    });
+
+    const permitted = spawnServe(['--allow-insecure-http']);
+    child = permitted;
+    const permittedResult = await callListPets(permitted);
+    expect(permittedResult.isError).toBe(true);
+    // A REAL dispatch attempt was made this time (and failed for the
+    // unrelated "nothing is listening on 0.0.0.0:1" reason) — specifically
+    // NOT the cleartext-gate wording the denied case asserted above.
+    expect(permittedResult.text).toContain('the request to the upstream server failed');
+    expect(permittedResult.text).not.toContain('cleartext');
+    expect(permittedResult.text).not.toContain(SECRET);
+    permitted.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      permitted.once('exit', () => resolve());
+    });
+    child = undefined;
+  }, 10000);
 });

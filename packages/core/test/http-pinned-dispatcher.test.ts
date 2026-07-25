@@ -1225,6 +1225,18 @@ describe('validateHopUrlSync', () => {
     ).toMatch(/cloud-metadata/u);
   });
 
+  it('always rejects the Tencent Cloud metadata hostname, even trusted with allowPrivateNetwork', () => {
+    // Regression: METADATA_HOSTNAMES must be the single set shared with
+    // egress.ts (not a separately maintained local copy) so this hostname
+    // can never be denied in egress.ts but missed here.
+    expect(
+      validateHopUrlSync(new URL('http://metadata.tencentyun.com/'), {
+        allowPrivateNetwork: true,
+        trusted: true,
+      }),
+    ).toBe('"metadata.tencentyun.com" is a cloud-metadata endpoint');
+  });
+
   it('allows a public IP literal', () => {
     expect(validateHopUrlSync(new URL('http://93.184.216.34/'), untrusted)).toBeUndefined();
   });

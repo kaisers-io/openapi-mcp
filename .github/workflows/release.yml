@@ -1,0 +1,136 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+# No pull_request/workflow_dispatch trigger — the only way to reach the `publish` job (which mints an
+# npm OIDC token) is a tag push, and only after the `verify` job passes.
+permissions:
+  contents: read
+jobs:
+  # Gate: re-runs the full CI check suite against the exact tagged commit, plus release-only guards
+  # (tag/version match, branch containment, tarball content allowlist) and a smoke test of the packed
+  # tarball. Holds only read permissions — no publish credentials live here. This is also where the CLI
+  # bundle is built: `dist/openapi-mcp.mjs` is gitignored build output (not committed; `bin/openapi-mcp.mjs`
+  # is the committed stub), so this unprivileged job builds it, proves the build is reproducible, guards
+  # its shape, and hands it to `publish` as a workflow artifact.
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      # No `cache: pnpm` in this workflow (unlike ci.yml): a poisoned or stale restore-key cache is a
+      # plausible supply-chain vector for the one workflow with publish reach, so the release pipeline
+      # always installs clean.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with: { node-version-file: .node-version }
+      - name: Guard — tag matches packages/cli/package.json version
+        # `github.ref_name` is attacker-controlled text once the repo is public (anyone who can push a
+        # tag controls it) — it goes into env, never directly into the script body, so it can't be
+        # spliced into the shell command.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          PKG_VERSION="$(node -p "require('./packages/cli/package.json').version")"
+          if [ "$VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::tag $TAG (version $VERSION) does not match packages/cli/package.json version $PKG_VERSION" >&2
+            exit 1
+          fi
+          echo "tag $TAG matches package version $PKG_VERSION"
+      - name: Guard — tagged commit is reachable from origin/main
+        # A tag pushed from a random branch/fork must not be able to publish. `GITHUB_SHA` is the
+        # runner-assigned commit SHA (not attacker-suppliable text like ref_name), so it's safe to
+        # reference directly.
+        run: |
+          set -euo pipefail
+          # No --depth here: a shallow fetch would write .git/shallow and narrow the ancestor check to
+          # "tag is the exact current tip" — tagging an older main commit must stay legal.
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::tagged commit $GITHUB_SHA is not reachable from origin/main — refusing to publish from a stray branch" >&2
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm check
+      - run: pnpm build
+      - run: bash scripts/check-bundle-determinism.sh
+      - name: Guard — pack the tarball, verify its contents, smoke-test the install
+        run: |
+          set -euo pipefail
+          PACK_DIR="$(mktemp -d)"
+          PACK_JSON="$(npm pack ./packages/cli --json --pack-destination "$PACK_DIR")"
+          # Regression net for "no source code in the tarball": the tarball must contain EXACTLY this
+          # file set — extras (leaked source) and missing files (dropped LICENSE/README) both fail.
+          # Shipping a new file requires deliberately updating this set.
+          node -e '
+            const pack = JSON.parse(process.argv[1])[0];
+            const expected = ["LICENSE", "README.md", "bin/openapi-mcp.mjs", "dist/openapi-mcp.mjs", "package.json"];
+            const actual = pack.files.map((f) => f.path).sort();
+            if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+              console.error("tarball shape mismatch — expected exactly:", expected.join(", "));
+              console.error("actual:", actual.join(", "));
+              process.exit(1);
+            }
+            console.log("tarball contents OK:", actual.join(", "));
+          ' "$PACK_JSON"
+          TARBALL="$PACK_DIR/$(node -e 'console.log(JSON.parse(process.argv[1])[0].filename)' "$PACK_JSON")"
+          PREFIX="$(mktemp -d)"
+          npm install -g --prefix "$PREFIX" "$TARBALL"
+          export PATH="$PREFIX/bin:$PATH"
+          bash scripts/smoke-cli.sh
+      - name: Upload the built CLI bundle for the publish job
+        # This is the ONLY channel that gets `dist/openapi-mcp.mjs` into `publish`: the artifact built,
+        # determinism-checked, and shape-guarded above by this unprivileged (no id-token) job.
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cli-bundle
+          path: packages/cli/dist/openapi-mcp.mjs
+          if-no-files-found: error
+          retention-days: 1
+  # Publish: the only job with OIDC (`id-token: write`) reach. Runs only after `verify` passes, against
+  # the same tagged commit. Deliberately minimal: the published bundle is the artifact `verify` built,
+  # determinism-checked, and shape-guarded — downloaded here, not rebuilt — so no dependency install and
+  # no build runs while the OIDC permission is in scope. Any step in a job can mint the job's OIDC
+  # identity, so repo-controlled build tooling must never execute here.
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+          # Required for npm's Trusted Publishing (OIDC) exchange to target the right registry — npm CLI
+          # >= 11.5.1 is required, which is what ships with the pinned Node version above (node v24.12.0
+          # bundles npm 11.6.2).
+          registry-url: 'https://registry.npmjs.org'
+      - name: Download the CLI bundle built by the unprivileged verify job
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cli-bundle
+          path: packages/cli/dist
+      - name: Guard — restore the executable bit stripped by artifact zipping
+        # actions/upload-artifact zips its payload, and zip does not preserve Unix mode bits — every file
+        # lands back at plain 644. Re-apply the mode tsdown set at build time and confirm it stuck.
+        run: |
+          set -euo pipefail
+          chmod 755 packages/cli/dist/openapi-mcp.mjs
+          test -x packages/cli/dist/openapi-mcp.mjs
+      - name: Publish to npm via Trusted Publishing (OIDC)
+        working-directory: packages/cli
+        # No NPM_TOKEN / secrets.* anywhere: authentication is the short-lived OIDC token GitHub mints
+        # from `id-token: write` above, exchanged by npm CLI for a publish token. This requires a
+        # ONE-TIME manual step by the package owner: configure this repo + this exact workflow file as a
+        # Trusted Publisher for `@kaisers-io/openapi-mcp` on npmjs.com. Until that is done, this step
+        # fails with an auth error — expected and safe (there is no fallback long-lived token to leak).
+        # `--ignore-scripts`: no lifecycle scripts run at publish time.
+        # No `--provenance`: while the GitHub repo is private, a provenance attestation would link to a
+        # 404 repository URL. Add `--provenance` once the repo goes public.
+        run: npm publish --ignore-scripts
