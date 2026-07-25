@@ -30,14 +30,24 @@ export type AddressClass = 'public' | 'private' | 'metadata';
 // Cloud metadata/credential endpoints: denied even with --allow-private-network.
 // Maintained deny set (D4): IMDS at 169.254.169.254 (AWS/GCP/Azure/OpenStack/
 // DigitalOcean), AWS ECS task credentials, AWS EKS Pod Identity Agent
-// (169.254.170.23), Alibaba Cloud metadata, GCP hostnames.
+// (169.254.170.23), Alibaba Cloud metadata, Azure WireServer (168.63.129.16 —
+// Microsoft's reserved platform IP; no customer workload serves there, so it
+// is reachable ALWAYS, even without --allow-private-network), GCP hostnames.
 const METADATA_IPV4 = new Set([
   '169.254.169.254',
   '169.254.170.2',
   '169.254.170.23',
   '100.100.100.200',
+  '168.63.129.16',
 ]);
-const METADATA_HOSTNAMES = new Set(['metadata.google.internal', 'metadata.goog']);
+// GCP metadata hostnames, plus the Tencent Cloud CAM/STS credential endpoint
+// hostname (metadata.tencentyun.com) — no reliable Tencent IP is added here
+// (sources conflict and both candidates already classify 'private').
+const METADATA_HOSTNAMES = new Set([
+  'metadata.google.internal',
+  'metadata.goog',
+  'metadata.tencentyun.com',
+]);
 
 const classifyIpv4 = (address: string): AddressClass => {
   if (METADATA_IPV4.has(address)) {

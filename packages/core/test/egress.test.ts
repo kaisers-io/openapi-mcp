@@ -25,6 +25,8 @@ describe('classifyAddress', () => {
     ['169.254.170.23', 'metadata'], // AWS EKS Pod Identity Agent (IPv4)
     ['169.254.170.24', 'private'], // Adjacent address stays private (proves the metadata match is exact)
     ['100.100.100.200', 'metadata'],
+    ['168.63.129.16', 'metadata'], // Azure WireServer — reachable always, no customer workload serves there
+    ['168.63.129.17', 'public'], // Adjacent address stays public (proves the metadata match is exact)
     ['93.184.216.34', 'public'],
     ['172.32.0.1', 'public'],
     ['100.128.0.1', 'public'],
@@ -169,7 +171,7 @@ describe('assertAllowedRedirectTarget', () => {
     ).rejects.toMatchObject({ message: expect.stringContaining('metadata') as string });
   });
 
-  it.each(['169.254.170.2', '169.254.170.23', '100.100.100.200'])(
+  it.each(['169.254.170.2', '169.254.170.23', '100.100.100.200', '168.63.129.16'])(
     'always rejects the cloud credential endpoint %s, even with allowPrivateNetwork',
     async (address) => {
       await expect(
@@ -178,12 +180,17 @@ describe('assertAllowedRedirectTarget', () => {
     },
   );
 
-  it.each(['metadata.google.internal', 'metadata.goog'])(
+  it.each(['metadata.google.internal', 'metadata.goog', 'metadata.tencentyun.com'])(
     'always rejects the metadata hostname %s',
     async (host) => {
+      // Asserts the specific cloud-metadata-hostname deny message (not a bare
+      // 'metadata' substring match, which the hostname itself would satisfy
+      // even via the unrelated DNS-lookup-failure path through noLookup).
       await expect(
         assertAllowedRedirectTarget(new URL(`http://${host}/x`), allow, noLookup, signal),
-      ).rejects.toMatchObject({ message: expect.stringContaining('metadata') as string });
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('is a cloud-metadata endpoint') as string,
+      });
     },
   );
 
