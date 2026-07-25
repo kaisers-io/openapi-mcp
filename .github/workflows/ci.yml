@@ -39,6 +39,5 @@ jobs:
           set -euo pipefail
           npm pack ./packages/cli --pack-destination /tmp
           npm install -g /tmp/kaisers-io-openapi-mcp-*.tgz
-          openapi-mcp --version
-          openapi-mcp --json doctor
+          bash scripts/smoke-cli.sh
 # NOTE: no publish job here — publishing lives in release.yml (tag-triggered, OIDC).

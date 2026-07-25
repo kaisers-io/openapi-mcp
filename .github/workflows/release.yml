@@ -81,8 +81,7 @@ jobs:
           PREFIX="$(mktemp -d)"
           npm install -g --prefix "$PREFIX" "$TARBALL"
           export PATH="$PREFIX/bin:$PATH"
-          openapi-mcp --version
-          openapi-mcp --json doctor
+          bash scripts/smoke-cli.sh
       - name: Upload the built CLI bundle for the publish job
         # This is the ONLY channel that gets `dist/openapi-mcp.mjs` into `publish`: the artifact built,
         # determinism-checked, and shape-guarded above by this unprivileged (no id-token) job.
