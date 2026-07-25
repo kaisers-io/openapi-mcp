@@ -366,6 +366,22 @@
         // for the same reason)
         "max-lines": "off"
       }
+    },
+    {
+      "files": ["packages/core/src/server/execute/response.ts"],
+      "rules": {
+        // Off per task-8 brief (M5): response.ts is the whole response-mapping
+        // module — the local Ajv2020 envelope-validator compiler, the fixed
+        // PinnedOutcome-error text table, the byte-safe UTF-8 decode/redact/
+        // sanitize/truncate/scan pipeline shared by the error-excerpt and
+        // no-outputSchema text paths, and the schema-branch envelope builder
+        // live together by design, with load-bearing research-citation and
+        // round-1 amendment rationale comments throughout (see the
+        // file's own comments), so it verbatim exceeds 300 lines (mirrors the
+        // pipeline.ts/store.ts/layout.ts/pinned-dispatcher.ts/request.ts
+        // overrides above for the same reason)
+        "max-lines": "off"
+      }
     }
   ]
 }
