@@ -80,7 +80,7 @@ export const gutterFrame = (
 ): GutteredBody => {
   const shown = logicalLines.slice(0, opts.maxLines);
   // Truncated flags BOTH dropped logical lines AND any per-line cell cut, so the
-  // footer's "DETAILS TRUNCATED" is honest for either (round-2 finding).
+  // footer's "DETAILS TRUNCATED" is honest for either.
   let truncated = logicalLines.length > shown.length;
   // The gutter is ASCII, so its cell width equals its code-unit length. Only a
   // non-positive raw budget (gutter as wide as or wider than the terminal) is

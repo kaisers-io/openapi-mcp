@@ -44,7 +44,7 @@ const combinedError = (jsonError: unknown, yamlProblem: unknown): OpenapiMcpErro
 
 const parseAsYaml = (text: string, jsonError: unknown): unknown => {
   // Fail-closed YAML: parseDocument surfaces unresolved tags as warnings and
-  // duplicate keys / multi-doc streams as errors; parse() would only warn (D2)
+  // duplicate keys / multi-doc streams as errors; parse() would only warn
   const doc = parseDocument(text, { schema: 'core', version: '1.2', uniqueKeys: true });
   const firstProblem = doc.errors[0] ?? doc.warnings[0];
   if (firstProblem !== undefined) {

@@ -78,7 +78,7 @@ export const dereference = (document: Record<string, unknown>): Record<string, u
         );
       }
       if (refStack.includes(ref)) {
-        // Cycle: keep an opaque marker; consumers decide representability (D3)
+        // Cycle: keep an opaque marker; consumers decide representability
         return { $ref: ref };
       }
       if (refStack.length >= SPEC_BUDGETS.maxRefDepth) {
@@ -97,7 +97,7 @@ export const dereference = (document: Record<string, unknown>): Record<string, u
           return { $ref: ref };
         }
       }
-      // Sibling keys next to $ref are dropped (documented v1 simplification, D3)
+      // Sibling keys next to $ref are dropped (documented v1 simplification)
       return walk(target, [...refStack, ref]);
     }
     const entries = Object.entries(record);

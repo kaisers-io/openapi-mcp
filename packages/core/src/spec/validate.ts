@@ -8,13 +8,13 @@ import { validationError } from '../errors.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 
 // The official OpenAPI meta-schemas are imported as JSON modules so tsdown can
-// inline them into the single-file bundle (Plan Decision D1). The 3.0 schema is
-// JSON Schema draft-04, the 3.1 schema is draft 2020-12 — hence two Ajv builds.
+// inline them into the single-file bundle. The 3.0 schema is JSON Schema
+// draft-04, the 3.1 schema is draft 2020-12 — hence two Ajv builds.
 
-// CJS interop (Plan Decision D10): TypeScript under nodenext types these CJS
-// default imports as namespaces without construct/call signatures, while at
-// runtime the binding (and its .default) is the class/function in every module
-// system in play (Node ESM, Vite, rolldown — probed). Unwrap once, typed.
+// CJS interop: TypeScript under nodenext types these CJS default imports as
+// namespaces without construct/call signatures, while at runtime the binding
+// (and its .default) is the class/function in every module system in play
+// (Node ESM, Vite, rolldown — probed). Unwrap once, typed.
 interface AjvInstance {
   addFormat: (name: string, format: true) => unknown;
   compile: (schema: object) => ValidateFunction;
@@ -91,7 +91,7 @@ export const validateOpenApiDocument = (document: Record<string, unknown>): Vali
   const validate = getValidator(version);
   if (!validate(document)) {
     // The declared version is attacker-controlled past the "3.0."/"3.1." prefix
-    // checked by the gate above (D2): sanitize and cap it before it is echoed
+    // checked by the gate above: sanitize and cap it before it is echoed
     const declaredDisplay = sanitizeSpecText(declared, DECLARED_VERSION_MAX);
     throw validationError(
       `spec failed OpenAPI ${declaredDisplay} schema validation:\n${formatAjvErrors(validate.errors ?? [])}`,

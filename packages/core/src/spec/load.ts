@@ -5,12 +5,13 @@ import { sanitizeSpecText } from './sanitize.ts';
 
 // Any RFC 3986 scheme prefix, not just "://" forms — "file:/x" is a URL, not a path
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/iu;
-// Same sensitive-name deny-list as the §3.3 --header rule, applied to query names (D8)
+// Same sensitive-name deny-list as the §3.3 --header rule, applied to query names
 const SENSITIVE_NAME_RE = /auth|token|secret|key|session|credential|cookie|signature/iu;
 
 export type SpecSource = { kind: 'url'; url: URL } | { kind: 'file'; path: string };
 
-// Shared with the redirect-hop validation in fetch.ts (D8 covers every spec URL)
+// Shared with the redirect-hop validation in fetch.ts: this deny-list applies
+// to every spec URL, not just the initial one
 export const findSensitiveQueryParam = (url: URL): string | undefined => {
   for (const name of url.searchParams.keys()) {
     if (SENSITIVE_NAME_RE.test(name)) {
@@ -97,7 +98,7 @@ export const loadSpecFromFile = async (
   }
   const byteLength = Buffer.byteLength(text, 'utf8');
   if (byteLength > maxBytes) {
-    // TOCTOU guard (D9): the file may have grown between stat and read
+    // TOCTOU guard: the file may have grown between stat and read
     throw validationError(
       `spec file "${path}" is ${byteLength} bytes — exceeds the ${maxBytes}-byte budget`,
     );
