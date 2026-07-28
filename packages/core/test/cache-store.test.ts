@@ -36,9 +36,9 @@ export const DOC_V2: Record<string, unknown> = {
   info: { title: 'Petstore v2', version: '2.0.0' },
   paths: { '/pets': {} },
 };
-// A genuinely 3.0 document. Round-4 correction: the discriminator is derived
-// from the document, so a test that wants a 3.0 entry must supply 3.0 BYTES —
-// passing a 3.0 label beside a 3.1 document now (correctly) reads as corrupt.
+// A genuinely 3.0 document: the discriminator is derived from the document,
+// so a test that wants a 3.0 entry must supply 3.0 BYTES — passing a 3.0
+// label beside a 3.1 document now (correctly) reads as corrupt.
 export const DOC_30: Record<string, unknown> = {
   openapi: '3.0.3',
   info: { title: 'Petstore', version: '1.0.0' },
@@ -80,10 +80,10 @@ export const seeded = async (): Promise<MemoryCacheFs> => {
 export const metaOf = (fs: MemoryCacheFs): CacheMeta =>
   zCacheMeta.parse(JSON.parse(fs.files.get(LAYOUT.metaPath) ?? ''));
 
-// D12.1: there is no fixed accepted/candidate path any more — an object is
-// found through the hash meta.json records, which is also its filename. These
-// helpers read the entry the way the STORE does, so a test cannot accidentally
-// assert against bytes no metadata references.
+// There is no fixed accepted/candidate path any more — an object is found
+// through the hash meta.json records, which is also its filename. These
+// helpers read the entry the way the STORE does, so a test cannot
+// accidentally assert against bytes no metadata references.
 export const acceptedTextOf = (fs: MemoryCacheFs): string | undefined =>
   fs.files.get(objectPath(LAYOUT, metaOf(fs).acceptedContentHash));
 
@@ -103,10 +103,10 @@ export const objectNamesOf = (fs: MemoryCacheFs, layout = LAYOUT): readonly stri
     .sort();
 
 // A hand-rolled mock must be faithful to Node the same way memoryCacheFs's own
-// absenceError is (round-7 finding 4): the store now branches on `err.code`
-// (isCacheAbsence) to tell a lost race apart from a genuine I/O failure, so a
-// mock simulating "the object is transiently missing" has to carry the same
-// `.code` a real ENOENT would, or it is indistinguishable from EACCES/EIO.
+// absenceError is: the store now branches on `err.code` (isCacheAbsence) to
+// tell a lost race apart from a genuine I/O failure, so a mock simulating
+// "the object is transiently missing" has to carry the same `.code` a real
+// ENOENT would, or it is indistinguishable from EACCES/EIO.
 export const enoentError = (message: string): Error =>
   Object.assign(new Error(message), { code: 'ENOENT' });
 
@@ -149,7 +149,7 @@ describe('zCacheMeta', () => {
     ).toBe(true);
   });
 
-  it('accepts either OpenAPI version discriminator (D16b)', () => {
+  it('accepts either OpenAPI version discriminator', () => {
     expect(zCacheMeta.safeParse({ ...validMeta(), openapiVersion: '3.0' }).success).toBe(true);
     expect(zCacheMeta.safeParse({ ...validMeta(), openapiVersion: '3.1' }).success).toBe(true);
   });
@@ -157,8 +157,8 @@ describe('zCacheMeta', () => {
   it.each(['3.0.3', '3.1.0', '3.2', '3', '', 1, undefined])(
     'rejects the unusable openapiVersion %j',
     (openapiVersion) => {
-      // A cache hit skips revalidation (D16b), so this field is the only source
-      // of the discriminator normalizeSpec needs: a loose value would silently
+      // A cache hit skips revalidation, so this field is the only source of
+      // the discriminator normalizeSpec needs: a loose value would silently
       // normalize a 3.1 document under 3.0 rules
       const meta: Record<string, unknown> = { ...validMeta(), openapiVersion };
       if (openapiVersion === undefined) {
@@ -202,7 +202,7 @@ describe('zCacheMeta', () => {
 
   it('rejects a validator carrying a header-injection sequence', () => {
     // Validators are replayed as If-None-Match / If-Modified-Since request
-    // headers on the next revalidation (Task 5): only printable ASCII is stored
+    // headers on the next revalidation: only printable ASCII is stored
     expect(zCacheMeta.safeParse({ ...validMeta(), etag: 'v1\r\nX-Evil: 1' }).success).toBe(false);
     expect(zCacheMeta.safeParse({ ...validMeta(), etag: 'v1\u001B]0;PWNED' }).success).toBe(false);
     expect(zCacheMeta.safeParse({ ...validMeta(), etag: 'x'.repeat(257) }).success).toBe(false);
@@ -216,9 +216,9 @@ describe('zCacheMeta', () => {
     },
   );
 
-  it('bounds fetchedAt by the Date limit, not MAX_SAFE_INTEGER (D18)', () => {
+  it('bounds fetchedAt by the Date limit, not MAX_SAFE_INTEGER', () => {
     // Probed: new Date(Number.MAX_SAFE_INTEGER).toISOString() throws
-    // RangeError, so the round-1 bound admitted metadata that crashed
+    // RangeError, so an earlier bound admitted metadata that crashed
     // "cache list" while rendering it. Every schema-valid value must render.
     expect(FETCHED_AT_MAX).toBe(8_640_000_000_000_000);
     expect(zCacheMeta.safeParse({ ...validMeta(), fetchedAt: FETCHED_AT_MAX }).success).toBe(true);
@@ -229,7 +229,7 @@ describe('zCacheMeta', () => {
     expect(() => new Date(Number.MAX_SAFE_INTEGER).toISOString()).toThrow(RangeError);
   });
 
-  it('renders every schema-valid fetchedAt without throwing (D18)', () => {
+  it('renders every schema-valid fetchedAt without throwing', () => {
     for (const fetchedAt of [0, 1_700_000_000_000, FETCHED_AT_MAX]) {
       const parsed = zCacheMeta.parse({ ...validMeta(), fetchedAt });
       expect(() => new Date(parsed.fetchedAt).toISOString()).not.toThrow();
@@ -267,15 +267,15 @@ describe('zCacheMeta', () => {
         injected: true,
       },
     ],
-  ])('rejects a candidate with %s — the member is all-or-none (D18)', (_label, candidate) => {
-    // The round-1 shape had two independently optional hashes, so a file could
-    // carry exactly one and promotion silently fell back to the ACCEPTED
-    // entry's source hash — recording the replaced document's provenance
-    // against the promoted bytes. Nesting makes that unrepresentable.
+  ])('rejects a candidate with %s — the member is all-or-none', (_label, candidate) => {
+    // The old flat shape had two independently optional hashes, so a file
+    // could carry exactly one and promotion silently fell back to the
+    // ACCEPTED entry's source hash — recording the replaced document's
+    // provenance against the promoted bytes. Nesting makes that unrepresentable.
     expect(zCacheMeta.safeParse({ ...validMeta(), candidate }).success).toBe(false);
   });
 
-  it('rejects the round-1 flat candidate fields outright', () => {
+  it('rejects legacy flat candidate fields outright', () => {
     // A file written by the pre-correction shape is unreadable rather than
     // half-understood, which is exactly what the strict object is for
     expect(
@@ -308,7 +308,7 @@ describe('writeAccepted', () => {
     expect(fs.dirs.has(LAYOUT.objectsDir)).toBe(true);
   });
 
-  it('persists JSON.stringify(document) and hashes exactly those bytes (D14)', async () => {
+  it('persists JSON.stringify(document) and hashes exactly those bytes', async () => {
     const fs = memoryCacheFs();
     const { acceptedContentHash } = await writeAccepted(LAYOUT, fs, acceptedInput());
     const persisted = acceptedTextOf(fs);
@@ -318,7 +318,7 @@ describe('writeAccepted', () => {
     expect(metaOf(fs).acceptedContentHash).toBe(acceptedContentHash);
   });
 
-  it('names the object after its own hash, so the filename is self-verifying (D12.1)', async () => {
+  it('names the object after its own hash, so the filename is self-verifying', async () => {
     const fs = memoryCacheFs();
     const { acceptedContentHash } = await writeAccepted(LAYOUT, fs, acceptedInput());
     expect(objectNamesOf(fs)).toEqual([`${acceptedContentHash}.json`]);
@@ -326,10 +326,11 @@ describe('writeAccepted', () => {
     expect(hashContent(fs.files.get(persistedPath) ?? '')).toBe(acceptedContentHash);
   });
 
-  it('refuses a document over the persisted-document budget, before taking the lock (D14)', async () => {
-    // The round-1 draft checked only the candidate, and against the SOURCE
-    // budget — so an accepted document that dereferenced past it was persisted
-    // and then read back as corrupt, bricking an entry that had validated
+  it('refuses a document over the persisted-document budget, before taking the lock', async () => {
+    // Checking only the candidate, and only against the SOURCE budget, would
+    // let an accepted document that dereferences past the persisted-document
+    // budget get persisted anyway, then read back as corrupt — bricking an
+    // entry that had validated
     const fs = memoryCacheFs();
     const huge = {
       openapi: '3.1.0',
@@ -343,7 +344,7 @@ describe('writeAccepted', () => {
     expect([...fs.files.keys()]).toEqual([]);
   });
 
-  it('reads back everything it accepts at the budget boundary (D14)', async () => {
+  it('reads back everything it accepts at the budget boundary', async () => {
     // The invariant the shared constant buys: anything this build persisted,
     // this build can read back
     const fs = memoryCacheFs();
@@ -354,7 +355,7 @@ describe('writeAccepted', () => {
     expect(readResult.kind).toBe('hit');
   });
 
-  it('keeps the source hash distinct from the persisted-bytes hash (D14)', async () => {
+  it('keeps the source hash distinct from the persisted-bytes hash', async () => {
     const fs = await seeded();
     const meta = metaOf(fs);
     expect(meta.sourceContentHash).toBe(SOURCE_HASH);
@@ -369,14 +370,14 @@ describe('writeAccepted', () => {
     expect(hashContent(acceptedTextOf(fs) ?? '')).toBe(metaOf(fs).acceptedContentHash);
   });
 
-  it('persists the OpenAPI version discriminator a cache hit cannot recover (D16b)', async () => {
+  it('persists the OpenAPI version discriminator a cache hit cannot recover', async () => {
     const fs = memoryCacheFs();
     await writeAccepted(LAYOUT, fs, acceptedInput({ document: DOC_30 }));
     // Derived from the bytes, never supplied by the caller
     expect(metaOf(fs).openapiVersion).toBe('3.0');
   });
 
-  it('records the operator cache-key label (D9)', async () => {
+  it('records the operator cache-key label', async () => {
     const fs = memoryCacheFs();
     await writeAccepted(LAYOUT, fs, acceptedInput({ cacheKey: 'prod' }));
     expect(metaOf(fs).cacheKey).toBe('prod');
@@ -400,7 +401,7 @@ describe('writeAccepted', () => {
     });
   });
 
-  it('writes the object before meta.json, so meta is the commit point (D12.2)', async () => {
+  it('writes the object before meta.json, so meta is the commit point', async () => {
     const order: string[] = [];
     const fs = memoryCacheFs();
     const inner = fs.writeFileAtomic;
@@ -412,8 +413,8 @@ describe('writeAccepted', () => {
     expect(order).toEqual([objectPath(LAYOUT, acceptedContentHash), LAYOUT.metaPath]);
   });
 
-  it('never rewrites an existing object — a commit only ever creates (D12.1)', async () => {
-    // This is the property the round-1 fixed-path layout lacked, and the reason
+  it('never rewrites an existing object — a commit only ever creates', async () => {
+    // This is the property the old fixed-path layout lacked, and the reason
     // its crash-safety argument failed: writing a generation MUTATED the bytes
     // the live meta.json still pointed at
     const fs = await seeded();
@@ -433,7 +434,7 @@ describe('writeAccepted', () => {
     expect(written).not.toContain(objectPath(LAYOUT, acceptedHash));
   });
 
-  it('writeAccepted refuses while another process holds the namespace lock (D12)', async () => {
+  it('writeAccepted refuses while another process holds the namespace lock', async () => {
     const fs = await seeded();
     // A live lock from another process blocks the write outright
     await fs.createExclusive(
@@ -477,12 +478,13 @@ describe('writeAccepted', () => {
   });
 });
 
-describe('a crash during the FIRST-EVER commit (round-3 finding 2)', () => {
+describe('a crash during the FIRST-EVER commit', () => {
   it('leaves a miss that self-heals, not a permanently wedged namespace', async () => {
-    // The round-3 draft classified objects-without-metadata as corrupt, so a
-    // first commit that died after the object write bricked the namespace
-    // forever — D5 forbids healing a corrupt entry automatically, and there had
-    // never been a baseline to fall back to.
+    // Classifying an object file with no metadata as corrupt (instead of as a
+    // miss) would brick the namespace forever once a first commit dies right
+    // after the object write — fail-closed corruption handling forbids
+    // healing a corrupt entry automatically, and a first-ever commit has no
+    // baseline to fall back to.
     const fs = memoryCacheFs();
     const inner = fs.writeFileAtomic;
     fs.writeFileAtomic = (path, data) =>
@@ -506,7 +508,7 @@ describe('a crash during the FIRST-EVER commit (round-3 finding 2)', () => {
     expect(objectNamesOf(clean)).toEqual([`${hashContent(DOC_TEXT)}.json`]);
   });
 
-  it('does not weaken D5: deleting metadata beside a baseline is no better than deleting the directory', async () => {
+  it('does not weaken fail-closed corruption handling: deleting metadata beside a baseline is no better than deleting the directory', async () => {
     // The justification for calling orphan-only a miss. An attacker who can
     // remove meta.json can equally remove the whole namespace directory, which
     // has always been a miss — so this grants no new capability.
@@ -523,7 +525,7 @@ describe('a crash during the FIRST-EVER commit (round-3 finding 2)', () => {
   });
 });
 
-describe('the persisted-size preflight is exact (round-4 finding 1)', () => {
+describe('the persisted-size preflight is exact', () => {
   // Round 3 reasoned this through instead of proving it and chose the wrong
   // unit — UTF-16 code units where the reader caps UTF-8 bytes — so a multibyte
   // document passed the writer and was corrupt on its first read. The property
@@ -544,7 +546,7 @@ describe('the persisted-size preflight is exact (round-4 finding 1)', () => {
     const rng = mulberry32(20_260_720);
     const rand = (n: number): number => Math.floor(rng() * n);
     // Deliberately includes: astral, BMP non-ASCII, and every character
-    // JSON.stringify escapes — the three classes that broke the round-4 version
+    // JSON.stringify escapes — the three classes that broke an earlier version
     const CHARS = ['a', 'ä', 'é', '\u{1F600}', '"', '\\', '\n', '\t', '\u0000', '中', ' '];
     const makeString = (): string => {
       let s = '';
@@ -594,7 +596,7 @@ describe('the persisted-size preflight is exact (round-4 finding 1)', () => {
       // And one byte short of it, it must refuse
       expect(serializedSizeWithin(value, truth - 1)).toBeUndefined();
     }
-    // The corpus must contain what it claims to test (the round-3 fuzz lesson)
+    // The corpus must contain what it claims to test
     expect(checkedAstral).toBeGreaterThan(100);
     expect(checkedEscapes).toBeGreaterThan(100);
   });
@@ -612,13 +614,13 @@ describe('the persisted-size preflight is exact (round-4 finding 1)', () => {
         return node;
       })(),
     ],
-  ])('refuses %s rather than mis-sizing it (round-5 finding 3)', (_label, value) => {
+  ])('refuses %s rather than mis-sizing it', (_label, value) => {
     // The exported writers take Record<string, unknown>, which admits more than
-    // the sizer is exact for. Round 5 assumed the narrower domain in a comment;
-    // it is now ENFORCED, because an inexact size breaks the D14 write-then-read
-    // invariant for any caller of the exported store. Concretely:
-    // JSON.stringify({x:[undefined]}) is 12 bytes and the round-5 walker
-    // counted 8.
+    // the sizer is exact for. An earlier version assumed the narrower domain in
+    // a comment; it is now ENFORCED, because an inexact size breaks the
+    // write-then-read invariant for any caller of the exported store.
+    // Concretely: JSON.stringify({x:[undefined]}) is 12 bytes and an earlier
+    // walker counted 8.
     expect(() => serializedSizeWithin(value, 1_000_000)).toThrowError(/round-trip exactly/u);
   });
 
@@ -626,19 +628,20 @@ describe('the persisted-size preflight is exact (round-4 finding 1)', () => {
     ['a boxed number', { x: new Number(5) }],
     ['a boxed string', { x: new String('a') }],
     ['a boxed boolean', { x: new Boolean(true) }],
-  ])('refuses %s, which stringifies as a primitive (round-6 finding 1)', (_label, value) => {
+  ])('refuses %s, which stringifies as a primitive', (_label, value) => {
     // JSON.stringify(new Number(5)) is '5'; a walker using Object.entries sees
-    // no entries and counts '{}'. The round-6 draft claimed a plain-object tree
-    // and then accepted any object at all.
+    // no entries and counts '{}' — a boxed primitive would look like an empty
+    // plain-object tree and be accepted, when it must be refused.
     expect(() => serializedSizeWithin(value, 1_000_000)).toThrowError(/round-trip exactly/u);
   });
 
-  it('refuses an enumerable getter, which could answer twice (round-6 finding 1)', () => {
-    // Worse than inexact: measuring and serializing used to read the property
-    // separately, so a getter could answer small for the preflight and
+  it('refuses an enumerable getter, which could answer twice', () => {
+    // Worse than inexact: invoking the getter separately for measuring and
+    // for serializing would let it answer small for the preflight and
     // over-budget for the stringify that followed — defeating the check
-    // itself. The single-pass walk now reads it once, via descriptor, so this
-    // is refused before the getter ever runs.
+    // itself. The walk reads each property's descriptor instead of invoking
+    // it, so an accessor property is refused outright, without the getter
+    // ever running.
     let calls = 0;
     const value = Object.defineProperty({}, 'x', {
       enumerable: true,
@@ -674,12 +677,12 @@ describe('the persisted-size preflight is exact (round-4 finding 1)', () => {
     const encoded = JSON.stringify(value);
     expect(encoded).toHaveLength(11);
     expect(Buffer.byteLength(encoded, 'utf8')).toBe(14);
-    // The round-4 version answered 11 here and let the document through
+    // An earlier version answered 11 here and let the document through
     expect(serializedSizeWithin(value, 14)).toBe(14);
     expect(serializedSizeWithin(value, 13)).toBeUndefined();
   });
 
-  it('keeps the writer and reader caps in agreement (the D14 invariant)', async () => {
+  it('keeps the writer and reader caps in agreement (the write-then-read invariant)', async () => {
     // The end-to-end property: anything the writer accepts, the reader reads
     // back. A document of multibyte text sized just under the cap must survive
     // the round trip rather than being rejected as corrupt on first read.
@@ -747,13 +750,13 @@ describe('serializeWithinBudget: the single pass the sizer and the writer now sh
   });
 });
 
-describe('crash between the object write and the metadata commit (D12.2)', () => {
-  // Round 2 rejected the round-1 crash-safety argument, and rightly: with a
-  // fixed accepted/spec.json the new bytes REPLACED the old ones before
-  // meta.json was rewritten, so in that window — and permanently after a crash
-  // in it — the live metadata described bytes that were already gone. These
-  // cases drive that exact window deterministically. Ten probabilistic
-  // subprocess runs cannot target it at all.
+describe('crash between the object write and the metadata commit', () => {
+  // The old crash-safety argument didn't hold: with a fixed accepted/spec.json
+  // the new bytes REPLACED the old ones before meta.json was rewritten, so in
+  // that window — and permanently after a crash in it — the live metadata
+  // described bytes that were already gone. These cases drive that exact
+  // window deterministically. Ten probabilistic subprocess runs cannot target
+  // it at all.
 
   const failAfterObjectWrite = (fs: MemoryCacheFs): void => {
     const inner = fs.writeFileAtomic;
@@ -775,7 +778,7 @@ describe('crash between the object write and the metadata commit (D12.2)', () =>
     ).rejects.toThrowError('crash before the metadata commit');
 
     // The critical assertion: a reader still gets the PREVIOUS generation,
-    // hash-verified. Under the round-1 layout this read corrupt, because the
+    // hash-verified. Under the old fixed-path layout this read corrupt, because the
     // old bytes had been overwritten by the new ones.
     const result = await readCacheEntry(LAYOUT, fs);
     expect(result.kind).toBe('hit');
@@ -824,7 +827,7 @@ describe('crash between the object write and the metadata commit (D12.2)', () =>
   });
 });
 
-describe('the discriminator is derived, not supplied (round-4 finding)', () => {
+describe('the discriminator is derived, not supplied', () => {
   it('refuses a document that declares no usable OpenAPI version', async () => {
     // A caller can no longer label an entry: only the bytes decide, so an
     // unusable declaration has to fail at the writer rather than produce an
@@ -846,7 +849,7 @@ describe('the discriminator is derived, not supplied (round-4 finding)', () => {
   });
 
   it('cannot persist an entry its own next read would reject', async () => {
-    // The property asked for: writer and reader now agree by
+    // The key property: writer and reader now agree by
     // construction, because one function decides the discriminator for both
     for (const document of [DOC, DOC_30, DOC_V2]) {
       const fs = memoryCacheFs();
@@ -914,7 +917,7 @@ describe('writeCandidate', () => {
     expect(candidateTextOf(fs)).toBe(DOC_V2_TEXT);
     const meta = metaOf(fs);
     expect(meta.acceptedContentHash).toBe(acceptedBefore);
-    // D18: one nested member, so the two hashes cannot drift apart
+    // One nested member, so the two hashes cannot drift apart
     expect(meta.candidate).toEqual({
       contentHash: candidateContentHash,
       sourceContentHash: SOURCE_HASH_V2,
@@ -927,10 +930,10 @@ describe('writeCandidate', () => {
     );
   });
 
-  it('records the validators returned WITH the candidate (D16a2)', async () => {
-    // The round-1 draft copied the accepted entry's stale validators forward, so
-    // the next conditional request asked the server about a representation the
-    // cache no longer held
+  it('records the validators returned WITH the candidate', async () => {
+    // Copying the accepted entry's stale validators forward instead of the
+    // candidate's own would make the next conditional request ask the server
+    // about a representation the cache no longer held
     const fs = await seeded();
     await writeCandidate(LAYOUT, fs, {
       ...candidateInput(),
@@ -965,7 +968,7 @@ describe('writeCandidate', () => {
     expect(metaOf(fs)).toMatchObject({ title: 'Petstore', specVersion: '1.0.0' });
   });
 
-  it('writes the candidate object before meta.json (D12.2)', async () => {
+  it('writes the candidate object before meta.json', async () => {
     const fs = await seeded();
     const order: string[] = [];
     const inner = fs.writeFileAtomic;
@@ -991,7 +994,7 @@ describe('writeCandidate', () => {
     expect(acceptedTextOf(fs)).toBe(DOC_TEXT);
   });
 
-  it('refuses a candidate over the persisted-document budget before the lock (D14)', async () => {
+  it('refuses a candidate over the persisted-document budget before the lock', async () => {
     const fs = await seeded();
     const huge = {
       openapi: '3.1.0',
@@ -1010,7 +1013,7 @@ describe('writeCandidate', () => {
     });
   });
 
-  it('refuses on a corrupt entry rather than replacing the baseline (D5)', async () => {
+  it('refuses on a corrupt entry rather than replacing the baseline', async () => {
     const fs = await seeded();
     fs.files.set(LAYOUT.metaPath, 'not json');
     await expect(writeCandidate(LAYOUT, fs, candidateInput())).rejects.toMatchObject({
@@ -1033,7 +1036,7 @@ describe('writeCandidate', () => {
     expect(metaOf(fs).candidate).toBeUndefined();
   });
 
-  it('writeCandidate refuses while another process holds the namespace lock (D12)', async () => {
+  it('writeCandidate refuses while another process holds the namespace lock', async () => {
     const fs = await seeded();
     await fs.createExclusive(
       LAYOUT.lockPath,
@@ -1046,13 +1049,12 @@ describe('writeCandidate', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Supplementary coverage. Everything above this line is the brief's Step 1
-// suite, used verbatim. The brief's suite proves the write-side transactional
+// Supplementary coverage. The suite above proves the write-side transactional
 // invariants but never exercises touchRevalidated directly and never asserts
 // a `corrupt` outcome from readCacheEntry, so several store.ts branches -
-// most of them the D5 corrupt-detection paths this task exists to build -
-// were unreached. These tests close that gap so the module's own coverage
-// gate can be met honestly rather than by lowering the threshold.
+// most of them the corrupt-detection paths this module relies on - were
+// unreached. These tests close that gap so the module's own coverage gate
+// can be met honestly rather than by lowering the threshold.
 // ---------------------------------------------------------------------------
 
 describe('touchRevalidated', () => {
@@ -1089,7 +1091,7 @@ describe('touchRevalidated', () => {
     ).rejects.toMatchObject({ code: 'validation' });
   });
 
-  it('refuses on a corrupt entry rather than healing it (D5)', async () => {
+  it('refuses on a corrupt entry rather than healing it', async () => {
     const fs = await seeded();
     fs.files.set(LAYOUT.metaPath, 'not json');
     await expect(touchRevalidated(LAYOUT, fs, 1_700_000_000_000, {})).rejects.toMatchObject({
@@ -1098,7 +1100,7 @@ describe('touchRevalidated', () => {
     });
   });
 
-  it('touchRevalidated refuses while another process holds the namespace lock (D12)', async () => {
+  it('touchRevalidated refuses while another process holds the namespace lock', async () => {
     const fs = await seeded();
     await fs.createExclusive(
       LAYOUT.lockPath,
@@ -1110,7 +1112,7 @@ describe('touchRevalidated', () => {
   });
 });
 
-describe('readCacheEntry corrupt states (D5)', () => {
+describe('readCacheEntry corrupt states', () => {
   it('reports corrupt when meta.json exceeds its read budget', async () => {
     const fs = await seeded();
     fs.files.set(LAYOUT.metaPath, `x${'y'.repeat(CACHE_META_MAX_BYTES)}`);
@@ -1146,7 +1148,7 @@ describe('readCacheEntry corrupt states (D5)', () => {
   it('reports a miss, not corrupt, when meta.json is concurrently unlinked between the existence probe and the read (TOCTOU)', async () => {
     // Meta reading does pathExists(metaPath) THEN readFileTextCapped(metaPath):
     // a concurrent clear can unlink the file in between. That is a legitimate
-    // miss (D17's one outcome that may re-enter trust-on-first-use), not
+    // miss (the one outcome that may re-enter trust-on-first-use), not
     // damage — the entry was not corrupt, it was raced away underneath us.
     const fs = await seeded();
     fs.readFileTextCapped = (path) =>
@@ -1236,7 +1238,7 @@ describe('readCacheEntry corrupt states (D5)', () => {
   });
 });
 
-describe('readCacheEntry retry loop (round-3/4 findings)', () => {
+describe('readCacheEntry retry loop', () => {
   it('retries once and succeeds when a transient object read recovers', async () => {
     const fs = await seeded();
     const objPath = objectPath(LAYOUT, metaOf(fs).acceptedContentHash);
@@ -1302,7 +1304,7 @@ describe('readCacheEntry retry loop (round-3/4 findings)', () => {
   });
 });
 
-describe('serializedSizeWithin: array-specific enforcement (round-7 finding 2)', () => {
+describe('serializedSizeWithin: array-specific enforcement', () => {
   it('refuses an array cycle', () => {
     const arr: unknown[] = [];
     arr.push(arr);
@@ -1332,7 +1334,7 @@ describe('serializedSizeWithin: object member omission matches JSON.stringify', 
   });
 });
 
-describe('commitEntry: an existing object under the target hash is verified, not trusted (round-3 finding 5)', () => {
+describe('commitEntry: an existing object under the target hash is verified, not trusted', () => {
   it('refuses to persist over a tampered object sharing the new hash', async () => {
     const fs = memoryCacheFs();
     const targetHash = hashContent(DOC_TEXT);
@@ -1356,7 +1358,7 @@ describe('assertRedactedDisplaySource: a malformed http(s) URL', () => {
   });
 });
 
-describe('serializeMeta: the schema is the final safety net (D5)', () => {
+describe('serializeMeta: the schema is the final safety net', () => {
   it('refuses an accepted title beyond the metadata bounds via the schema check', async () => {
     const fs = memoryCacheFs();
     const overlongTitle = 'x'.repeat(257);
@@ -1374,19 +1376,16 @@ const withCandidate = async (): Promise<MemoryCacheFs> => {
   return fs;
 };
 
-// Round-9 finding 1: this block lives in Task 4, not Task 3. Two of its cases
-// call clearNamespace, and all four use NOW — both are introduced here, so in
-// Task 3 the block referenced names that did not yet exist. Keeping the
-// concurrency cases together next to promotion and clearing is also where they
-// belong: they are about what a lock-free reader observes while another
-// operation mutates the namespace.
+// These concurrency cases live here, next to promotion and clearing, because
+// they are about what a lock-free reader observes while another operation
+// mutates the namespace.
 
-describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
+describe('object lifetime vs lock-free readers', () => {
   it('retries against the new generation when GC collected the one it was reading', async () => {
     // Immutable objects do NOT by themselves make immediate reclamation safe.
     // A reader loads generation A, a writer commits B and collects A's object,
-    // and the reader — still holding A's hash — finds nothing. The round-3
-    // draft reported that healthy cache as corrupt.
+    // and the reader — still holding A's hash — finds nothing. An earlier
+    // version reported that healthy cache as corrupt.
     const fs = await seeded();
     const oldHash = metaOf(fs).acceptedContentHash;
     let swapped = false;
@@ -1411,15 +1410,15 @@ describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
 
   it('still reports corrupt when the object is gone and the generation did NOT move', async () => {
     // The complement: without a concurrent commit, a missing object is real
-    // damage and must stay fail-closed (D5)
+    // damage and must stay fail-closed
     const fs = await seeded();
     fs.files.delete(objectPath(LAYOUT, metaOf(fs).acceptedContentHash));
     const result = await readCacheEntry(LAYOUT, fs);
     expect(result.kind).toBe('corrupt');
   });
 
-  it('reports a miss, not corrupt, when a concurrent clear removed the entry (round-4 finding 2)', async () => {
-    // The round-4 retry only recognised a CHANGED hash, so a clear landing
+  it('reports a miss, not corrupt, when a concurrent clear removed the entry', async () => {
+    // An earlier retry only recognised a CHANGED hash, so a clear landing
     // mid-read left the reader reporting corrupt on an entry the operator had
     // simply asked to delete — which would have failed the clear-vs-read
     // expectation that the reader stays exit 0.
@@ -1437,7 +1436,7 @@ describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
     expect(await readCacheEntry(LAYOUT, fs)).toEqual({ kind: 'miss' });
   });
 
-  it('survives a clear followed by re-seeding the SAME content (round-4 finding 2)', async () => {
+  it('survives a clear followed by re-seeding the SAME content', async () => {
     // A hash-change check cannot detect this: the new generation has the same
     // content hash as the one that was collected, so "did the hash change" is
     // false even though the object really was recreated underneath the reader.
@@ -1466,17 +1465,15 @@ describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
     // The retry must terminate even against an adversarial filesystem that
     // keeps the object missing while metadata stays readable.
     //
-    // Round-9 finding 2: this asserted against `READ_RETRY_LIMIT + 1`, but that
-    // constant is PRIVATE to store.ts — never exported, never imported here, so
-    // the identifier was simply unbound and the file could not typecheck. The
-    // bound is named locally instead of exported, because the behaviour under
-    // test is that the loop terminates within its documented bound, not that an
-    // implementation constant is part of the public API. Exporting it to make
-    // the test compile would widen the contract to satisfy a test.
+    // This asserts against a locally named constant rather than
+    // `READ_RETRY_LIMIT + 1`, because that constant is PRIVATE to store.ts —
+    // never exported, never imported here, so the identifier would be unbound
+    // and the file could not typecheck. The bound is named locally instead of
+    // exported, because the behaviour under test is that the loop terminates
+    // within its documented bound, not that an implementation constant is part
+    // of the public API. Exporting it to make the test compile would widen the
+    // contract to satisfy a test.
     //
-    // Round-9 prose: the first `readFileTextCapped` assignment here was dead —
-    // it was overwritten below before any call could reach it, which is noise
-    // and would likely trip the strict useless-assignment lint.
     // Bounded by the static-confirm path: the initial object read plus up to
     // READ_STATIC_CONFIRM_LIMIT (2) re-confirmations on an unchanging generation
     // before it reports corrupt; 4 is a safe ceiling (the old READ_RETRY_LIMIT
@@ -1519,8 +1516,8 @@ describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
     const fs = await seeded();
     const hash = metaOf(fs).acceptedContentHash;
     // Base on the SEEDED fetchedAt, not NOW — the seed's timestamp differs from
-    // NOW, so re-seeding at NOW would ADVANCE the generation (round-5 fix). Use
-    // the seeded value so the generation key is genuinely unchanged.
+    // NOW, so re-seeding at NOW would ADVANCE the generation. Use the seeded
+    // value so the generation key is genuinely unchanged.
     const initial = metaOf(fs).fetchedAt;
     let raced = false;
     const inner = fs.readFileTextCapped;
@@ -1540,11 +1537,11 @@ describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
     expect(read.kind).toBe('hit');
   });
 
-  it('resets the static-confirm budget after a generation advance (round-4)', async () => {
+  it('resets the static-confirm budget after a generation advance', async () => {
     const fs = await seeded();
     const hash = metaOf(fs).acceptedContentHash;
     // Base on the SEEDED fetchedAt so the FIRST failing read is a true STATIC
-    // (same generation), not an advance (round-5 fix — NOW differs from the seed).
+    // (same generation), not an advance — NOW differs from the seed.
     // Failing-read generations: static A(initial), advance to B, two statics under B.
     const initial = metaOf(fs).fetchedAt;
     const timeline = [initial, initial + 1, initial + 1, initial + 1];
@@ -1649,8 +1646,8 @@ describe('object lifetime vs lock-free readers (round-3 finding 1)', () => {
     const read = await readCacheEntry(LAYOUT, fs);
     expect(read.kind).toBe('corrupt');
     // Bounded near READ_GENERATION_RETRY_CAP (64, private to store.ts — named
-    // locally per the same round-9 rationale as the existing "gives up" test),
-    // not anywhere near the fake's 300-advance storm ceiling.
+    // locally for the same reason as the existing "gives up" test), not
+    // anywhere near the fake's 300-advance storm ceiling.
     const READ_GENERATION_RETRY_CAP_LOCAL = 64;
     expect(objectReads).toBeLessThanOrEqual(READ_GENERATION_RETRY_CAP_LOCAL + 5);
     expect(objectReads).toBeGreaterThan(READ_GENERATION_RETRY_CAP_LOCAL / 2);
@@ -1669,7 +1666,7 @@ describe('readCacheEntry', () => {
     expect(result.entry.meta.acceptedContentHash).toBe(hashContent(DOC_TEXT));
   });
 
-  it('round-trips the OpenAPI version discriminator (D16b)', async () => {
+  it('round-trips the OpenAPI version discriminator', async () => {
     // The hit path feeds this straight to normalizeSpec without revalidating,
     // so it has to survive the write/read round trip exactly
     const fs = memoryCacheFs();
@@ -1704,9 +1701,9 @@ describe('readCacheEntry', () => {
 
   it.each<[string, (fs: MemoryCacheFs) => void, string]>([
     // NOTE: "meta.json deleted, objects surviving" is deliberately NOT in this
-    // list any more. Round-3 finding 2: it is a miss, covered by its own
-    // describe block above, because an orphan object is not a baseline and the
-    // alternative wedged a crashed first commit forever.
+    // list any more. It is a miss, covered by its own describe block above,
+    // because an orphan object is not a baseline and the alternative wedged a
+    // crashed first commit forever.
     [
       'meta.json is truncated mid-object',
       (fs) => {
@@ -1805,7 +1802,7 @@ describe('readCacheEntry', () => {
       'could not be read',
     ],
     [
-      'meta.json carries a candidate missing one of its two hashes (D18)',
+      'meta.json carries a candidate missing one of its two hashes',
       (fs) => {
         const meta = JSON.parse(fs.files.get(LAYOUT.metaPath) ?? '') as Record<string, unknown>;
         fs.files.set(
@@ -1815,7 +1812,7 @@ describe('readCacheEntry', () => {
       },
       'expected schema',
     ],
-  ])('reports corrupt when %s (D5)', async (_label, damage, needle) => {
+  ])('reports corrupt when %s', async (_label, damage, needle) => {
     const fs = await seeded();
     damage(fs);
     const result = await readCacheEntry(LAYOUT, fs);
@@ -1857,7 +1854,7 @@ describe('readCacheEntry', () => {
   });
 });
 
-describe('D5 regression: a corrupt baseline cannot be laundered by restarting (§6.3)', () => {
+describe('a corrupt baseline cannot be laundered by restarting (§6.3)', () => {
   it('refuses the entry instead of letting a changed remote become accepted', async () => {
     // Process A accepted v1 and it is the durable record of what the operator
     // approved. An attacker (or a bad disk) damages the accepted object while
@@ -1901,17 +1898,17 @@ describe('D5 regression: a corrupt baseline cannot be laundered by restarting (�
   });
 });
 
-// Not part of the Task 4 brief: adjudicated fix for a defect the brief's own
-// D5 regression test exposed. readMetaFile alone (meta.json's shape and
-// schema) is not enough to decide whether an entry is corrupt — a damaged
-// ACCEPTED OBJECT slipped through every write path that checked only
-// readMetaFile, and the next writeAccepted then installed the changed remote
-// document as the new accepted baseline: the entry read back as a healthy
-// hit, which is exactly the laundering D5 and §6.3 exist to forbid. Every
-// write path now verifies the accepted object it is building on top of (or
-// leaving untouched) before proceeding, sharing the exact hash/shape/version
-// checks readCacheEntry itself uses.
-describe('D5: every write path verifies the accepted OBJECT, not just meta.json', () => {
+// A fix for a defect the corrupt-baseline regression test above exposed.
+// readMetaFile alone (meta.json's shape and schema) is not enough to decide
+// whether an entry is corrupt — a damaged ACCEPTED OBJECT slipped through
+// every write path that checked only readMetaFile, and the next writeAccepted
+// then installed the changed remote document as the new accepted baseline:
+// the entry read back as a healthy hit, which is exactly the laundering the
+// fail-closed corruption handling and §6.3 exist to forbid. Every write path
+// now verifies the accepted object it is building on top of (or leaving
+// untouched) before proceeding, sharing the exact hash/shape/version checks
+// readCacheEntry itself uses.
+describe('every write path verifies the accepted OBJECT, not just meta.json', () => {
   const damageAcceptedObject = (fs: MemoryCacheFs): void => {
     fs.files.set(
       objectPath(LAYOUT, hashContent(DOC_TEXT)),
@@ -2012,7 +2009,7 @@ describe('promoteCandidate', () => {
     expect(metaOf(fs).acceptedContentHash).toBe(CANDIDATE_HASH);
   });
 
-  it('carries the candidate source hash into the accepted source hash (D14)', async () => {
+  it('carries the candidate source hash into the accepted source hash', async () => {
     const fs = await withCandidate();
     await promoteCandidate(LAYOUT, fs, NOW, {});
     expect(metaOf(fs).sourceContentHash).toBe(SOURCE_HASH_V2);
@@ -2024,7 +2021,7 @@ describe('promoteCandidate', () => {
     expect(metaOf(fs)).toMatchObject({ title: 'Petstore v2', specVersion: '2.0.0' });
   });
 
-  it('derives the OpenAPI version from the promoted document, not the accepted entry (D16b)', async () => {
+  it('derives the OpenAPI version from the promoted document, not the accepted entry', async () => {
     // DOC_V2 declares 3.1.0 over a 3.0 baseline: inheriting the accepted value
     // would normalize the promoted document under the wrong rules
     const fs = memoryCacheFs();
@@ -2049,16 +2046,13 @@ describe('promoteCandidate', () => {
     expect(acceptedTextOf(fs)).toBe(DOC_TEXT);
   });
 
-  it("promotes with the candidate's own recorded title even when its document has none (D18, no fallback)", async () => {
-    // Corrected per project-owner adjudication: the round-1 draft had a
-    // `boundedText` helper that recovered a missing title from the promoted
-    // DOCUMENT, falling back further to the previous accepted entry's title.
-    // That helper is gone (D18) — meta.candidate records the candidate's own
-    // title and version at write time, and promotion reads only that, with no
-    // fallback to the document or to the entry being replaced. candidateInput()
-    // fixes title 'Petstore v2'/specVersion '2.0.0' regardless of `document`,
-    // so a document with no info.title still promotes with those values, not
-    // the previous accepted entry's 'Petstore'/'1.0.0'.
+  it("promotes with the candidate's own recorded title even when its document has none (no fallback)", async () => {
+    // The meta.candidate member records the candidate's own title and version at write
+    // time, and promotion reads only that, with no fallback to the promoted
+    // DOCUMENT's title or to the entry being replaced. candidateInput() fixes
+    // title 'Petstore v2'/specVersion '2.0.0' regardless of `document`, so a
+    // document with no info.title still promotes with those values, not the
+    // previous accepted entry's 'Petstore'/'1.0.0'.
     const fs = await seeded();
     await writeCandidate(LAYOUT, fs, {
       ...candidateInput(),
@@ -2084,7 +2078,7 @@ describe('promoteCandidate', () => {
     expect(candidateTextOf(fs)).toBe(DOC_V2_TEXT);
   });
 
-  it('evaluates expectedHash under the lock, making it a compare-and-swap (D12)', async () => {
+  it('evaluates expectedHash under the lock, making it a compare-and-swap', async () => {
     const fs = await withCandidate();
     // A concurrent refresh holding the lock cannot interleave with the check
     await fs.createExclusive(
@@ -2125,11 +2119,13 @@ describe('promoteCandidate', () => {
     });
   });
 
-  it('takes the candidate provenance from meta, with no fallback (D18)', async () => {
-    // The round-1 draft fell back to the ACCEPTED entry's source hash when the
-    // candidate's own was absent, recording the replaced document's provenance
-    // against the promoted bytes. The nested member makes that unrepresentable,
-    // so the promoted source hash is always the candidate's own.
+  it('takes the candidate provenance from meta, with no fallback', async () => {
+    // Falling back to the ACCEPTED entry's source hash when the candidate's
+    // own is absent would record the replaced document's provenance against
+    // the promoted bytes — but sourceContentHash is a required field on the
+    // nested candidate member, so it is always present and that fallback can
+    // never be reached: the promoted source hash is always the candidate's
+    // own.
     const fs = await withCandidate();
     await promoteCandidate(LAYOUT, fs, NOW, {});
     const meta = metaOf(fs);
@@ -2150,7 +2146,7 @@ describe('promoteCandidate', () => {
     expect(acceptedTextOf(fs)).toBe(DOC_TEXT);
   });
 
-  it('fails closed with a validation error on a corrupt entry, not a conflict (D5)', async () => {
+  it('fails closed with a validation error on a corrupt entry, not a conflict', async () => {
     const fs = await withCandidate();
     fs.files.set(LAYOUT.metaPath, 'not json');
     await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
@@ -2160,14 +2156,14 @@ describe('promoteCandidate', () => {
   });
 });
 
-describe('clearNamespace (D16a — under the lock after review round 2)', () => {
+describe('clearNamespace (under the lock)', () => {
   it('removes the metadata and every object, leaving a clean miss', async () => {
     const fs = await withCandidate();
     expect(await clearNamespace(LAYOUT, fs, NOW)).toBe(true);
     expect(fs.files.has(LAYOUT.metaPath)).toBe(false);
     expect(objectNamesOf(fs)).toEqual([]);
     // The end state is an empty namespace directory, which reads as a miss —
-    // exactly the clean absence clear is supposed to produce (D5)
+    // exactly the clean absence clear is supposed to produce
     expect(await readCacheEntry(LAYOUT, fs)).toEqual({ kind: 'miss' });
   });
 
@@ -2176,8 +2172,8 @@ describe('clearNamespace (D16a — under the lock after review round 2)', () => 
   });
 
   it('acquires the namespace lock and refuses while a writer holds it', async () => {
-    // The round-1 draft was lock-free here and cleared straight through a live
-    // writer
+    // An earlier version was lock-free here and cleared straight through a
+    // live writer
     const fs = await withCandidate();
     await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'writer', acquiredAt: NOW }));
     await expect(clearNamespace(LAYOUT, fs, NOW)).rejects.toMatchObject({
@@ -2193,7 +2189,7 @@ describe('clearNamespace (D16a — under the lock after review round 2)', () => 
     const fs = await seeded();
     await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'writer', acquiredAt: NOW }));
     await expect(clearNamespace(LAYOUT, fs, NOW)).rejects.toMatchObject({ code: 'conflict' });
-    // The round-1 draft unlinked .lock unconditionally, which re-admitted a
+    // An earlier version unlinked .lock unconditionally, which re-admitted a
     // second writer to a namespace already being torn down
     expect(JSON.parse(fs.files.get(LAYOUT.lockPath) ?? '')).toMatchObject({ owner: 'writer' });
   });
@@ -2207,19 +2203,19 @@ describe('clearNamespace (D16a — under the lock after review round 2)', () => 
   });
 
   it('cannot leave a durable metadata-without-spec entry against a concurrent writer', async () => {
-    // THE round-2 finding. The interleaving the round-1 lock-free clear
-    // permitted: clear removes the metadata, a writer commits new metadata
-    // naming its new object, clear then removes that object — and the durable
-    // end state is metadata pointing at bytes that no longer exist, i.e. a
-    // permanently corrupt entry produced by the operation meant to leave a
-    // clean absence. Driven deterministically by attempting the write from
-    // inside clear's own removal sequence.
+    // The interleaving an earlier lock-free clear permitted: clear removes the
+    // metadata, a writer commits new metadata naming its new object, clear
+    // then removes that object — and the durable end state is metadata
+    // pointing at bytes that no longer exist, i.e. a permanently corrupt entry
+    // produced by the operation meant to leave a clean absence. Driven
+    // deterministically by attempting the write from inside clear's own
+    // removal sequence.
     const fs = await withCandidate();
     let writeAttempt: Promise<unknown> | undefined;
     const innerRemoveFile = fs.removeFile;
     fs.removeFile = (path) => {
       if (path === LAYOUT.metaPath && writeAttempt === undefined) {
-        // The exact instant the round-1 code was vulnerable. Deliberately NOT
+        // The exact instant the original code was vulnerable. Deliberately NOT
         // awaited here: this fires the write and captures its eventual
         // outcome (value or error) without blocking removeFile's synchronous
         // return, which is what lets it interleave with clear's own removal
@@ -2267,11 +2263,11 @@ describe('clearNamespace (D16a — under the lock after review round 2)', () => 
   });
 });
 
-describe('touchRevalidated (D16a2 — the 304 transition)', () => {
-  it('preserves a waiting candidate that the round-1 304 path destroyed', async () => {
-    // THE round-2 finding. A 304 used to run writeAccepted, which rewrites the
-    // accepted entry and clears the candidate — so revalidating silently
-    // discarded a candidate awaiting promotion without ever approving it.
+describe('touchRevalidated (the 304 transition)', () => {
+  it('preserves a waiting candidate across a 304 revalidation', async () => {
+    // Running writeAccepted on a 304 would rewrite the accepted entry and
+    // clear the candidate — so revalidating would silently discard a
+    // candidate awaiting promotion without ever approving it.
     const fs = await withCandidate();
     const before = metaOf(fs);
     await touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' });
@@ -2341,7 +2337,7 @@ describe('touchRevalidated (D16a2 — the 304 transition)', () => {
     });
   });
 
-  it('fails closed on a corrupt entry (D5)', async () => {
+  it('fails closed on a corrupt entry', async () => {
     const fs = await seeded();
     fs.files.set(LAYOUT.metaPath, 'not json');
     await expect(touchRevalidated(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
@@ -2350,7 +2346,7 @@ describe('touchRevalidated (D16a2 — the 304 transition)', () => {
     });
   });
 
-  it('refuses a 304 revalidation when there is no baseline to revalidate (D16a2)', async () => {
+  it('refuses a 304 revalidation when there is no baseline to revalidate', async () => {
     await expect(touchRevalidated(LAYOUT, memoryCacheFs(), NOW, {})).rejects.toMatchObject({
       code: 'validation',
     });
@@ -2385,7 +2381,7 @@ describe('listCacheEntries', () => {
     });
   });
 
-  it('surfaces the cache-key label so two namespaces of one URL are distinguishable (D9)', async () => {
+  it('surfaces the cache-key label so two namespaces of one URL are distinguishable', async () => {
     const fs = memoryCacheFs();
     const a = cacheLayout('/cache', '1111111111111111');
     const b = cacheLayout('/cache', '2222222222222222');
@@ -2445,7 +2441,7 @@ describe('listCacheEntries', () => {
   });
 });
 
-describe('every exported cache operation types its raw I/O (D17)', () => {
+describe('every exported cache operation types its raw I/O', () => {
   const eaccesError = (): Error => Object.assign(new Error('EACCES'), { code: 'EACCES' });
 
   const breaking = async (method: keyof MemoryCacheFs, seed = true): Promise<MemoryCacheFs> => {
@@ -2472,9 +2468,9 @@ describe('every exported cache operation types its raw I/O (D17)', () => {
       'writeFileAtomic',
       (fs: MemoryCacheFs) => writeCandidate(LAYOUT, fs, candidateInput()),
     ],
-    // Round-7 finding 3: NOT readFileTextCapped. readMetaFile catches that and
-    // resolves kind:'corrupt', exactly as the frozen signature promises, so the
-    // row would never reject. pathExists is the raw path that does reach the
+    // NOT readFileTextCapped. readMetaFile catches that and resolves
+    // kind:'corrupt', exactly as the frozen signature promises, so the row
+    // would never reject. pathExists is the raw path that does reach the
     // definition adapter.
     ['readCacheEntry', 'pathExists', (fs: MemoryCacheFs) => readCacheEntry(LAYOUT, fs)],
     ['clearNamespace', 'removeFile', (fs: MemoryCacheFs) => clearNamespace(LAYOUT, fs, NOW)],
@@ -2501,10 +2497,10 @@ describe('every exported cache operation types its raw I/O (D17)', () => {
     });
   });
 
-  it('surfaces EACCES on the lock holder read during CONTENTION (round-6 finding 2)', async () => {
-    // The round-6 draft swallowed this into "unreadable holder" and then
-    // reported a conflict — a typed error the outer wrapper deliberately
-    // preserves, so the I/O failure became permanently invisible
+  it('surfaces EACCES on the lock holder read during CONTENTION', async () => {
+    // Swallowing this into "unreadable holder" and reporting a conflict would
+    // make the I/O failure permanently invisible — the outer wrapper
+    // deliberately preserves the typed EACCES error instead
     const fs = await seeded();
     await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'other', acquiredAt: NOW }));
     const inner = fs.readFileTextCapped;
@@ -2516,7 +2512,7 @@ describe('every exported cache operation types its raw I/O (D17)', () => {
     });
   });
 
-  it('surfaces EACCES on the lock holder read during RELEASE (round-6 finding 2)', async () => {
+  it('surfaces EACCES on the lock holder read during RELEASE', async () => {
     const fs = memoryCacheFs();
     const inner = fs.readFileTextCapped;
     let inRun = false;
@@ -2530,9 +2526,9 @@ describe('every exported cache operation types its raw I/O (D17)', () => {
     ).rejects.toMatchObject({ code: 'validation', exitCode: 3 });
   });
 
-  it('surfaces EACCES on the candidate read during PROMOTION (round-6 finding 2)', async () => {
-    // The round-6 draft turned this into conflict exit 5, contradicting D17's
-    // frozen validation exit 3 for persistent-cache I/O
+  it('surfaces EACCES on the candidate read during PROMOTION', async () => {
+    // Turning this into conflict exit 5 would contradict the frozen
+    // validation exit 3 for persistent-cache I/O
     const fs = await withCandidate();
     const inner = fs.readFileTextCapped;
     fs.readFileTextCapped = (path, maxBytes) =>
@@ -2556,15 +2552,15 @@ describe('every exported cache operation types its raw I/O (D17)', () => {
   });
 });
 
-// Not part of the Task 4 brief: CacheEntrySummary is display-only (a later
-// task renders it in the `cache list` table), and the meta schema bounds
-// displaySource/title/specVersion by LENGTH but not by character set. Those
-// three are derived from spec documents this project treats as untrusted, so
-// a hand-planted or damaged meta.json — schema-valid, but hostile — must not
-// be able to put an ANSI escape sequence or a bidi override onto the
-// operator's terminal by way of `cache list`. Built with String.fromCodePoint
-// rather than a \u escape literal, so the hostile bytes exist only at test
-// runtime and never sit in the source file as a raw control character.
+// CacheEntrySummary is display-only (rendered elsewhere in the `cache list`
+// table), and the meta schema bounds displaySource/title/specVersion by
+// LENGTH but not by character set. Those three are derived from spec
+// documents this project treats as untrusted, so a hand-planted or damaged
+// meta.json — schema-valid, but hostile — must not be able to put an ANSI
+// escape sequence or a bidi override onto the operator's terminal by way of
+// `cache list`. Built with String.fromCodePoint rather than a \u escape
+// literal, so the hostile bytes exist only at test runtime and never sit in
+// the source file as a raw control character.
 describe('listCacheEntries: sanitizes hostile metadata before display', () => {
   it('strips control and bidi characters from displaySource, title, and specVersion', async () => {
     const ESC = String.fromCodePoint(0x1b);

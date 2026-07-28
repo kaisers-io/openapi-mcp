@@ -90,9 +90,9 @@ describe('validateOpenApiDocument', () => {
     expect(validateOpenApiDocument(minimal31()).version).toBe('3.1');
   });
 
-  it('does not echo control characters from the declared openapi version (D2)', () => {
+  it('does not echo control characters from the declared openapi version', () => {
     // The version gate only checks the "3.0."/"3.1." prefix — the remainder is
-    // arbitrary spec content that reached stderr verbatim before this fix
+    // arbitrary spec content that must not reach stderr unescaped/verbatim
     const doc = {
       openapi: '3.0.\u001B]0;PWNED\u0007',
       info: { title: 'T' },

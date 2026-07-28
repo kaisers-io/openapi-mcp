@@ -39,7 +39,7 @@ describe('parseCacheKey', () => {
     },
   );
 
-  it('accepts ".." because the key is hashed, never used as a path segment (D9)', () => {
+  it('accepts ".." because the key is hashed, never used as a path segment', () => {
     // The charset admits dots on purpose: parseCacheKey guards a label, and
     // cacheNamespace below proves the label only ever reaches a sha256 digest
     expect(parseCacheKey('..')).toBe('..');
@@ -175,12 +175,12 @@ describe('cacheNamespace', () => {
     );
   });
 
-  it('separates source from key with a real NUL, not the six characters "\\u0000" (D9)', () => {
-    // The round-1 draft wrote "\\u0000" in the template literal, which is a
-    // backslash plus "u0000" — six printable characters. That silently voided
-    // the separator argument, because nothing stops a canonical source from
-    // containing them. This asserts the byte without spelling it: the file must
-    // never carry a raw control character.
+  it('separates source from key with a real NUL, not the six characters "\\u0000"', () => {
+    // Writing "\\u0000" in the template literal is a backslash plus "u0000" —
+    // six printable characters — which would silently void the separator
+    // argument, because nothing stops a canonical source from containing
+    // them. This asserts the byte without spelling it: the file must never
+    // carry a raw control character.
     const NUL = String.fromCodePoint(0);
     const digest = createHash('sha256')
       .update(`source:https://a.example/s.json${NUL}key:prod`, 'utf8')
@@ -195,7 +195,7 @@ describe('cacheNamespace', () => {
     expect(cacheNamespace('https://a.example/s.json', 'prod')).not.toBe(defective);
   });
 
-  it('cannot be collided by a source spelling the defective separator (D9)', () => {
+  it('cannot be collided by a source spelling the defective separator', () => {
     // The concrete attack the six-character separator would have permitted
     expect(cacheNamespace('https://a.example/s.json\\u0000key:prod')).not.toBe(
       cacheNamespace('https://a.example/s.json', 'prod'),
@@ -215,7 +215,7 @@ describe('cacheLayout', () => {
     });
   });
 
-  it('exposes no fixed accepted or candidate path (D12.1)', () => {
+  it('exposes no fixed accepted or candidate path', () => {
     // A fixed path has to be REPLACED to store a new generation, and that
     // replacement is what destroyed the bytes the live meta.json pointed at
     const layout = cacheLayout('/c', 'abcdef0123456789');
@@ -224,7 +224,7 @@ describe('cacheLayout', () => {
   });
 });
 
-describe('objectPath (D12.1)', () => {
+describe('objectPath', () => {
   const layout = cacheLayout('/c', 'abcdef0123456789');
 
   it('names the object after the hash of its own contents', () => {
@@ -246,7 +246,7 @@ describe('objectPath (D12.1)', () => {
   });
 });
 
-describe('resolveCachePolicy (D13)', () => {
+describe('resolveCachePolicy', () => {
   const base = {
     source: URL_SOURCE,
     authenticated: false,
@@ -321,11 +321,11 @@ describe('resolveCachePolicy (D13)', () => {
     expect(policy).toMatchObject({ kind: 'bypass' });
   });
 
-  it('applies the authenticated decision BEFORE the no-root bypass (D13 ordering)', () => {
-    // The round-1 implementation checked cacheRoot first, so this returned a
-    // generic bypass instead of the required usage error — while Task 10's own
-    // regression builds exactly this context (homeDir() is undefined) and
-    // asserts exit 2. The suite and the implementation disagreed.
+  it('applies the authenticated decision BEFORE the no-root bypass', () => {
+    // Checking cacheRoot before the authenticated decision would return a
+    // generic bypass instead of the required usage error here, since this
+    // context has no cache root at all (e.g. an undefined homeDir()) and must
+    // still produce a usage error with exit code 2.
     try {
       resolveCachePolicy({ ...base, authenticated: true, cacheRoot: undefined });
       expect.unreachable('expected a usage error, not a bypass');
@@ -339,7 +339,7 @@ describe('resolveCachePolicy (D13)', () => {
 
   it('keeps the deliberate non-persistent bypass ahead of the no-root bypass', () => {
     // Same ordering, opposite outcome: the operator DID decide, so this is the
-    // D13 credential-separation bypass and its reason must say so rather than
+    // credential-separation bypass and its reason must say so rather than
     // blaming a missing home directory
     const policy = resolveCachePolicy({
       ...base,

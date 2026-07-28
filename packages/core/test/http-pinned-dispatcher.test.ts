@@ -208,11 +208,10 @@ describe('createPinnedAgent', () => {
     }
   });
 
-  // Documents the gap this Agent alone cannot close (Task 3 brief amendment,
-  // context for Task 4): Node skips `lookup` entirely for an IP-literal
-  // hostname, so a hop whose URL is already an IP literal bypasses this
-  // Agent's validation regardless of policy. Task 4's synchronous per-hop
-  // check closes this gap for the redirect transport.
+  // Documents the gap this Agent alone cannot close: Node skips `lookup`
+  // entirely for an IP-literal hostname, so a hop whose URL is already an IP
+  // literal bypasses this Agent's validation regardless of policy. A
+  // synchronous per-hop check closes this gap for the redirect transport.
   it('bypasses the custom lookup entirely for an IP-literal host', async () => {
     const server = await startServer();
     try {
@@ -250,12 +249,11 @@ describe('pinnedLookup', () => {
     expect(result.family).toBe(4);
   });
 
-  // M5 Task 4 round-2 fix (restoring the callback-once latch): the success
-  // path's own `settle(...)` call can throw synchronously (a misbehaving
-  // downstream lookup callback, exactly as injected here) — that throw
-  // rejects the `.then` chain, which the trailing `.catch` then handles by
-  // calling `settle` a SECOND time. Without the latch this fires the
-  // underlying callback twice; with it, exactly once.
+  // The success path's own `settle(...)` call can throw synchronously (a
+  // misbehaving downstream lookup callback, exactly as injected here) — that
+  // throw rejects the `.then` chain, which the trailing `.catch` then handles
+  // by calling `settle` a SECOND time. Without a callback-once latch this
+  // fires the underlying callback twice; with it, exactly once.
   it('invokes the underlying callback exactly once even when the success-path callback throws synchronously', async () => {
     const fakeResolve: Resolve = () => Promise.resolve(['93.184.216.34']);
     const lookupFn = pinnedLookup({ trusted: false, allowPrivateNetwork: true }, fakeResolve);
@@ -280,7 +278,7 @@ describe('pinnedLookup', () => {
   });
 });
 
-// M5 Task 4: pinnedRequest, the shared manual-redirect transport built on
+// The pinnedRequest is the shared manual-redirect transport built on
 // createPinnedAgent above. A real 127.0.0.1 server plays every role (200,
 // redirect, slow, oversized, gzip) — the DNS-pinning happens at the socket
 // layer, so only a real server proves headers/bodies/cancellation actually
@@ -378,10 +376,10 @@ describe('pinnedRequest', () => {
   let closeSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    // A SPY Agent (round-1 Agent-lifecycle amendment): wraps the real
-    // undici Agent methods (still calling through, so sockets really close)
-    // so every path's destroy()-vs-close() choice is provable, not just
-    // inferred from "a follow-up request succeeds".
+    // A SPY Agent wraps the real undici Agent methods (still calling
+    // through, so sockets really close) so every path's destroy()-vs-close()
+    // choice is provable, not just inferred from "a follow-up request
+    // succeeds".
     destroySpy = vi.spyOn(Agent.prototype, 'destroy');
     closeSpy = vi.spyOn(Agent.prototype, 'close');
   });
@@ -653,9 +651,9 @@ describe('pinnedRequest', () => {
     }
   }, 10_000);
 
-  // M5 Task 4 round-2 fix (MINOR finding): the fast-reject above only
-  // exercises the ABSENT-encoding half of isIdentityEncoding's `=== null ||
-  // === 'identity'` check. This fixture sends an EXPLICIT
+  // The fast-reject above only exercises the ABSENT-encoding half of
+  // isIdentityEncoding's `=== null || === 'identity'` check. This fixture
+  // sends an EXPLICIT
   // `content-encoding: identity` header with an over-cap declared
   // content-length, exercising the other half — proving the fast-reject
   // fires from the header alone (before any body read) for an explicit
@@ -717,8 +715,8 @@ describe('pinnedRequest', () => {
 
   it('does not fast-reject a gzip response whose ACCURATE compressed content-length exceeds the cap when the decompressed body is small', async () => {
     // This is the fixture that actually falsifies an unconditional
-    // pre-check (round-1 amendment): gzip's own framing overhead
-    // (~20 bytes) makes even a tiny payload's TRUE, wire-accurate
+    // pre-check: gzip's own framing overhead (~20 bytes) makes even a tiny
+    // payload's TRUE, wire-accurate
     // compressed length bigger than this small cap, while the real
     // decompressed content comfortably fits. An unconditional pre-check
     // (comparing the declared length to maxBytes regardless of encoding)
@@ -975,9 +973,8 @@ describe('pinnedRequest', () => {
     }
   });
 
-  // M5 Task 4 round-2 fix (abort-winner discrimination by identity,
-  // MED finding): checking `opts.signal.aborted` at ERROR-HANDLING time
-  // misclassifies this exact race — the timeout signal fires and wins
+  // Checking `opts.signal.aborted` at ERROR-HANDLING time misclassifies this
+  // exact race — the timeout signal fires and wins
   // FIRST, but the client signal ALSO goes on to abort (e.g. an MCP client
   // cancelling right after a server-side timeout already committed) before
   // the fetch rejection is handled. Both `AbortController.abort()` calls
@@ -1059,8 +1056,8 @@ describe('pinnedRequest', () => {
     // EgressError itself is not exported (callers only ever see the
     // PinnedErrorReason it maps to) — so the only legitimate way to obtain a
     // REAL instance for this fixture is to capture one from the actual
-    // DNS-pinning denial path (Task 3's createPinnedAgent), exactly as a
-    // real undici fetch failure's `.cause` would carry it.
+    // DNS-pinning denial path (createPinnedAgent), exactly as a real undici
+    // fetch failure's `.cause` would carry it.
     const denialServer = await startFlexServer((_req, res) => {
       res.writeHead(200);
       res.end('should never be hit');

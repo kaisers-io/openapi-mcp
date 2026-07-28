@@ -149,7 +149,7 @@ describe('loadSpecFromFile', () => {
     });
   });
 
-  it('re-checks the byte budget after reading (stat/read TOCTOU, D9)', async () => {
+  it('re-checks the byte budget after reading (stat/read TOCTOU)', async () => {
     const grewBetweenStatAndRead = {
       readFileText: () => Promise.resolve('x'.repeat(2048)),
       fileSizeBytes: () => Promise.resolve(10),

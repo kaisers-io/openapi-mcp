@@ -59,7 +59,7 @@ describe('sanitizeDisplayText', () => {
     expect(sanitizeDisplayText('a\r\nb\rc\u2028d\u2029e', 100)).toBe('a\nb\nc\nd\ne');
   });
 
-  it('strips the OSC window-title escape from the M2a review repro', () => {
+  it('strips the OSC window-title escape sequence', () => {
     expect(sanitizeDisplayText('/paths/~1a\u001B]0;PWNED\u001B\\x/get', 100)).toBe(
       '/paths/~1a]0;PWNED\\x/get',
     );

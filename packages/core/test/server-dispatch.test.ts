@@ -17,7 +17,7 @@ import {
   type ToolExecutor,
 } from '../src/index.ts';
 
-// A local fake standing in for the M5 upstream executor (this suite tests
+// A local fake standing in for the real upstream executor (this suite tests
 // dispatch wiring/validation/redaction, not real upstream execution — that
 // is server-execute-executor.test.ts's job) + a neutral redactor used
 // everywhere this suite does not itself exercise the boundary redaction.
@@ -26,9 +26,9 @@ const noopExecutor: ToolExecutor = () =>
 const NOOP_REDACTOR = createRedactor([]);
 
 // A real buildTools fixture: an optional flattened body with a required `id`
-// and an optional `note` — the same all-or-nothing shape the M3 obligation
-// (post-merge #9) and the Task 5 mandatory InMemory test both drive through
-// the wire path. Here it proves validation precedes the EXECUTOR directly.
+// and an optional `note` — the same all-or-nothing shape used elsewhere to
+// drive validation through the wire path. Here it proves validation precedes
+// the EXECUTOR directly.
 const namedOp: NamedOperation = {
   toolName: 'createThing',
   operation: {
@@ -234,7 +234,7 @@ const buildSnapshotFor = (op: NamedOperation): ServerSnapshot => {
 // from its raw INPUT). This fixture is the only way to make the "forwards the PARSED
 // data" test below actually BINDING: with a raw/parsed pair that are byte-for-byte
 // identical (the old fixture), the test would stay green even if the dispatcher forwarded
-// `request.arguments` instead of `parsed.data` (see FIX 2 in the Task 4 security review).
+// `request.arguments` instead of `parsed.data`.
 const buildTransformSnapshot = (): ServerSnapshot => {
   const inputSchema = z.object({ id: z.string(), flag: z.boolean().default(true) });
   const tool: SnapshotTool = {
@@ -320,7 +320,7 @@ describe('createDispatcher', () => {
     expect(executor).not.toHaveBeenCalled();
   });
 
-  it('the M3/M4 mandatory obligation: an invalid partial optional-body call NEVER reaches the executor', async () => {
+  it('an invalid partial optional-body call NEVER reaches the executor', async () => {
     const executor = vi.fn<ToolExecutor>();
     const dispatcher = createDispatcher({
       snapshot: buildTestSnapshot(),
@@ -346,7 +346,7 @@ describe('createDispatcher', () => {
     // caller-controlled throwing getter/Proxy trap. A naked (non-try/catch'd)
     // `await tool.inputSchema.safeParseAsync(...)` would let that raw, unredacted error
     // (which may itself carry a secret, per the getter below) escape straight out of
-    // `dispatcher.call` — see FIX 1 in the Task 4 security review.
+    // `dispatcher.call`.
     const executor = vi.fn<ToolExecutor>();
     const dispatcher = createDispatcher({
       snapshot: buildTestSnapshot(),
@@ -671,10 +671,10 @@ describe('createDispatcher', () => {
   });
 });
 
-// plan-review H4 (M5 Task 11): the dispatcher itself must scrub the
-// LAST hop before an outcome reaches the client — this covers the meta
-// executor and any future executor, not just the M5 upstream one, so a bug
-// in a single executor's own redaction can never alone leak a secret.
+// The dispatcher itself must scrub the LAST hop before an outcome reaches
+// the client — this covers the meta executor and any future executor, not
+// just the upstream one, so a bug in a single executor's own redaction can
+// never alone leak a secret.
 describe('dispatch-boundary redaction', () => {
   const SECRET = 'sk-live-boundary-secret-01234567';
   const boundaryRedactor = createRedactor([SECRET]);
@@ -731,10 +731,9 @@ describe('dispatch-boundary redaction', () => {
     expect(JSON.stringify(result.outcome)).not.toContain(SECRET);
   });
 
-  // Final-review Fix 4 (MED — rescan after redaction): redactString's
-  // single ordered (longest-needle-first) pass checks each registered needle
-  // exactly once. Registering a SHORT secret (REAL_SECRET) alongside a LONGER
-  // secret (SYNTHESIZED_SECRET) that happens to equal "[redacted]" (the
+  // The redactString function's single ordered (longest-needle-first) pass checks each
+  // registered needle exactly once. Registering a SHORT secret (REAL_SECRET)
+  // alongside a LONGER secret (SYNTHESIZED_SECRET) that happens to equal "[redacted]" (the
   // marker) immediately followed by the literal suffix text that sits right
   // after REAL_SECRET in the body means: SYNTHESIZED_SECRET's turn in the
   // ordered pass comes FIRST (it is longer) and finds no match yet (the body

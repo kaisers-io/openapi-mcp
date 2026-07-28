@@ -18,7 +18,7 @@ const ancestors = (path: string): readonly string[] => {
 
 // Node attaches a `code` to filesystem errors and the store branches on it
 // (isCacheAbsence). A fake that omits it silently changes every absence
-// decision, so this models it (round-7 finding 4).
+// decision, so this models it.
 const absenceError = (path: string): Error =>
   Object.assign(new Error(`ENOENT: no such file or directory, '${path}'`), {
     code: 'ENOENT',
@@ -26,7 +26,7 @@ const absenceError = (path: string): Error =>
 
 // Every method below reads and writes through `self.files` / `self.dirs`
 // rather than closing over the initial Map/Set bindings directly. That is
-// deliberate: several Task 3 store tests simulate "a later, independent
+// deliberate: several store tests simulate "a later, independent
 // process observing the same on-disk state" by constructing a second
 // `memoryCacheFs()` and reassigning its `files`/`dirs` properties to alias an
 // existing instance's (`clean.files = fs.files`). A fake whose closures
@@ -58,7 +58,7 @@ export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCach
     readFileTextCapped: (path, maxBytes) => {
       const found = self.files.get(path);
       if (found === undefined) {
-        // Round-7 finding 4: the fake must be FAITHFUL to Node. Without a
+        // The fake must be FAITHFUL to Node here too: without a
         // `code`, isCacheAbsence answers false and every genuine-absence branch
         // in the store misclassifies — the promotion complement expected
         // conflict exit 5 and would have got validation exit 3.

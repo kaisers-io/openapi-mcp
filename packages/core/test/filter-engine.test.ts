@@ -70,7 +70,7 @@ describe('matchesOperation', () => {
     expect(matchesOperation(parseFilterPattern('DELETE /pets/*'), fixture[4]!)).toBe(true);
   });
 
-  it('matches a methodPath pattern against the raw path template, braces included (D8)', () => {
+  it('matches a methodPath pattern against the raw path template, braces included', () => {
     expect(matchesOperation(parseFilterPattern('GET /pets/{petId}'), fixture[1]!)).toBe(true);
   });
 
@@ -84,7 +84,7 @@ describe('matchesOperation', () => {
     expect(matchesOperation(parseFilterPattern('tag:**'), record('get', '/x', 'x'))).toBe(false);
   });
 
-  it('matches raw spec values, not sanitized tool names (D8)', () => {
+  it('matches raw spec values, not sanitized tool names', () => {
     // AssignToolNames rewrites "list-pets!" to "list-pets_"; the filter must
     // still see the original, or a deny pattern would miss its target
     const op = record('get', '/pets', 'list-pets!');
@@ -116,7 +116,7 @@ describe('closestMatch', () => {
     expect(closestMatch('readPets', ['headPets', 'readPetById'])).toBe('headPets');
   });
 
-  it('never prefers a strictly farther candidate, whatever the ratios say (round-8 finding 5)', () => {
+  it('never prefers a strictly farther candidate, whatever the ratios say', () => {
     // The regression case that ratio-only ranking got wrong. "abcdeXYZ" is 3
     // edits (3/8 = 0.375); "abcdefghWXYZ" is 4 (4/12 = 0.333). Both clear the
     // admission bound, and ratio alone returns the distance-4 candidate —
@@ -308,7 +308,7 @@ describe('applyFilters — dead patterns (spec §8)', () => {
   });
 });
 
-describe('applyFilters — aggregate work budget (D15 mechanism 2)', () => {
+describe('applyFilters — aggregate work budget', () => {
   it('shares one budget across exposure and dead-pattern detection', () => {
     // Not one budget per match: the reachable cost is the AGGREGATE, which is
     // what still measured 22.5 s at the maximum admitted dimensions even with a
@@ -339,22 +339,17 @@ describe('applyFilters — aggregate work budget (D15 mechanism 2)', () => {
     // matching operationId, path and two tags each): 33,099,767 steps in 319 ms,
     // 16.5% of the cap, 6.0x headroom. This fixture is far smaller, so it must
     // be a rounding error against it.
-    //
-    // Round-8 cleanup: this comment previously said 5,618,160 steps and 11%,
-    // which was the figure from BEFORE the round-4 recalibration — the count
-    // that charged only some of the loops and left D15's own numbers
-    // contradicting it. One measured figure, and D15 is where it is derived.
     const budget = createMatchBudget();
     applyFilters(named(fixture), patterns('**'), [], budget);
     expect(FILTER_MAX_MATCH_STEPS - budget.remaining).toBeLessThan(10_000);
   });
 
-  // Final review, high-severity finding 1: closestMatch's
-  // boundedDistance ran unbudgeted, so the dead-pattern SUGGESTION phase
-  // escaped the D15 aggregate entirely — measured at 35,917 ms of CPU at
-  // admitted dimensions (128 dead patterns x 512 candidates x 256-char
-  // identifiers). This makes the applyFilters comment above ("ONE budget for
-  // the whole run — exposure AND dead-pattern detection alike") true.
+  // The closestMatch's boundedDistance ran unbudgeted, so the dead-pattern
+  // SUGGESTION phase escaped the aggregate work budget entirely — measured at
+  // 35,917 ms of CPU at admitted dimensions (128 dead patterns x 512
+  // candidates x 256-char identifiers). This makes the applyFilters comment
+  // above ("ONE budget for the whole run — exposure AND dead-pattern
+  // detection alike") true.
   it('bounds closestMatch itself by the work budget it is given', () => {
     // A single candidate whose length is close enough to clear the admission
     // screen already exceeds a tiny budget on the very first Levenshtein row
@@ -373,8 +368,9 @@ describe('applyFilters — aggregate work budget (D15 mechanism 2)', () => {
     // input length; Levenshtein is quadratic). A budget that comfortably
     // survives both matching scans (exposure + dead-pattern detection) but
     // cannot survive even one full boundedDistance call proves the
-    // suggestion phase now draws on the SAME budget applyFilters created —
-    // before this fix, this budget would have survived the whole call.
+    // suggestion phase draws on the SAME budget applyFilters created — a
+    // separate budget for the suggestion phase would let this call survive
+    // the whole matching-plus-suggestion pass instead of throwing.
     const longOps = Array.from({ length: 40 }, (_, index) =>
       record('get', `/p${index}`, `op${'x'.repeat(200)}${index}`),
     );

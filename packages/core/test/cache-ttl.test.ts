@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { CACHE_META_SCHEMA_VERSION, type CacheMeta, evaluateFreshness } from '../src/index.ts';
 
-// The openapiVersion field is REQUIRED on CacheMeta. The round-1 fixture
-// omitted it and would have failed typecheck the moment this file was
-// compiled — the frozen writeAccepted signature had the same gap while
-// Tasks 3 and 9 both passed the field (round-2 correction 7).
+// The openapiVersion field is REQUIRED on CacheMeta — omitting it fails
+// typecheck the moment this file compiles, since the frozen writeAccepted
+// signature demands it too.
 const META: CacheMeta = {
   schemaVersion: CACHE_META_SCHEMA_VERSION,
   displaySource: 'https://api.example.com/openapi.json',

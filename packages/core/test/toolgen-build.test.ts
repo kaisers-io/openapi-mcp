@@ -94,7 +94,7 @@ describe('buildTools', () => {
   });
 
   it('reserves a mixed-case operator auth header (case-insensitive set contents)', () => {
-    // M4/M5 unions operator-configured auth-header names into reservedHeaders;
+    // Operator-configured auth-header names are unioned into reservedHeaders;
     // those may be mixed-case. buildTools must lowercase the set contents so the
     // case-insensitive header lookup matches — otherwise the auth header leaks in
     // as a tool input. reservedHeaders here carries the mixed-case 'X-API-Key'.

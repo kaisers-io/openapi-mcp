@@ -344,9 +344,8 @@ describe('buildRequest — header/simple', () => {
 
 describe('buildRequest — header wireName validation (spec-derived, untrusted)', () => {
   // A hostile spec could declare a header parameter whose NAME itself carries
-  // an embedded CRLF; undici throws at fetch time on such a key (Task 10),
-  // which would otherwise escape this module's fail-closed `{error}`
-  // contract (task-7 review, FIX 1).
+  // an embedded CRLF; undici throws at fetch time on such a key, which would
+  // otherwise escape this module's fail-closed `{error}` contract.
   const wireNameMapper = (wireName: string): RequestMapper => ({
     bodyMode: 'none',
     fields: {
@@ -518,8 +517,7 @@ describe('buildRequest — body', () => {
 
   // `JSON.stringify` throws on a bigint, a circular reference, or a throwing
   // `toJSON` — this module must catch that and fail closed with `{error}`
-  // rather than let the throw escape its never-throw contract (task-7
-  // review, FIX 2).
+  // rather than let the throw escape its never-throw contract.
   it('rejects a JSON body containing a bigint (JSON.stringify throws)', () => {
     const mapper: RequestMapper = {
       bodyMode: 'single',

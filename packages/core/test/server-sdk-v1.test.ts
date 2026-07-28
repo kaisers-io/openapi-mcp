@@ -16,14 +16,13 @@ import {
 // A neutral redactor: this suite never exercises redaction itself.
 const NOOP_REDACTOR = createRedactor([]);
 
-// The mandatory M4 integration test (exact fixture shape): an
-// optional flattened body with a required `id` and an optional `note`.
-// `{}` and `{id:"x"}` are valid; `{note:"partial"}` must fail the
-// all-or-nothing refinement — a rule ABSENT from the wire inputSchema
-// (z.toJSONSchema cannot express a cross-field rule), safe ONLY because
-// every tools/call is validated with inputSchema before the executor. This
-// drives that guarantee through the REAL SDK transport, not just the pure
-// dispatcher (Task 4), proving the adapter did not bypass it.
+// Integration test fixture: an optional flattened body with a required
+// `id` and an optional `note`. `{}` and `{id:"x"}` are valid; `{note:"partial"}`
+// must fail the all-or-nothing refinement — a rule ABSENT from the wire
+// inputSchema (z.toJSONSchema cannot express a cross-field rule), safe ONLY
+// because every tools/call is validated with inputSchema before the
+// executor. This drives that guarantee through the REAL SDK transport, not
+// just the pure dispatcher, proving the adapter did not bypass it.
 const namedOp: NamedOperation = {
   toolName: 'createThing',
   operation: {
@@ -228,9 +227,9 @@ describe('createProtocolSession — InMemory integration', () => {
     // Match on `code` plus the reflected substring (not the whole `.message`
     // verbatim): the client-side SDK re-wraps the wire error's message
     // through its own `MCP error ${code}: ` prefix on top of the server's
-    // own McpError message — an SDK quirk orthogonal to T5 — so asserting
-    // the exact, doubly-prefixed string would couple this test to that SDK
-    // internal rather than to what T5 actually changed (the CONTENT that
+    // own McpError message — an unrelated SDK quirk — so asserting the
+    // exact, doubly-prefixed string would couple this test to that SDK
+    // internal rather than to what actually changed here (the CONTENT that
     // gets reflected).
     await expect(client.callTool({ name: 'does-not-exist', arguments: {} })).rejects.toMatchObject({
       code: ErrorCode.InvalidParams,

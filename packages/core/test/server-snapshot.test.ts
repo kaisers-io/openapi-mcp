@@ -13,7 +13,7 @@ import {
 
 const RLO = String.fromCodePoint(0x202e); // Right-to-Left Override — never paste raw
 
-// Task 6's build-time path-template consistency guard omits an operation
+// The build-time path-template consistency guard omits an operation
 // whose `{...}` placeholders don't exactly match its path parameters — derive
 // a matching required path parameter per placeholder so this fixture keeps
 // building a REPRESENTABLE operation regardless of which path it is given.

@@ -186,10 +186,10 @@ describe('mapResponse — HTTP error status (>=400)', () => {
     }
   });
 
-  // Final-review Fix 2: the same escaped-JSON-secret leak
-  // Task 8's Fix A closed on the no-outputSchema SUCCESS path (see the
-  // matching test below) exists on the 4xx/5xx error path too, since
-  // mapHttpError used to redact the raw body text only.
+  // The escaped-JSON-secret leak the no-outputSchema SUCCESS-path test below
+  // guards against — a secret escaped as `\/` bypassing a redactor built from
+  // the raw secret — applies equally on the 4xx/5xx error path: mapHttpError
+  // redacts the raw body text, so it must catch the escaped form there too.
   it('a 500 application/json body with a secret escaped as `\\/` never leaks via the error path', () => {
     const secret = 'ab/cd/ef/gh'; // Registered secret containing `/`
     const escapedSecret = 'ab\\/cd\\/ef\\/gh'; // Runtime value: ab\/cd\/ef\/gh (literal backslashes)
@@ -225,14 +225,14 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     expect(result.content[0]?.text).toBe('{"id":1}');
   });
 
-  // Round-2 fix A (load-bearing): D9's "a secret anywhere downgrades to
-  // a generic isError, never a redacted-but-successful body" policy — already
-  // applied to the outputSchema path (mapSchemaSuccess) — now extends to the
+  // The "a secret anywhere downgrades to a generic isError, never a
+  // redacted-but-successful body" policy — already applied to the
+  // outputSchema path (mapSchemaSuccess) — now extends to the
   // no-outputSchema JSON path too. A JSON success body is parsed and its
   // STRUCTURE scanned before any string-level redaction is attempted; a hit
-  // there means outright rejection, never a redact-and-serve. (Superseded
-  // the old round-1 behavior of redacting the secret in place and returning
-  // it as successful text — that behavior was itself the gap: it could only
+  // there means outright rejection, never a redact-and-serve. (Supersedes
+  // the previous behavior of redacting the secret in place and returning it
+  // as successful text — that behavior was itself the gap: it could only
   // ever match the secret's exact raw-text encoding, never a JSON-escaped
   // one; see the escaped-secret test below.)
   it('a JSON body containing a registered secret is rejected outright, never redacted-and-served', () => {
@@ -245,7 +245,7 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     expect(text).not.toContain(secret);
   });
 
-  // Covers FIX A's own "parse failed" branch: a body whose Content-Type
+  // Covers the "parse failed" branch: a body whose Content-Type
   // claims JSON but is not actually valid JSON has no structure to scan, so
   // it falls through to the existing redacted-text handling unchanged.
   it('a JSON-labeled body that is not valid JSON falls through to the redacted-text path', () => {
@@ -255,12 +255,12 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     expect(result.content[0]?.text).toBe('not-json {');
   });
 
-  // Round-2 fix D (cheap, keeps mapResponse locally fail-closed):
-  // scanForSecret's own contract (redact.ts) says a pathologically deep body
+  // The scanForSecret contract (redact.ts) says a pathologically deep body
   // throws rather than looping forever. scanSafely must catch that and fail
-  // closed to a generic isError from WITHIN mapResponse, not let it escape
-  // to the dispatcher's outer catch. Simulated here via a redactor whose
-  // scanForSecret throws, standing in for a genuine deep-recursion overflow.
+  // closed to a generic isError from WITHIN mapResponse (keeping it locally
+  // fail-closed), not let it escape to the dispatcher's outer catch.
+  // Simulated here via a redactor whose scanForSecret throws, standing in
+  // for a genuine deep-recursion overflow.
   it('a scanForSecret throw (e.g. pathological recursion depth) fails closed to a generic isError', () => {
     const outcome = response(200, 'application/json', '{"a":1}');
     const throwingScan: Redactor = {
@@ -326,12 +326,12 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     expect(text).toContain('image/png');
   });
 
-  // Round-2 fix B: the unsupported-media-type message interpolates
-  // the upstream-controlled Content-Type essence. A hostile upstream can
-  // echo a registered secret through its own Content-Type header, so that
-  // essence must be redacted (not merely sanitize-truncated) before it
-  // reaches this error text. Secret is lowercase because mediaEssence()
-  // lowercases the observed essence before it ever reaches this message.
+  // The unsupported-media-type message interpolates the upstream-controlled
+  // Content-Type essence. A hostile upstream can echo a registered secret
+  // through its own Content-Type header, so that essence must be redacted
+  // (not merely sanitize-truncated) before it reaches this error text.
+  // Secret is lowercase because mediaEssence() lowercases the observed
+  // essence before it ever reaches this message.
   it('an unsupported Content-Type whose essence contains a registered secret is redacted, not echoed', () => {
     const secret = 'leaked-secret-value';
     const outcome = response(200, `application/x-${secret}-blob`, new Uint8Array([0x01]));
@@ -372,10 +372,10 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     expect(text).toBe('the upstream response could not be returned safely');
   });
 
-  // Round-2 fix A (load-bearing): the OLD no-outputSchema JSON path
-  // did STRING-only redaction on the raw body text, never parsing it — so a
-  // secret present in the JSON STRUCTURE but escaped differently in its
-  // serialized form evaded both redactString and the final scanForSecret
+  // The old no-outputSchema JSON path did STRING-only redaction on the raw
+  // body text, never parsing it — so a secret present in the JSON STRUCTURE
+  // but escaped differently in its serialized form evaded both redactString
+  // and the final scanForSecret
   // (both operating on the raw text). Concrete case: a secret containing
   // '/' (present in base64 and HTTP Basic-auth creds); PHP's json_encode
   // (and other encoders) render '/' as '\/', so the raw wire body reads
@@ -432,9 +432,9 @@ describe('mapResponse — outputSchema present (validator defined)', () => {
     expect(text).toContain('application/xml');
   });
 
-  // Round-2 fix B: same upstream-controlled-essence redaction as the
-  // no-outputSchema unsupported-media-type message, for the outputSchema
-  // branch-mismatch message.
+  // Same upstream-controlled-essence redaction as the no-outputSchema
+  // unsupported-media-type message, for the outputSchema branch-mismatch
+  // message.
   it('a mismatched Content-Type essence containing a registered secret is redacted, not echoed', () => {
     const secret = 'leaked-secret-value';
     const outcome = response(200, `application/x-${secret}-blob`, '{}');

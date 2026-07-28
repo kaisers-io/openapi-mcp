@@ -63,7 +63,7 @@ describe('paramFields', () => {
 
   it('drops reserved header params (case-insensitive)', () => {
     // paramFields drops a header iff its lowercased name is in the passed set;
-    // it has no built-in set. The caller (Task 5) passes SYSTEM_HEADERS ∪ auth names.
+    // it has no built-in set. The caller passes SYSTEM_HEADERS ∪ auth names.
     const fields = okFields(
       paramFields(
         op([
@@ -77,7 +77,7 @@ describe('paramFields', () => {
     expect(fields.map((f) => f.preferred)).toEqual(['keep']);
   });
 
-  it('validates a reserved header BEFORE dropping it (owner decision, round-15)', () => {
+  it('validates a reserved header BEFORE dropping it', () => {
     // A reserved header is injected, not a tool input, but it is still fully
     // validated: a malformed/unsupported reserved-header param omits the operation
     // rather than being silently discarded. A wrong-version exclusive bound:
@@ -293,8 +293,8 @@ describe('buildLayout — body classification', () => {
   it('omits a flattened body with a malformed required array', () => {
     // The flatten path bypasses convertSchema on the root, so bodyFields must
     // validate the root `required` itself: a non-string element or a duplicate is
-    // an invalid Schema Object and omits (fail-closed, round-12), not silently
-    // filtered as objectSchema's convertSchema path would otherwise do.
+    // an invalid Schema Object and omits (fail-closed), not silently filtered
+    // as objectSchema's convertSchema path would otherwise do.
     expect(
       'unrepresentable' in
         buildLayout(
@@ -358,7 +358,7 @@ describe('buildLayout — body classification', () => {
   it('omits a body with a malformed additionalProperties (not flattened, not silently ignored)', () => {
     // additionalProperties:7 is neither absent/false nor true/schema; it must not be
     // silently ignored by flattening. isFlattenableRoot routes it to the single-body
-    // path, where convertSchema omits it (round-14).
+    // path, where convertSchema omits it.
     expect(
       'unrepresentable' in
         buildLayout(
@@ -570,11 +570,11 @@ describe('buildLayout — path template consistency', () => {
     ['/a/%2F/b'],
     ['/a/%5C/b'],
     ['/a/./b'],
-    // Final-review Fix 7 (finding 6): a static `?`/`#` baked into the path
-    // template is dangerous once decoded — joinFinalUrl (executor.ts)
-    // assembles the final URL by string concatenation of the built pathname
-    // + `?` + query, so a decoded `?`/`#` here could truncate/inject the
-    // real query string or smuggle a fragment into path text.
+    // A static `?`/`#` baked into the path template is dangerous once
+    // decoded — joinFinalUrl (executor.ts) assembles the final URL by
+    // string concatenation of the built pathname + `?` + query, so a
+    // decoded `?`/`#` here could truncate/inject the real query string or
+    // smuggle a fragment into path text.
     ['/a/%3F/b'], // Decoded: "?"
     ['/a/%23/b'], // Decoded: "#"
     ['/a/?abc/b'], // A literal "?" needs no percent-encoding to reach this check
