@@ -29,7 +29,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 //   - a 2xx response's JSON schema is unrepresentable via convertSchema.
 // A partial envelope that silently drops one of these cases would let
 // `structuredContent` violate the tool's own advertised outputSchema at
-// runtime (M5) — omitting entirely is the only sound fallback the plan makes.
+// runtime — omitting entirely is the only sound fallback.
 const isJsonContentType = (contentType: string): boolean =>
   /^application\/(?:[\w.+-]+\+)?json$/u.test(contentType);
 

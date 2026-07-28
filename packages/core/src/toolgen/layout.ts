@@ -63,10 +63,10 @@ export const paramFields = (
       return { unrepresentable: 'a parameter with an unsupported location' };
     }
     // Validate EVERY parameter — including a reserved header — BEFORE deciding to
-    // keep or drop it (owner decision, round-15): the tool boundary is fully
-    // fail-closed, so a malformed/unsupported reserved-header param omits the
-    // operation rather than being silently discarded. allowReserved/content/style
-    // and the schema conversion run first; the reserved-header drop comes after.
+    // keep or drop it: the tool boundary is fully fail-closed, so a
+    // malformed/unsupported reserved-header param omits the operation rather than
+    // being silently discarded. allowReserved/content/style and the schema
+    // conversion run first; the reserved-header drop comes after.
     if (param['allowReserved'] === true) {
       return { unrepresentable: `parameter "${name}" uses allowReserved, which is not supported` };
     }
@@ -174,7 +174,7 @@ const isFlattenableRoot = (root: unknown): root is Record<string, unknown> => {
   // `true`/schema route to the single `body` field. A MALFORMED value (e.g. `7`)
   // must ALSO leave the flatten path — otherwise it is silently ignored and an
   // operation is generated; the single-body path runs it through convertSchema,
-  // which omits it (fail-closed, round-14).
+  // which omits it (fail-closed).
   if (root['additionalProperties'] !== undefined && root['additionalProperties'] !== false) {
     return false;
   }
@@ -212,7 +212,7 @@ const bodyFields = (
     // `required` bypasses schema.ts's malformedKeyword gate. Validate it here with
     // the same rule (an array of UNIQUE strings) — otherwise required:[123] or a
     // duplicate would be silently filtered, an invalid Schema Object accepted
-    // (fail-closed, round-12 review; mirrors malformedKeyword's `required` check).
+    // (fail-closed; mirrors malformedKeyword's `required` check).
     const requiredRaw = root['required'];
     if (
       requiredRaw !== undefined &&
@@ -309,13 +309,13 @@ const pathPlaceholders = (path: string): { names: Set<string> } | { malformed: t
 // a dot-segment or smuggles a path separator: `.`/`..` (traversal), or a
 // decoded `/`/`\` (an encoded separator baked into the spec's path template,
 // which could re-emerge once the upstream origin decodes it and escape the
-// intended base path). A decoded `?` or `#` is equally dangerous (final-review
-// Fix 7, finding 6): joinFinalUrl (executor.ts) assembles the final URL by
-// STRING CONCATENATION of the built pathname + `?` + query, so a static `?`
-// baked into the path template would either truncate/inject the real query
-// string or introduce a spec-baked query the caller never asked for, and a
-// static `#` would smuggle a fragment into what should be plain path text.
-// Malformed percent-encoding fails closed too.
+// intended base path). A decoded `?` or `#` is equally dangerous: joinFinalUrl
+// (executor.ts) assembles the final URL by STRING CONCATENATION of the built
+// pathname + `?` + query, so a static `?` baked into the path template would
+// either truncate/inject the real query string or introduce a spec-baked
+// query the caller never asked for, and a static `#` would smuggle a fragment
+// into what should be plain path text. Malformed percent-encoding fails closed
+// too.
 const isDangerousStaticSegment = (segment: string): boolean => {
   let decoded: string;
   try {

@@ -25,11 +25,11 @@ export interface BuildToolsResult {
   omitted: readonly OmittedOperation[];
 }
 
-// Request headers the tool boundary never exposes as inputs (spec §6.2): the
-// auth header is injected from env at request time; hop/entity headers are
-// managed by the HTTP client; Cookie/Set-Cookie carry credentials. Lowercased
-// for case-insensitive matching. M4/M5 union operator-configured auth-header
-// names into the passed reservedHeaders.
+// Request headers the tool boundary never exposes as inputs: the auth header
+// is injected from env at request time; hop/entity headers are managed by the
+// HTTP client; Cookie/Set-Cookie carry credentials. Lowercased for
+// case-insensitive matching. Callers union additional operator-configured
+// auth-header names into the reservedHeaders set passed to buildTools.
 export const SYSTEM_HEADERS: ReadonlySet<string> = new Set([
   'authorization',
   'proxy-authorization',
@@ -63,10 +63,11 @@ export const buildTools = (
   const omitted: OmittedOperation[] = [];
   // HTTP header names are case-insensitive, and the header drop in paramFields
   // looks up `reservedHeaders.has(name.toLowerCase())`. The caller's set contents
-  // are NOT guaranteed lowercase — M4/M5 unions operator-configured auth-header
-  // names (which may be mixed-case) into this set (see SYSTEM_HEADERS above). A
-  // mixed-case entry like 'X-API-Key' would otherwise fail to match and the auth
-  // header would be exposed as a tool input. Normalize once here (fail-closed).
+  // are NOT guaranteed lowercase — a caller unions operator-configured
+  // auth-header names (which may be mixed-case) into this set (see
+  // SYSTEM_HEADERS above). A mixed-case entry like 'X-API-Key' would otherwise
+  // fail to match and the auth header would be exposed as a tool input.
+  // Normalize once here (fail-closed).
   const reservedHeaders = new Set([...opts.reservedHeaders].map((name) => name.toLowerCase()));
   for (const named of namedOperations) {
     const method = named.operation.method.toUpperCase();
