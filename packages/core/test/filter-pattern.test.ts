@@ -104,7 +104,7 @@ describe('parseFilterPattern — rejections', () => {
     }
   });
 
-  it('rejects a lowercase method — the language is case-sensitive (§3.2)', () => {
+  it('rejects a lowercase method — the language is case-sensitive', () => {
     expect(() => parseFilterPattern('get /users')).toThrowError(OpenapiMcpError);
   });
 
@@ -272,7 +272,7 @@ describe('compileGlob — wildcards (grammar rules 1, 2, 4)', () => {
     expect(match('readPets', 'readPet')).toBe(false);
   });
 
-  it('is case-sensitive (§3.2)', () => {
+  it('is case-sensitive', () => {
     expect(match('readPets', 'readpets')).toBe(false);
     expect(match('read*', 'READ_ALL')).toBe(false);
   });

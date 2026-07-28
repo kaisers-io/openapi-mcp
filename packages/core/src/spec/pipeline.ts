@@ -85,7 +85,7 @@ const enforceToolBudget = (spec: NormalizedSpec): void => {
 
 // Parse, validate, dereference, normalize, and enforce the tool budget. Every
 // cache write happens downstream of this function, so an unvalidated or
-// over-budget spec can never reach the disk (spec §4.1).
+// over-budget spec can never reach the disk.
 const processSpecText = (text: string): ProcessedSpec => {
   const parsed = parseSpecText(text);
   const validated = validateOpenApiDocument(parsed);
@@ -167,8 +167,9 @@ export const runSpecPipeline = async (
     if (read.kind === 'corrupt') {
       // FAIL CLOSED. A silent refetch here would re-enter trust-on-first-use
       // and accept whatever the remote says now, which is exactly the rug pull
-      // §6.3 exists to prevent and is reachable by anyone who can write into the
-      // cache directory. Recovery must be an explicit operator act.
+      // that fail-closed handling of a corrupt entry exists to prevent, and is
+      // reachable by anyone who can write into the cache directory. Recovery
+      // must be an explicit operator act.
       throw validationError(
         `the spec cache entry is unusable (${read.reason}); it is the accepted baseline that authorizes this spec, so it is never refetched silently — run "openapi-mcp cache clear" to reset it deliberately`,
       );
@@ -178,7 +179,7 @@ export const runSpecPipeline = async (
     }
   }
 
-  // Spec §5.4 rule 2: file specs are re-read and hash-compared on every run, so
+  // File specs are re-read and hash-compared on every run, so
   // the TTL never short-circuits them; only URL sources take the no-network path.
   const decision =
     cached === undefined || source.kind === 'file'
@@ -196,7 +197,7 @@ export const runSpecPipeline = async (
     });
   }
 
-  // The refresh attempt. §5.4's last-known-good rule wraps exactly this block:
+  // The refresh attempt. The last-known-good rule wraps exactly this block:
   // a failed fetch or a failed validation of the REFRESHED spec falls back to
   // the accepted baseline. The corrupt-entry throw above is deliberately outside
   // it, because a corrupt anchor is never a recoverable condition.
@@ -265,7 +266,7 @@ export const runSpecPipeline = async (
       // failure — or, worse, a lock conflictError (exit 5) or a
       // corrupt-existing-object validationError — be caught by the
       // stale-fallback below and reported as a SUCCESSFUL `stale` response. A
-      // failed cache write is not a failed refresh: §5.4's last-known-good rule
+      // failed cache write is not a failed refresh: the last-known-good rule
       // covers the network and the spec, not our own inability to persist.
       // Only the fetch and the validation may fall back.
       processedRefresh = processSpecText(refreshed.loaded.text);
@@ -401,7 +402,7 @@ const acceptedCacheStatus = (
 
 // Decides what a successfully fetched-and-validated spec becomes: the accepted
 // baseline (first use, unchanged content, or --trust-spec-updates), or a gated
-// candidate while the accepted baseline keeps serving (§5.4/§6.3).
+// candidate while the accepted baseline keeps serving.
 const commitRefresh = async (
   processed: ProcessedSpec,
   refreshed: Refreshed,

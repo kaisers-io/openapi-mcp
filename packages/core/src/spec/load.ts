@@ -5,7 +5,7 @@ import { sanitizeSpecText } from './sanitize.ts';
 
 // Any RFC 3986 scheme prefix, not just "://" forms — "file:/x" is a URL, not a path
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/iu;
-// Same sensitive-name deny-list as the §3.3 --header rule, applied to query names
+// Same sensitive-name deny-list as the --header rule, applied to query names
 const SENSITIVE_NAME_RE = /auth|token|secret|key|session|credential|cookie|signature/iu;
 
 export type SpecSource = { kind: 'url'; url: URL } | { kind: 'file'; path: string };
@@ -47,7 +47,7 @@ export const parseSpecSource = (raw: string, opts: { cwd: string }): SpecSource 
     }
     const sensitiveParam = findSensitiveQueryParam(url);
     if (sensitiveParam !== undefined) {
-      // Spec §5.3: query-string secrets are unsupported; never echo the value
+      // Query-string secrets are unsupported; never echo the value
       throw usageError(
         `spec URL query parameter "${sanitizeSpecText(sensitiveParam, 64)}" looks credential-bearing — query-string secrets are unsupported, use --spec-header-env`,
       );

@@ -860,7 +860,7 @@ describe('the discriminator is derived, not supplied', () => {
   });
 });
 
-describe('cache writes and secret hygiene (spec §5.3)', () => {
+describe('cache writes and secret hygiene', () => {
   it.each([
     ['a query string', 'https://api.example.com/openapi.json?token=super-secret'],
     ['a bare query marker', 'https://api.example.com/openapi.json?'],
@@ -908,7 +908,7 @@ describe('cache writes and secret hygiene (spec §5.3)', () => {
 });
 
 describe('writeCandidate', () => {
-  it('stores the candidate without touching the accepted baseline (§6.3)', async () => {
+  it('stores the candidate without touching the accepted baseline', async () => {
     const fs = await seeded();
     const acceptedBefore = metaOf(fs).acceptedContentHash;
     const { candidateContentHash } = await writeCandidate(LAYOUT, fs, candidateInput());
@@ -980,7 +980,7 @@ describe('writeCandidate', () => {
     expect(order).toEqual([objectPath(LAYOUT, hashContent(DOC_V2_TEXT)), LAYOUT.metaPath]);
   });
 
-  it('never touches the accepted object while storing a candidate (§6.3)', async () => {
+  it('never touches the accepted object while storing a candidate', async () => {
     const fs = await seeded();
     const acceptedHash = metaOf(fs).acceptedContentHash;
     const written: string[] = [];
@@ -1854,7 +1854,7 @@ describe('readCacheEntry', () => {
   });
 });
 
-describe('a corrupt baseline cannot be laundered by restarting (§6.3)', () => {
+describe('a corrupt baseline cannot be laundered by restarting', () => {
   it('refuses the entry instead of letting a changed remote become accepted', async () => {
     // Process A accepted v1 and it is the durable record of what the operator
     // approved. An attacker (or a bad disk) damages the accepted object while
@@ -1903,8 +1903,8 @@ describe('a corrupt baseline cannot be laundered by restarting (§6.3)', () => {
 // whether an entry is corrupt — a damaged ACCEPTED OBJECT slipped through
 // every write path that checked only readMetaFile, and the next writeAccepted
 // then installed the changed remote document as the new accepted baseline:
-// the entry read back as a healthy hit, which is exactly the laundering the
-// fail-closed corruption handling and §6.3 exist to forbid. Every write path
+// the entry read back as a healthy hit, which is exactly the laundering
+// fail-closed corruption handling exists to forbid. Every write path
 // now verifies the accepted object it is building on top of (or leaving
 // untouched) before proceeding, sharing the exact hash/shape/version checks
 // readCacheEntry itself uses.

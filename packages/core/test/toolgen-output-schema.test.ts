@@ -10,7 +10,7 @@ const op = (responses: Record<string, unknown>): OperationRecord => ({
   responses,
 });
 
-describe('deriveOutputSchema — the §6.6 object-envelope', () => {
+describe('deriveOutputSchema — the object-envelope', () => {
   it('builds an object-root oneOf envelope over every 2xx JSON branch', () => {
     const schema = deriveOutputSchema(
       op({

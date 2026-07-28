@@ -5,7 +5,7 @@ import type { OpenapiVersion } from './validate.ts';
 export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head'] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
-// Spec §3.2: OPTIONS and TRACE operations are never exposed in v1
+// OPTIONS and TRACE operations are never exposed in v1
 const NEVER_EXPOSED_METHODS = ['options', 'trace'] as const;
 
 const TITLE_MAX_LENGTH = 256;

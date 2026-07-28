@@ -52,7 +52,7 @@ export const dereference = (document: Record<string, unknown>): Record<string, u
     if (nodeCount + immediateChildren > SPEC_BUDGETS.maxSchemaNodes) {
       // Preflight a container's immediate allocation against the remaining
       // budget: a wide array must fail BEFORE the destination array is
-      // allocated, not after its children are individually counted (§4.1)
+      // allocated, not after its children are individually counted
       throw validationError(
         `dereferenced spec exceeds the ${SPEC_BUDGETS.maxSchemaNodes}-node budget`,
       );
@@ -72,7 +72,7 @@ export const dereference = (document: Record<string, unknown>): Record<string, u
     const ref = record['$ref'];
     if (typeof ref === 'string') {
       if (!ref.startsWith('#')) {
-        // SSRF/injection surface — spec §4 rejects external documents outright
+        // SSRF/injection surface — external documents are rejected outright
         throw validationError(
           `external $ref "${ref}" is not supported — inline external documents before serving`,
         );

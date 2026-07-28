@@ -111,7 +111,7 @@ describe('buildTools', () => {
   });
 });
 
-describe('buildTools — §6.4 wire schema + sanitization', () => {
+describe('buildTools — wire schema + sanitization', () => {
   it('propagates a body-field description into the wire schema', () => {
     const { tools } = buildTools(
       [

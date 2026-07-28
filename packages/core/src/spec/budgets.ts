@@ -1,4 +1,4 @@
-// Spec §4.1 resource budgets for untrusted spec input. All violations are hard
+// Resource budgets for untrusted spec input. All violations are hard
 // validation errors raised before anything is cached or emitted.
 export const SPEC_BUDGETS = {
   fetchTimeoutMs: 30_000,

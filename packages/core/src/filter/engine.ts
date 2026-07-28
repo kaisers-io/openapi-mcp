@@ -9,7 +9,7 @@ import {
   globMatches,
 } from './pattern.ts';
 
-// Spec §3.2 rule 3: with no --allow, only these methods are exposed
+// With no --allow, only these methods are exposed
 const READ_ONLY_METHODS = new Set(['get', 'head']);
 
 // Suggestions are advisory: a pattern or candidate longer than this is skipped
@@ -120,10 +120,10 @@ export const closestMatch = (
   if (raw === '' || raw.length > SUGGESTION_MAX_LENGTH) {
     return undefined;
   }
-  // Admission bound: half the typed pattern, floored at 2. Spec §8's own worked
-  // example needs it this loose — "readPets" -> "readPetById" is distance 4 over
-  // 8 characters, so a tighter proportion yields no suggestion in the
-  // documented case. The floor keeps short patterns ("gt" -> "get") suggestible.
+  // Admission bound: half the typed pattern, floored at 2. This ratio needs to
+  // be this loose to admit "readPets" -> "readPetById", which is distance 4
+  // over 8 characters — a tighter proportion would yield no suggestion for
+  // that pair. The floor keeps short patterns ("gt" -> "get") suggestible.
   const threshold = Math.max(MIN_SUGGESTION_DISTANCE, Math.ceil(raw.length / 2));
   let best: string | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
@@ -143,10 +143,10 @@ export const closestMatch = (
     // edits (4/12 = 0.333) — both admitted, and a ratio-alone rule would
     // return the FARTHER one.
     //
-    // Distance-first still produces every documented outcome, because §8's
-    // own example is an equal-distance tie that the ratio resolves: "readPets"
-    // is 4 edits from both "listPets" (4/8) and "readPetById" (4/11), so the
-    // ratio picks "readPetById" exactly as the spec documents.
+    // Distance-first still produces the correct outcome here too, because this
+    // is an equal-distance tie that the ratio resolves: "readPets" is 4 edits
+    // from both "listPets" (4/8) and "readPetById" (4/11), so the ratio picks
+    // "readPetById".
     const ratio = distance / Math.max(raw.length, candidate.length);
     if (distance < bestDistance || (distance === bestDistance && ratio < bestRatio)) {
       best = candidate;
@@ -228,7 +228,7 @@ export const applyFilters = (
     // Rule 3: read-only default
     return READ_ONLY_METHODS.has(operation.method);
   });
-  // Spec §8: a pattern is dead when it matches zero operations in the ENTIRE
+  // A pattern is dead when it matches zero operations in the ENTIRE
   // normalized inventory, evaluated before exposure. Deliberately not "zero
   // exposed operations" — a deny pattern that removes everything an allow
   // pattern selected is doing its job, not misspelled, and a pattern naming a

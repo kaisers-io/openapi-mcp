@@ -32,7 +32,7 @@ const URL_DISPLAY_SOURCE_RE = /^https?:\/\//iu;
 // typed as a validation error (exit 3) rather than surfacing as an unexpected
 // exit 1.
 //
-// Spec §5.3: credentials, headers, and raw URLs with query strings are never
+// Credentials, headers, and raw URLs with query strings are never
 // cached. A URL display source must be exactly origin + path, which also rules
 // out a fragment and userinfo (URL.origin excludes both).
 const assertRedactedDisplaySource = (displaySource: string): void => {
@@ -531,9 +531,9 @@ const verifyAcceptedObject = (
 // Without this check, every write path would decide whether an entry is
 // corrupt purely from readMetaFile — i.e. from meta.json alone — so a write
 // could build on top of, or silently replace, an accepted object whose BYTES
-// had been damaged or tampered with. That is exactly the laundering §6.3
-// forbids: "restart is not approval" only holds if a write cannot quietly
-// paper over damage either. Concretely, without this, a damaged accepted
+// had been damaged or tampered with. That is exactly the laundering the
+// "restart is not approval" rule forbids: it only holds if a write cannot
+// quietly paper over damage either. Concretely, without this, a damaged accepted
 // object would not merely fail to be rejected: the next writeAccepted would
 // install the changed document as the new accepted baseline, and the entry
 // would then read back as a healthy hit.
@@ -678,7 +678,7 @@ const writeCandidateImpl = async (
     // still intact before recording a candidate beside it
     await assertAcceptedObjectIntact(layout, fs, existing.meta);
     // The accepted half is copied through untouched: a candidate is stored,
-    // never activated (§6.3), so meta.title/specVersion keep describing what is
+    // never activated, so meta.title/specVersion keep describing what is
     // actually served. The validators recorded are the ones returned WITH the
     // candidate — they describe the most recently fetched representation,
     // which is this one. Carrying the accepted entry's stale validators
@@ -943,7 +943,7 @@ const promotedOpenapiVersion = (
   );
 };
 
-// Promotion moves the trust baseline (§6.3), so it runs inside the namespace
+// Promotion moves the trust baseline, so it runs inside the namespace
 // lock: the expectedHash comparison and the accepted switch happen without a
 // concurrent refresh interleaving between them, which is what makes --hash a
 // real compare-and-swap rather than an advisory check.

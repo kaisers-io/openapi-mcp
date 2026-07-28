@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SPEC_BUDGETS } from '../src/index.ts';
 
 describe('SPEC_BUDGETS', () => {
-  it('pins the spec §4.1 budget values', () => {
+  it('pins the spec budget values', () => {
     expect(SPEC_BUDGETS).toEqual({
       fetchTimeoutMs: 30_000,
       maxSpecBytes: 20 * 1024 * 1024,

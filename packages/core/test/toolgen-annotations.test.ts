@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deriveAnnotations } from '../src/index.ts';
 
-describe('deriveAnnotations — the §6.5 HTTP-method heuristic', () => {
+describe('deriveAnnotations — the HTTP-method heuristic', () => {
   it('marks GET/HEAD read-only and open-world, omitting idempotentHint and destructiveHint', () => {
     for (const method of ['get', 'head'] as const) {
       expect(deriveAnnotations(method)).toEqual({ readOnlyHint: true, openWorldHint: true });

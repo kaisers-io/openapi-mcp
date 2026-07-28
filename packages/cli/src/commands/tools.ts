@@ -36,7 +36,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
         const result = await runSpecPipeline(args.source, args.options, args.deps);
         const deadMessages = result.deadPatterns.map((dead) => deadPatternMessage(dead));
         if (cmdOpts.strictFilters === true && deadMessages.length > 0) {
-          // Spec §8 mandates exit 3 for dead patterns under --strict-filters
+          // Dead patterns under --strict-filters must exit 3
           throw validationError(deadMessages.join('\n'));
         }
         const built = buildTools(result.namedOperations, {

@@ -27,7 +27,7 @@ const TAG_PREFIX = 'tag:';
 // Derived from HTTP_METHODS rather than typed as string: adding or removing an
 // exposable method in normalize.ts becomes a compile error here, not drift.
 // HTTP_METHODS already excludes OPTIONS and TRACE, which are never exposed in
-// v1 (spec §3.2), so those spellings are rejected for free.
+// v1, so those spellings are rejected for free.
 export type FilterMethod = Uppercase<HttpMethod>;
 
 // The compiled programme travels with the pattern, so a pattern is compiled

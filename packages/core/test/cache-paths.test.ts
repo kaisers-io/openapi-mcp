@@ -150,7 +150,7 @@ describe('cacheNamespace', () => {
     );
   });
 
-  it('binds the namespace to both source and key (spec §5.3)', () => {
+  it('binds the namespace to both source and key', () => {
     // Reusing --cache-key prod across two different APIs must never collide
     expect(cacheNamespace('https://a.example/s.json', 'prod')).not.toBe(
       cacheNamespace('https://b.example/s.json', 'prod'),
@@ -278,7 +278,7 @@ describe('resolveCachePolicy', () => {
   });
 
   it('resolves authenticated + --trust-spec-updates + no key to a NON-PERSISTENT bypass', () => {
-    // Design §12 records this combination as "non-persistent": a source-only
+    // This combination is "non-persistent": a source-only
     // namespace would be shared by two hosts using different credentials
     const policy = resolveCachePolicy({
       ...base,
@@ -304,7 +304,7 @@ describe('resolveCachePolicy', () => {
     ).toBe('persistent');
   });
 
-  it('rejects an authenticated source with neither option, naming both (spec §5.3)', () => {
+  it('rejects an authenticated source with neither option, naming both', () => {
     try {
       resolveCachePolicy({ ...base, authenticated: true });
       expect.unreachable('expected a usage error');

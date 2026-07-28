@@ -4,8 +4,7 @@ import { validationError } from '../errors.ts';
 // Address validation for remote-controlled redirect targets. The initial
 // --spec URL is operator intent and is not checked here. This is
 // post-resolution validation; the DNS-pinning dispatcher in
-// pinned-dispatcher.ts closes the remaining resolve-vs-connect TOCTOU window
-// (§7.4).
+// pinned-dispatcher.ts closes the remaining resolve-vs-connect TOCTOU window.
 //
 // classifyAddress fails closed on the full set of SSRF-relevant IANA
 // special-purpose ranges (IANA "IPv4 Special-Purpose Address Registry" and
@@ -318,7 +317,7 @@ export const assertAllowedRedirectTarget = async (
   let addresses: readonly string[];
   try {
     // Bound to the caller's whole-chain deadline: a hanging resolver must not
-    // outlive the §4.1 fetch timeout budget
+    // outlive the fetch timeout budget
     addresses = await lookup(hostname, signal);
   } catch (err) {
     throw validationError(`cannot resolve redirect target "${lower}": ${describeCause(err)}`);
@@ -326,7 +325,7 @@ export const assertAllowedRedirectTarget = async (
   if (addresses.length === 0) {
     throw validationError(`redirect target "${lower}" did not resolve to any address`);
   }
-  // Post-resolution validation of EVERY answer (spec §7.4). The remaining
+  // Post-resolution validation of EVERY answer. The remaining
   // resolve-vs-connect TOCTOU window is closed by the DNS-pinning dispatcher
   // in pinned-dispatcher.ts.
   for (const address of addresses) {

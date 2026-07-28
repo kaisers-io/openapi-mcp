@@ -10,8 +10,8 @@ export const FRAME_MAX_LINES = 40;
 // the terminal; a small-but-positive budget is honoured as-is. The
 // `current !== ''` guard in chunkByCells is what actually prevents a
 // zero-width chunk. On a terminal narrower than the gutter plus one atom, a
-// guttered physical line can still exceed the viewport — the design's §7
-// pathologically-narrow residual, accepted.
+// guttered physical line can still exceed the viewport — a pathologically-narrow
+// residual, accepted.
 export const FRAME_MIN_CONTENT_WIDTH = 8;
 
 export interface GutterFrameOptions {

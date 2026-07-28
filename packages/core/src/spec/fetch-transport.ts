@@ -17,7 +17,7 @@ export type UndiciResponse = Awaited<ReturnType<UndiciFetch>>;
 
 export const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-// Redacted display form (spec §5.3): origin + path, query string dropped
+// Redacted display form: origin + path, query string dropped
 export const displaySource = (url: URL): string => `${url.origin}${url.pathname}`;
 
 // URL.hostname keeps brackets around an IPv6 literal; strip them for isIP()
@@ -38,7 +38,7 @@ export const validateHopUrl = (url: URL): void => {
   }
   const sensitiveParam = findSensitiveQueryParam(url);
   if (sensitiveParam !== undefined) {
-    // Spec §5.3's sensitive-name deny-list applies to every spec URL,
+    // The sensitive-name deny-list applies to every spec URL,
     // including redirect targets. The decoded name is remote-controlled:
     // sanitize the display copy.
     throw validationError(

@@ -96,17 +96,17 @@ describe('matchesOperation', () => {
 });
 
 describe('closestMatch', () => {
-  it('reproduces the suggestion documented in spec §8', () => {
-    // Explicit candidate list rather than the fixture: §8's example only holds
+  it('reproduces the worked "readPets" -> "readPetById" suggestion example', () => {
+    // Explicit candidate list rather than the fixture: this example only holds
     // when no nearer candidate exists, and stating it here keeps that visible
     expect(closestMatch('readPets', ['listPets', 'readPetById', 'deletePet'])).toBe('readPetById');
   });
 
-  it('breaks an equal-distance tie by relative distance — this is what §8 turns on', () => {
+  it('breaks an equal-distance tie by relative distance', () => {
     // "readPets" is 4 edits from BOTH "listPets" (4/8) and "readPetById"
     // (4/11). The distances tie, so the ratio decides, and it picks the longer,
-    // more-shared candidate the spec documents. Without the tiebreak this would
-    // return whichever came first and could contradict §8 — hence both orders.
+    // more-shared candidate. Without the tiebreak this would return whichever
+    // came first and could disagree between runs — hence both orders.
     expect(closestMatch('readPets', ['listPets', 'readPetById'])).toBe('readPetById');
     expect(closestMatch('readPets', ['readPetById', 'listPets'])).toBe('readPetById');
   });
@@ -167,7 +167,7 @@ describe('closestMatch', () => {
   });
 });
 
-describe('applyFilters — precedence (spec §3.2)', () => {
+describe('applyFilters — precedence', () => {
   it('rule 3: with no allow, exposes only GET and HEAD', () => {
     const decision = applyFilters(named(fixture), [], []);
     expect(exposedIds(decision)).toEqual(['listPets', 'readPetById', 'headPets']);
@@ -223,11 +223,11 @@ describe('applyFilters — precedence (spec §3.2)', () => {
   });
 });
 
-describe('applyFilters — dead patterns (spec §8)', () => {
+describe('applyFilters — dead patterns', () => {
   it('reports an allow pattern that matches nothing, flagged and with a suggestion', () => {
     // "headPets" is 1 edit from "readPets" and "readPetById" is 4: the nearer
-    // candidate wins, and that is correct even though §8 uses the other one
-    // against a candidate list that does not contain "headPets"
+    // candidate wins, and that is correct even though the worked example uses
+    // the other one against a candidate list that does not contain "headPets"
     const decision = applyFilters(named(fixture), patterns('readPets'), []);
     expect(decision.deadPatterns).toEqual([
       { raw: 'readPets', flag: 'allow', suggestion: 'headPets' },
@@ -270,8 +270,9 @@ describe('applyFilters — dead patterns (spec §8)', () => {
   });
 
   it('measures deadness against the whole inventory, not the exposed set', () => {
-    // §8 counts patterns matching zero operations in the spec: a deny that
-    // removes everything an allow selected is doing its job, not misspelled
+    // Deadness is counted against patterns matching zero operations in the
+    // spec: a deny that removes everything an allow selected is doing its job,
+    // not misspelled
     const decision = applyFilters(named(fixture), patterns('deletePet'), patterns('deletePet'));
     expect(decision.deadPatterns).toEqual([]);
   });

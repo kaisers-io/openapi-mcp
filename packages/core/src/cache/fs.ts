@@ -1,9 +1,9 @@
 // The cache's only contact with the filesystem. Core depends on this interface;
 // the single real implementation lives in the CLI's realContext() so that
-// realContext stays the only place touching node:fs (spec §9).
+// realContext stays the only place touching node:fs.
 export interface CacheFs {
   // Creates the directory and every missing parent at 0700, repairing the mode
-  // on a directory that already exists (spec §5.3)
+  // on a directory that already exists
   mkdirSecure: (path: string) => Promise<void>;
   // Writes at 0600 via a temp file + rename, so the replace is atomic and the
   // mode is enforced even when the target already exists

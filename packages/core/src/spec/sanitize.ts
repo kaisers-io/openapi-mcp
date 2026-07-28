@@ -1,4 +1,4 @@
-// Spec text is untrusted input that reaches model context (spec §6.4): strip
+// Spec text is untrusted input that reaches model context: strip
 // C0/C1 controls (except tab/newline, collapsed below) and Unicode bidi controls.
 const CONTROL_AND_BIDI_RE =
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;

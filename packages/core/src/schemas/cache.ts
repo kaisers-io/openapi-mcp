@@ -87,7 +87,7 @@ const zCandidate = z.strictObject({
 // mode this schema exists to prevent by failing closed instead.
 export const zCacheMeta: z.ZodType<CacheMeta> = z.strictObject({
   schemaVersion: z.literal(CACHE_META_SCHEMA_VERSION),
-  // Always the redacted origin + path form (spec §5.3); enforced again on write
+  // Always the redacted origin + path form; enforced again on write
   displaySource: z.string().min(1).max(DISPLAY_SOURCE_MAX),
   cacheKey: z.string().regex(CACHE_KEY_RE).optional(),
   etag: zValidator.optional(),

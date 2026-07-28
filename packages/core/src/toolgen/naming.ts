@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { validationError } from '../errors.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 
-// Spec §6.1: 64 is a deliberate compatibility cap (MCP allows up to 128)
+// 64 is a deliberate compatibility cap (MCP allows up to 128)
 export const TOOL_NAME_MAX_LENGTH = 64;
 
 const INVALID_CHARS_RE = /[^A-Za-z0-9_.-]/gu;
@@ -52,7 +52,7 @@ export const assignToolNames = (
     return { operation, base, toolName: base };
   });
   // Collisions get a stable content-hash suffix derived from METHOD + path, so
-  // names never change when the spec is reordered (spec §6.1). The second,
+  // names never change when the spec is reordered. The second,
   // longer pass covers operationIds crafted to mimic a suffixed name.
   for (const suffixLength of [8, 16]) {
     const counts = collisionCounts(entries);

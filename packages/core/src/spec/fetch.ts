@@ -97,7 +97,7 @@ const fetchChain = async (
   // the synchronous IP-literal guard below (hop 0 is `trusted`, so a
   // private/loopback literal is still allowed, but cloud-metadata is denied
   // even for an operator-supplied --spec URL — a deliberate hardening, not a
-  // regression: see the design §7.4 note).
+  // regression).
   let url = initialUrl;
   validateHopUrl(url);
   // MONOTONIC (matches the API path's monotonic stripping): once the chain
@@ -118,12 +118,12 @@ const fetchChain = async (
     if (syncViolation !== undefined) {
       throw validationError(`spec URL ${displaySource(url)} rejected: ${syncViolation}`);
     }
-    // Content-negotiation default first: configured headers override it (§3.3 precedence)
+    // Content-negotiation default first: configured headers override it
     const headers = new Headers({
       accept: 'application/json, application/yaml;q=0.9, text/yaml;q=0.8, */*;q=0.1',
     });
     if (!crossed && url.origin === originalOrigin) {
-      // Auth headers are never forwarded to a foreign origin (spec §5.1), and
+      // Auth headers are never forwarded to a foreign origin, and
       // neither are cache validators: they describe the original origin's copy
       for (const header of opts.headers) {
         headers.set(header.name, header.value);
@@ -266,7 +266,7 @@ export const fetchSpec = async (
   return result.loaded;
 };
 
-// Spec §5.4: revalidation of an expired baseline. Validators are sent only when
+// Revalidation of an expired baseline. Validators are sent only when
 // the cached entry actually recorded them; with neither this is a plain GET, and
 // a 304 answer is then treated as "unchanged" — the fail-safe direction, since
 // the caller keeps serving its accepted baseline.

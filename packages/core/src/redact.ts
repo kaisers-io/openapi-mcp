@@ -3,7 +3,7 @@ import { validationError } from './errors.ts';
 
 const MAX_SECRETS = 64; // Bound construction cost
 const MAX_SECRET_LENGTH = 8192; // Bound per-needle scan cost
-const MIN_VARIANT_LENGTH = 8; // Design §7.5: encoding variants only for 8+ char secrets
+const MIN_VARIANT_LENGTH = 8; // Encoding variants only for 8+ char secrets
 const REDACTED = '[redacted]';
 
 // The literal needles for one secret: the raw value, plus (for 8+ chars) the

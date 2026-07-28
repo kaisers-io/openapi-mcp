@@ -33,14 +33,14 @@ export interface SnapshotTool {
   readonly generated?: GeneratedTool;
 }
 
-// Read-only, package-authored status content (§6.7). specTitle/specVersion
+// Read-only, package-authored status content. specTitle/specVersion
 // already passed through normalizeSpec's own sanitizeSpecText call;
 // displaySource and every omittedReasons path/reason are explicitly
 // re-sanitized+capped by buildSnapshot below — see snapshot.ts's
 // `sanitizeOmission`/the displaySource line — because both can carry RAW
 // spec-derived text (a path segment, an unrepresentable-parameter name in a
 // `reason` string, or a local absolute file path) that normalizeSpec never
-// touches (§6.4 untrusted-text rule).
+// touches.
 export interface MetaSummary {
   readonly specTitle: string;
   readonly specVersion: string;

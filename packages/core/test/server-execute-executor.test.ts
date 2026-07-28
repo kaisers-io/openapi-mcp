@@ -354,8 +354,8 @@ describe('createExecutor — header assembly', () => {
 
   // The assembleHeaders function writes content/tool-arg headers FIRST, then --header,
   // then --header-env LAST, so a same-name secret header always wins over a
-  // static one, which always wins over a tool-argument one — design §4's
-  // precedence content < tool < --header < --header-env. Unreachable
+  // static one, which always wins over a tool-argument one — the precedence is
+  // content < tool < --header < --header-env. Unreachable
   // through the real pipeline (the reserved-name gate above always rejects
   // a tool-arg name colliding with an operator-configured header before
   // assembleHeaders ever runs), so this test reaches the fallback path the

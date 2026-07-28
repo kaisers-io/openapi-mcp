@@ -11,8 +11,8 @@ export const CACHE_META_MAX_BYTES = 65_536;
 
 // The budget for the DEREFERENCED representation the cache persists,
 // deliberately distinct from SPEC_BUDGETS.maxSpecBytes, which bounds the SOURCE
-// download. Dereferencing expands a document, so a spec can pass every §4.1
-// budget and still serialize past the source byte budget; reading with that
+// download. Dereferencing expands a document, so a spec can pass every one of
+// those budgets and still serialize past the source byte budget; reading with that
 // smaller source budget would then classify a validly-written entry as corrupt. Write and read use
 // this same constant so the two paths can never disagree.
 export const CACHE_MAX_PERSISTED_BYTES = 67_108_864;
@@ -77,7 +77,7 @@ export const canonicalSourceOf = (source: SpecSource): string =>
 const NAMESPACE_SEPARATOR = '\u0000';
 
 export const cacheNamespace = (canonicalSource: string, cacheKey?: string): string => {
-  // Spec §5.3: with a key the namespace is bound to BOTH source and label, so
+  // With a key the namespace is bound to BOTH source and label, so
   // reusing "--cache-key prod" across two APIs cannot collide. The NUL
   // separator cannot occur in a canonical source — URL.href percent-encodes it
   // and a POSIX path cannot contain it — so the two encodings are unambiguous.
@@ -127,8 +127,8 @@ export type CachePolicy =
   | { kind: 'persistent'; layout: CacheLayout; cacheKey?: string | undefined };
 
 // The authenticated-source rule is resolved to a value, not asserted.
-// Design §12 calls --trust-spec-updates the "non-persistent" option, and the
-// reason is structural: without a key the namespace would be source-only, so
+// --trust-spec-updates is the "non-persistent" option, and the reason is
+// structural: without a key the namespace would be source-only, so
 // two hosts pointing at one URL with different credentials or tenants would
 // share a single entry. Bypass means the cache is never touched at all.
 export const resolveCachePolicy = (opts: {
@@ -145,7 +145,7 @@ export const resolveCachePolicy = (opts: {
   // be available, silently skipping the credential-separation check.
   if (opts.authenticated && opts.cacheKey === undefined) {
     if (!opts.trustSpecUpdates) {
-      // Spec §5.3: without a durable baseline every restart would silently
+      // Without a durable baseline every restart would silently
       // re-accept a changed spec, so the operator must choose explicitly
       throw usageError(
         'an authenticated spec source (--spec-header-env) requires an explicit cache decision:' +

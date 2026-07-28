@@ -80,7 +80,7 @@ describe('runSpecPipeline — file sources', () => {
     expect(result.spec.title).toBe('Petstore');
     expect(result.spec.openapiVersion).toBe('3.0');
     expect(result.spec.omitted).toEqual([]);
-    // The read-only default (spec §3.2 rule 3) drops the POST unless allowed
+    // The read-only default drops the POST unless allowed
     expect(result.namedOperations.map((named) => named.toolName)).toEqual([
       'listPets',
       'get_pets_by_petid',
@@ -170,7 +170,7 @@ describe('runSpecPipeline — URL sources', () => {
     );
     expect(result.spec.title).toBe('Petstore');
     expect(result.namedOperations).toHaveLength(3);
-    // Benign query strings are allowed but dropped from the display source (§5.3)
+    // Benign query strings are allowed but dropped from the display source
     expect(result.displaySource).toBe('https://api.example.com/openapi.json');
   });
 
@@ -377,7 +377,7 @@ describe('runSpecPipeline — cache', () => {
     expect(meta.sourceContentHash).toBe(hashContent(remoteSpec('Remote')));
     expect(meta.acceptedContentHash).toMatch(/^[0-9a-f]{64}$/u);
     expect(meta.candidate).toBeUndefined();
-    // The redacted display source is what lands on disk (spec §5.3)
+    // The redacted display source is what lands on disk
     expect(meta.displaySource).toBe(specUrl);
     expect(meta.title).toBe('Remote');
     // The discriminator is persisted, because a hit will not revalidate
@@ -476,7 +476,7 @@ describe('runSpecPipeline — cache', () => {
       { ...cachedOpts, nowMs: 3_600_001 },
       { ...fileDeps, fetcher, cacheFs },
     );
-    // Spec §5.4: the changed spec waits as a candidate; the accepted baseline serves
+    // The changed spec waits as a candidate; the accepted baseline serves
     expect(second.cacheStatus).toBe('candidate');
     expect(second.namedOperations.map((named) => named.toolName)).toEqual(['listThings']);
     expect(second.warnings.join('\n')).toContain('cache promote');
@@ -696,7 +696,7 @@ describe('runSpecPipeline — cache', () => {
     expect(metaOf(cacheFs).candidate).toBeUndefined();
   });
 
-  it('serves the last known good baseline with a warning when a refresh fails (§5.4)', async () => {
+  it('serves the last known good baseline with a warning when a refresh fails', async () => {
     const cacheFs = memoryCacheFs();
     let calls = 0;
     const fetcher = (() => {
@@ -810,7 +810,7 @@ describe('runSpecPipeline — cache', () => {
     // anyway would be an authorization reset: with the namespace unreachable,
     // nothing consults the durable accepted baseline, so the run behaves
     // exactly like trust-on-first-use. An attacker who can make one mkdir fail
-    // would get the rug pull §6.3 exists to prevent.
+    // would get exactly the rug pull this fail-closed behavior exists to prevent.
     const failing: CacheFs = {
       ...memoryCacheFs(),
       mkdirSecure: () => Promise.reject(new Error('EACCES: permission denied')),
@@ -887,7 +887,7 @@ describe('runSpecPipeline — cache', () => {
     expect(cacheFs.calls).toEqual([]);
   });
 
-  it('re-reads a file source on every run and reports fresh when unchanged (§5.4)', async () => {
+  it('re-reads a file source on every run and reports fresh when unchanged', async () => {
     const cacheFs = memoryCacheFs();
     const opts = { ...cachedOpts, cwd: fixturesDir };
     const first = await runSpecPipeline('petstore-3.0.json', opts, { ...fileDeps, cacheFs });
@@ -897,7 +897,7 @@ describe('runSpecPipeline — cache', () => {
       { ...opts, nowMs: 999_999_999 },
       { ...fileDeps, cacheFs },
     );
-    // Spec §5.4 rule 2: file specs are re-read and hash-compared on every tick,
+    // File specs are re-read and hash-compared on every tick,
     // so the TTL never short-circuits them — an unchanged file still reports fresh
     expect(second.cacheStatus).toBe('revalidated');
   });
@@ -935,11 +935,11 @@ describe('runSpecPipeline — cache', () => {
     );
     expect(result.cacheStatus).toBe('accepted-first');
     expect(metaOf(cacheFs).cacheKey).toBe('prod');
-    // No secret material derived the namespace or reached the disk (§5.3)
+    // No secret material derived the namespace or reached the disk
     expect([...cacheFs.files.values()].join('\n')).not.toContain('Bearer x');
   });
 
-  it('rejects an authenticated source with no cache decision (spec §5.3)', async () => {
+  it('rejects an authenticated source with no cache decision', async () => {
     const { fetcher } = countingFetcher(remoteSpec('Remote'));
     const cacheFs = memoryCacheFs();
     await expect(
@@ -1031,7 +1031,7 @@ describe('runSpecPipeline — filters', () => {
       fetcher: (() => Promise.resolve(new Response(big))) as unknown as SpecFetcher,
     };
     // Every operation is a POST the read-only default would drop: the budget
-    // still fires, because filters must never smuggle an oversized spec past §4.1
+    // still fires, because filters must never smuggle an oversized spec past the budget
     await expect(
       runSpecPipeline('https://api.example.com/big.json', baseOpts, deps),
     ).rejects.toMatchObject({ code: 'validation' });
