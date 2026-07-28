@@ -3,17 +3,15 @@ import { HTTP_METHODS, type HttpMethod } from '../spec/normalize.ts';
 
 // Patterns are operator input from argv, not spec content, but they are still
 // bounded: the cap keeps the token programme short and the Levenshtein
-// suggestion in Task 7 cheap
+// suggestion in engine.ts's closestMatch cheap
 export const FILTER_PATTERN_MAX_LENGTH = 256;
 
-// A SANITY bound, not a safety property. Round-8 cleanup: this comment used to
-// describe a "backtracking bound" and quote the RegExp cost curve (~1ms at 10
-// wildcards, ~19s at 24), which contradicted D15 — that engine is gone. The
-// matcher is a non-backtracking state-set simulation whose cost is strictly
-// O(tokens x length), so a wildcard count cannot produce exponential blowup
-// and this cap is not what makes matching safe. D15's two mechanisms are: the
-// Thompson simulation (no input-dependent blowup) and the aggregate step
-// budget (FILTER_MAX_MATCH_STEPS). The cap survives only because no real
+// A SANITY bound, not a safety property. The matcher is a non-backtracking
+// state-set simulation whose cost is strictly O(tokens x length), so a
+// wildcard count cannot produce exponential blowup, and this cap is not what
+// makes matching safe. Safety comes from two mechanisms: the non-backtracking
+// Thompson simulation itself (no input-dependent blowup) and the aggregate
+// step budget (FILTER_MAX_MATCH_STEPS). The cap survives only because no real
 // filter pattern comes close to 10 and rejecting absurd input early is cheap.
 // Enforced inside compileGlob so every caller inherits it, not only argv.
 export const FILTER_PATTERN_MAX_WILDCARDS = 10;
@@ -32,8 +30,8 @@ const TAG_PREFIX = 'tag:';
 // v1 (spec §3.2), so those spellings are rejected for free.
 export type FilterMethod = Uppercase<HttpMethod>;
 
-// D15: the compiled programme travels with the pattern, so a pattern is
-// compiled exactly once at parse time rather than once per candidate string
+// The compiled programme travels with the pattern, so a pattern is compiled
+// exactly once at parse time rather than once per candidate string
 export type FilterPattern =
   | { kind: 'operationId'; glob: string; raw: string; compiled: CompiledGlob }
   | {
@@ -52,7 +50,7 @@ const EXPOSABLE_METHOD_SET = new Set<string>(EXPOSABLE_METHODS);
 
 const isFilterMethod = (value: string): value is FilterMethod => EXPOSABLE_METHOD_SET.has(value);
 
-// D15: the token programme. A pattern lowers to literal code points plus two
+// The token programme. A pattern lowers to literal code points plus two
 // wildcard kinds, and matching is a state-set simulation over it — there is no
 // RegExp on the production path at all. The compiled RegExp survives only in the
 // test suite, as the oracle the differential fuzz test compares against.
@@ -75,13 +73,13 @@ export const compileGlob = (glob: string): CompiledGlob => {
   if (glob.length > FILTER_PATTERN_MAX_LENGTH) {
     throw usageError(`a filter pattern must be at most ${FILTER_PATTERN_MAX_LENGTH} characters`);
   }
-  // Round-3 finding 8: tokenize by CODE POINT, not by UTF-16 code unit. The
-  // round-3 draft indexed `glob[index]` (code units) while the matcher iterated
-  // `for...of` (code points), so a literal astral character compiled to two
-  // surrogate tokens that no single code point could ever equal — probed: six
-  // of eight astral cases disagreed with the /u oracle, including the trivial
-  // `compileGlob(EMOJI)` against that same emoji. Code points are also the unit
-  // the /u oracle itself works in, so this is what makes the two equivalent.
+  // Tokenize by CODE POINT, not by UTF-16 code unit: indexing `glob[index]`
+  // would walk code units while the matcher iterates `for...of` (code
+  // points), so a literal astral character would compile to two surrogate
+  // tokens that no single code point could ever equal. Code points are also
+  // the unit the /u-flag RegExp oracle (used as the differential-fuzz
+  // reference) works in, so this is what keeps the two representations
+  // equivalent.
   const points = [...glob];
   const tokens: GlobToken[] = [];
   let index = 0;
@@ -141,22 +139,21 @@ export const compileGlob = (glob: string): CompiledGlob => {
   };
 };
 
-// D15 mechanism 2. A non-backtracking matcher removes the exponential class but
-// NOT the aggregate: measured at the maximum admitted dimensions, a short
-// pathological pattern still cost 22.5 s against long values, because
-// patterns x operations x tokens x length is large even when every factor is
-// polynomial. One budget covers a whole applyFilters run. The count is a pure
-// function of the inputs — verified identical across repeated runs — so tests
-// assert step counts rather than wall-clock time.
+// A non-backtracking matcher removes the exponential class but NOT the
+// aggregate: at the maximum admitted dimensions, a short pathological pattern
+// still costs 22.5 s against long values, because patterns x operations x
+// tokens x length is large even when every factor is polynomial. One budget
+// covers a whole applyFilters run. The step count is a pure function of the
+// inputs, so it is a deterministic proxy for cost where wall-clock time would
+// not be.
 //
-// Round-4 finding 4 recalibration. Charging the previously-unaccounted work
-// (code-point materialization, affix comparisons, state-array initialization)
-// raised a realistic maximal configuration from a reported 13.0M to a measured
-// 33.1M — which left only 1.5x headroom under the old 50M cap, i.e. the budget
-// would have fired on legitimate use. Raised so the same configuration sits at
-// 16.5% with 6.0x headroom, at the cost of the pathological case running ~1.4 s
-// before being cut off instead of ~0.4 s. That trade is deliberate: refusing a
-// legitimate filter set is a worse failure than a slow refusal of a hostile one.
+// The step counter charges every input-dependent cost (code-point
+// materialization, affix comparisons, state-array initialization). At the
+// admitted maxima (patterns x operations x tokens x length), a realistic
+// maximal configuration measures 33.1M steps, so this cap gives it 6.0x
+// headroom while a pathological pattern still runs for about 1.4 s before
+// being cut off. That trade is deliberate: refusing a legitimate filter set
+// is a worse failure than a slow refusal of a hostile one.
 export const FILTER_MAX_MATCH_STEPS = 200_000_000;
 
 export interface MatchBudget {
@@ -167,10 +164,10 @@ export const createMatchBudget = (limit: number = FILTER_MAX_MATCH_STEPS): Match
   remaining: limit,
 });
 
-// Final review, high-severity finding 1: closestMatch's suggestion
-// phase (engine.ts) used to run unbudgeted, escaping the D15 aggregate this
-// message is part of. Shared here, rather than duplicated in engine.ts, so the
-// two exhaustion paths cannot drift apart.
+// Shared by globMatches below and closestMatch's boundedDistance in
+// engine.ts — both spend against the same aggregate step budget, so this
+// message covers either exhaustion path and the two cannot drift apart by
+// each defining their own.
 export const FILTER_WORK_BUDGET_EXCEEDED_MESSAGE =
   'filter matching exceeded its work budget — reduce the number of --allow/--deny patterns, the number of wildcards in them, or the size of the spec';
 
@@ -190,11 +187,11 @@ export const globMatches = (
       throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
     }
   };
-  // Round-4 finding 4: the counter charges EVERY input-dependent cost, in
-  // input order. The round-3 draft spent a flat 1 before materializing the
-  // value's code points, running startsWith/endsWith, and allocating two
-  // Int32Arrays — all of which scale with value or pattern length, so the
-  // counter still did not describe the work performed.
+  // The counter charges EVERY input-dependent cost, in the order the work
+  // happens: materializing the value's code points, running
+  // startsWith/endsWith, and allocating two Int32Arrays all scale with value
+  // or pattern length, so a flat per-call charge would not describe the work
+  // performed.
   //
   // Materializing the code points is O(value length) and happens first.
   spend(value.length);
@@ -224,12 +221,12 @@ export const globMatches = (
   const tokenCount = tokens.length;
   // The two state arrays are allocated and filled per match: O(tokens) each
   spend(2 * (tokenCount + 1));
-  // Round-3 finding 9: generation stamps instead of a Uint8Array cleared per
-  // input unit. `next.fill(0)` cost O(tokens) for EVERY character and was never
-  // charged, so a pattern keeping many states live could spend O(tokens x
-  // length) real work while paying only O(length) steps. Stamping removes the
-  // clearing loop entirely, so the only input-dependent loops left are the
-  // transition scan and the epsilon closure — and both are charged below.
+  // Generation stamps replace a Uint8Array cleared per input unit:
+  // `next.fill(0)` costs O(tokens) for EVERY character, which a pattern
+  // keeping many states live would turn into O(tokens x length) real work
+  // while charging only O(length) steps. Stamping removes the clearing loop
+  // entirely, so the only input-dependent loops left are the transition scan
+  // and the epsilon closure — and both are charged below.
   let currentStamp = new Int32Array(tokenCount + 1).fill(-1);
   let nextStamp = new Int32Array(tokenCount + 1).fill(-1);
   let currentList: number[] = [];
@@ -327,8 +324,7 @@ export const parseFilterPattern = (raw: string): FilterPattern => {
 // One flag's worth of patterns. The count cap is checked before a single
 // pattern is compiled, so an over-long list costs one comparison rather than
 // 129 pattern compilations, and every caller with a list inherits the bound
-// instead of restating it at its own boundary. (Round-8 cleanup: "129 RegExp
-// constructions" — nothing on this path builds a RegExp any more, per D15.)
+// instead of restating it at its own boundary.
 export const parseFilterPatterns = (raws: readonly string[]): readonly FilterPattern[] => {
   if (raws.length > FILTER_PATTERN_MAX_COUNT) {
     throw usageError(

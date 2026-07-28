@@ -1,20 +1,20 @@
 import { isIP } from 'node:net';
 import { validationError } from '../errors.ts';
 
-// M2a scope (Plan Decision D4): address validation for remote-controlled
-// redirect targets. The initial --spec URL is operator intent and is not
-// checked here. M3 replaces this post-resolution validation with a DNS-pinning
-// dispatcher that closes the remaining resolve-vs-connect TOCTOU window (§7.4).
+// Address validation for remote-controlled redirect targets. The initial
+// --spec URL is operator intent and is not checked here. This is
+// post-resolution validation; the DNS-pinning dispatcher in
+// pinned-dispatcher.ts closes the remaining resolve-vs-connect TOCTOU window
+// (§7.4).
 //
-// M5 Task 1 hardening: classifyAddress fails closed on the full set of
-// SSRF-relevant IANA special-purpose ranges (IANA "IPv4 Special-Purpose
-// Address Registry" and "IPv6 Special-Purpose Address Registry"), plus the
-// NAT64 IPv4-embedding rules of RFC 6052/8215. Only the well-known NAT64
-// prefix 64:ff9b::/96 has a fixed "embedded IPv4 = low 32 bits" layout; every
-// OTHER 64:ff9b:x:: prefix (incl. the RFC 8215 local-use 64:ff9b:1::/48)
-// places the embedded IPv4 at a translator-prefix-dependent bit offset that
-// cannot be soundly decoded and is classified metadata (always denied,
-// non-overridable) WITHOUT decoding — final-review fix (HIGH): a
+// classifyAddress fails closed on the full set of SSRF-relevant IANA
+// special-purpose ranges (IANA "IPv4 Special-Purpose Address Registry" and
+// "IPv6 Special-Purpose Address Registry"), plus the NAT64 IPv4-embedding
+// rules of RFC 6052/8215. Only the well-known NAT64 prefix 64:ff9b::/96 has a
+// fixed "embedded IPv4 = low 32 bits" layout; every OTHER 64:ff9b:x:: prefix
+// (incl. the RFC 8215 local-use 64:ff9b:1::/48) places the embedded IPv4 at a
+// translator-prefix-dependent bit offset that cannot be soundly decoded, so it
+// is classified metadata (always denied, non-overridable) WITHOUT decoding: a
 // merely-private classification there would still be allowed under
 // --allow-private-network/baseTrusted, and a /96 translator inside that
 // prefix can map onto the metadata address (see classifyAddress below).
@@ -28,7 +28,7 @@ export interface EgressPolicyOptions {
 export type AddressClass = 'public' | 'private' | 'metadata';
 
 // Cloud metadata/credential endpoints: denied even with --allow-private-network.
-// Maintained deny set (D4): IMDS at 169.254.169.254 (AWS/GCP/Azure/OpenStack/
+// Maintained deny set: IMDS at 169.254.169.254 (AWS/GCP/Azure/OpenStack/
 // DigitalOcean), AWS ECS task credentials, AWS EKS Pod Identity Agent
 // (169.254.170.23), Alibaba Cloud metadata, Azure WireServer (168.63.129.16 —
 // Microsoft's reserved platform IP; no customer workload serves there, so it
@@ -153,13 +153,12 @@ export const classifyAddress = (address: string): AddressClass => {
       // Only the well-known prefix 64:ff9b::/96 has a fixed "embedded IPv4 =
       // low 32 bits" layout — decode it and classify with classifyIpv4 so a
       // NAT64-wrapped metadata/private address is denied rather than passed
-      // as public (round-1 egress-bypass #2).
+      // as public.
       if (g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
         return classifyIpv4(ipv4FromGroups(g6, g7));
       }
-      // Final-review fix (HIGH — NAT64 metadata bypass): every OTHER
-      // 64:ff9b:x:: prefix — including the RFC 8215 local-use 64:ff9b:1::/48
-      // — places the embedded IPv4 at a translator-prefix-dependent bit
+      // Every OTHER 64:ff9b:x:: prefix — including the RFC 8215 local-use
+      // 64:ff9b:1::/48 — places the embedded IPv4 at a translator-prefix-dependent bit
       // offset (/32../64, with the reserved "u" octet at bits 64-71 per
       // RFC 6052 §2.2), so a fixed low-32 decode there is unsound and a /96
       // translator inside the prefix could map e.g.
@@ -233,7 +232,7 @@ export const classifyAddress = (address: string): AddressClass => {
       // Unique-local fc00::/7, link-local fe80::/10, multicast ff00::/8
       return 'private';
     }
-    // Fail-closed allow-list posture (M5 Task 1 review fix): classify public
+    // Fail-closed allow-list posture: classify public
     // ONLY within global-unicast 2000::/3 (IANA registry), minus the two
     // carve-outs below. Every other range (e.g. discard-only 100::/8 beyond
     // the 100::/64 handled above, SRv6 SIDs 5f00::/16, and any future or
@@ -328,7 +327,8 @@ export const assertAllowedRedirectTarget = async (
     throw validationError(`redirect target "${lower}" did not resolve to any address`);
   }
   // Post-resolution validation of EVERY answer (spec §7.4). The remaining
-  // resolve-vs-connect TOCTOU window is closed by M3's DNS-pinning dispatcher.
+  // resolve-vs-connect TOCTOU window is closed by the DNS-pinning dispatcher
+  // in pinned-dispatcher.ts.
   for (const address of addresses) {
     check(address);
   }

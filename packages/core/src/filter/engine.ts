@@ -32,16 +32,16 @@ export interface FilterDecision {
   deadPatterns: readonly DeadPattern[];
 }
 
-// D15: the budget is threaded through rather than created per call, because the
+// The budget is threaded through rather than created per call, because the
 // bound that matters is the aggregate over patterns x operations x candidate
-// lengths. It defaults so that a direct caller (and every existing test) gets a
-// full budget without having to construct one.
+// lengths. It defaults so that a direct caller gets a full budget without
+// having to construct one.
 export const matchesOperation = (
   pattern: FilterPattern,
   op: OperationRecord,
   budget: MatchBudget = createMatchBudget(),
 ): boolean => {
-  // D8: every comparison uses the raw normalized spec value. Sanitizing first
+  // Every comparison uses the raw normalized spec value. Sanitizing first
   // would collapse two distinct operations onto one decision and would let a
   // deny pattern silently miss its target; diagnostics sanitize at the print site.
   // The pattern carries its compiled programme, so nothing is compiled here.
@@ -62,13 +62,13 @@ export const matchesOperation = (
 // Levenshtein distance, abandoned as soon as it is known to exceed maxDistance.
 // Returns maxDistance + 1 to signal "further than you asked about".
 //
-// Final review, high-severity finding 1: this used to take no
-// budget at all, so the suggestion phase escaped the D15 aggregate that
-// matchesOperation/globMatches enforce — measured at 35,917 ms of CPU at
-// admitted dimensions (128 dead patterns x 512 candidates x 256-char
-// identifiers). Charged per row, before that row's cells are computed, so an
-// exhausted budget stops the work rather than completing it — mirroring
-// globMatches's spend discipline in pattern.ts exactly, sharing its message.
+// Charged against the same aggregate budget that matchesOperation/globMatches
+// enforce: at the admitted dimensions (128 dead patterns x 512 candidates x
+// 256-char identifiers), running this phase unbudgeted costs 35,917 ms of
+// CPU, so it needs the same guard. Charged per row, before that row's cells
+// are computed, so an exhausted budget stops the work rather than completing
+// it — mirroring globMatches's spend discipline in pattern.ts exactly,
+// sharing its message.
 const boundedDistance = (
   left: string,
   right: string,
@@ -109,9 +109,9 @@ const boundedDistance = (
   return previous[right.length] ?? tooFar;
 };
 
-// D15: the budget defaults exactly as matchesOperation's does, so the 14
-// existing two-argument callers (and any other direct caller) keep working
-// unchanged and get a full budget when no shared one is threaded in.
+// The budget defaults exactly as matchesOperation's does, so existing
+// two-argument callers (and any other direct caller) keep working unchanged
+// and get a full budget when no shared one is threaded in.
 export const closestMatch = (
   raw: string,
   candidates: readonly string[],
@@ -136,22 +136,17 @@ export const closestMatch = (
     if (distance > threshold) {
       continue;
     }
-    // Round-8 finding 5: ranking is LEXICOGRAPHIC — edit distance is primary,
-    // and the length-relative ratio breaks ties only among candidates at equal
-    // distance. The round-8 draft ranked on ratio alone and claimed "a strictly
-    // nearer candidate still wins", justifying it with the single example
-    // 1/8 < 4/11. That claim is false in general, and the plan's own contract
-    // (see the Ranking note above) asserted the opposite of what the code did.
-    // Counterexample, verified by execution: against "abcdefgh", the candidate
-    // "abcdeXYZ" is 3 edits (3/8 = 0.375) while "abcdefghWXYZ" is 4 edits
-    // (4/12 = 0.333) — both admitted, and ratio-alone returns the FARTHER one.
+    // Ranking is LEXICOGRAPHIC: edit distance is primary, and the
+    // length-relative ratio breaks ties only among candidates at equal
+    // distance. Ranking on ratio alone does not work: against "abcdefgh", the
+    // candidate "abcdeXYZ" is 3 edits (3/8 = 0.375) while "abcdefghWXYZ" is 4
+    // edits (4/12 = 0.333) — both admitted, and a ratio-alone rule would
+    // return the FARTHER one.
     //
     // Distance-first still produces every documented outcome, because §8's
-    // example is an equal-distance tie that the ratio resolves: "readPets" is 4
-    // edits from both "listPets" (4/8) and "readPetById" (4/11), so the ratio
-    // picks "readPetById" exactly as the spec documents. Re-measured against
-    // the whole closestMatch suite: distance-first passes all 14 existing cases
-    // plus the counterexample; ratio-alone passes 14 and fails the 15th.
+    // own example is an equal-distance tie that the ratio resolves: "readPets"
+    // is 4 edits from both "listPets" (4/8) and "readPetById" (4/11), so the
+    // ratio picks "readPetById" exactly as the spec documents.
     const ratio = distance / Math.max(raw.length, candidate.length);
     if (distance < bestDistance || (distance === bestDistance && ratio < bestRatio)) {
       best = candidate;
@@ -209,7 +204,7 @@ const deadPatternsFor = (
         : { raw: pattern.raw, flag, suggestion };
     });
 
-// D15: ONE budget for the whole run — exposure and dead-pattern detection alike.
+// ONE budget for the whole run — exposure and dead-pattern detection alike.
 // Scoping it per match would bound nothing: the reachable cost is the aggregate
 // over patterns x operations x candidate lengths, which is what measured 22.5 s
 // at the maximum admitted dimensions even with a non-backtracking matcher.
