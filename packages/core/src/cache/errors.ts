@@ -1,6 +1,6 @@
 import { OpenapiMcpError, validationError } from '../errors.ts';
 
-// D17: the ONLY errors that may be read as "nothing here". A miss is the one
+// The only errors read as "nothing here" (ENOENT/ENOTDIR). A miss is the one
 // outcome that may become trust-on-first-use, so anything else is a real
 // failure rather than an absence.
 export const isCacheAbsence = (err: unknown): boolean =>

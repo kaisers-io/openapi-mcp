@@ -3,12 +3,12 @@
 // realContext stays the only place touching node:fs (spec §9).
 export interface CacheFs {
   // Creates the directory and every missing parent at 0700, repairing the mode
-  // on a directory that already exists (spec §5.3, D4)
+  // on a directory that already exists (spec §5.3)
   mkdirSecure: (path: string) => Promise<void>;
   // Writes at 0600 via a temp file + rename, so the replace is atomic and the
-  // mode is enforced even when the target already exists (D3/D4)
+  // mode is enforced even when the target already exists
   writeFileAtomic: (path: string, data: string) => Promise<void>;
-  // Cache files are untrusted input in the same way spec downloads are (D12):
+  // Cache files are untrusted input in the same way spec downloads are:
   // rejects with a validationError once maxBytes is exceeded, before the
   // contents are ever turned into a string
   readFileTextCapped: (path: string, maxBytes: number) => Promise<string>;
@@ -16,7 +16,7 @@ export interface CacheFs {
   removeDir: (path: string) => Promise<void>;
   pathExists: (path: string) => Promise<boolean>;
   // Exclusive create; resolves false when the path already exists. This is the
-  // primitive the per-namespace writer lock is built on (D12).
+  // primitive the per-namespace writer lock is built on.
   createExclusive: (path: string, data: string) => Promise<boolean>;
   // Tolerates a missing path — removing an already-absent file is not an error
   removeFile: (path: string) => Promise<void>;
