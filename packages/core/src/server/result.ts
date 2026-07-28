@@ -25,7 +25,7 @@ export const structuredOutcome = (
 // The lookup step's own outcome: an unknown tool name is a PROTOCOL error
 // (InvalidParams — the tool NAME is what's invalid, not the tools/call
 // METHOD, which exists and dispatched fine), never a ToolCallOutcome — the
-// adapter (Task 5) maps `unknown-tool` to McpError and everything else to
+// protocol adapter maps `unknown-tool` to McpError and everything else to
 // CallToolResult.
 export type DispatchResult =
   | { kind: 'outcome'; outcome: ToolCallOutcome }

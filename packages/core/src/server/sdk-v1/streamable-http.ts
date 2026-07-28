@@ -12,7 +12,7 @@ import { createProtocolSession } from './protocol.ts';
 const MAX_SESSIONS = 8;
 const IDLE_MS = 30 * 60 * 1000;
 const BODY_CAP_BYTES = 4 * 1024 * 1024;
-// Bounded forced-close fallback for graceful shutdown (C5): if closing every
+// Bounded forced-close fallback for graceful shutdown: if closing every
 // session's transport, or the listener itself, has not finished within this
 // bound, force-destroy remaining connections rather than hang the process.
 const SHUTDOWN_FORCE_MS = 5000;
@@ -40,7 +40,7 @@ export interface StreamableHttpServerHandle {
 // A JSON-RPC-shaped error response — used for EVERY rejection this module
 // writes itself (guard denials aside, which have no body), so a client never
 // sees a bare socket reset/500 for something this server can diagnose
-// cleanly (C body-cap/parse-error fix below).
+// cleanly (see the body-cap and parse-error handling below).
 const jsonRpcError = (res: ServerResponse, status: number, code: number, message: string): void => {
   res.writeHead(status, { 'content-type': 'application/json' }).end(
     // oxlint-disable-next-line no-null -- JSON-RPC 2.0 requires a literal `null` id when the id of the failed request cannot be determined
@@ -48,18 +48,19 @@ const jsonRpcError = (res: ServerResponse, status: number, code: number, message
   );
 };
 
-// T1: a STRICT single-header reader for `req.headersDistinct` (`string[] |
+// A STRICT single-header reader for `req.headersDistinct` (`string[] |
 // undefined` only — headersDistinct never yields a plain string, unlike
 // `req.headers`): returns the value ONLY when EXACTLY ONE was actually sent,
-// mirroring request-guard.ts's own fail-closed `singleHeader`. This module
-// used to read the session-id header via `req.headers` through a LOOSE
-// `value[0]`-style helper; that helper is deliberately NOT reused here
-// against `headersDistinct`, since reusing it would ACCEPT a DUPLICATED
-// mcp-session-id as if only the first value had been sent — a regression
-// from the old `req.headers` behavior, where a duplicate comma-joins into
-// `"id1, id2"`, a string that never matches a real session id and so fails
-// closed via the store lookup (404). A duplicated id must keep 404ing
-// exactly like a missing one, never silently resolve to its first value.
+// mirroring request-guard.ts's own fail-closed `singleHeader`. A LOOSE
+// `value[0]`-style read against `headersDistinct` would ACCEPT a DUPLICATED
+// mcp-session-id as if only the first value had been sent, silently
+// resolving to that id's session. Reading the same duplicate off plain
+// `req.headers` instead would comma-join it into `"id1, id2"`, a string that
+// never matches a real session id and so fails closed via the store lookup
+// (404) purely by coincidence — this reader makes the fail-closed behavior
+// deliberate against `headersDistinct` too: a duplicated id must keep
+// 404ing exactly like a missing one, never silently resolve to its first
+// value.
 const strictSingleHeader = (value: string[] | undefined): string | undefined =>
   value !== undefined && value.length === 1 ? value[0] : undefined;
 
@@ -133,8 +134,8 @@ export const createStreamableHttpServer = (
     maxSessions: MAX_SESSIONS,
     idleMs: IDLE_MS,
   });
-  // H3: a shutdown admission fence — deliberately CLOSURE-LOCAL (one
-  // instance per createStreamableHttpServer call), NOT module-level. A
+  // A shutdown admission fence — deliberately CLOSURE-LOCAL (one instance
+  // per createStreamableHttpServer call), NOT module-level. A
   // module-level flag would be shared across EVERY server instance in the
   // process, so once any one server closed, every later instance would
   // reject initialization forever. Flipped true at the very top of close(),
@@ -145,13 +146,13 @@ export const createStreamableHttpServer = (
   let closing = false;
 
   // Closes and evicts every session idle past IDLE_MS. Called lazily at the
-  // top of EVERY request (C3 fix — sweepExpired was previously never
-  // called, so an expired session lingered forever, permanently occupying a
-  // capacity slot and leaking its transport). A fully-idle server with no
-  // further requests would not free capacity until the NEXT request
-  // arrives, which is when it matters anyway (nothing needs the slot until
-  // something asks for one) — a periodic background timer was considered
-  // and deliberately deferred as unnecessary complexity for that reason.
+  // top of EVERY request, so an expired session cannot survive past the next
+  // request — it would otherwise permanently occupy a capacity slot and leak
+  // its transport. A fully-idle server with no further requests does retain
+  // expired sessions until the NEXT request arrives, which is when it
+  // matters anyway (nothing needs the slot until something asks for one) —
+  // that is why there is no periodic background timer: it would add
+  // complexity without freeing anything a waiting request needs.
   const evictExpiredSessions = (nowMs: number): void => {
     for (const expired of sessions.sweepExpired(nowMs)) {
       void expired.transport.close().catch(() => {
@@ -160,26 +161,25 @@ export const createStreamableHttpServer = (
     }
   };
 
-  // C4 fix: reserve the session-store SLOT synchronously — before
-  // constructing a transport or awaiting anything — using OUR OWN
-  // pre-generated id (`sessionIdGenerator: () => sessionId` below, rather
-  // than the SDK's own `onsessioninitialized` callback pattern). Node's
-  // event loop only yields to another request's callback at an actual
-  // await/I-O point; since `sessions.create` here happens before any await,
-  // no other concurrent initialize can interleave between the capacity
-  // check and the reservation. This closes the race the officially
-  // documented `onsessioninitialized`-registers-later pattern leaves open
-  // (a burst of concurrent initializes could otherwise all pass a "check,
-  // then await, then register" sequence before any of them registers) — see
-  // the design note in Verified Facts above.
+  // Reserve the session-store SLOT synchronously — before constructing a
+  // transport or awaiting anything — using OUR OWN pre-generated id
+  // (`sessionIdGenerator: () => sessionId` below, rather than the SDK's own
+  // `onsessioninitialized` callback pattern). Node's event loop only yields
+  // to another request's callback at an actual await/I-O point; since
+  // `sessions.create` here happens before any await, no other concurrent
+  // initialize can interleave between the capacity check and the
+  // reservation. This closes the race the officially documented
+  // `onsessioninitialized`-registers-later pattern leaves open (a burst of
+  // concurrent initializes could otherwise all pass a "check, then await,
+  // then register" sequence before any of them registers).
   const handleFreshInitialize = async (
     req: IncomingMessage,
     res: ServerResponse,
     body: unknown,
   ): Promise<void> => {
-    // Captured ONCE (plan review) and reused below for both the
-    // eviction sweep and the reservation timestamp, rather than calling
-    // opts.now() twice for what is conceptually the same instant.
+    // Captured ONCE and reused below for both the eviction sweep and the
+    // reservation timestamp, rather than calling opts.now() twice for what
+    // is conceptually the same instant.
     const nowMs = opts.now();
     evictExpiredSessions(nowMs);
     const sessionId = randomUUID();
@@ -189,7 +189,7 @@ export const createStreamableHttpServer = (
     // `sessions.get`) until AFTER both are assigned, since no `await` runs
     // in between.
     const reserved: Partial<HttpSessionValue> = {};
-    // H3: the shutdown fence, checked immediately before the reservation
+    // The shutdown fence, checked immediately before the reservation
     // below with no await in between, so the check-and-reserve pair stays
     // atomic on the event loop — a request racing a concurrent close() can
     // never slip a session into existence AFTER close()'s own
@@ -204,8 +204,8 @@ export const createStreamableHttpServer = (
       jsonRpcError(res, 503, -32000, 'session capacity exceeded');
       return;
     }
-    // C4-ROLLBACK fix: the slot reserved just above must be released if
-    // this attempt never actually completes initialization. The SDK
+    // The slot reserved just above must be released if this attempt never
+    // actually completes initialization. The SDK
     // validates a POST's Accept/Content-Type headers BEFORE touching
     // initialize semantics at all — verified directly against the v1.29.0
     // source (`webStandardStreamableHttp.js`'s `handlePostRequest`: the
@@ -220,9 +220,9 @@ export const createStreamableHttpServer = (
     // without ever completing a session, exhausting capacity for every
     // legitimate client.
     let initialized = false;
-    // H2 (round-3 fix): the reservation made above must be released on EVERY
-    // path that does not complete initialization — not only a 406/415 returned
-    // by `transport.handleRequest`, but ALSO a throw from transport
+    // The reservation made above must be released on EVERY path that does
+    // not complete initialization — not only a 406/415 returned by
+    // `transport.handleRequest`, but ALSO a throw from transport
     // construction, `createProtocolSession`, or `server.connect()`. All of them
     // therefore live inside the single try whose finally rolls the reservation
     // back. `transport`/`server` are declared here (initially undefined) so the
@@ -233,13 +233,13 @@ export const createStreamableHttpServer = (
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => sessionId, // Matches the id already reserved above
         // Plain JSON responses, not the SDK's default SSE-formatted POST
-        // response: this plan's client is a single local, non-streaming
+        // response: this server's client is a single local, non-streaming
         // caller (the CLI's own E2E tests use fetch()+res.json() directly),
-        // and every server-initiated push this plan needs (if any, in a
-        // future milestone) still goes over the separate GET/SSE stream,
-        // which is unaffected by this flag (verified against the v1.29.0
-        // source: enableJsonResponse only changes handlePostRequest's own
-        // response formatting, not handleGetRequest's).
+        // and any server-initiated push a future version might need still
+        // goes over the separate GET/SSE stream, which is unaffected by
+        // this flag (verified against the v1.29.0 source: enableJsonResponse
+        // only changes handlePostRequest's own response formatting, not
+        // handleGetRequest's).
         enableJsonResponse: true,
         onsessioninitialized: () => {
           initialized = true;
@@ -251,10 +251,10 @@ export const createStreamableHttpServer = (
       // A FRESH low-level Server per session, connected to this session's
       // transport — the snapshot and EVERY entry in `dispatcherDeps`
       // (including the limiter) are the SAME shared references passed in via
-      // `opts` for every session (Task 3's trap: constructing a NEW limiter
-      // here would silently make it per-session instead of process-global).
+      // `opts` for every session: constructing a NEW limiter here would
+      // silently make it per-session instead of process-global.
       // `createDispatcher` itself IS still called fresh inside
-      // `createProtocolSession` for each session (Task 5), but it is a pure,
+      // `createProtocolSession` for each session, but it is a pure,
       // stateless closure over these shared references — recreating that
       // closure per session is benign; only the underlying limiter/executor
       // objects being distinct per session would be the actual bug, and they
@@ -312,8 +312,8 @@ export const createStreamableHttpServer = (
     // duplicate Origin into one comma-joined string via the plain `.headers`
     // accessor — either would defeat evaluateRequest's array-based
     // duplicate-header rejection. `.headersDistinct.<name>` always returns
-    // every value actually sent as `string[] | undefined` (verified fact
-    // above), which is what that rejection logic needs to see.
+    // every value actually sent as `string[] | undefined`, which is what
+    // that rejection logic needs to see.
     const decision = evaluateRequest(opts.guard, {
       // Bracket notation: `headersDistinct` is `NodeJS.Dict<string[]>` (an
       // index-signature type), which this project's tsconfig
@@ -326,7 +326,7 @@ export const createStreamableHttpServer = (
       res.writeHead(decision.status).end();
       return;
     }
-    // T1: read via req.headersDistinct through the STRICT helper above, not
+    // Read via req.headersDistinct through the STRICT helper above, not
     // req.headers — same discipline as the guard just above, for the same
     // reason (a duplicated header must fail closed, not silently resolve to
     // its first value).
@@ -354,10 +354,10 @@ export const createStreamableHttpServer = (
       await handleFreshInitialize(req, res, parsed.body);
       return;
     }
-    // T2: a single sessions.get, captured once and reused below — the two
-    // call sites this replaces (the 404 gate and the subsequent re-fetch)
-    // read the exact same sessionId/nowMs pair with no await in between, so
-    // the second lookup was always redundant with the first.
+    // A single sessions.get, captured once and reused below for both the
+    // 404 gate and the subsequent session access: both read the exact same
+    // sessionId/nowMs pair with no await in between, so a second, separate
+    // lookup would be redundant with this one.
     const existingSession = sessionId === undefined ? undefined : sessions.get(sessionId, nowMs);
     if (sessionId === undefined || existingSession === undefined) {
       jsonRpcError(res, 404, -32001, 'unknown or expired session');
@@ -391,14 +391,14 @@ export const createStreamableHttpServer = (
       }
     });
   });
-  // H4 — slow-client LIFETIME hardening (Node's own defaults are 300_000ms
+  // Slow-client LIFETIME hardening (Node's own defaults are 300_000ms
   // request / 60_000ms headers). Honest framing: these are THRESHOLDS Node
   // checks periodically (via its internal `connectionsCheckingInterval`,
   // default ~30s), not exact wall-clock deadlines — an incomplete
   // request/header phase can therefore stay open somewhat longer than the
   // nominal value before Node notices and closes it, but the values still
-  // give a finite lifetime bound: a stalled client can no longer pin a
-  // pre-session body read open indefinitely. They do NOT bound the NUMBER
+  // give a finite lifetime bound: a stalled client cannot pin a pre-session
+  // body read open indefinitely. They do NOT bound the NUMBER
   // of simultaneous pre-session requests or aggregate buffered memory. The
   // aggregate-memory residual (~BODY_CAP_BYTES per concurrent connection)
   // is an ACCEPTED approximation under this project's single-local-client +
@@ -415,10 +415,10 @@ export const createStreamableHttpServer = (
   return {
     listen: () =>
       new Promise((resolve, reject) => {
-        // The listen() call does not throw/reject on EADDRINUSE (verified
-        // fact above) — the failure surfaces asynchronously via 'error'. Without
-        // this listener, a port conflict would hang forever instead of
-        // reaching the CLI's normal startup-error path.
+        // The listen() call does not throw/reject on EADDRINUSE — the
+        // failure surfaces asynchronously via 'error'. Without this
+        // listener, a port conflict would hang forever instead of reaching
+        // the CLI's normal startup-error path.
         const onError = (err: Error): void => {
           httpServer.removeListener('listening', onListening);
           reject(err);
@@ -432,18 +432,18 @@ export const createStreamableHttpServer = (
         httpServer.listen(opts.port, '127.0.0.1');
       }),
     close: async () => {
-      // H3: flip the shutdown admission fence FIRST — synchronously, before
+      // Flip the shutdown admission fence FIRST — synchronously, before
       // the session-drain snapshot just below is taken — so a fresh
-      // initialize whose body is still arriving right now can no longer
-      // slip a brand-new session into existence after this snapshot has
-      // already been captured (which would leave it permanently undrained).
+      // initialize whose body is still arriving right now cannot slip a
+      // brand-new session into existence after this snapshot has already
+      // been captured (which would leave it permanently undrained).
       closing = true;
-      // C5 fix: close every session's SERVER FIRST (an open SSE response
-      // would otherwise keep the LISTENER's own close() pending
-      // indefinitely — http.Server#close() waits for existing connections
-      // to end on their own, verified fact above), THEN the listener — each
-      // phase individually bounded by SHUTDOWN_FORCE_MS so a hung
-      // connection can never prevent the process from exiting.
+      // Close every session's SERVER FIRST (an open SSE response would
+      // otherwise keep the LISTENER's own close() pending indefinitely —
+      // http.Server#close() waits for existing connections to end on their
+      // own), THEN the listener — each phase individually bounded by
+      // SHUTDOWN_FORCE_MS so a hung connection can never prevent the
+      // process from exiting.
       //
       // Closing ONLY `session.server` (never ALSO `session.transport`
       // directly, concurrently) is deliberate, not an omission: the SDK's
@@ -454,9 +454,7 @@ export const createStreamableHttpServer = (
       // `server.close()`'s own internal call would race two overlapping
       // `close()` invocations on the SAME transport instance for no
       // benefit; `server.close()` alone is both sufficient and
-      // deterministic (the earlier `session.transport.close()` call this
-      // replaces was redundant with, not additive to, what `server.close()`
-      // already does).
+      // deterministic.
       //
       // Each fallback timer below is captured and CLEARED as soon as its
       // own `Promise.race` settles: an uncleared `setTimeout` keeps running

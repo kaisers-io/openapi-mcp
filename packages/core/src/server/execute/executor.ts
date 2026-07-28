@@ -13,18 +13,17 @@ import type { SnapshotTool } from '../types.ts';
 import { buildRequest, type OutboundBudgets } from './request.ts';
 import { mapResponse, type EnvelopeValidator } from './response.ts';
 
-// M5 Task 10 (design §5-8, §1.3, D5/D9/D10): the integration point wiring
-// request-building (Task 7) + the pinned transport (Tasks 3-4) +
-// response-mapping (Task 8) + redaction (Task 2) + a global
-// outbound-concurrency semaphore into a real ToolExecutor. Every guard here
-// is defense in depth, not the FIRST line of defense — toolgen/layout.ts
-// already drops reserved header names and dangerous path segments at build
-// time, and buildRequest already budgets its own components — but this
-// module is the last place before a byte leaves the process, so it re-checks
-// fail-closed rather than trusting an earlier stage never regresses.
+// The integration point wiring request-building, the pinned transport,
+// response-mapping, redaction, and a global outbound-concurrency semaphore
+// into a real ToolExecutor. Every guard here is defense in depth, not the
+// FIRST line of defense — toolgen/layout.ts already drops reserved header
+// names and dangerous path segments at build time, and buildRequest already
+// budgets its own components — but this module is the last place before a
+// byte leaves the process, so it re-checks fail-closed rather than trusting
+// an earlier stage never regresses.
 
 export interface ExecutorConfig {
-  // Resolved+validated final base (Task 11 resolves --base-url|serverUrl).
+  // Resolved+validated final base (resolved from --base-url or serverUrl).
   baseUrl: string;
   // True iff from --base-url.
   baseTrusted: boolean;
@@ -37,10 +36,10 @@ export interface ExecutorConfig {
   timeoutMs: number;
   maxResponseBytes: number;
   outboundBudgets: OutboundBudgets;
-  // Global outbound-concurrency cap (default 16, §7.6).
+  // Global outbound-concurrency cap (default 16).
   maxConcurrent: number;
-  // By tool name; prebuilt at startup (D7 eager compile, done by Task 11 —
-  // this module only looks the map up per call).
+  // By tool name; compiled eagerly once at server startup — this module only
+  // looks the map up per call.
   validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
 }
 
@@ -82,7 +81,7 @@ const isLoopbackHost = (hostname: string): boolean => {
   return isIP(bare) === 6 && bare === '::1';
 };
 
-// CLEARTEXT gate (brief, mandatory): a secret header sent in the clear over a
+// CLEARTEXT gate, mandatory: a secret header sent in the clear over a
 // non-loopback http: origin is a credential-leak footgun — refuse the call
 // entirely (no request is ever sent) unless the operator explicitly opted in
 // via --allow-insecure-http.
@@ -108,8 +107,8 @@ const joinFinalUrl = (base: URL, pathname: string, query: string): URL | undefin
   }
 };
 
-// SEGMENT-BOUNDARY check (round-1 amendment, final-URL assertion): a
-// bare `startsWith(basePath)` would admit `/api-evil` under base `/api` — the
+// SEGMENT-BOUNDARY check on the final URL assertion: a bare
+// `startsWith(basePath)` would admit `/api-evil` under base `/api` — the
 // escaped path must land exactly ON the base path or continue at a `/`
 // boundary.
 const withinBasePath = (finalPath: string, basePath: string): boolean =>
@@ -124,11 +123,10 @@ const withinBasePath = (finalPath: string, basePath: string): boolean =>
 // monotonic origin-crossing switch; this module only supplies the two sets).
 // Write order fixes precedence on a name collision (later write wins):
 // content-type/tool-arg headers FIRST, then --header, then --header-env
-// LAST — design §4's content < tool < --header < --header-env (final-review
-// Fix 6, finding 5). Unreachable while the reserved-name gate in
-// runUpstreamCall holds (a tool argument can never map onto a reserved
-// name), but this ordering makes the fallback correct rather than inverted
-// should that gate ever regress.
+// LAST — content < tool < --header < --header-env. Unreachable while the
+// reserved-name gate in runUpstreamCall holds (a tool argument can never map
+// onto a reserved name), but this ordering makes the fallback correct rather
+// than inverted should that gate ever regress.
 const assembleHeaders = (
   config: ExecutorConfig,
   contentType: string | undefined,
@@ -153,8 +151,8 @@ const assembleHeaders = (
 };
 
 // FINAL outbound budgets, re-checked AFTER the base-URL join and the full
-// header assembly (round-1 amendment): buildRequest only budgets the
-// relative pathname/query and the tool-argument headers it itself produced —
+// header assembly: buildRequest only budgets the relative pathname/query
+// and the tool-argument headers it itself produced —
 // it cannot see the base URL or the operator's static/secret headers. This
 // is the one place that sees the whole wire request.
 const overFinalBudget = (
@@ -182,14 +180,15 @@ const runUpstreamCall = async (
   const { generated } = tool;
   if (generated === undefined) {
     // The dispatcher routes a meta-kind tool to metaExecutor, never here —
-    // defensive, unreachable in the real wiring (Task 11 constructs exactly
-    // one createExecutor and passes it only as the upstream ToolExecutor).
+    // defensive, unreachable in the real wiring (the caller constructs
+    // exactly one createExecutor and passes it only as the upstream
+    // ToolExecutor).
     return isError('this tool has no upstream operation to execute');
   }
-  // Validators FAIL-CLOSED (round-1 amendment, mandatory): a missing
-  // map entry is a wiring bug (Task 11 must build one entry per upstream
-  // tool, `undefined` for a genuine no-outputSchema tool) — never fall
-  // through to a silent unvalidated text path.
+  // Validators FAIL-CLOSED, mandatory: a missing map entry is a wiring bug
+  // (the caller must build one entry per upstream tool, `undefined` for a
+  // genuine no-outputSchema tool) — never fall through to a silent
+  // unvalidated text path.
   if (!config.validators.has(tool.name)) {
     return isError('no response validator is registered for this tool');
   }
@@ -198,7 +197,7 @@ const runUpstreamCall = async (
   try {
     base = new URL(config.baseUrl);
   } catch {
-    // Defensive: Task 11 resolves+validates baseUrl before construction.
+    // Defensive: baseUrl is resolved and validated before this point.
     return isError('the configured base URL is invalid');
   }
   if (cleartextBlocked(config, base)) {
@@ -216,8 +215,7 @@ const runUpstreamCall = async (
     config.outboundBudgets,
   );
   if ('error' in built) {
-    // Final-review Fix 3 (Important — unsanitized spec wireName):
-    // buildRequest's `{error}` strings embed spec-derived text verbatim
+    // `buildRequest`'s `{error}` strings embed spec-derived text verbatim
     // (e.g. `mapping.wireName`, a hostile spec's own param name) — see
     // request.ts's own comment on wireName being untrusted text. The
     // dispatcher's finalizeOutcome redacts SECRETS but never strips
@@ -228,17 +226,17 @@ const runUpstreamCall = async (
     // every wireName-bearing message from this module in one place.
     return isError(sanitizeSpecText(built.error, DISPLAY_TEXT_MAX));
   }
-  // DEFENSIVE reserved-name check (mandatory per D3, not merely defensive in
-  // effect): toolgen/layout.ts already drops any reserved header name from a
+  // DEFENSIVE reserved-name check, mandatory rather than merely defensive in
+  // effect: toolgen/layout.ts already drops any reserved header name from a
   // tool's input schema at build time, so this is unreachable through the
   // real pipeline — but it is re-checked here fail-closed rather than ever
   // trusting that upstream guard silently. HTTP header names are
-  // case-insensitive, so the comparison lowercases the built name itself
-  // (round-1 amendment): today this is correct even without the
-  // `.toLowerCase()` because Task 7's buildRequest lowercases built header
-  // keys and Task 9's resolveApiConfig lowercases reservedHeaderNames — but
-  // this is the mandatory auth-collision gate and must not depend on those
-  // unstated upstream invariants for a security guard.
+  // case-insensitive, so the comparison lowercases the built name itself:
+  // today this is correct even without the `.toLowerCase()` because
+  // buildRequest already lowercases built header keys and resolveApiConfig
+  // already lowercases reservedHeaderNames — but this is the mandatory
+  // auth-collision gate and must not depend on those unstated upstream
+  // invariants for a security guard.
   for (const name of Object.keys(built.ok.headers)) {
     if (config.reservedHeaderNames.has(name.toLowerCase())) {
       return isError('a tool argument collided with a reserved header name');
@@ -278,7 +276,7 @@ const runUpstreamCall = async (
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): ToolExecutor => {
-  // A closure counter, NOT a module-level singleton: Task 11 constructs
+  // A closure counter, NOT a module-level singleton: the caller constructs
   // exactly one createExecutor and shares it between the stdio and HTTP
   // transports, so this one counter bounds concurrency across BOTH.
   let inFlight = 0;

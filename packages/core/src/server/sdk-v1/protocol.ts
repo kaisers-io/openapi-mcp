@@ -13,8 +13,8 @@ import { createDispatcher, type CallRequest, type DispatcherDeps } from '../disp
 import type { ToolCallOutcome } from '../result.ts';
 import type { ServerSnapshot } from '../types.ts';
 
-// STATIC, package-authored — NEVER spec-derived (§6.4: InitializeResult
-// instructions are a high-impact prompt-injection surface). This string must
+// STATIC, package-authored — NEVER spec-derived: InitializeResult
+// instructions are a high-impact prompt-injection surface. This string must
 // never interpolate anything from the accepted OpenAPI document.
 const STATIC_INSTRUCTIONS =
   'This server exposes tools generated from an OpenAPI specification, plus a read-only ' +
@@ -36,24 +36,24 @@ const MAX_REFLECTED_NAME_LENGTH = 100;
 // A GENEROUS pre-sanitize bound on the RAW unknown-tool name, well ABOVE
 // MAX_REFLECTED_NAME_LENGTH: `sanitizeSpecText` below scans its ENTIRE input
 // before applying the 100-char output cap, and unknown tool names bypass the
-// dispatcher's rate limiter (§ dispatch.ts), so a hostile local client could
-// otherwise force large sanitizer allocation/regex work with one absurdly
-// long `name`. Because 1000 >> 100, this bound is NOT output-observable for
-// any realistic name (every name <= 1000 code points reaches sanitizeSpecText
-// completely unmodified, exactly as before this change) — only a
-// >1000-code-point name, which is already hostile for an unknown tool call,
-// has its pre-sanitize scan bounded.
+// dispatcher's rate limiter (see dispatch.ts), so a hostile local client
+// could otherwise force large sanitizer allocation/regex work with one
+// absurdly long `name`. Because 1000 >> 100, this bound is NOT
+// output-observable for any realistic name — every name <= 1000 code points
+// reaches sanitizeSpecText completely unmodified — only a >1000-code-point
+// name, which is already hostile for an unknown tool call, has its
+// pre-sanitize scan bounded.
 const RAW_NAME_SCAN_MAX = 1000;
 
 const outcomeToResult = (outcome: ToolCallOutcome): CallToolResult => ({
   isError: outcome.isError,
   // Spread into a MUTABLE array: `ToolCallOutcome.content` is `readonly
-  // {...}[]` (Task 4), but the SDK's own `CallToolResult.content` is a
-  // plain, MUTABLE array (`z.array(ContentBlockSchema).default([])` in the
-  // v1.29.0 SDK's own schema — verified directly against the tarball) — a
-  // readonly array is not assignable to a mutable one under strict
-  // TypeScript, so this spread is required for `pnpm check`'s typecheck to
-  // pass, not merely a style preference.
+  // {...}[]`, but the SDK's own `CallToolResult.content` is a plain, MUTABLE
+  // array (`z.array(ContentBlockSchema).default([])` in the v1.29.0 SDK's
+  // own schema — verified directly against the tarball) — a readonly array
+  // is not assignable to a mutable one under strict TypeScript, so this
+  // spread is required for `pnpm check`'s typecheck to pass, not merely a
+  // style preference.
   content: [...outcome.content],
   ...(outcome.structuredContent === undefined
     ? {}
@@ -63,9 +63,9 @@ const outcomeToResult = (outcome: ToolCallOutcome): CallToolResult => ({
 // The low-level `Server` is @deprecated in the SDK's own JSDoc in favor of
 // `McpServer` — but McpServer accepts ONLY Zod for inputSchema and does its
 // own lossy Zod->JSON-Schema conversion (drops .describe() under Zod 4,
-// SDK #1143), which would silently corrupt the wire-faithful schemas Task 1
-// derived. This IS the "advanced use case" the deprecation notice carves out
-// for Server — see the design note's load-bearing SDK decision.
+// SDK #1143), which would silently corrupt the wire-faithful schemas this
+// server derives from the accepted OpenAPI document. This IS the "advanced
+// use case" the deprecation notice carves out for Server.
 // oxlint-disable-next-line no-deprecated -- see comment above; McpServer's Zod-4 description-loss bug is the reason we bypass it
 export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
   const server = new Server(
@@ -92,25 +92,24 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
   server.setRequestHandler(
     CallToolRequestSchema,
     async (request, extra): Promise<CallToolResult> => {
-      // NOTE ON TASK-AUGMENTED CALLS (§ "unsupported task calls can execute" —
-      // verified against reality, not assumed): this handler deliberately does
-      // NOT add its own `request.params.task` guard, because a live probe
-      // against the real `@modelcontextprotocol/sdk@1.29.0` package proved one
-      // would be unreachable dead code. The base `Protocol` class's dispatch
-      // loop (`shared/protocol.js`) checks `isTaskAugmentedRequestParams` and,
+      // NOTE ON TASK-AUGMENTED CALLS: this handler deliberately does NOT add
+      // its own `request.params.task` guard, because a live probe against the
+      // real `@modelcontextprotocol/sdk@1.29.0` package proved one would be
+      // unreachable dead code. The base `Protocol` class's dispatch loop
+      // (`shared/protocol.js`) checks `isTaskAugmentedRequestParams` and,
       // whenever `params.task` is set, calls
       // `this.assertTaskHandlerCapability(request.method)` in a `.then()` step
       // strictly BEFORE invoking ANY registered handler — including this one.
       // `Server.assertTaskHandlerCapability` throws a plain `Error` ("Server
       // does not support task creation (required for tools/call)") whenever
-      // `this._capabilities.tasks` is unset, which it always is here (M4 never
-      // declares a `tasks` capability). The probe (a `Server`+`Client` pair
-      // over `InMemoryTransport`, a handler that flips a flag when reached,
-      // then a raw task-augmented `client.request(...)`) confirmed the flag
-      // NEVER flips and the client's promise REJECTS with `error.code ===
-      // -32603` (`ErrorCode.InternalError` — a plain `Error` has no `.code`,
-      // so the generic fallback applies) before this handler body ever runs.
-      // Adding a redundant `if (request.params.task) throw new
+      // `this._capabilities.tasks` is unset, which it always is here (this
+      // server never declares a `tasks` capability). The probe (a
+      // `Server`+`Client` pair over `InMemoryTransport`, a handler that flips
+      // a flag when reached, then a raw task-augmented `client.request(...)`)
+      // confirmed the flag NEVER flips and the client's promise REJECTS with
+      // `error.code === -32603` (`ErrorCode.InternalError` — a plain `Error`
+      // has no `.code`, so the generic fallback applies) before this handler
+      // body ever runs. Adding a redundant `if (request.params.task) throw new
       // McpError(ErrorCode.InvalidParams, ...)` here would never execute under
       // this SDK version/configuration — dead code that would also fail this
       // file's own branch-coverage threshold, since no reachable test could
@@ -118,14 +117,13 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
       // SDK-INTERNAL mechanism (`assertTaskHandlerCapability` is not documented
       // public API) rather than an explicit guard of our own — re-verify this
       // behaviour with a probe like the one above on any future SDK upgrade.
-      // NOTE ON `?? {}` COVERAGE: verified empirically (falsification sweep,
-      // Task 5) that the SDK's own `CallToolRequestSchema` already defaults
-      // `arguments` to `{}` before this handler ever runs, over the REAL
-      // transport — so the `?? {}` fallback branch below is unreachable
-      // through any real MCP client and this file's own branch coverage
-      // reflects that. It is kept anyway as dispatcher-level
-      // belt-and-suspenders (Task 4's `?? {}` convention), not because a
-      // reachable case depends on it.
+      // NOTE ON `?? {}` COVERAGE: verified empirically that the SDK's own
+      // `CallToolRequestSchema` already defaults `arguments` to `{}` before
+      // this handler ever runs, over the REAL transport — so the `?? {}`
+      // fallback branch below is unreachable through any real MCP client and
+      // this file's own branch coverage reflects that. It is kept anyway as
+      // dispatcher-level belt-and-suspenders, matching this codebase's own
+      // `?? {}` convention, not because a reachable case depends on it.
       const call: CallRequest = {
         name: request.params.name,
         arguments: request.params.arguments ?? {},
@@ -171,7 +169,7 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
 
   // NEVER call server.sendToolListChanged() anywhere in this adapter:
   // listChanged:false above is advertisement only, and the SDK still exposes
-  // the method — calling it would contradict the immutable-snapshot design
-  // (owner decision 1: no runtime refresh in M4).
+  // the method — calling it would contradict the immutable-snapshot design:
+  // this server never refreshes its tool list at runtime.
   return server;
 };

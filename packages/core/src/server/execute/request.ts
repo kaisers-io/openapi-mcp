@@ -5,8 +5,8 @@ import type { FieldMapping, RequestMapper } from '../../toolgen/layout.ts';
 // Outbound resource budgets the caller enforces on the request THIS module
 // builds — path+query length, aggregate tool-arg header bytes, and body
 // bytes. The final URL (base URL + this pathname/query) and the full header
-// set (incl. auth) are re-budgeted by the executor (Task 10); this module
-// only bounds the components it itself produces.
+// set (incl. auth) are re-budgeted by the executor; this module only bounds
+// the components it itself produces.
 export interface OutboundBudgets {
   maxUrlLength: number;
   maxHeaderBytes: number;
@@ -35,10 +35,9 @@ type Shape =
 
 // The mapper only ever emits path/simple, query/form, header/simple — and
 // those styles are DEFINED only for a primitive, an array-of-primitives, or a
-// flat object-of-primitives (research m5-request-building.md Q1.3 #3). Our
-// Zod schemas do not prevent a nested object or array-of-objects from
-// reaching here, so this guard fails closed rather than ever emitting
-// `[object Object]` onto the wire.
+// flat object-of-primitives. Our Zod schemas do not prevent a nested object
+// or array-of-objects from reaching here, so this guard fails closed rather
+// than ever emitting `[object Object]` onto the wire.
 const classifyShape = (value: unknown): Shape | undefined => {
   if (isPrimitive(value)) {
     return { kind: 'primitive', value };
@@ -57,10 +56,9 @@ const classifyShape = (value: unknown): Shape | undefined => {
 
 // RFC 3986 §2.1-2.4 element-wise percent-encoding: encode each leaf BEFORE
 // joining with a style's literal delimiter, never the whole serialized
-// string (research m5-request-building.md §2.1/§3.3 — never `URLSearchParams`
-// for the query, it emits `+` for space and over-encodes `~`).
-// `encodeURIComponent` throws on a lone UTF-16 surrogate; treat that as an
-// encode failure rather than letting it crash the caller.
+// string — never `URLSearchParams` for the query, it emits `+` for space and
+// over-encodes `~`. `encodeURIComponent` throws on a lone UTF-16 surrogate;
+// treat that as an encode failure rather than letting it crash the caller.
 const encodeLeaf = (raw: string): string | undefined => {
   try {
     return encodeURIComponent(raw);
@@ -75,9 +73,9 @@ const encodeLeaf = (raw: string): string | undefined => {
 // `encodeURIComponent` always encodes '/', '\\', and the '%' character
 // itself, so a literal separator or an already-percent-encoded
 // separator/dot-dot typed by the caller is caught here BEFORE we ever encode
-// it (round-1 amendment, task-7 brief). The static half of the path
-// template is already vetted at build time (toolgen/layout.ts's
-// `isDangerousStaticSegment`) — this only guards the dynamic VALUE.
+// it. The static half of the path template is already vetted at build time
+// (toolgen/layout.ts's `isDangerousStaticSegment`) — this only guards the
+// dynamic VALUE.
 const isDangerousPathLeaf = (raw: string): boolean => {
   if (raw === '.' || raw === '..' || raw.includes('/') || raw.includes('\\')) {
     return true;
@@ -146,8 +144,8 @@ const serializePathValue = (
     segment = parts.join(',');
   }
   // A required path value (path params are ALWAYS required) that serializes
-  // to '' would produce `//`, silently changing the request's path semantics
-  // (task-7 brief; research m5-request-building.md §2.2).
+  // to '' would produce `//`, silently changing the request's path
+  // semantics.
   if (segment === '') {
     return { error: `path parameter "${mapping.wireName}" must not be empty` };
   }
@@ -198,7 +196,7 @@ const serializeQueryValue = (
       encoded.push(result.ok);
     }
     // Form + explode=true -> a repeated key; form + explode=false -> a single
-    // comma-joined key (research m5-request-building.md §1.1/§3.1).
+    // comma-joined key.
     return mapping.explode
       ? { ok: encoded.map((item) => ({ key: wireKey.ok, value: item })) }
       : { ok: [{ key: wireKey.ok, value: encoded.join(',') }] };
@@ -241,12 +239,11 @@ type HeaderMapping = Extract<FieldMapping, { destination: 'header' }>;
 // Mirrors http/headers.ts's CONTROL_CHAR_RE (not exported there): any C0
 // control or DEL in a header value is a request-smuggling vector. A header
 // value has no percent-encoding layer, so a control character must be
-// rejected outright — never stripped, never encoded (research
-// m5-request-building.md §4.2).
+// rejected outright — never stripped, never encoded.
 const HEADER_CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
 
 // `mapping.wireName` is spec-derived, untrusted text (the header parameter's
-// NAME, not its value). Task 10's undici transport THROWS at fetch time on a
+// NAME, not its value). The undici transport THROWS at fetch time on a
 // header key outside the RFC 9110 token grammar — e.g. one carrying an
 // embedded CR/LF — which would turn this module's fail-closed `{error}`
 // contract into an uncaught throw past its boundary. Reject it here instead.
@@ -293,8 +290,7 @@ const serializeHeaderValue = (
   }
   // Shape.kind === 'object'. `simple` always joins pairs with ','; an
   // exploded object additionally joins each key/value with '=', so both
-  // characters are ambiguous delimiters in that case (research
-  // m5-request-building.md §4.1, Q1.3 #2).
+  // characters are ambiguous delimiters in that case.
   const delimiters = mapping.explode ? [',', '='] : [','];
   const parts: string[] = [];
   for (const [key, val] of shape.entries) {
@@ -321,10 +317,10 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // Reassembles the flattened body fields into one object by walking each
-// field's `bodyPath` (today always length 1, but walked in full — research
-// m5-request-building.md §5.1 — so it survives any future nesting).
-// `isDangerousKey` (toolgen/schema.ts) guards every segment against prototype
-// pollution BEFORE the assignment, mirroring layout.ts's own field-name gate.
+// field's `bodyPath` (today always length 1, but walked in full so it
+// survives any future nesting). `isDangerousKey` (toolgen/schema.ts) guards
+// every segment against prototype pollution BEFORE the assignment, mirroring
+// layout.ts's own field-name gate.
 const buildBodyObject = (
   bodyFieldEntries: readonly (readonly [string, BodyMapping])[],
   data: Record<string, unknown>,
@@ -364,7 +360,7 @@ const buildBodyObject = (
 
 // `JSON.stringify` throws on a bigint, a circular reference, or a throwing
 // `toJSON` — any of which would otherwise escape this module's never-throw
-// `{ok}|{error}` contract (task-7 review). Fail closed instead.
+// `{ok}|{error}` contract. Fail closed instead.
 const jsonBody = (value: unknown): { ok: Uint8Array } | { error: string } => {
   let serialized: string;
   try {
@@ -399,8 +395,8 @@ const serializeBody = (
   method: string,
   data: Record<string, unknown>,
 ): { ok: SerializedBody } | { error: string } => {
-  // GET/HEAD never carry a body, even when the mapper has body fields
-  // (task-7 brief — non-negotiable regardless of bodyMode).
+  // GET/HEAD never carry a body, even when the mapper has body fields —
+  // non-negotiable regardless of bodyMode.
   const upperMethod = method.toUpperCase();
   if (upperMethod === 'GET' || upperMethod === 'HEAD') {
     return { ok: {} };
@@ -436,8 +432,7 @@ const serializeBody = (
     }
     // An entirely-absent optional body group sends no body at all — the
     // all-or-nothing refine in buildLayout already guarantees the group is
-    // either fully present or fully absent by the time we get here (research
-    // m5-request-building.md §5.3).
+    // either fully present or fully absent by the time we get here.
     if (!assembled.anyPresent) {
       return { ok: {} };
     }
@@ -491,8 +486,8 @@ export const buildRequest = (
       if (mapping.required) {
         return { error: `"${mapping.wireName}" is required and must not be null` };
       }
-      // Q1 (research m5-request-building.md §3.2 / task-7 brief): an
-      // explicit null on an OPTIONAL param is omitted, exactly like absent.
+      // An explicit null on an OPTIONAL param is omitted, exactly like
+      // absent.
       continue;
     }
     if (mapping.destination === 'path') {

@@ -45,10 +45,10 @@ export interface DispatcherDeps {
   now: () => number;
   executor: ToolExecutor;
   metaExecutor: MetaExecutor;
-  // M5 Task 11 (plan-review H4): the dispatch-boundary redactor. Every
-  // outcome this dispatcher returns is finalized through it as the LAST step
-  // before returning — the meta executor and any future executor get the
-  // same defense, not just the M5 upstream one.
+  // The dispatch-boundary redactor. Every outcome this dispatcher returns is
+  // finalized through it as the LAST step before returning — the meta
+  // executor and any future executor get the same defense, not just the
+  // built-in upstream one.
   redactor: Redactor;
 }
 
@@ -66,7 +66,7 @@ interface ZodIssueLike {
 // A path SEGMENT can itself be caller-controlled (a dynamic object key from
 // a catchall/additionalProperties schema) — sanitize (strip control/bidi)
 // AND cap it independently, exactly like any other untrusted spec/caller
-// text reaching a display sink (§6.4 untrusted-text rule extended to
+// text reaching a display sink (the untrusted-text rule extended to
 // caller-supplied data, not just spec text).
 const renderPathSegment = (segment: string | number | symbol): string =>
   sanitizeSpecText(String(segment), MAX_PATH_SEGMENT_LENGTH);
@@ -121,16 +121,16 @@ const PARSE_THREW_OUTCOME: ToolCallOutcome = textOutcome(
 // server/execute/response.ts's own GENERIC_UNSAFE_TEXT wording.
 const BOUNDARY_UNSAFE_TEXT = 'tool execution result could not be returned safely';
 
-// The dispatch-boundary finalizer (plan-review H4): runs as the LAST
-// step before ANY outcome leaves createDispatcher.call. Every content[].text
-// block is redacted; if structuredContent is present and a secret is found
-// ANYWHERE inside it, the whole structuredContent is dropped and a generic
-// isError is returned instead — never a redacted-but-successful envelope,
-// and never a partially-redacted structuredContent (redactJson is NOT used
-// here: rewriting structured data invites subtly-wrong reserialization; the
-// only safe move on a hit is to withhold the data entirely). This runs for
-// EVERY outcome, from the meta executor and from any future executor, not
-// only the M5 upstream one — a bug in a single executor's own redaction can
+// The dispatch-boundary finalizer: runs as the LAST step before ANY outcome
+// leaves createDispatcher.call. Every content[].text block is redacted; if
+// structuredContent is present and a secret is found ANYWHERE inside it, the
+// whole structuredContent is dropped and a generic isError is returned
+// instead — never a redacted-but-successful envelope, and never a
+// partially-redacted structuredContent (redactJson is NOT used here:
+// rewriting structured data invites subtly-wrong reserialization; the only
+// safe move on a hit is to withhold the data entirely). This runs for EVERY
+// outcome, from the meta executor and from any future executor, not only the
+// built-in upstream one — a bug in a single executor's own redaction can
 // never alone leak a secret past this boundary.
 const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOutcome => {
   if (outcome.structuredContent !== undefined) {
@@ -149,11 +149,11 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
     ...block,
     text: redactor.redactString(block.text),
   }));
-  // Final-review Fix 4 (MED — rescan after redaction): redactString's
-  // single ordered replacement pass can, in composition, still leave or
-  // synthesize a registered secret in its own output (e.g. an earlier,
-  // longer needle's replacement text can go unchecked against a shorter
-  // needle whose turn in the pass already came and went). Rescan the
+  // Rescan after redaction: redactString's single ordered replacement pass
+  // can, in composition, still leave or synthesize a registered secret in
+  // its own output (e.g. an earlier, longer needle's replacement text can go
+  // unchecked against a shorter needle whose turn in the pass already came
+  // and went). Rescan the
   // REDACTED text itself before returning it — a hit, or the scan itself
   // throwing, downgrades the whole outcome to the same generic boundary
   // error as the structuredContent branch above, rather than ever returning
@@ -195,8 +195,8 @@ export const createDispatcher = (
         return { kind: 'unknown-tool', name: request.name };
       }
       // Rate consume BEFORE validation: a known-but-invalid call still spends
-      // budget (ordering decision); an unknown tool never does (handled
-      // above, before this point).
+      // budget; an unknown tool never does (handled above, before this
+      // point).
       if (!deps.limiter.consume(deps.now())) {
         return {
           kind: 'outcome',

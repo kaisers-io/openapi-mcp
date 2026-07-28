@@ -106,9 +106,9 @@ const assertObjectRoot = (
 // The subset of SpecPipelineResult the meta summary needs — deliberately
 // narrower than the full result (no `namedOperations`, no `cacheStatus`, and
 // crucially NO `candidateContentHash`): the meta tool reports the ACCEPTED
-// baseline only (owner decision 1 — no runtime refresh/candidate fields in
-// M4), so the type itself makes threading a candidate hash through a mistake
-// the compiler catches, not just a convention. `spec.omitted` is
+// baseline only — there is no runtime refresh or candidate-spec field to
+// report — so the type itself makes threading a candidate hash through a
+// mistake the compiler catches, not just a convention. `spec.omitted` is
 // normalizeSpec's OWN omission source (cookie parameters, OPTIONS/TRACE,
 // webhooks, path-level `servers` overrides, ...) — a DIFFERENT stage from
 // `built.omitted` (buildTools' toolgen-level omissions: unrepresentable
@@ -132,8 +132,8 @@ export interface SnapshotPipelineInput {
 // `wireToolOf`/`SnapshotTool.generated` retain the ORIGINAL `GeneratedTool`
 // object references from `built.tools` (never copied) rather than cloning
 // them, this also freezes the caller's own `BuildToolsResult.tools[*]`
-// objects — intentional (Task 2's goal explicitly "retains the original
-// schema objects unchanged"; freezing is the stronger form of that promise),
+// objects — intentional: this snapshot must retain the original schema
+// objects unchanged, and freezing is the stronger form of that guarantee,
 // not an accidental side channel. `typeof value !== 'object'` also skips
 // functions (e.g. `GeneratedTool.mapper`, `typeof` is `'function'`, not
 // `'object'`) — deliberately: nothing in this codebase ever reassigns a

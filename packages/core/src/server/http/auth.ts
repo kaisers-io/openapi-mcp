@@ -1,20 +1,20 @@
 import { Buffer } from 'node:buffer';
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-// Token grammar (design §7.6, CORRECTED): the token must decode to EXACTLY
-// 32 bytes (256 bits) — either 43 unpadded Base64URL characters, or a
-// 44-character PADDED standard Base64 string (the literal shape of
-// `openssl rand -base64 32`, one trailing '='). The original ">=32 Base64
-// characters" grammar only guaranteed 192 bits at its minimum length AND
-// rejected `openssl rand -base64 32`'s own output outright (44 chars,
-// padded) — neither matched the design's "256-bit" claim. Length-gate FIRST
-// (cheap; avoids base64-decoding an attacker-chosen string of arbitrary
-// length) with a closed-form regex for each of the two accepted shapes,
-// THEN decode and verify the EXACT byte count as a second, independent
-// check — a string that merely LOOKS the right length is still rejected if
-// it does not actually decode to 32 bytes. Validated once at CLI startup
-// (Task 8) so a malformed --http-token-env value fails fast rather than
-// silently comparing against garbage forever.
+// Token grammar: the token must decode to EXACTLY 32 bytes (256 bits) —
+// either 43 unpadded Base64URL characters, or a 44-character PADDED
+// standard Base64 string (the literal shape of `openssl rand -base64 32`,
+// one trailing '='). A minimum-length-only check (e.g. ">=32 Base64
+// characters") would not guarantee this: it admits as few as 192 bits at
+// its minimum length and rejects `openssl rand -base64 32`'s own output
+// outright (44 chars, padded) — neither satisfies the required 256-bit
+// guarantee. Length-gate FIRST (cheap; avoids base64-decoding an
+// attacker-chosen string of arbitrary length) with a closed-form regex for
+// each of the two accepted shapes, THEN decode and verify the EXACT byte
+// count as a second, independent check — a string that merely LOOKS the
+// right length is still rejected if it does not actually decode to 32
+// bytes. Validated once at CLI startup so a malformed --http-token-env
+// value fails fast rather than silently comparing against garbage forever.
 const UNPADDED_BASE64URL_43_RE = /^[A-Za-z0-9_-]{43}$/u;
 const PADDED_STANDARD_BASE64_44_RE = /^[A-Za-z0-9+/]{43}=$/u;
 const REQUIRED_DECODED_BYTES = 32;

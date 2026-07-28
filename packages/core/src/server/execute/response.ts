@@ -6,22 +6,19 @@ import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText, TRUNCATION_MARKER } from '../../spec/sanitize.ts';
 import { structuredOutcome, textOutcome, type ToolCallOutcome } from '../result.ts';
 
-// M5 Task 8 (design §6.6, D7/D9; research m5-response-envelope.md): the
-// executor is the SOLE enforcer of {status,contentType,data} envelope
+// The executor is the SOLE enforcer of {status,contentType,data} envelope
 // conformance — the low-level SDK Server performs no per-tool outputSchema
-// validation at all (research m5-response-envelope.md, "CRUCIAL FINDING"),
-// so a bug here that emits nonconforming structuredContent would reach the
-// client unchecked. mapResponse turns a Task 4 PinnedOutcome into the MCP
-// envelope, validated with ajv, or a redacted isError — never forwarding a
-// raw upstream body, a raw ajv error, or a secret.
+// validation at all, so a bug here that emits nonconforming structuredContent
+// would reach the client unchecked. mapResponse turns a PinnedOutcome into
+// the MCP envelope, validated with ajv, or a redacted isError — never
+// forwarding a raw upstream body, a raw ajv error, or a secret.
 
 // CJS interop mirror of spec/validate.ts's unwrapDefault/AjvConstructor
-// pattern (Plan Decision D10): TypeScript under nodenext types these CJS
-// default imports as namespaces without construct/call signatures, while at
-// runtime the binding (and its .default) is the class/function in every
-// module system in play. Kept as a LOCAL mirror rather than a shared import:
-// research m5-response-envelope.md Q2 explicitly recommends keeping envelope
-// compilation executor-local, not entangled with spec/validate.ts's
+// pattern: TypeScript under nodenext types these CJS default imports as
+// namespaces without construct/call signatures, while at runtime the binding
+// (and its .default) is the class/function in every module system in play.
+// Kept as a LOCAL mirror rather than a shared import: envelope compilation
+// stays executor-local, not entangled with spec/validate.ts's
 // meta-schema-validator cache — an unrelated cache key (the two official
 // OpenAPI meta-schemas vs. one compiled validator per tool outputSchema).
 interface AjvInstance {
@@ -40,9 +37,9 @@ const addFormats = unwrapDefault<(ajv: AjvInstance) => unknown>(addFormatsModule
 export type EnvelopeValidator = (envelope: unknown) => boolean;
 
 // Compiles once, eagerly, so an incompatible outputSchema throws AT this
-// call — i.e. at server startup (Task 11), never on the first matching tool
-// call. `undefined` in, `undefined` out: a tool with no outputSchema has
-// nothing to validate against.
+// call — i.e. at server startup, never on the first matching tool call.
+// `undefined` in, `undefined` out: a tool with no outputSchema has nothing
+// to validate against.
 export const compileEnvelopeValidator = (
   outputSchema: Record<string, unknown> | undefined,
 ): EnvelopeValidator | undefined => {
@@ -70,8 +67,7 @@ export interface MapResponseOptions {
 
 // Fixed, reason-keyed text — never the PinnedOutcome's own `detail` string,
 // which can embed a hostname or an underlying network-library message never
-// meant for a tool-call response (round-1 amendment: never leak raw
-// detail).
+// meant for a tool-call response.
 const PINNED_ERROR_TEXT: Record<PinnedErrorReason, string> = {
   timeout: 'the upstream request timed out',
   cancelled: 'the request was cancelled',
@@ -104,8 +100,7 @@ const mediaEssence = (contentType: string | undefined): string | undefined => {
 };
 
 // Mirrors toolgen/output-schema.ts's isJsonContentType (not exported there —
-// this module needs its own copy of the same essence test; research
-// m5-response-envelope.md Q3).
+// this module needs its own copy of the same essence test).
 const JSON_ESSENCE_RE = /^application\/(?:[\w.+-]+\+)?json$/u;
 const isTextEssence = (essence: string): boolean => essence.startsWith('text/');
 
@@ -178,8 +173,8 @@ const truncateUtf8 = (text: string, maxBytes: number): string => {
   }
 };
 
-// Byte-capped excerpt budget for a 4xx/5xx error body (brief: "byte-capped
-// excerpt"). Reuses DISPLAY_TEXT_MAX rather than inventing a new magic
+// Byte-capped excerpt budget for a 4xx/5xx error body. Reuses
+// DISPLAY_TEXT_MAX rather than inventing a new magic
 // number: it is already the codebase's shared "bound a single hostile
 // human-display string" budget (spec/sanitize.ts), and an error excerpt is
 // exactly that kind of string. Measured in characters (sanitizeSpecText's
@@ -188,13 +183,13 @@ const ERROR_EXCERPT_MAX = DISPLAY_TEXT_MAX;
 
 const GENERIC_UNSAFE_TEXT = 'the upstream response could not be returned safely';
 
-// Round-2 fix D (cheap, keeps mapResponse locally fail-closed):
-// scanForSecret's contract (redact.ts) explicitly documents that a
-// pathologically deep JSON-compatible input throws rather than looping
-// forever. Every scanForSecret call site in this module treats "found a
-// secret" as "reject the body", so mapping a throw to `true` reuses each
-// call site's existing generic-isError branch instead of letting the throw
-// escape mapResponse and rely on the dispatcher's outer catch.
+// Keeps mapResponse locally fail-closed: scanForSecret's contract
+// (redact.ts) explicitly documents that a pathologically deep
+// JSON-compatible input throws rather than looping forever. Every
+// scanForSecret call site in this module treats "found a secret" as
+// "reject the body", so mapping a throw to `true` reuses each call site's
+// existing generic-isError branch instead of letting the throw escape
+// mapResponse and rely on the dispatcher's outer catch.
 const scanSafely = (redactor: Redactor, value: unknown): boolean => {
   try {
     return redactor.scanForSecret(value);
@@ -221,14 +216,14 @@ const mapHttpError = (
   if ('error' in decoded) {
     return textOutcome(`upstream request failed with status ${status}`, true);
   }
-  // Final-review Fix 2 (HIGH/Important): mirror mapNoSchemaSuccess's
-  // Round-2 fix A below — string-only redaction on the raw body text cannot
-  // see a secret that is present in the decoded JSON STRUCTURE but escaped
-  // differently in its serialized form (e.g. a secret containing `/`
-  // rendered `\/`, or a `\uXXXX` escape). Parse the JSON and scan the
-  // resulting STRUCTURE first; on a hit, drop straight to the status-only
-  // message with NO excerpt at all (never fall through to the string-redacted
-  // excerpt below, which could still echo the escaped form verbatim).
+  // Mirrors mapNoSchemaSuccess's JSON-structure scan below — string-only
+  // redaction on the raw body text cannot see a secret that is present in
+  // the decoded JSON STRUCTURE but escaped differently in its serialized
+  // form (e.g. a secret containing `/` rendered `\/`, or a `\uXXXX` escape).
+  // Parse the JSON and scan the resulting STRUCTURE first; on a hit, drop
+  // straight to the status-only message with NO excerpt at all (never fall
+  // through to the string-redacted excerpt below, which could still echo
+  // the escaped form verbatim).
   const essence = mediaEssence(contentType);
   if (essence !== undefined && JSON_ESSENCE_RE.test(essence)) {
     let parsed: unknown;
@@ -242,10 +237,9 @@ const mapHttpError = (
       return textOutcome(`upstream request failed with status ${status}`, true);
     }
   }
-  // Redact BEFORE truncating (round-1 amendment): sanitizeSpecText's
-  // own truncation runs AFTER this redaction, over the already-secret-free
-  // text, so a secret cannot be split across the excerpt boundary and leak
-  // a surviving fragment.
+  // Redact BEFORE truncating: sanitizeSpecText's own truncation runs AFTER
+  // this redaction, over the already-secret-free text, so a secret cannot
+  // be split across the excerpt boundary and leak a surviving fragment.
   const redacted = redactor.redactString(decoded.ok);
   const excerpt = sanitizeSpecText(redacted, ERROR_EXCERPT_MAX);
   if (scanSafely(redactor, excerpt)) {
@@ -266,10 +260,10 @@ const mapNoSchemaSuccess = (
   }
   const essence = mediaEssence(contentType);
   if (essence !== undefined && !JSON_ESSENCE_RE.test(essence) && !isTextEssence(essence)) {
-    // Round-2 fix B: `essence` is upstream-controlled (the raw
-    // Content-Type header) — a hostile upstream can echo a registered
-    // secret through it, so it must be redacted, not merely
-    // sanitize-truncated, before it reaches this error text.
+    // `essence` is upstream-controlled (the raw Content-Type header) — a
+    // hostile upstream can echo a registered secret through it, so it must
+    // be redacted, not merely sanitize-truncated, before it reaches this
+    // error text.
     const safeEssence = sanitizeSpecText(redactor.redactString(essence), 128);
     return textOutcome(
       `upstream response for status ${status} used an unsupported media type "${safeEssence}"`,
@@ -280,9 +274,9 @@ const mapNoSchemaSuccess = (
   if ('error' in decoded) {
     return textOutcome('upstream response body was not valid UTF-8 text', true);
   }
-  // Round-2 fix A (load-bearing): string-only redaction on the raw
-  // body text cannot see a secret that is present in the decoded JSON
-  // STRUCTURE but escaped differently in its serialized form — e.g. a
+  // Load-bearing: string-only redaction on the raw body text cannot see a
+  // secret that is present in the decoded JSON STRUCTURE but escaped
+  // differently in its serialized form — e.g. a
   // secret containing `/` (base64 and HTTP Basic-auth creds commonly do),
   // where PHP's json_encode (and other encoders) render `/` as `\/`. The
   // raw body text then reads `...sk\/live\/...` while every redactor
@@ -308,9 +302,8 @@ const mapNoSchemaSuccess = (
       return textOutcome(GENERIC_UNSAFE_TEXT, true);
     }
   }
-  // Redact BEFORE truncating, same rationale as mapHttpError above (the
-  // round-1 amendment explicitly extends this to the text/JSON
-  // success path, which used to return the body verbatim).
+  // Redact BEFORE truncating, same rationale as mapHttpError above: the
+  // text/JSON success path must never return the raw body either.
   const redacted = redactor.redactString(decoded.ok);
   const truncated = truncateUtf8(redacted, maxTextBytes);
   if (scanSafely(redactor, truncated)) {
@@ -330,8 +323,8 @@ const mapSchemaSuccess = (
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
   if (branch === undefined) {
-    // Round-2 fix B: same upstream-controlled-essence redaction as
-    // mapNoSchemaSuccess's unsupported-media-type message above.
+    // Same upstream-controlled-essence redaction as mapNoSchemaSuccess's
+    // unsupported-media-type message above.
     const observed =
       essence === undefined ? '(missing)' : sanitizeSpecText(redactor.redactString(essence), 128);
     return textOutcome(
@@ -350,7 +343,7 @@ const mapSchemaSuccess = (
     return textOutcome(`upstream response for status ${status} was not valid JSON`, true);
   }
   const envelope: Record<string, unknown> = { status, contentType: branch.contentType, data };
-  // D9: a secret anywhere in the structured data downgrades to a generic
+  // A secret anywhere in the structured data downgrades to a generic
   // isError — never a redacted-but-successful structuredContent. The
   // envelope's DATA is never itself rewritten: either it is secret-free and
   // returned verbatim, or the call is refused outright.
@@ -386,8 +379,8 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
     return textOutcome(`upstream response for status ${status} had no body to validate`, true);
   }
   if (opts.outputSchema === undefined) {
-    // Contract violation (Task 10 must always pass outputSchema alongside a
-    // compiled validator) — fail closed rather than crash.
+    // Contract violation: the caller must always pass outputSchema alongside
+    // a compiled validator — fail closed rather than crash.
     return textOutcome(
       'tool execution failed: the tool has no output schema to validate against',
       true,
