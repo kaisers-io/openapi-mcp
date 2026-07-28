@@ -38,10 +38,9 @@ const registerList: CommandRegistrar = (program, ctx, state) => {
         const root = rootOf(ctx);
         const entries = await listCacheEntries(root, ctx.cacheFs);
         const data = { cacheRoot: root, entryCount: entries.length, entries };
-        // Round-2 correction 12: the root is environment-derived (homeDir()),
-        // so it is untrusted display text on the human path exactly like a spec
-        // title is. The round-1 draft interpolated it raw into both lines
-        // below. JSON mode stays raw because JSON encoding escapes controls.
+        // The root is environment-derived (homeDir()), so it is untrusted
+        // display text on the human path exactly like a spec title is. JSON
+        // mode stays raw because JSON encoding escapes controls.
         const displayRoot = sanitizeSpecText(root, CACHE_DISPLAY_MAX);
         if (entries.length === 0) {
           return { data, humanLines: [`no cache entries under ${displayRoot}`] };
@@ -56,7 +55,7 @@ const registerList: CommandRegistrar = (program, ctx, state) => {
               CACHE_DISPLAY_MAX,
             )}`,
             `    source:    ${sanitizeSpecText(entry.displaySource, CACHE_DISPLAY_MAX)}`,
-            // D9: the label is charset-restricted and never secret, so it prints raw
+            // The label is charset-restricted and never secret, so it prints raw
             `    key:       ${entry.cacheKey ?? '(none)'}`,
             `    fetched:   ${new Date(entry.fetchedAt).toISOString()}`,
             `    accepted:  ${entry.acceptedContentHash}`,
@@ -99,10 +98,10 @@ const registerClear: CommandRegistrar = (program, ctx, state) => {
         }
         const root = rootOf(ctx);
         if (cmdOpts.all === true) {
-          // Cleared namespace by namespace, each under its OWN lock (D16a).
-          // The root itself is left in place (D16c) — removing it would race a
-          // first-ever write recreating a namespace underneath, and an empty
-          // root costs nothing
+          // Cleared namespace by namespace, each under its OWN lock. The root
+          // itself is left in place — removing it would race a first-ever
+          // write recreating a namespace underneath, and an empty root costs
+          // nothing
           const cleared = await clearAllNamespaces(root, ctx.cacheFs, ctx.now());
           return {
             data: { cacheRoot: root, clearedEntries: cleared },
@@ -194,7 +193,7 @@ const registerRefresh: CommandRegistrar = (program, ctx, state) => {
           cacheStatus: result.cacheStatus,
           displaySource: result.displaySource,
           acceptedContentHash: meta?.acceptedContentHash ?? '',
-          // D18: the nested member on disk, flattened for the output envelope
+          // The nested member on disk, flattened for the output envelope
           ...(meta?.candidate === undefined
             ? {}
             : { candidateContentHash: meta.candidate.contentHash }),
@@ -244,18 +243,18 @@ const registerPromote: CommandRegistrar = (program, ctx, state) => {
     });
 };
 
-// D12.3: the explicit recovery path that replaces automatic stale-lock
-// breaking. Breaking a lock cannot be made safe automatically — a third process
-// can acquire between the staleness check and the unlink, so the breaker
-// deletes a live lock.
-// Round-3 finding 4, corrected claim: making it an operator action does NOT
-// make the race disappear. unlockNamespace reads one record and unlinks the
-// path afterwards, so A can release and C can acquire in between and the unlink
-// aimed at A removes C's lock. What the operator action buys is that the risk
-// is taken KNOWINGLY by someone who can check whether the owning process still
-// exists — not that the operation is safe. The command documents that it
-// requires quiesced writers, and the exit-3 path below refuses without --force
-// whenever the lock is not demonstrably stale.
+// The explicit recovery path that replaces automatic stale-lock breaking.
+// Breaking a lock cannot be made safe automatically — a third process can
+// acquire between the staleness check and the unlink, so the breaker deletes
+// a live lock. Making it an operator action does NOT make the race
+// disappear: unlockNamespace reads one record and unlinks the path
+// afterwards, so a process A can release and a process C can acquire in
+// between, and the unlink aimed at A's lock removes C's instead. What the
+// operator action buys is that the risk is taken KNOWINGLY by someone who
+// can check whether the owning process still exists — not that the
+// operation is safe. The command documents that it requires quiesced
+// writers, and the exit-3 path below refuses without --force whenever the
+// lock is not demonstrably stale.
 const registerUnlock: CommandRegistrar = (program, ctx, state) => {
   program
     .command('unlock')

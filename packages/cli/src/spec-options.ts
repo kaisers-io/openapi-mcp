@@ -28,10 +28,10 @@ export const PATH_DISPLAY_MAX = 512;
 // suggestions, so the whole warning line is bounded
 export const PATTERN_DISPLAY_MAX = 256;
 
-// Spec §8 wording: --allow "readPets" matches no operation; closest: readPetById
+// Example wording: --allow "readPets" matches no operation; closest: readPetById
 // The flag comes from the engine, which knows which list the pattern came from.
-// Shared by `tools` and `serve` (Task 6 security fix) so a dead-pattern warning
-// is sanitized and worded identically regardless of which command produced it.
+// Shared by `tools` and `serve` so a dead-pattern warning is sanitized and
+// worded identically regardless of which command produced it.
 export const deadPatternMessage = (dead: DeadPattern): string => {
   const raw = sanitizeSpecText(dead.raw, PATTERN_DISPLAY_MAX);
   const base = `--${dead.flag} "${raw}" matches no operation`;

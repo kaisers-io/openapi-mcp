@@ -35,15 +35,15 @@ import {
 } from '../spec-options.ts';
 import type { CommandRegistrar } from './registry.ts';
 
-// M5 Task 11: fixed operational budgets for the runtime API executor. No CLI
-// flag exists for these (Task 9's ApiCmdOpts covers auth/base-url/response
-// size/cleartext-gating only) — they bound the OUTBOUND request the way
-// --max-response-bytes bounds the inbound one, and are conservative enough
-// never to reject a well-formed request against a real API.
+// Fixed operational budgets for the runtime API executor. No CLI flag exists
+// for these (ApiCmdOpts covers auth/base-url/response size/cleartext-gating
+// only) — they bound the OUTBOUND request the way --max-response-bytes bounds
+// the inbound one, and are conservative enough never to reject a well-formed
+// request against a real API.
 const MAX_URL_LENGTH = 8192;
 const MAX_HEADER_BYTES = 16_384;
-// Global outbound-concurrency semaphore (design §7.6), shared by stdio + HTTP
-// because `createExecutor` is constructed exactly ONCE below.
+// Global outbound-concurrency semaphore, shared by stdio + HTTP because
+// `createExecutor` is constructed exactly ONCE below.
 const MAX_CONCURRENT_UPSTREAM_CALLS = 16;
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -78,14 +78,13 @@ export interface ResolvedBase {
   trusted: boolean;
 }
 
-// M5 Task 11 / plan-review MED (base resolution): `--base-url` wins
-// (trusted); else an ABSOLUTE `servers[0]` candidate is used as-is
-// (untrusted); else a RELATIVE/absent candidate resolves against the spec's
-// own FINAL, post-redirect source URL (`displaySource`) — OpenAPI's own "no
-// servers -> root of the document's location" default — but ONLY when the
-// spec came from a URL; a FILE spec with no usable server candidate has no
-// document location to resolve against, so it is a startup usage error
-// requiring `--base-url`.
+// Base-URL resolution order: `--base-url` wins (trusted); else an ABSOLUTE
+// `servers[0]` candidate is used as-is (untrusted); else a RELATIVE/absent
+// candidate resolves against the spec's own FINAL, post-redirect source URL
+// (`displaySource`) — OpenAPI's own "no servers -> root of the document's
+// location" default — but ONLY when the spec came from a URL; a FILE spec
+// with no usable server candidate has no document location to resolve
+// against, so it is a startup usage error requiring `--base-url`.
 export const resolveBaseUrl = (
   baseUrlOverride: string | undefined,
   spec: NormalizedSpec,
@@ -190,19 +189,19 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         }
         httpConfig = { token, port };
       }
-      // M5 Task 11: resolved BEFORE buildTools (below) — its
-      // reservedHeaderNames must be unioned into buildTools' reservedHeaders
-      // so a spec header parameter colliding with a configured auth header
-      // name is dropped from the tool's input schema, not merely rejected
-      // later at call time. Also validated fast, before any spec/cache/
-      // network processing, matching the httpConfig check just above.
+      // Resolved BEFORE buildTools (below): its reservedHeaderNames must be
+      // unioned into buildTools' reservedHeaders so a spec header parameter
+      // colliding with a configured auth header name is dropped from the
+      // tool's input schema, not merely rejected later at call time. Also
+      // validated fast, before any spec/cache/network processing, matching
+      // the httpConfig check just above.
       const apiConfig = resolveApiConfig(cmdOpts, ctx);
       const args = parseSpecPipelineArgs(cmdOpts, ctx);
       const result = await runSpecPipeline(args.source, args.options, args.deps);
       // Sanitized + suggestion-bearing, matching `tools`' strict-filters
-      // throw exactly (deadPatternMessage is the shared, spec §8-worded
-      // renderer): the raw inline form this replaced put unsanitized
-      // spec-derived text straight into a thrown error's message.
+      // throw exactly (deadPatternMessage is the shared renderer): building
+      // the message inline instead would put unsanitized spec-derived text
+      // straight into a thrown error's message.
       if (cmdOpts.strictFilters === true && result.deadPatterns.length > 0) {
         throw validationError(
           result.deadPatterns.map((dead) => deadPatternMessage(dead)).join('\n'),
@@ -211,8 +210,8 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // Union: a spec header parameter named e.g. "X-Api-Key" is dropped from
       // the tool's input schema when that same name is configured as an
       // operator auth header (--header/--header-env) — SYSTEM_HEADERS alone
-      // (the M4 baseline) would let it reappear as a caller-settable input,
-      // silently colliding with the credential the executor injects.
+      // would let it reappear as a caller-settable input, silently colliding
+      // with the credential the executor injects.
       const built = buildTools(result.namedOperations, {
         reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
         openapiVersion: result.spec.openapiVersion,
@@ -232,10 +231,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       assertBaseUrlShape(resolvedBase.url);
       const allowPrivateNetwork = cmdOpts.allowPrivateNetwork === true;
       if (!resolvedBase.trusted) {
-        // Bounded resolve + classifyAddress (Task 1/3), respecting
+        // Bounded resolve + classifyAddress, respecting
         // --allow-private-network; metadata is denied unconditionally. The
-        // per-connection DNS pin (pinnedRequest, Task 4) remains the actual
-        // runtime control — this is a fail-fast startup check only.
+        // per-connection DNS pin (pinnedRequest) remains the actual runtime
+        // control — this is a fail-fast startup check only.
         await assertAllowedRedirectTarget(
           resolvedBase.url,
           { allowPrivateNetwork },
@@ -255,11 +254,11 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...(httpConfig === undefined ? [] : [httpConfig.token]),
       ]);
 
-      // D7 eager compile (round-1 amendment): every upstream tool's
-      // outputSchema is compiled HERE, at startup, so an incompatible schema
-      // fails fast rather than on the first matching call. `validators.has`
-      // is the executor's fail-closed contract — every upstream tool gets an
-      // entry, `undefined` only for a genuine no-outputSchema tool.
+      // Every upstream tool's outputSchema is compiled eagerly HERE, at
+      // startup, so an incompatible schema fails fast rather than on the
+      // first matching call. `validators.has` is the executor's fail-closed
+      // contract — every upstream tool gets an entry, `undefined` only for a
+      // genuine no-outputSchema tool.
       const validators = new Map<string, EnvelopeValidator | undefined>();
       for (const tool of snapshot.tools) {
         if (tool.kind !== 'upstream') {
@@ -315,10 +314,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       ]);
       if (httpConfig !== undefined) {
         const guard: RequestGuardOptions = {
-          // No CLI flag for browser Origins in M4 (documented scope: a
-          // single local, non-browser client) — an empty allowlist means
-          // every PRESENT Origin 403s; an absent Origin still works with a
-          // valid bearer (Task 7).
+          // No CLI flag for browser Origins (documented scope: a single
+          // local, non-browser client) — an empty allowlist means every
+          // PRESENT Origin 403s; an absent Origin still works with a valid
+          // bearer.
           allowedOrigins: new Set(),
           allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
           bearer: { configuredToken: httpConfig.token },

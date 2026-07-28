@@ -22,7 +22,7 @@ const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
 
 // Names that read as a credential regardless of what --header actually
 // carries. Deny-by-pattern, not proof of non-secret — secretValues below is
-// the defense-in-depth backstop for whatever this misses (round-1 amendment).
+// the defense-in-depth backstop for whatever this misses.
 const SENSITIVE_EXACT: ReadonlySet<string> = new Set([
   'authorization',
   'proxy-authorization',
@@ -76,7 +76,7 @@ const MAX_RESPONSE_BYTES_CEILING = 104_857_600; // 100 MiB
 // Mirrors redact.ts's own (non-exported) MIN_VARIANT_LENGTH: below this
 // length, createRedactor computes no encoding variants for a needle at all,
 // so registering a short static --header value buys no defense-in-depth and
-// risks the final-review Fix 5 footgun below instead.
+// risks the marker-collision footgun described below instead.
 const MIN_SECRET_REGISTRATION_LENGTH = 8;
 
 const textEncoder = new TextEncoder();
@@ -95,17 +95,16 @@ export interface ResolvedApiConfig {
   secretHeaders: ApiSecretHeader[];
   reservedHeaderNames: ReadonlySet<string>;
   // Every --header-env value (always) AND every --header value that is at
-  // least MIN_SECRET_REGISTRATION_LENGTH chars (round-1 amendment, refined by
-  // final-review Fix 5): a credential mistakenly passed via the non-secret
-  // --header flag is still scrubbed from all redacted output. A SHORT static
-  // value (e.g. "da") is excluded — see resolveApiConfig's own comment for
-  // why registering it is both useless (createRedactor computes no encoding
-  // variants below that length) and actively dangerous (createRedactor
-  // throws on a value that is itself a substring of the literal
-  // '[redacted]' marker, e.g. "da"). The cleartext gate (Task 10) stays keyed
-  // on --header-env presence only — static --header is contractually
-  // non-secret (sensitive names are already rejected above), so gating
-  // cleartext on it would block legitimate non-secret headers.
+  // least MIN_SECRET_REGISTRATION_LENGTH chars: a credential mistakenly
+  // passed via the non-secret --header flag is still scrubbed from all
+  // redacted output. A SHORT static value (e.g. "da") is excluded — see
+  // resolveApiConfig's own comment for why registering it is both useless
+  // (createRedactor computes no encoding variants below that length) and
+  // actively dangerous (createRedactor throws on a value that is itself a
+  // substring of the literal '[redacted]' marker, e.g. "da"). The cleartext
+  // gate stays keyed on --header-env presence only — static --header is
+  // contractually non-secret (sensitive names are already rejected above),
+  // so gating cleartext on it would block legitimate non-secret headers.
   secretValues: string[];
   maxResponseBytes: number;
   allowInsecureHttp: boolean;
@@ -125,8 +124,8 @@ export interface ApiCmdOpts {
 }
 
 // The --base-url/--header-env/--header/--max-response-bytes/
-// --allow-insecure-http flags for the runtime API executor (Task 10/11) —
-// separate from registerSpecOptions, which governs the spec fetch instead.
+// --allow-insecure-http flags for the runtime API executor — separate from
+// registerSpecOptions, which governs the spec fetch instead.
 export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
   command
     .option('--base-url <url>', 'override the spec-derived base URL for API requests')
@@ -317,13 +316,13 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
   const secretHeaders = parseSecretHeaders(cmdOpts.headerEnv, ctx.env);
   const staticHeaders = parseStaticHeaders(cmdOpts.header);
   const reservedHeaderNames = crossValidateHeaders(staticHeaders, secretHeaders);
-  // Final-review Fix 5 (finding 3 — marker-collision startup footgun): a
-  // --header-env value is ALWAYS a real credential and is always registered.
-  // A static --header value shorter than MIN_SECRET_REGISTRATION_LENGTH is
-  // excluded — createRedactor computes no encoding variants below that
-  // length anyway (see the ResolvedApiConfig comment above), and registering
-  // one risks createRedactor's own substring-of-the-marker guard throwing at
-  // startup for an entirely legitimate, non-secret value (e.g.
+  // Marker-collision startup footgun: a --header-env value is ALWAYS a real
+  // credential and is always registered. A static --header value shorter
+  // than MIN_SECRET_REGISTRATION_LENGTH is excluded — createRedactor
+  // computes no encoding variants below that length anyway (see the
+  // ResolvedApiConfig comment above), and registering one risks
+  // createRedactor's own substring-of-the-marker guard throwing at startup
+  // for an entirely legitimate, non-secret value (e.g.
   // `--header Accept-Language:da` — "da" is a substring of "[redacted]").
   const secretValues = [
     ...secretHeaders.map((header) => header.value),
