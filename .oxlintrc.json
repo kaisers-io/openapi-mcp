@@ -265,9 +265,6 @@
         // numberSchema, enum, pattern) to name the exact keyword/function being
         // discussed, verbatim
         "capitalized-comments": "off",
-        // Off per task-1 brief (M3): the `ok` test helper's early-throw guard
-        // uses a braceless `if (...) throw ...;` verbatim
-        "curly": "off",
         // Off per task-1 brief (M3): the keyword-allowlist `it.each` fixture for
         // the `if` keyword includes a sibling `then: {}` property because it is
         // a literal JSON Schema `if`/`then` node under test, not a thenable,
@@ -303,11 +300,6 @@
         // `allowReserved`, verbatim (same rationale as the
         // toolgen-schema.test.ts override above)
         "capitalized-comments": "off",
-        // Off to support task-3's verbatim converged code (M3): the
-        // `okFields` test helper's early-throw guard uses a braceless
-        // `if (...) throw ...;` verbatim (same rationale as
-        // toolgen-schema.test.ts's `ok` helper above)
-        "curly": "off",
         // Off to support task-3's verbatim converged code (M3): the round-15 reserved-header assertions
         // nest `expect(okFields(paramFields(op([...` (4 calls) verbatim, one
         // level deeper than the file's usual `const fields = okFields(paramFields(op([...`

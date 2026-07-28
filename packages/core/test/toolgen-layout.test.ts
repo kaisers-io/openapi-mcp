@@ -11,7 +11,9 @@ const op = (parameters: readonly Record<string, unknown>[]): OperationRecord => 
 });
 
 const okFields = (r: ReturnType<typeof paramFields>) => {
-  if (!('ok' in r)) throw new Error(`unrepresentable: ${r.unrepresentable}`);
+  if (!('ok' in r)) {
+    throw new Error(`unrepresentable: ${r.unrepresentable}`);
+  }
   return r.ok;
 };
 
@@ -211,7 +213,9 @@ const jsonBody = (schema: Record<string, unknown>, required = false): Record<str
 });
 
 const layout = (r: ReturnType<typeof buildLayout>) => {
-  if (!('ok' in r)) throw new Error(`unrepresentable: ${r.unrepresentable}`);
+  if (!('ok' in r)) {
+    throw new Error(`unrepresentable: ${r.unrepresentable}`);
+  }
   return r.ok;
 };
 

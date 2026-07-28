@@ -3,7 +3,9 @@ import { z } from 'zod';
 import { convertSchema, MAX_CONVERT_DEPTH, type SchemaResult } from '../src/index.ts';
 
 const ok = (r: SchemaResult): z.ZodType => {
-  if (!('ok' in r)) throw new Error(`expected ok, got unrepresentable: ${r.unrepresentable}`);
+  if (!('ok' in r)) {
+    throw new Error(`expected ok, got unrepresentable: ${r.unrepresentable}`);
+  }
   return r.ok;
 };
 
@@ -750,7 +752,9 @@ describe('convertSchema — composites', () => {
 
   it('guards against pathological structural depth', () => {
     let node: Record<string, unknown> = { type: 'string' };
-    for (let i = 0; i <= MAX_CONVERT_DEPTH + 1; i += 1) node = { type: 'array', items: node };
+    for (let i = 0; i <= MAX_CONVERT_DEPTH + 1; i += 1) {
+      node = { type: 'array', items: node };
+    }
     expect('unrepresentable' in convertSchema(node)).toBe(true);
   });
 });
