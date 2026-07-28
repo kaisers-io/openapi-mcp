@@ -4,9 +4,9 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
-// A real, local upstream (127.0.0.1, ephemeral port) that the M5 executor
-// actually calls through — no more asserting an "execution lands in M5"
-// stub. GET /pets -> a real JSON array (a structuredContent envelope);
+// A real, local upstream (127.0.0.1, ephemeral port) that the executor
+// actually calls through — this test asserts a genuine upstream response,
+// not a stub placeholder. GET /pets -> a real JSON array (a structuredContent envelope);
 // anything else -> 404. Records the LAST Authorization header it saw so a
 // secret --header-env can be proven to have reached the upstream without
 // ever asserting on the outcome (which must never contain it).
@@ -55,7 +55,7 @@ interface JsonRpcMessage {
 }
 
 // StdioServerTransport frames JSON-RPC messages one-per-line (verified
-// against the SDK's shared/stdio.js ReadBuffer/serializeMessage in Task 5).
+// against the SDK's shared/stdio.js ReadBuffer/serializeMessage).
 const send = (proc: ReturnType<typeof spawn>, message: JsonRpcMessage): void => {
   proc.stdin?.write(`${JSON.stringify(message)}\n`);
 };
@@ -129,12 +129,12 @@ describe('serve — stdio subprocess E2E', () => {
         'Authorization=UPSTREAM_TOKEN',
         // The on-disk fixture content can differ from a PRIOR run's accepted
         // cache entry at ~/.kaisers-io/openapi-mcp/cache (trust-on-first-use,
-        // keyed by file path — see M2b) — auto-accept here so this test
-        // never depends on cache history left over from an earlier run.
+        // keyed by file path) — auto-accept here so this test never depends
+        // on cache history left over from an earlier run.
         '--trust-spec-updates',
-        // Spec §3.2 rule 3: with no --allow, only read-only methods are
-        // exposed — createPet (POST) needs an explicit allow to be callable
-        // (this test needs it for the 404 case below).
+        // With no --allow, only read-only methods are exposed — createPet
+        // (POST) needs an explicit allow to be callable (this test needs it
+        // for the 404 case below).
         '--allow',
         '**',
       ],
@@ -184,7 +184,7 @@ describe('serve — stdio subprocess E2E', () => {
     await waitFor(() => stdoutLines.length >= 4);
     const upstreamResponse = JSON.parse(stdoutLines[3] as string) as JsonRpcMessage;
     // REAL execution: a genuine structuredContent envelope from the local
-    // upstream, not the old "execution lands in M5" stub text.
+    // upstream, not a stub placeholder.
     expect(upstreamResponse.result?.['isError']).not.toBe(true);
     const structured = upstreamResponse.result?.['structuredContent'] as
       | { status: number; contentType: string; data: unknown }
@@ -217,8 +217,8 @@ describe('serve — stdio subprocess E2E', () => {
       child?.once('exit', () => resolve());
     });
 
-    // Airtight stdout-purity assertion (the one thing the in-process
-    // InMemory tier in Task 5 cannot catch), evaluated on the RAW
+    // Airtight stdout-purity assertion (the one thing an in-process InMemory
+    // transport tier cannot catch), evaluated on the RAW
     // accumulation through process exit — not the incremental
     // `stdoutLines`, which quietly drops an unterminated trailing fragment:
     // (1) the raw stream must end with a trailing newline or be empty — no
@@ -238,7 +238,7 @@ describe('serve — stdio subprocess E2E', () => {
     expect(stderrLines.every((line) => !line.includes('{'))).toBe(true); // Stderr carries plain-text diagnostics, not JSON-RPC
   }, 10000);
 
-  // FALSIFICATION target (task-11 brief step 5): pointing buildTools back at
+  // FALSIFICATION target: pointing buildTools back at
   // SYSTEM_HEADERS only (dropping the `...apiConfig.reservedHeaderNames`
   // union) makes exactly this test fail — the spec's own "X-Trace" header
   // parameter would reappear as a caller-settable tool input even though
@@ -315,8 +315,8 @@ describe('serve — stdio subprocess E2E', () => {
 
   it('a PRE-action commander parse failure (an unknown flag) never touches stdout, even with the global --json flag', async () => {
     // MUST pass --json here to actually bind the policy this test claims to
-    // exercise: with --json ABSENT (an earlier version of this test),
-    // getGlobalOpts(program) reads json:false regardless of whether
+    // exercise: with --json ABSENT, getGlobalOpts(program) reads json:false
+    // regardless of whether
     // isServeInvocation's own errorOpts branch ever ran, so the assertions
     // below would stay green even if that branch were deleted entirely —
     // proving nothing about the fix. --json forces the two code paths to
@@ -359,12 +359,11 @@ describe('serve — stdio subprocess E2E', () => {
     // The scanner for the subcommand token must not stop at the first
     // unrecognized flag it meets: `--bogus` is neither `--` nor a known
     // global flag, but it DOES start with '-', so it must be skipped just
-    // like `--json` is, leaving `serve` as the first non-option token. An
-    // earlier version of isServeInvocation() only skipped a fixed set of
-    // known global flags (`--json`/`--verbose`) and `--`, so it stopped at
-    // `--bogus`, classified this as a non-serve invocation, and fell back to
-    // getGlobalOpts (json:true) — leaking the {"ok":false,...} envelope to
-    // stdout.
+    // like `--json` is, leaving `serve` as the first non-option token. A
+    // scanner that only skips a fixed set of known global flags
+    // (`--json`/`--verbose`) and `--` would stop at `--bogus`, classify this
+    // as a non-serve invocation, and fall back to getGlobalOpts (json:true)
+    // — leaking the {"ok":false,...} envelope to stdout.
     child = spawn(process.execPath, [bin, '--json', '--bogus', 'serve'], { cwd: fixturesDir });
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
     const code = await new Promise<number | null>((resolve) => {
@@ -456,7 +455,7 @@ describe('serve — stdio subprocess E2E', () => {
     expect(code).toBe(0);
   }, 10000);
 
-  // Task 5 (M6): the executor's cleartext gate (executor.ts's
+  // The executor's cleartext gate (executor.ts's
   // `cleartextBlocked` — a secret `--header-env` header over a cleartext
   // http: origin to a NON-loopback host is refused unless
   // --allow-insecure-http) is checked PER-CALL, inside runUpstreamCall, not

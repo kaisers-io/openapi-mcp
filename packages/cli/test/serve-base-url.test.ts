@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { NormalizedSpec } from '@kaisers-io/openapi-mcp-core';
 import { assertBaseUrlShape, resolveBaseUrl } from '../src/commands/serve.ts';
 
-// M5 Task 11: in-process unit coverage for the base-URL resolution helpers
-// serve.ts's action body wires together — the CLI's OWN serve.test.ts/
+// In-process unit coverage for the base-URL resolution helpers serve.ts's
+// action body wires together — the CLI's own serve.test.ts/
 // serve-http.test.ts suites drive these through a real spawned subprocess
 // (v8 coverage instrumentation never sees inside a child process), so this
 // file is what actually exercises resolveBaseUrl's/assertBaseUrlShape's own

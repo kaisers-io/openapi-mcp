@@ -39,7 +39,7 @@ interface Fixture {
 
 let fixture: Fixture;
 
-describe('cross-process cache races and the D13 bypass (real filesystem, real processes)', () => {
+describe('cross-process cache races and the authenticated bypass (real filesystem, real processes)', () => {
   beforeAll(async () => {
     const home = await mkdtemp(join(tmpdir(), 'openapi-mcp-cache-'));
     const body = { text: specOf('1.0.0', false) };
@@ -102,7 +102,7 @@ describe('cross-process cache races and the D13 bypass (real filesystem, real pr
     return JSON.parse(await readFile(metaPath, 'utf8')) as Record<string, unknown>;
   };
 
-  describe('cross-process cache races (D12)', () => {
+  describe('cross-process cache races', () => {
     it('seeds an accepted baseline through the real filesystem', async () => {
       const seeded = await runProcess([
         'tools',
@@ -168,8 +168,8 @@ describe('cross-process cache races and the D13 bypass (real filesystem, real pr
       ]);
       expect([EXIT.OK, EXIT.CONFLICT]).toContain(promoted.code);
       for (const reader of readers) {
-        // A torn read would surface as the D5 corrupt-entry validation error:
-        // the hash in meta.json would not match the persisted bytes
+        // A torn read would surface as a corrupt-entry validation error: the
+        // hash in meta.json would not match the persisted bytes
         expect(reader.code).toBe(EXIT.OK);
         expect(reader.stderr).not.toContain('cache clear');
       }
@@ -188,27 +188,27 @@ describe('cross-process cache races and the D13 bypass (real filesystem, real pr
         ]),
       ]);
       expect([EXIT.OK, EXIT.NOT_FOUND]).toContain(cleared.code);
-      // Round-8 finding 6: exit 0 alone is WRONG here, and would have made this
-      // test flake against a correct implementation. Readers are lock-free (D12),
-      // so this reader may legitimately observe the cleared entry as a miss,
-      // fetch a replacement, and reach writeAccepted while clear still holds the
-      // namespace lock — and D12.3 says a held lock is ALWAYS a conflictError
-      // (exit 5), with no automatic takeover. That outcome is correct behaviour,
-      // not corruption: the operator asked for a clear, and the reader declined
-      // to write underneath it.
+      // Asserting exit 0 alone would be WRONG here, and would make this test
+      // flake against a correct implementation. Readers are lock-free, so
+      // this reader may legitimately observe the cleared entry as a miss,
+      // fetch a replacement, and reach writeAccepted while clear still holds
+      // the namespace lock — and a held namespace lock always surfaces as a
+      // conflictError (exit 5), with no automatic takeover. That outcome is
+      // correct behaviour, not corruption: the operator asked for a clear,
+      // and the reader declined to write underneath it.
       //
       // What the test must actually pin is that no interleaving produces a
       // CORRUPT entry, so the admissible set is exactly {ok, conflict} and the
       // assertions below exclude the two outcomes that would signal real damage:
-      // a validation exit 3 (which is what a corrupt baseline reports, per D5)
-      // and any diagnostic naming the internals.
+      // a validation exit 3 (which is what a corrupt baseline reports) and
+      // any diagnostic naming the internals.
       expect([EXIT.OK, EXIT.CONFLICT]).toContain(read.code);
       expect(read.code).not.toBe(EXIT.VALIDATION);
       expect(read.stderr).not.toContain('cache clear');
       expect(read.stderr).not.toMatch(/corrupt/iu);
     });
 
-    it('leaves the cache root untouched for an authenticated bypass (D13)', async () => {
+    it('leaves the cache root untouched for an authenticated bypass', async () => {
       await rm(fixture.root, { recursive: true, force: true });
       const first = await runProcess([
         'tools',

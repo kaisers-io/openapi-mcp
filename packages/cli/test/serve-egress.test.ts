@@ -4,11 +4,11 @@ import { EXIT } from '@kaisers-io/openapi-mcp-core';
 import { testContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 
-// Task 5 (M6): in-process coverage for the ~10-line untrusted-base
-// startup-egress passthrough in serve.ts's action body (the
+// In-process coverage for the ~10-line untrusted-base startup-egress
+// passthrough in serve.ts's action body (the
 // `if (!resolvedBase.trusted) { await assertAllowedRedirectTarget(...) }`
-// block) — the ONE piece of the M5 Task 11 wiring that was typecheck-only
-// before this file: `resolveBaseUrl`/`assertBaseUrlShape` already had
+// block) — this was typecheck-only coverage before this file:
+// `resolveBaseUrl`/`assertBaseUrlShape` already had
 // in-process coverage (serve-base-url.test.ts) and `assertAllowedRedirectTarget`
 // itself already had in-process coverage (core/test/egress.test.ts), but
 // nothing exercised serve.ts's OWN wiring of the two together at startup —
@@ -64,9 +64,9 @@ describe('serve — untrusted spec-derived base: startup egress classification (
 
   // Binds an ephemeral port with a PLAIN net.Server FIRST, then hands that
   // same port to `serve --http --port`: serve's own httpServer.listen()
-  // reliably rejects EADDRINUSE (verified against streamable-http.ts's
-  // listen() promise, which the core M5 fix made reject rather than hang on
-  // a port conflict — see serve-http.test.ts's own comment on that fix).
+  // reliably rejects EADDRINUSE (streamable-http.ts's listen() promise
+  // rejects rather than hangs on a port conflict — see serve-http.test.ts's
+  // own comment on that behavior).
   const bindBusyPort = async (): Promise<number> => {
     const server = createServer();
     blocker = server;

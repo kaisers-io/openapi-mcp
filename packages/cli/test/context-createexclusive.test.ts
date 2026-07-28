@@ -77,7 +77,7 @@ describe('createExclusive atomic publish', () => {
     expect(await realContext().cacheFs.createExclusive('/cache/ns/.lock', 'record')).toBe(false);
   });
 
-  it('a temp-cleanup failure does not fail a successful acquisition (round-3)', async () => {
+  it('a temp-cleanup failure does not fail a successful acquisition', async () => {
     openMock.mockResolvedValue({
       writeFile: () => Promise.resolve(),
       chmod: () => Promise.resolve(),

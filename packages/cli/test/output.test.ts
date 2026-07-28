@@ -104,8 +104,8 @@ describe('emitError', () => {
   it('does not keep a wide (CJK) single line compact when it overflows the width in cells', () => {
     const errLines: string[] = [];
     const ctx = testContext({ errLines, errWidth: () => 40 });
-    // 27 CJK chars = 54 cells; + "openapi-mcp: " (13) = 67 cells > 40, so the
-    // pre-fix code-unit check (27 + 13 = 40) wrongly kept it compact.
+    // 27 CJK chars = 54 cells; + "openapi-mcp: " (13) = 67 cells > 40, so a
+    // code-unit-length check (27 + 13 = 40) would wrongly keep it compact.
     emitError(ctx, { json: false, verbose: false }, validationError('界'.repeat(27)));
     expect(errLines[0]).toBe('openapi-mcp: error [validation] (exit 3)');
     expect(errLines.at(-1)!.startsWith('openapi-mcp: [END ERROR:')).toBe(true);
@@ -241,10 +241,10 @@ describe('warnings channel', () => {
     expect(errLines[0]).toBe('openapi-mcp: warning: GET /a]0;PWNED\\x omitted');
   });
 
-  // Serve.ts (Task 6 security fix) calls emitWarnings() directly -- never
-  // emit() -- so the sanitization it relies on must be proven against
-  // emitWarnings() itself, not only inferred from emit() delegating to it.
-  // The ESC byte is built at runtime, never typed/pasted literally.
+  // Serve.ts calls emitWarnings() directly -- never emit() -- so the
+  // sanitization it relies on must be proven against emitWarnings() itself,
+  // not only inferred from emit() delegating to it. The ESC byte is built at
+  // runtime, never typed/pasted literally.
   it('emitWarnings() sanitizes untrusted spec text directly, independent of emit()', () => {
     const esc = String.fromCodePoint(0x1b);
     const errLines: string[] = [];
