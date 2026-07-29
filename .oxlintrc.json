@@ -48,8 +48,10 @@
     // Off per task-5 brief (M2a): egress.ts's classifyIpv4/classifyAddress branch
     // comments are inline per condition verbatim
     "no-inline-comments": "off",
-    // Off per task-5 brief (M2a): egress.ts's IPv6 range constants (0xfc00,
-    // 0xfdff, 0xfe80, 0xfebf, 0xffff) are lowercase and ungrouped verbatim
+    // Off because it is unsatisfiable alongside the formatter: oxfmt rewrites
+    // hexadecimal digits to lowercase while this rule demands uppercase, and
+    // the rule accepts no configuration — enabling it would make `lint` and
+    // `fmt:check` contradict each other on every hex literal.
     "unicorn/number-literal-case": "off",
     "unicorn/numeric-separators-style": "off",
     // Off per task-5 brief (M2a): egress.ts's assertAllowedRedirectTarget and
