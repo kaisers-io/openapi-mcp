@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { convertSchema, MAX_CONVERT_DEPTH, type SchemaResult } from '../src/index.ts';
+import { convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
+import type { SchemaResult } from '../src/index.ts';
 
 const ok = (r: SchemaResult): z.ZodType => {
   if (!('ok' in r)) {

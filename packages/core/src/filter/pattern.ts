@@ -1,5 +1,6 @@
 import { usageError, validationError } from '../errors.ts';
-import { HTTP_METHODS, type HttpMethod } from '../spec/normalize.ts';
+import { HTTP_METHODS } from '../spec/normalize.ts';
+import type { HttpMethod } from '../spec/normalize.ts';
 
 // Patterns are operator input from argv, not spec content, but they are still
 // bounded: the cap keeps the token programme short and the Levenshtein

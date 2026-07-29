@@ -18,21 +18,24 @@ import {
   SYSTEM_HEADERS,
   usageError,
   validationError,
-  type EnvelopeValidator,
-  type ExecutorConfig,
-  type NormalizedSpec,
-  type RequestGuardOptions,
+} from '@kaisers-io/openapi-mcp-core';
+import type {
+  EnvelopeValidator,
+  ExecutorConfig,
+  NormalizedSpec,
+  RequestGuardOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
-import { registerApiOptions, resolveApiConfig, type ApiCmdOpts } from '../api-options.ts';
+import { registerApiOptions, resolveApiConfig } from '../api-options.ts';
+import type { ApiCmdOpts } from '../api-options.ts';
 import { emitError, emitWarnings } from '../output.ts';
 import {
   deadPatternMessage,
   omissionWarningLines,
   parseSpecPipelineArgs,
   registerSpecOptions,
-  type SpecCmdOpts,
 } from '../spec-options.ts';
+import type { SpecCmdOpts } from '../spec-options.ts';
 import type { CommandRegistrar } from './registry.ts';
 
 // Fixed operational budgets for the runtime API executor. No CLI flag exists

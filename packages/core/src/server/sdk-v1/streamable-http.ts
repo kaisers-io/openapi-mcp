@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { DispatcherDeps } from '../dispatch.ts';
-import { evaluateRequest, type RequestGuardOptions } from '../http/request-guard.ts';
-import { createSessionStore, type SessionStore } from '../http/sessions.ts';
+import { evaluateRequest } from '../http/request-guard.ts';
+import type { RequestGuardOptions } from '../http/request-guard.ts';
+import { createSessionStore } from '../http/sessions.ts';
+import type { SessionStore } from '../http/sessions.ts';
 import type { ServerSnapshot } from '../types.ts';
 import { createProtocolSession } from './protocol.ts';
 

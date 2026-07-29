@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { EXIT, sanitizeSpecText, usageError, validationError } from '@kaisers-io/openapi-mcp-core';
 import { testContext } from '../src/context.ts';
-import { emit, emitError, emitWarnings, wrapAction, type ActionResult } from '../src/output.ts';
+import { emit, emitError, emitWarnings, wrapAction } from '../src/output.ts';
+import type { ActionResult } from '../src/output.ts';
 
 describe('emit', () => {
   it('prints human lines to stdout in human mode', () => {

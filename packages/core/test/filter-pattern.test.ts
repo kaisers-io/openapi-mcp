@@ -7,14 +7,13 @@ import {
   GLOBSTAR,
   OpenapiMcpError,
   STAR,
-  type CompiledGlob,
-  type FilterPattern,
   compileGlob,
   createMatchBudget,
   globMatches,
   parseFilterPattern,
   parseFilterPatterns,
 } from '../src/index.ts';
+import type { CompiledGlob, FilterPattern } from '../src/index.ts';
 
 // Every pattern now also carries its `compiled` programme, so exact-object
 // assertions must account for it or they fail to typecheck and to match.

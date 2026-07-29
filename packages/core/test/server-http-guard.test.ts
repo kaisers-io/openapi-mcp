@@ -4,8 +4,8 @@ import {
   evaluateRequest,
   extractBearerToken,
   isValidBearerToken,
-  type RequestGuardOptions,
 } from '../src/index.ts';
+import type { RequestGuardOptions } from '../src/index.ts';
 
 // Both TOKEN and OTHER_TOKEN are 43 unpadded Base64URL characters that
 // decode to EXACTLY 32 bytes (256 bits) — verified: `Buffer.from('A'.repeat(43),

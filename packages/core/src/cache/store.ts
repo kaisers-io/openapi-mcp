@@ -6,9 +6,9 @@ import {
   CACHE_DISPLAY_SOURCE_MAX,
   CACHE_META_SCHEMA_VERSION,
   CACHE_TEXT_MAX,
-  type CacheMeta,
   zCacheMeta,
 } from '../schemas/cache.ts';
+import type { CacheMeta } from '../schemas/cache.ts';
 import { hashContent } from '../spec/load.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
@@ -17,10 +17,10 @@ import { withNamespaceLock } from './lock.ts';
 import {
   CACHE_MAX_PERSISTED_BYTES,
   CACHE_META_MAX_BYTES,
-  type CacheLayout,
   cacheLayout,
   objectPath,
 } from './paths.ts';
+import type { CacheLayout } from './paths.ts';
 
 // Only http(s) display sources are re-derivable; a file source is its own path
 const URL_DISPLAY_SOURCE_RE = /^https?:\/\//iu;

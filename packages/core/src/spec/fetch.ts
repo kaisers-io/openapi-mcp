@@ -1,13 +1,10 @@
 import { isIP } from 'node:net';
 import { validationError } from '../errors.ts';
-import { assertAllowedRedirectTarget, type DnsLookup } from '../http/egress.ts';
+import { assertAllowedRedirectTarget } from '../http/egress.ts';
+import type { DnsLookup } from '../http/egress.ts';
 import type { ResolvedHeader } from '../http/headers.ts';
-import {
-  createPinnedAgent,
-  MAX_REDIRECTS,
-  validateHopUrlSync,
-  type PinnedPolicy,
-} from '../http/pinned-dispatcher.ts';
+import { createPinnedAgent, MAX_REDIRECTS, validateHopUrlSync } from '../http/pinned-dispatcher.ts';
+import type { PinnedPolicy } from '../http/pinned-dispatcher.ts';
 import {
   describeCause,
   displaySource,
@@ -18,11 +15,11 @@ import {
   readValidator,
   REDIRECT_STATUSES,
   validateHopUrl,
-  type UndiciFetch,
-  type UndiciResponse,
 } from './fetch-transport.ts';
+import type { UndiciFetch, UndiciResponse } from './fetch-transport.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
-import { hashContent, type LoadedSpecText } from './load.ts';
+import { hashContent } from './load.ts';
+import type { LoadedSpecText } from './load.ts';
 
 // `MAX_REDIRECTS` has its single source of truth in pinned-dispatcher.ts —
 // both transports share one hop limit by construction. Re-exported here so

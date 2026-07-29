@@ -5,10 +5,11 @@ import {
   cachePathTypeError,
   EXIT,
   validationError,
-  type CacheFs,
 } from '@kaisers-io/openapi-mcp-core';
+import type { CacheFs } from '@kaisers-io/openapi-mcp-core';
 import { clearAllNamespaces } from '../src/commands/cache-target.ts';
-import { testContext, type CliContext } from '../src/context.ts';
+import { testContext } from '../src/context.ts';
+import type { CliContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 
 const HOME = '/home/tester';

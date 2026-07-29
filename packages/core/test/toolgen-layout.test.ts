@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildLayout, paramFields, type HttpMethod, type OperationRecord } from '../src/index.ts';
+import { buildLayout, paramFields } from '../src/index.ts';
+import type { HttpMethod, OperationRecord } from '../src/index.ts';
 
 const op = (parameters: readonly Record<string, unknown>[]): OperationRecord => ({
   method: 'get' as HttpMethod,

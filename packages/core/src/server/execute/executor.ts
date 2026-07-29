@@ -1,17 +1,16 @@
 import { isIP } from 'node:net';
-import {
-  pinnedRequest,
-  type HopHeaders,
-  type PinnedDeps,
-  type PinnedRequestOptions,
-} from '../../http/pinned-dispatcher.ts';
+import { pinnedRequest } from '../../http/pinned-dispatcher.ts';
+import type { HopHeaders, PinnedDeps, PinnedRequestOptions } from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
-import { textOutcome, type ToolCallOutcome } from '../result.ts';
+import { textOutcome } from '../result.ts';
+import type { ToolCallOutcome } from '../result.ts';
 import type { SnapshotTool } from '../types.ts';
-import { buildRequest, type OutboundBudgets } from './request.ts';
-import { mapResponse, type EnvelopeValidator } from './response.ts';
+import { buildRequest } from './request.ts';
+import type { OutboundBudgets } from './request.ts';
+import { mapResponse } from './response.ts';
+import type { EnvelopeValidator } from './response.ts';
 
 // The integration point wiring request-building, the pinned transport,
 // response-mapping, redaction, and a global outbound-concurrency semaphore

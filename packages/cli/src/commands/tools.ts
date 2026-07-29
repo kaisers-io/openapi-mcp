@@ -12,8 +12,8 @@ import {
   parseSpecPipelineArgs,
   PATH_DISPLAY_MAX,
   registerSpecOptions,
-  type SpecCmdOpts,
 } from '../spec-options.ts';
+import type { SpecCmdOpts } from '../spec-options.ts';
 import type { CommandRegistrar } from './registry.ts';
 
 interface ToolRow {

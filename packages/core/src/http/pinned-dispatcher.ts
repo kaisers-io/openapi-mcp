@@ -1,5 +1,7 @@
-import { isIP, type LookupFunction } from 'node:net';
-import { Agent, type fetch as undiciFetchType } from 'undici';
+import { isIP } from 'node:net';
+import type { LookupFunction } from 'node:net';
+import { Agent } from 'undici';
+import type { fetch as undiciFetchType } from 'undici';
 import { classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
 
 // The SSRF connection-pinning core. undici's custom connect.lookup resolves

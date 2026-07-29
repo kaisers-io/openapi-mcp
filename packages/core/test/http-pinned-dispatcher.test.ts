@@ -1,4 +1,5 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { gzipSync } from 'node:zlib';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -10,11 +11,13 @@ import {
   pinnedLookup,
   pinnedRequest,
   validateHopUrlSync,
-  type HopHeaders,
-  type PinnedDeps,
-  type PinnedPolicy,
-  type PinnedRequestOptions,
-  type Resolve,
+} from '../src/http/pinned-dispatcher.ts';
+import type {
+  HopHeaders,
+  PinnedDeps,
+  PinnedPolicy,
+  PinnedRequestOptions,
+  Resolve,
 } from '../src/http/pinned-dispatcher.ts';
 
 interface TestServer {

@@ -11,8 +11,8 @@ import {
   parseCacheKey,
   parseSpecSource,
   validationError,
-  type CacheLayout,
 } from '@kaisers-io/openapi-mcp-core';
+import type { CacheLayout } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from '../context.ts';
 import { getGlobalOpts } from '../output.ts';
 

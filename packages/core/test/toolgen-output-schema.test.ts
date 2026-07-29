@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deriveOutputSchema, type OperationRecord } from '../src/index.ts';
+import { deriveOutputSchema } from '../src/index.ts';
+import type { OperationRecord } from '../src/index.ts';
 
 const op = (responses: Record<string, unknown>): OperationRecord => ({
   method: 'get',

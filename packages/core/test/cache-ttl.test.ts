@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { CACHE_META_SCHEMA_VERSION, type CacheMeta, evaluateFreshness } from '../src/index.ts';
+import { CACHE_META_SCHEMA_VERSION, evaluateFreshness } from '../src/index.ts';
+import type { CacheMeta } from '../src/index.ts';
 
 // The openapiVersion field is REQUIRED on CacheMeta — omitting it fails
 // typecheck the moment this file compiles, since the frozen writeAccepted

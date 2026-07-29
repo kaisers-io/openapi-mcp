@@ -6,8 +6,8 @@ import {
   resolveHeaderEnvMappings,
   SYSTEM_HEADERS,
   usageError,
-  type HeaderEnvMapping,
 } from '@kaisers-io/openapi-mcp-core';
+import type { HeaderEnvMapping } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
 
 const collect = (value: string, previous: readonly string[]): readonly string[] => [

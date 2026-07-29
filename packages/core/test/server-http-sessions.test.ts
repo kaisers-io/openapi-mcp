@@ -10,9 +10,8 @@ import {
   createStreamableHttpServer,
   SYSTEM_HEADERS,
   textOutcome,
-  type NamedOperation,
-  type RequestGuardOptions,
 } from '../src/index.ts';
+import type { NamedOperation, RequestGuardOptions } from '../src/index.ts';
 
 // A local fake standing in for the upstream executor (this suite tests HTTP
 // session lifecycle, not execution) + a neutral redactor.

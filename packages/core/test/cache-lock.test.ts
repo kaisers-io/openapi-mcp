@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LOCK_STALE_MS, cacheLayout, unlockNamespace, withNamespaceLock } from '../src/index.ts';
-import { type MemoryCacheFs, memoryCacheFs } from './helpers/cache-fs.ts';
+import { memoryCacheFs } from './helpers/cache-fs.ts';
+import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
 const LAYOUT = cacheLayout('/cache', 'abcdef0123456789');
 

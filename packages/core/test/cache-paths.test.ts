@@ -4,7 +4,6 @@ import {
   CACHE_KEY_MAX_LENGTH,
   CACHE_META_MAX_BYTES,
   OpenapiMcpError,
-  type SpecSource,
   cacheLayout,
   cacheNamespace,
   canonicalSourceOf,
@@ -15,6 +14,7 @@ import {
   parseContentHash,
   resolveCachePolicy,
 } from '../src/index.ts';
+import type { SpecSource } from '../src/index.ts';
 
 const URL_SOURCE: SpecSource = {
   kind: 'url',

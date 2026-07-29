@@ -9,9 +9,8 @@ import {
   createProtocolSession,
   createRedactor,
   SYSTEM_HEADERS,
-  type NamedOperation,
-  type ToolExecutor,
 } from '../src/index.ts';
+import type { NamedOperation, ToolExecutor } from '../src/index.ts';
 
 // A neutral redactor: this suite never exercises redaction itself.
 const NOOP_REDACTOR = createRedactor([]);

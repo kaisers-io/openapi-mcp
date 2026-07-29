@@ -2,15 +2,8 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import {
-  HTTP_METHODS,
-  hashContent,
-  parseFilterPattern,
-  runSpecPipeline,
-  type CacheFs,
-  type CacheMeta,
-  type SpecPipelineDeps,
-} from '../src/index.ts';
+import { HTTP_METHODS, hashContent, parseFilterPattern, runSpecPipeline } from '../src/index.ts';
+import type { CacheFs, CacheMeta, SpecPipelineDeps } from '../src/index.ts';
 
 // SpecPipelineDeps.fetcher is now typed via undici's own fetch (see
 // fetch.test.ts's identical note). None of the fakes below touch

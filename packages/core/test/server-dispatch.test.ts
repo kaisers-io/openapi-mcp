@@ -10,11 +10,13 @@ import {
   SYSTEM_HEADERS,
   textOutcome,
   TRUNCATION_MARKER,
-  type MetaSummary,
-  type NamedOperation,
-  type ServerSnapshot,
-  type SnapshotTool,
-  type ToolExecutor,
+} from '../src/index.ts';
+import type {
+  MetaSummary,
+  NamedOperation,
+  ServerSnapshot,
+  SnapshotTool,
+  ToolExecutor,
 } from '../src/index.ts';
 
 // A local fake standing in for the real upstream executor (this suite tests

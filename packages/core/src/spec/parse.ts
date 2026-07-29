@@ -1,5 +1,6 @@
 import { parseDocument } from 'yaml';
-import { validationError, type OpenapiMcpError } from '../errors.ts';
+import { validationError } from '../errors.ts';
+import type { OpenapiMcpError } from '../errors.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 
 const stripBom = (text: string): string => (text.startsWith('\uFEFF') ? text.slice(1) : text);

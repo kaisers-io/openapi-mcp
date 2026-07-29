@@ -2,7 +2,8 @@ import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { EXIT } from '@kaisers-io/openapi-mcp-core';
-import { testContext, type CliContext } from '../src/context.ts';
+import { testContext } from '../src/context.ts';
+import type { CliContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));

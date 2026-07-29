@@ -1,5 +1,6 @@
 import { dirname } from 'node:path';
-import { type CacheFs, validationError } from '../../src/index.ts';
+import { validationError } from '../../src/index.ts';
+import type { CacheFs } from '../../src/index.ts';
 
 export interface MemoryCacheFs extends CacheFs {
   files: Map<string, string>;

@@ -4,7 +4,6 @@ import {
   CACHE_META_MAX_BYTES,
   CACHE_META_SCHEMA_VERSION,
   FETCHED_AT_MAX,
-  type CacheMeta,
   cacheLayout,
   clearNamespace,
   hashContent,
@@ -22,7 +21,9 @@ import {
   writeCandidate,
   zCacheMeta,
 } from '../src/index.ts';
-import { type MemoryCacheFs, memoryCacheFs } from './helpers/cache-fs.ts';
+import type { CacheMeta } from '../src/index.ts';
+import { memoryCacheFs } from './helpers/cache-fs.ts';
+import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
 export const LAYOUT = cacheLayout('/cache', 'abcdef0123456789');
 

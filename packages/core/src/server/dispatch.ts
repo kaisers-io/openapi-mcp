@@ -1,12 +1,8 @@
 import type { RateLimiter } from './rate-limit.ts';
 import type { Redactor } from '../redact.ts';
 import { sanitizeDisplayText, sanitizeSpecText } from '../spec/sanitize.ts';
-import {
-  structuredOutcome,
-  textOutcome,
-  type DispatchResult,
-  type ToolCallOutcome,
-} from './result.ts';
+import { structuredOutcome, textOutcome } from './result.ts';
+import type { DispatchResult, ToolCallOutcome } from './result.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
 
 // Bounds how many Zod issues are rendered into a validation-failure message —

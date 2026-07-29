@@ -4,7 +4,8 @@ import type { Options, ValidateFunction } from 'ajv';
 import type { PinnedErrorReason, PinnedOutcome } from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText, TRUNCATION_MARKER } from '../../spec/sanitize.ts';
-import { structuredOutcome, textOutcome, type ToolCallOutcome } from '../result.ts';
+import { structuredOutcome, textOutcome } from '../result.ts';
+import type { ToolCallOutcome } from '../result.ts';
 
 // The executor is the SOLE enforcer of {status,contentType,data} envelope
 // conformance — the low-level SDK Server performs no per-tool outputSchema

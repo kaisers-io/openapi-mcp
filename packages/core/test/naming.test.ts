@@ -1,11 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import {
-  TOOL_NAME_MAX_LENGTH,
-  assignToolNames,
-  type HttpMethod,
-  type OperationRecord,
-} from '../src/index.ts';
+import { TOOL_NAME_MAX_LENGTH, assignToolNames } from '../src/index.ts';
+import type { HttpMethod, OperationRecord } from '../src/index.ts';
 
 const record = (method: HttpMethod, path: string, operationId?: string): OperationRecord => ({
   method,

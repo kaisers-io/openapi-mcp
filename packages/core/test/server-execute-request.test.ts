@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildRequest, type OutboundBudgets, type RequestMapper } from '../src/index.ts';
+import { buildRequest } from '../src/index.ts';
+import type { OutboundBudgets, RequestMapper } from '../src/index.ts';
 
 const budgets: OutboundBudgets = {
   maxUrlLength: 8192,

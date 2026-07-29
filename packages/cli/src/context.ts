@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { lookup as dnsLookup } from 'node:dns/promises';
-import { existsSync, type Stats } from 'node:fs';
+import { existsSync } from 'node:fs';
+import type { Stats } from 'node:fs';
 import {
   chmod,
-  type FileHandle,
   link,
   lstat,
   mkdir,
@@ -14,14 +14,11 @@ import {
   rm,
   stat,
 } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import {
-  cachePathTypeError,
-  type CacheFs,
-  type PinnedDeps,
-  validationError,
-} from '@kaisers-io/openapi-mcp-core';
+import { cachePathTypeError, validationError } from '@kaisers-io/openapi-mcp-core';
+import type { CacheFs, PinnedDeps } from '@kaisers-io/openapi-mcp-core';
 import { fetch as undiciFetch } from 'undici';
 
 export interface CliContext {

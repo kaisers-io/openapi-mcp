@@ -1,15 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import {
-  buildSnapshot,
-  buildTools,
-  META_TOOL_NAME,
-  SYSTEM_HEADERS,
-  type BuildToolsResult,
-  type DeadPattern,
-  type NamedOperation,
-  type SnapshotTool,
-} from '../src/index.ts';
+import { buildSnapshot, buildTools, META_TOOL_NAME, SYSTEM_HEADERS } from '../src/index.ts';
+import type { BuildToolsResult, DeadPattern, NamedOperation, SnapshotTool } from '../src/index.ts';
 
 const RLO = String.fromCodePoint(0x20_2e); // Right-to-Left Override — never paste raw
 

@@ -1,4 +1,5 @@
-import { isAuthorized, type BearerCheck } from './auth.ts';
+import { isAuthorized } from './auth.ts';
+import type { BearerCheck } from './auth.ts';
 
 export interface RequestGuardOptions {
   // Exact serialized origins only — no wildcard. An empty set means every

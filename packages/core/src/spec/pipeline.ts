@@ -1,27 +1,29 @@
 import { asCacheError } from '../cache/errors.ts';
 import type { CacheFs } from '../cache/fs.ts';
-import { resolveCachePolicy, type CacheLayout } from '../cache/paths.ts';
-import {
-  readCacheEntry,
-  touchRevalidated,
-  writeAccepted,
-  writeCandidate,
-  type CacheEntry,
-} from '../cache/store.ts';
+import { resolveCachePolicy } from '../cache/paths.ts';
+import type { CacheLayout } from '../cache/paths.ts';
+import { readCacheEntry, touchRevalidated, writeAccepted, writeCandidate } from '../cache/store.ts';
+import type { CacheEntry } from '../cache/store.ts';
 import { evaluateFreshness } from '../cache/ttl.ts';
 import { usageError, validationError } from '../errors.ts';
-import { applyFilters, type DeadPattern } from '../filter/engine.ts';
+import { applyFilters } from '../filter/engine.ts';
+import type { DeadPattern } from '../filter/engine.ts';
 import type { FilterPattern } from '../filter/pattern.ts';
 import type { DnsLookup } from '../http/egress.ts';
 import type { ResolvedHeader } from '../http/headers.ts';
-import { assignToolNames, type NamedOperation } from '../toolgen/naming.ts';
+import { assignToolNames } from '../toolgen/naming.ts';
+import type { NamedOperation } from '../toolgen/naming.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 import { dereference } from './dereference.ts';
-import { fetchSpecConditional, type FetchSpecDeps } from './fetch.ts';
-import { loadSpecFromFile, parseSpecSource, type LoadedSpecText } from './load.ts';
-import { normalizeSpec, type NormalizedSpec } from './normalize.ts';
+import { fetchSpecConditional } from './fetch.ts';
+import type { FetchSpecDeps } from './fetch.ts';
+import { loadSpecFromFile, parseSpecSource } from './load.ts';
+import type { LoadedSpecText } from './load.ts';
+import { normalizeSpec } from './normalize.ts';
+import type { NormalizedSpec } from './normalize.ts';
 import { parseSpecText } from './parse.ts';
-import { validateOpenApiDocument, type OpenapiVersion } from './validate.ts';
+import { validateOpenApiDocument } from './validate.ts';
+import type { OpenapiVersion } from './validate.ts';
 
 export interface SpecPipelineOptions {
   specHeaders: readonly ResolvedHeader[];

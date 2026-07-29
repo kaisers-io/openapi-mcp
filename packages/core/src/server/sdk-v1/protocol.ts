@@ -4,12 +4,11 @@ import {
   ErrorCode,
   ListToolsRequestSchema,
   McpError,
-  type CallToolResult,
-  type ListToolsResult,
-  type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult, ListToolsResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 import { sanitizeSpecText } from '../../spec/sanitize.ts';
-import { createDispatcher, type CallRequest, type DispatcherDeps } from '../dispatch.ts';
+import { createDispatcher } from '../dispatch.ts';
+import type { CallRequest, DispatcherDeps } from '../dispatch.ts';
 import type { ToolCallOutcome } from '../result.ts';
 import type { ServerSnapshot } from '../types.ts';
 

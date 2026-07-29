@@ -1,4 +1,5 @@
-import { createServer, type AddressInfo, type Server } from 'node:net';
+import { createServer } from 'node:net';
+import type { AddressInfo, Server } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 import { EXIT } from '@kaisers-io/openapi-mcp-core';
 import { testContext } from '../src/context.ts';

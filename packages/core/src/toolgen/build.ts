@@ -1,11 +1,14 @@
 import { z } from 'zod';
 import type { OmittedOperation, OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
-import { deriveAnnotations, type ToolAnnotations } from './annotations.ts';
+import { deriveAnnotations } from './annotations.ts';
+import type { ToolAnnotations } from './annotations.ts';
 import { composeDescription } from './description.ts';
-import { buildLayout, type RequestMapper } from './layout.ts';
+import { buildLayout } from './layout.ts';
+import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
-import { deriveOutputSchema, type JsonSchemaRecord } from './output-schema.ts';
+import { deriveOutputSchema } from './output-schema.ts';
+import type { JsonSchemaRecord } from './output-schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
 

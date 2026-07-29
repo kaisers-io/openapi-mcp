@@ -1,13 +1,8 @@
 import { validationError } from '../errors.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
-import {
-  FILTER_WORK_BUDGET_EXCEEDED_MESSAGE,
-  type FilterPattern,
-  type MatchBudget,
-  createMatchBudget,
-  globMatches,
-} from './pattern.ts';
+import { FILTER_WORK_BUDGET_EXCEEDED_MESSAGE, createMatchBudget, globMatches } from './pattern.ts';
+import type { FilterPattern, MatchBudget } from './pattern.ts';
 
 // With no --allow, only these methods are exposed
 const READ_ONLY_METHODS = new Set(['get', 'head']);

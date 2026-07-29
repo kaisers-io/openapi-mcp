@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  MAX_REDIRECTS,
-  fetchSpec,
-  fetchSpecConditional,
-  hashContent,
-  type FetchSpecDeps,
-} from '../src/index.ts';
+import { MAX_REDIRECTS, fetchSpec, fetchSpecConditional, hashContent } from '../src/index.ts';
+import type { FetchSpecDeps } from '../src/index.ts';
 // Module-internal helpers, not part of the public barrel: imported directly
 // (same pattern as http-pinned-dispatcher.test.ts) so their own trivial
 // bodies are unit-tested rather than relying on a live pinned Agent

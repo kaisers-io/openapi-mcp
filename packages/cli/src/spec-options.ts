@@ -7,12 +7,14 @@ import {
   parseHeaderEnvMapping,
   resolveHeaderEnvMappings,
   sanitizeSpecText,
-  type DeadPattern,
-  type FilterPattern,
-  type OmittedOperation,
-  type ResolvedHeader,
-  type SpecPipelineDeps,
-  type SpecPipelineOptions,
+} from '@kaisers-io/openapi-mcp-core';
+import type {
+  DeadPattern,
+  FilterPattern,
+  OmittedOperation,
+  ResolvedHeader,
+  SpecPipelineDeps,
+  SpecPipelineOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
 

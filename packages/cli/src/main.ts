@@ -3,7 +3,8 @@ import { EXIT, usageError } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../package.json' with { type: 'json' };
 import type { CliContext } from './context.ts';
 import { emitError, getGlobalOpts } from './output.ts';
-import { REGISTRARS, type CommandRegistrar } from './commands/registry.ts';
+import { REGISTRARS } from './commands/registry.ts';
+import type { CommandRegistrar } from './commands/registry.ts';
 
 export interface RunState {
   exitCode: number;

@@ -7,11 +7,8 @@ import {
   closestMatch,
   matchesOperation,
   parseFilterPattern,
-  type FilterPattern,
-  type HttpMethod,
-  type NamedOperation,
-  type OperationRecord,
 } from '../src/index.ts';
+import type { FilterPattern, HttpMethod, NamedOperation, OperationRecord } from '../src/index.ts';
 
 const record = (
   method: HttpMethod,

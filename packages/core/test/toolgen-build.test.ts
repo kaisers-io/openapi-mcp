@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildTools, SYSTEM_HEADERS, type HttpMethod, type NamedOperation } from '../src/index.ts';
+import { buildTools, SYSTEM_HEADERS } from '../src/index.ts';
+import type { HttpMethod, NamedOperation } from '../src/index.ts';
 
 const named = (
   toolName: string,

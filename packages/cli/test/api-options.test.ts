@@ -2,7 +2,8 @@ import { Command } from '@commander-js/extra-typings';
 import { describe, expect, it } from 'vitest';
 import { OpenapiMcpError, SYSTEM_HEADERS } from '@kaisers-io/openapi-mcp-core';
 import { testContext } from '../src/context.ts';
-import { registerApiOptions, resolveApiConfig, type ApiCmdOpts } from '../src/api-options.ts';
+import { registerApiOptions, resolveApiConfig } from '../src/api-options.ts';
+import type { ApiCmdOpts } from '../src/api-options.ts';
 
 // RegisterApiOptions isn't wired into any CLI command yet, so this builds a
 // bare standalone Command to exercise the flag registration exactly as a
