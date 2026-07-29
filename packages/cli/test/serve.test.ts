@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -107,15 +110,26 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void
 
 describe('serve — stdio subprocess E2E', () => {
   let child: ReturnType<typeof spawn> | undefined;
+  // Each spawned child gets its OWN temp HOME (never the real
+  // ~/.kaisers-io/openapi-mcp/cache) — matching
+  // cache-concurrency.test.ts's fixture.home pattern — so this suite never
+  // races another vitest worker's children over the real user cache's
+  // namespace refresh lock.
+  let tempHome: string | undefined;
 
-  afterEach(() => {
+  afterEach(async () => {
     child?.kill('SIGKILL');
     child = undefined;
+    if (tempHome !== undefined) {
+      await rm(tempHome, { recursive: true, force: true });
+      tempHome = undefined;
+    }
   });
 
   it('initialize/list/call(meta)/call(upstream, REAL execution against a local server)/shutdown, with stdout carrying ONLY JSON-RPC', async () => {
     const upstream = await startUpstream();
     const SECRET = 'sk-e2e-secret-01234567890123456789';
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
     child = spawn(
       process.execPath,
       [
@@ -138,7 +152,15 @@ describe('serve — stdio subprocess E2E', () => {
         '--allow',
         '**',
       ],
-      { cwd: fixturesDir, env: { ...process.env, UPSTREAM_TOKEN: `Bearer ${SECRET}` } },
+      {
+        cwd: fixturesDir,
+        env: {
+          ...process.env,
+          HOME: tempHome,
+          USERPROFILE: tempHome,
+          UPSTREAM_TOKEN: `Bearer ${SECRET}`,
+        },
+      },
     );
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
 
@@ -245,6 +267,7 @@ describe('serve — stdio subprocess E2E', () => {
   // --header-env configures a SAME-NAMED operator auth header, which the
   // executor injects and the caller must never be able to override.
   it('unions apiConfig.reservedHeaderNames into buildTools: a spec header param colliding with a configured --header-env name is dropped from the tool input schema', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
     child = spawn(
       process.execPath,
       [
@@ -257,7 +280,15 @@ describe('serve — stdio subprocess E2E', () => {
         '--header-env',
         'X-Trace=TRACE_ENV',
       ],
-      { cwd: fixturesDir, env: { ...process.env, TRACE_ENV: 'operator-trace-value' } },
+      {
+        cwd: fixturesDir,
+        env: {
+          ...process.env,
+          HOME: tempHome,
+          USERPROFILE: tempHome,
+          TRACE_ENV: 'operator-trace-value',
+        },
+      },
     );
     const { stdoutLines } = collectLines(child);
     send(child, {
@@ -377,6 +408,7 @@ describe('serve — stdio subprocess E2E', () => {
   });
 
   it('a dead --deny pattern in non-strict mode is reported as a sanitized stderr warning and the server still initializes normally (security fix)', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
     child = spawn(
       process.execPath,
       [
@@ -389,7 +421,7 @@ describe('serve — stdio subprocess E2E', () => {
         '--deny',
         'zzz-no-such-op',
       ],
-      { cwd: fixturesDir },
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
     );
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
 
@@ -427,10 +459,11 @@ describe('serve — stdio subprocess E2E', () => {
   });
 
   it('exits 0 on a graceful shutdown when the client closes stdin (stdin EOF), not just on SIGINT/SIGTERM (security fix)', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
     child = spawn(
       process.execPath,
       [bin, 'serve', '--spec', 'petstore.json', '--base-url', 'http://127.0.0.1:1'],
-      { cwd: fixturesDir },
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
     );
     const { stdoutLines } = collectLines(child);
 
@@ -487,6 +520,8 @@ describe('serve — stdio subprocess E2E', () => {
   // "some error" occurred either way.
   it('the cleartext gate refuses a --header-env secret over http to a non-loopback origin without --allow-insecure-http, and lets the real dispatch attempt through with the flag (security fix)', async () => {
     const SECRET = 'sk-cleartext-e2e-secret-0123456789';
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    const home = tempHome;
     const spawnServe = (extraArgs: readonly string[]): ReturnType<typeof spawn> =>
       spawn(
         process.execPath,
@@ -503,7 +538,12 @@ describe('serve — stdio subprocess E2E', () => {
         ],
         {
           cwd: fixturesDir,
-          env: { ...process.env, CLEARTEXT_TOKEN: `Bearer ${SECRET}` },
+          env: {
+            ...process.env,
+            HOME: home,
+            USERPROFILE: home,
+            CLEARTEXT_TOKEN: `Bearer ${SECRET}`,
+          },
         },
       );
 

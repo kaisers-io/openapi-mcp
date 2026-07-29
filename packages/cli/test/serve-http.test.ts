@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process';
 import { Buffer } from 'node:buffer';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { connect } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -72,12 +75,24 @@ const waitForPortOrExit = (
   return Promise.race([exited, poll()]);
 };
 
+// Every child spawned via spawnServeHttp (or ad hoc further below) gets an
+// ISOLATED temp HOME — never the real ~/.kaisers-io/openapi-mcp/cache —
+// matching cache-concurrency.test.ts's fixture.home pattern, so this suite
+// never races another vitest worker's children over the real user cache's
+// namespace refresh lock. Tracked at module scope (spawnServeHttp lives
+// outside the describe block below) and drained by the describe's own
+// afterEach.
+const activeTempHomes: string[] = [];
+
 // Spawns `serve --http`, retrying across CANDIDATE_PORTS if a bind fails
 // (EADDRINUSE) — returns the process AND the port it actually landed on.
 const spawnServeHttp = async (
   extraArgs: readonly string[] = [],
 ): Promise<{ proc: ReturnType<typeof spawn>; port: number }> => {
   for (const port of CANDIDATE_PORTS) {
+    // eslint-disable-next-line no-await-in-loop -- a fresh temp home per candidate is intentional: reusing one across candidates risks a stale lock from a killed prior candidate
+    const home = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-http-'));
+    activeTempHomes.push(home);
     const proc = spawn(
       process.execPath,
       [
@@ -99,14 +114,30 @@ const spawnServeHttp = async (
         'MCP_TOKEN',
         ...extraArgs,
       ],
-      { cwd: fixturesDir, env: { ...process.env, MCP_TOKEN: TOKEN } },
+      {
+        cwd: fixturesDir,
+        env: { ...process.env, HOME: home, USERPROFILE: home, MCP_TOKEN: TOKEN },
+      },
     );
     // eslint-disable-next-line no-await-in-loop -- sequential candidate probing is intentional here
     const up = await waitForPortOrExit(proc, port);
     if (up) {
       return { proc, port };
     }
-    proc.kill('SIGKILL');
+    // A candidate that lost the bind (EADDRINUSE) usually ALREADY exited —
+    // waitForPortOrExit consumed its one 'exit' event, so a listener attached
+    // now would never fire and hang the retry loop. Await only a still-live
+    // child, with the listener registered BEFORE the kill.
+    if (proc.exitCode === null && proc.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        proc.once('exit', () => {
+          resolve();
+        });
+      });
+      proc.kill('SIGKILL');
+      // eslint-disable-next-line no-await-in-loop -- the failed candidate must be fully gone before the next iteration reuses the port pool
+      await exited;
+    }
   }
   throw new Error('serve --http never came up on any candidate port');
 };
@@ -210,9 +241,28 @@ describe('serve --http — Streamable HTTP E2E', () => {
     return sessionId;
   };
 
-  afterEach(() => {
-    child?.kill('SIGKILL');
-    child = undefined;
+  afterEach(async () => {
+    if (child !== undefined) {
+      const proc = child;
+      child = undefined;
+      // A process that already exited on its own (e.g. a usage-error test
+      // whose child exits before this hook ever runs) has already fired its
+      // ONE 'exit' event — attaching a fresh listener now would wait
+      // forever, so only await exit for a proc that is still alive.
+      if (proc.exitCode === null && proc.signalCode === null) {
+        const exited = new Promise<void>((resolve) => {
+          proc.once('exit', () => {
+            resolve();
+          });
+        });
+        proc.kill('SIGKILL');
+        await exited;
+      } else {
+        proc.kill('SIGKILL');
+      }
+    }
+    const homes = activeTempHomes.splice(0);
+    await Promise.all(homes.map((home) => rm(home, { recursive: true, force: true })));
   });
 
   it('initializes, returns a session header, rejects a stale session with 404, requires the bearer on every method, and 403s a bad Origin', async () => {
@@ -260,10 +310,15 @@ describe('serve --http — Streamable HTTP E2E', () => {
   });
 
   it('rejects --http-token-env without --http at startup (usage error)', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-http-'));
+    activeTempHomes.push(home);
     child = spawn(
       process.execPath,
       [bin, 'serve', '--spec', 'petstore.json', '--http-token-env', 'MCP_TOKEN'],
-      { cwd: fixturesDir, env: { ...process.env, MCP_TOKEN: TOKEN } },
+      {
+        cwd: fixturesDir,
+        env: { ...process.env, HOME: home, USERPROFILE: home, MCP_TOKEN: TOKEN },
+      },
     );
     const stderrChunks: Buffer[] = [];
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
@@ -296,6 +351,8 @@ describe('serve --http — Streamable HTTP E2E', () => {
   });
 
   it('validates HTTP-specific options (a bad --port) BEFORE any spec/cache/network processing — the error is about the port, never about the (nonexistent) spec file', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-http-'));
+    activeTempHomes.push(home);
     child = spawn(
       process.execPath,
       [
@@ -309,7 +366,10 @@ describe('serve --http — Streamable HTTP E2E', () => {
         '--http-token-env',
         'MCP_TOKEN',
       ],
-      { cwd: fixturesDir, env: { ...process.env, MCP_TOKEN: TOKEN } },
+      {
+        cwd: fixturesDir,
+        env: { ...process.env, HOME: home, USERPROFILE: home, MCP_TOKEN: TOKEN },
+      },
     );
     const stderrChunks: Buffer[] = [];
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
