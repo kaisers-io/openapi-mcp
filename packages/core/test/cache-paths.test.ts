@@ -170,6 +170,7 @@ describe('cacheNamespace', () => {
   });
 
   it('is not confused by a source containing the literal separator text', () => {
+    // oxlint-disable-next-line no-useless-concat -- the two concatenated literals mirror the two-part namespace construction under test
     expect(cacheNamespace('source:https://a.example/s.json' + 'key:prod')).not.toBe(
       cacheNamespace('https://a.example/s.json', 'prod'),
     );

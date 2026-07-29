@@ -533,12 +533,15 @@ describe('the persisted-size preflight is exact', () => {
   // is now asserted against the exact quantity that lands on disk, over a
   // corpus that actually contains the cases that broke it.
   const mulberry32 = (seed: number): (() => number) => {
+    // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
     let a = seed >>> 0;
     return () => {
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
       a = (a + 0x6d_2b_79_f5) >>> 0;
       let t = a;
       t = Math.imul(t ^ (t >>> 15), t | 1);
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
       return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
     };
   };
@@ -604,6 +607,7 @@ describe('the persisted-size preflight is exact', () => {
 
   it.each([
     ['an undefined array member', { x: [undefined] }],
+    // oxlint-disable-next-line no-sparse-arrays -- the array hole is the case under test: serializedSizeWithin must refuse it, not the already-covered undefined-member case above
     ['a sparse array hole', { x: [1, , 3] }],
     ['an object with a toJSON hook', { x: new Date(0) }],
     ['a bigint', { x: 1n }],
@@ -626,8 +630,11 @@ describe('the persisted-size preflight is exact', () => {
   });
 
   it.each([
+    // oxlint-disable-next-line unicorn/new-for-builtins, no-new-wrappers -- boxed primitives are the value under test: serializedSizeWithin must refuse them, and the unboxed-literal rewrite these rules suggest is a plain primitive, which defeats the test
     ['a boxed number', { x: new Number(5) }],
+    // oxlint-disable-next-line unicorn/new-for-builtins, no-new-wrappers -- boxed primitives are the value under test: serializedSizeWithin must refuse them, and the unboxed-literal rewrite these rules suggest is a plain primitive, which defeats the test
     ['a boxed string', { x: new String('a') }],
+    // oxlint-disable-next-line unicorn/new-for-builtins, no-new-wrappers -- boxed primitives are the value under test: serializedSizeWithin must refuse them, and the unboxed-literal rewrite these rules suggest is a plain primitive, which defeats the test
     ['a boxed boolean', { x: new Boolean(true) }],
   ])('refuses %s, which stringifies as a primitive', (_label, value) => {
     // JSON.stringify(new Number(5)) is '5'; a walker using Object.entries sees

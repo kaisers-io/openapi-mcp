@@ -118,27 +118,6 @@
         // failure-path tests assert only that a real fs error is thrown, not its
         // message (the exact message is filesystem-dependent), verbatim
         "vitest/require-to-throw-message": "off",
-        // Off per task-2 brief: cache-paths.test.ts's D9 collision test writes the
-        // namespace material as two concatenated literals to mirror the two-part
-        // construction it is testing against, verbatim
-        "no-useless-concat": "off",
-        // Off per task-3 brief (M2b): cache-store.test.ts's mulberry32 PRNG needs
-        // the exact unsigned 32-bit wraparound `>>> 0` gives; Math.trunc keeps
-        // sign and does not wrap, which would silently change the generated
-        // sequence, verbatim
-        "unicorn/prefer-math-trunc": "off",
-        // Off per task-3 brief (M2b): cache-store.test.ts's round-5 finding 3
-        // case constructs a genuinely sparse array ([1, , 3]) to verify
-        // serializedSizeWithin rejects it - replacing the hole would test a
-        // different, already-covered value, verbatim
-        "no-sparse-arrays": "off",
-        // Off per task-3 brief (M2b): cache-store.test.ts's round-6 finding 1
-        // cases construct boxed primitives (new Number/String/Boolean)
-        // specifically to verify serializedSizeWithin refuses them; the
-        // unboxed-literal replacement these rules suggest is a plain primitive,
-        // which defeats the test, verbatim
-        "unicorn/new-for-builtins": "off",
-        "no-new-wrappers": "off",
         // Off for tests: race/deadline scenarios (session eviction, shutdown
         // timers, cache-lock contention, DNS-abort races) are constructed
         // directly with `new Promise` to control exactly when a fixture
@@ -264,12 +243,7 @@
         // intentionally start with a lowercase code identifier (nullable,
         // numberSchema, enum, pattern) to name the exact keyword/function being
         // discussed, verbatim
-        "capitalized-comments": "off",
-        // Off per task-1 brief (M3): the keyword-allowlist `it.each` fixture for
-        // the `if` keyword includes a sibling `then: {}` property because it is
-        // a literal JSON Schema `if`/`then` node under test, not a thenable,
-        // verbatim
-        "unicorn/no-thenable": "off"
+        "capitalized-comments": "off"
       }
     },
     {

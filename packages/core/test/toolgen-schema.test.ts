@@ -301,6 +301,7 @@ describe('convertSchema — keyword allowlist (fail-closed)', () => {
     ['uniqueItems', { type: 'array', items: { type: 'string' }, uniqueItems: true }],
     ['not', { not: { type: 'string' } }],
     ['patternProperties', { type: 'object', patternProperties: {} }],
+    // oxlint-disable-next-line unicorn/no-thenable -- `then:` here is a literal JSON-Schema if/then keyword fixture, not a thenable
     ['if', { if: { type: 'string' }, then: {} }],
     ['prefixItems', { prefixItems: [{ type: 'string' }] }],
     ['minProperties', { type: 'object', minProperties: 2 }],

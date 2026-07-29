@@ -574,12 +574,15 @@ describe('globMatches — differential equivalence with the frozen grammar', () 
   // `compileGlob(EMOJI)`. A fuzz test that cannot show what it explored is
   // false assurance, so this version asserts its own corpus coverage.
   const mulberry32 = (seed: number): (() => number) => {
+    // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
     let a = seed >>> 0;
     return () => {
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
       a = (a + 0x6d_2b_79_f5) >>> 0;
       let t = a;
       t = Math.imul(t ^ (t >>> 15), t | 1);
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
       return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
     };
   };
