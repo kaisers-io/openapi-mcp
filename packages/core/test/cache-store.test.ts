@@ -534,7 +534,7 @@ describe('the persisted-size preflight is exact', () => {
   const mulberry32 = (seed: number): (() => number) => {
     let a = seed >>> 0;
     return () => {
-      a = (a + 0x6d2b79f5) >>> 0;
+      a = (a + 0x6d_2b_79_f5) >>> 0;
       let t = a;
       t = Math.imul(t ^ (t >>> 15), t | 1);
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
@@ -581,7 +581,7 @@ describe('the persisted-size preflight is exact', () => {
 
     let checkedAstral = 0;
     let checkedEscapes = 0;
-    for (let trial = 0; trial < 5_000; trial += 1) {
+    for (let trial = 0; trial < 5000; trial += 1) {
       const value = makeValue(3);
       const encoded = JSON.stringify(value);
       const truth = Buffer.byteLength(encoded, 'utf8');
@@ -2564,7 +2564,7 @@ describe('listCacheEntries: sanitizes hostile metadata before display', () => {
   it('strips control and bidi characters from displaySource, title, and specVersion', async () => {
     const ESC = String.fromCodePoint(0x1b);
     const BEL = String.fromCodePoint(0x07);
-    const BIDI_OVERRIDE = String.fromCodePoint(0x202e);
+    const BIDI_OVERRIDE = String.fromCodePoint(0x20_2e);
     const fs = await seeded();
     const hostileMeta = {
       ...metaOf(fs),

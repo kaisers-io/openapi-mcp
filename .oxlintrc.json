@@ -53,7 +53,6 @@
     // the rule accepts no configuration — enabling it would make `lint` and
     // `fmt:check` contradict each other on every hex literal.
     "unicorn/number-literal-case": "off",
-    "unicorn/numeric-separators-style": "off",
     // Off per task-5 brief (M2a): egress.ts's assertAllowedRedirectTarget and
     // fetch.ts's fetchSpec exceed 50 lines verbatim
     "max-lines-per-function": "off",

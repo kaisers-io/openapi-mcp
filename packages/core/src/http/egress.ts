@@ -108,7 +108,7 @@ const ipv6Groups = (raw: string): readonly number[] | undefined => {
   const groups = [...head, ...Array.from({ length: zeros }, () => '0'), ...tail].map((group) =>
     Number.parseInt(group, 16),
   );
-  return groups.some((value) => Number.isNaN(value) || value < 0 || value > 0xffff)
+  return groups.some((value) => Number.isNaN(value) || value < 0 || value > 0xff_ff)
     ? undefined
     : groups;
 };
@@ -125,7 +125,7 @@ export const classifyAddress = (address: string): AddressClass => {
       return 'private';
     }
     const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0, g7 = 0] = groups;
-    if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xffff) {
+    if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0xff_ff) {
       // IPv4-mapped ::ffff:0:0/96 — classify the embedded IPv4 regardless of
       // spelling (WHATWG URLs canonicalize dotted forms to hex groups)
       return classifyIpv4(ipv4FromGroups(g6, g7));
@@ -147,7 +147,7 @@ export const classifyAddress = (address: string): AddressClass => {
       // Loopback ::1
       return 'private';
     }
-    if (g0 === 0x0064 && g1 === 0xff9b) {
+    if (g0 === 0x00_64 && g1 === 0xff_9b) {
       // NAT64 (RFC 6052/8215; IANA IPv6 Special-Purpose Address Registry).
       // Only the well-known prefix 64:ff9b::/96 has a fixed "embedded IPv4 =
       // low 32 bits" layout — decode it and classify with classifyIpv4 so a
@@ -175,25 +175,25 @@ export const classifyAddress = (address: string): AddressClass => {
       // egress guard.
       return 'metadata';
     }
-    if (g0 === 0x2001 && g1 === 0) {
+    if (g0 === 0x20_01 && g1 === 0) {
       // Teredo 2001::/32 (RFC 4380; IANA registry) — a tunneling prefix we
       // cannot soundly decode; fail closed rather than classify public.
       return 'private';
     }
-    if (g0 === 0x2001 && g1 === 0x0db8) {
+    if (g0 === 0x20_01 && g1 === 0x0d_b8) {
       // Documentation 2001:db8::/32 (IANA registry)
       return 'private';
     }
-    if (g0 === 0x2001 && g1 === 2 && g2 === 0) {
+    if (g0 === 0x20_01 && g1 === 2 && g2 === 0) {
       // Benchmarking 2001:2::/48 (IANA registry)
       return 'private';
     }
-    if (g0 === 0x2002) {
+    if (g0 === 0x20_02) {
       // 6to4 2002::/16 (RFC 3056; IANA registry) — another undecodable
       // tunneling prefix; fail closed rather than classify public.
       return 'private';
     }
-    if (g0 === 0x0100 && g1 === 0 && g2 === 0 && g3 === 0) {
+    if (g0 === 0x01_00 && g1 === 0 && g2 === 0 && g3 === 0) {
       // Discard-only 100::/64 (IANA registry)
       return 'private';
     }
@@ -202,32 +202,32 @@ export const classifyAddress = (address: string): AddressClass => {
     // --allow-private-network). Matched before the fc00::/7 ULA range below,
     // which would otherwise class them merely private.
     if (
-      g0 === 0xfd00 &&
-      g1 === 0x0ec2 &&
+      g0 === 0xfd_00 &&
+      g1 === 0x0e_c2 &&
       g2 === 0 &&
       g3 === 0 &&
       g4 === 0 &&
       g5 === 0 &&
       g6 === 0 &&
-      (g7 === 0x0254 || g7 === 0x0023)
+      (g7 === 0x02_54 || g7 === 0x00_23)
     ) {
       return 'metadata';
     }
     // GCP Compute metadata server (IPv6) fd20:ce::254 — same rationale as
     // above; matched before the fc00::/7 ULA range.
     if (
-      g0 === 0xfd20 &&
-      g1 === 0x00ce &&
+      g0 === 0xfd_20 &&
+      g1 === 0x00_ce &&
       g2 === 0 &&
       g3 === 0 &&
       g4 === 0 &&
       g5 === 0 &&
       g6 === 0 &&
-      g7 === 0x0254
+      g7 === 0x02_54
     ) {
       return 'metadata';
     }
-    if ((g0 >= 0xfc00 && g0 <= 0xfdff) || (g0 >= 0xfe80 && g0 <= 0xfebf) || g0 >= 0xff00) {
+    if ((g0 >= 0xfc_00 && g0 <= 0xfd_ff) || (g0 >= 0xfe_80 && g0 <= 0xfe_bf) || g0 >= 0xff_00) {
       // Unique-local fc00::/7, link-local fe80::/10, multicast ff00::/8
       return 'private';
     }
@@ -237,12 +237,12 @@ export const classifyAddress = (address: string): AddressClass => {
     // the 100::/64 handled above, SRv6 SIDs 5f00::/16, and any future or
     // unallocated non-global-unicast block) falls through to private instead
     // of the previous fail-open "return 'public'" default.
-    if (g0 === 0x3fff) {
+    if (g0 === 0x3f_ff) {
       // Documentation 3fff::/20 (RFC 9637; IANA registry), over-approximated
       // to the containing 3fff::/16 — no real public address lives here.
       return 'private';
     }
-    if (g0 === 0x2001 && g1 <= 0x01ff) {
+    if (g0 === 0x20_01 && g1 <= 0x01_ff) {
       // IETF Protocol Assignments 2001::/23 (IANA registry). Teredo
       // (2001::/32), benchmarking (2001:2::/48), and documentation
       // (2001:db8::/32) above are explicit sub-block matches within this
@@ -251,7 +251,7 @@ export const classifyAddress = (address: string): AddressClass => {
       // (2001:4860::, 2606:4700::, 2a00::, ...) all lie outside 2001::/23.
       return 'private';
     }
-    if (g0 >= 0x2000 && g0 <= 0x3fff) {
+    if (g0 >= 0x20_00 && g0 <= 0x3f_ff) {
       // Global unicast 2000::/3 (IANA registry), excluding the
       // documentation/protocol-assignment carve-outs above.
       return 'public';

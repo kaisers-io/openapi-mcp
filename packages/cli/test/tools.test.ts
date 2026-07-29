@@ -630,7 +630,7 @@ describe('tools command — toolgen omissions', () => {
 
   it('sanitizes a hostile parameter name before it reaches the omission warning', async () => {
     // Built at runtime, never typed literally: BEL (0x07) and RTL override (0x202e)
-    const bad = `p${String.fromCodePoint(0x07)}${String.fromCodePoint(0x202e)}`;
+    const bad = `p${String.fromCodePoint(0x07)}${String.fromCodePoint(0x20_2e)}`;
     const specText = JSON.stringify({
       openapi: '3.1.0',
       info: { title: 'Hostile', version: '1.0.0' },
@@ -667,7 +667,7 @@ describe('tools command — toolgen omissions', () => {
     // But the hostile bytes it carried in the raw parameter name must not.
     expect(allOutput).not.toContain(bad);
     expect(allOutput).not.toContain(String.fromCodePoint(0x07));
-    expect(allOutput).not.toContain(String.fromCodePoint(0x202e));
+    expect(allOutput).not.toContain(String.fromCodePoint(0x20_2e));
 
     // Bind the tools.ts reason-sanitize wrap directly. In human mode emit()
     // re-sanitizes every warning line, so the assertions above hold even if the
@@ -692,6 +692,6 @@ describe('tools command — toolgen omissions', () => {
     const warningsText = envelope.warnings.join('\n');
     expect(warningsText).toContain('omitted GET /h');
     expect(warningsText).not.toContain(String.fromCodePoint(0x07));
-    expect(warningsText).not.toContain(String.fromCodePoint(0x202e));
+    expect(warningsText).not.toContain(String.fromCodePoint(0x20_2e));
   });
 });

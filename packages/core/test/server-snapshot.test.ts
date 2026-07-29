@@ -11,7 +11,7 @@ import {
   type SnapshotTool,
 } from '../src/index.ts';
 
-const RLO = String.fromCodePoint(0x202e); // Right-to-Left Override — never paste raw
+const RLO = String.fromCodePoint(0x20_2e); // Right-to-Left Override — never paste raw
 
 // The build-time path-template consistency guard omits an operation
 // whose `{...}` placeholders don't exactly match its path parameters — derive

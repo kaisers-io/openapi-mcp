@@ -579,7 +579,7 @@ describe('globMatches — differential equivalence with the frozen grammar', () 
   const mulberry32 = (seed: number): (() => number) => {
     let a = seed >>> 0;
     return () => {
-      a = (a + 0x6d2b79f5) >>> 0;
+      a = (a + 0x6d_2b_79_f5) >>> 0;
       let t = a;
       t = Math.imul(t ^ (t >>> 15), t | 1);
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
@@ -655,10 +655,10 @@ describe('globMatches — differential equivalence with the frozen grammar', () 
     // generator silently turns the sweep into 20,000 copies of one trivial case
     // — which is exactly what happened with the fuzz sweep this replaces.
     expect(coverage.pairs).toBeGreaterThan(15_000);
-    expect(coverage.astral).toBeGreaterThan(1_000);
-    expect(coverage.slash).toBeGreaterThan(1_000);
+    expect(coverage.astral).toBeGreaterThan(1000);
+    expect(coverage.slash).toBeGreaterThan(1000);
     expect(coverage.deep).toBeGreaterThan(500);
-    expect(coverage.matches).toBeGreaterThan(1_000);
-    expect(coverage.nonMatches).toBeGreaterThan(1_000);
+    expect(coverage.matches).toBeGreaterThan(1000);
+    expect(coverage.nonMatches).toBeGreaterThan(1000);
   });
 });

@@ -25,7 +25,7 @@ const truncate = (cleaned: string, maxLength: number): string => {
   // exceeds 0xffff when the unit at `end - 1` and the unit at `end` form a
   // genuine astral pair, so step back one unit to keep it whole.
   const codePoint = end > 0 ? cleaned.codePointAt(end - 1) : 0;
-  if (codePoint !== undefined && codePoint > 0xffff) {
+  if (codePoint !== undefined && codePoint > 0xff_ff) {
     end -= 1;
   }
   const head = cleaned.slice(0, end);

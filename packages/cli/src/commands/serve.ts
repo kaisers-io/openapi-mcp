@@ -184,7 +184,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           );
         }
         const port = Number(cmdOpts.port);
-        if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+        if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
           throw usageError(`--port "${cmdOpts.port}" is not a valid port number`);
         }
         httpConfig = { token, port };

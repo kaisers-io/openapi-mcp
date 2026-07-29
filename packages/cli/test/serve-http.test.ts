@@ -297,7 +297,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     expect(badOrigin.status).toBe(403);
 
     child.kill('SIGTERM');
-  }, 15000);
+  }, 15_000);
 
   it('rejects --http without --http-token-env at startup (usage error)', async () => {
     child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json', '--http'], {
@@ -408,7 +408,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
       method: 'tools/list',
     });
     expect(reuseAfterDelete.status).toBe(404); // The SAME id no longer resolves to a session
-  }, 15000);
+  }, 15_000);
 
   it('supports a SECOND, independent concurrent session — each gets its own id and both work', async () => {
     const spawned = await spawnServeHttp();
@@ -430,7 +430,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     });
     expect(callA.status).toBe(200);
     expect(callB.status).toBe(200);
-  }, 15000);
+  }, 15_000);
 
   it('SESSION ISOLATION: terminating session A does not disturb session B', async () => {
     const spawned = await spawnServeHttp();
@@ -453,7 +453,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
       method: 'tools/list',
     });
     expect(stillB.status).toBe(200); // B is entirely unaffected
-  }, 15000);
+  }, 15_000);
 
   it('rejects an UNAUTHENTICATED GET and DELETE (401) — auth is required on every HTTP method, not just POST', async () => {
     const spawned = await spawnServeHttp();
@@ -472,7 +472,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
       headers: { 'mcp-session-id': sessionId },
     });
     expect(deleteNoAuth.status).toBe(401);
-  }, 15000);
+  }, 15_000);
 
   it('enforces the max-8-concurrent-session cap — the 9th initialize is rejected cleanly and no dangling session id 404s later', async () => {
     const spawned = await spawnServeHttp();
@@ -495,7 +495,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
       method: 'tools/list',
     });
     expect(stillWorks.status).toBe(200);
-  }, 20000);
+  }, 20_000);
 
   it('a BURST of 9 concurrent initialize requests still admits at most 8 sessions with 8 DISTINCT ids and no dangling session — a genuine concurrency race, not a sequential approximation of one', async () => {
     const spawned = await spawnServeHttp();
@@ -515,7 +515,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     expect(rejected).toHaveLength(1);
     const sessionIds = succeeded.map((res) => res.headers.get('mcp-session-id'));
     expect(new Set(sessionIds).size).toBe(8); // Every admitted session got a DISTINCT id — none collided or was double-counted
-  }, 20000);
+  }, 20_000);
 
   it('a malformed initialize (missing Accept header) never consumes a session-capacity slot — 8 of them in a row still leave room for a 9th REAL initialize', async () => {
     const spawned = await spawnServeHttp();
@@ -542,7 +542,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     }
     const ninth = await initSession(port); // A real, well-formed initialize — asserts status 200 and a session id internally
     expect(typeof ninth).toBe('string');
-  }, 20000);
+  }, 20_000);
 
   it('a duplicate Host header (one allowed value + one evil value) is rejected — proves the guard reads req.headersDistinct, not the collapsing req.headers', async () => {
     const spawned = await spawnServeHttp();
@@ -559,7 +559,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     // wrongly passing the Host guard and letting the request through;
     // req.headersDistinct.host sees BOTH values and fails closed (403).
     expect(result.status).toBe(403);
-  }, 15000);
+  }, 15_000);
 
   it('a duplicated mcp-session-id header (the SAME valid session id sent twice) is rejected by THIS module own 404 gate, not merely by the SDK transport downstream', async () => {
     const spawned = await spawnServeHttp();
@@ -604,7 +604,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     // message text is what makes this test bind to the actual fix.
     const parsedBody = JSON.parse(result.body) as { error?: { code: number; message: string } };
     expect(parsedBody.error?.message).toBe('unknown or expired session');
-  }, 15000);
+  }, 15_000);
 
   it('a POST carrying a DUPLICATED mcp-session-id header plus a valid initialize body is 404d, never fresh-initialized (fresh-init must key on the RAW header being ABSENT, not on the strict helper resolving to undefined)', async () => {
     const spawned = await spawnServeHttp();
@@ -646,7 +646,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     expect(result.status).toBe(404);
     const parsedBody = JSON.parse(result.body) as { error?: { code: number; message: string } };
     expect(parsedBody.error?.message).toBe('unknown or expired session');
-  }, 15000);
+  }, 15_000);
 
   it('enforces the 4 MB inbound body cap with a DELIBERATE 400 (not a socket reset/500) — and rejects invalid JSON with a 400 JSON-RPC parse error, not a 500', async () => {
     const spawned = await spawnServeHttp();
@@ -662,7 +662,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     });
     expect(tooBig.status).toBe(400);
     const tooBigJson = (await tooBig.json()) as { error?: { code: number } };
-    expect(tooBigJson.error?.code).toBe(-32600);
+    expect(tooBigJson.error?.code).toBe(-32_600);
 
     const badJson = await fetch(url(port), {
       method: 'POST',
@@ -671,8 +671,8 @@ describe('serve --http — Streamable HTTP E2E', () => {
     });
     expect(badJson.status).toBe(400);
     const badJsonBody = (await badJson.json()) as { error?: { code: number } };
-    expect(badJsonBody.error?.code).toBe(-32700);
-  }, 15000);
+    expect(badJsonBody.error?.code).toBe(-32_700);
+  }, 15_000);
 
   it('GLOBAL rate exhaustion is SHARED across sessions (proves the limiter is process-shared, not per-session)', async () => {
     const spawned = await spawnServeHttp();
@@ -708,7 +708,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     expect(lastBody?.result?.content?.[0]?.text).toBe(
       'rate limit exceeded — too many tool calls; retry later',
     );
-  }, 30000);
+  }, 30_000);
 
   it('graceful SIGINT/SIGTERM exits 0 and completes within the shutdown bound, EVEN WITH an active, long-lived SSE (GET) connection deliberately left open', async () => {
     const spawned = await spawnServeHttp();
@@ -767,5 +767,5 @@ describe('serve --http — Streamable HTTP E2E', () => {
     // fallback path.
     expect(Date.now() - start).toBeLessThan(4000);
     sseController.abort();
-  }, 15000);
+  }, 15_000);
 });

@@ -433,7 +433,7 @@ describe('createDispatcher', () => {
   });
 
   it('sanitizes and caps a DYNAMIC path segment (a caller-controlled key from a catchall/additionalProperties schema)', async () => {
-    const RLO = String.fromCodePoint(0x202e); // Right-to-Left Override — never paste raw
+    const RLO = String.fromCodePoint(0x20_2e); // Right-to-Left Override — never paste raw
     const hostileKey = `evilKey${RLO}Name`;
     const dispatcher = createDispatcher({
       snapshot: buildSnapshotFor(namedOpWithCatchall),

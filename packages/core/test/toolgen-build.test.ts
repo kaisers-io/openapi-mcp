@@ -137,7 +137,7 @@ describe('buildTools — wire schema + sanitization', () => {
   it('sanitizes a hostile property description in .describe() and the wire schema', () => {
     // Build the hostile string at runtime — no raw control/bidi bytes in this file.
     const bel = String.fromCodePoint(0x07);
-    const rlo = String.fromCodePoint(0x202e);
+    const rlo = String.fromCodePoint(0x20_2e);
     const hostile = `evil${bel}${rlo}text`;
     const { tools } = buildTools(
       [

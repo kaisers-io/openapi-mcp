@@ -112,8 +112,8 @@ describe('sanitizeDisplayText', () => {
     const out = sanitizeDisplayText(`${'a'.repeat(10)}\u{1F600}`, 11);
     // 11 - marker (12) <= marker, so hard-cut at 11 units would land mid-emoji
     // at unit 10/11; the surrogate-safe truncate stops before it.
-    expect([...out].every((ch) => ch.codePointAt(0)! < 0xd800 || ch.codePointAt(0)! > 0xdfff)).toBe(
-      true,
-    );
+    expect(
+      [...out].every((ch) => ch.codePointAt(0)! < 0xd8_00 || ch.codePointAt(0)! > 0xdf_ff),
+    ).toBe(true);
   });
 });

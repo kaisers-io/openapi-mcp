@@ -58,8 +58,8 @@ vi.mock(import('../src/server/execute/request.ts'), async (importOriginal) => {
 // tests also invoked the spy.
 const budgets: OutboundBudgets = {
   maxUrlLength: 8192,
-  maxHeaderBytes: 16384,
-  maxBodyBytes: 65536,
+  maxHeaderBytes: 16_384,
+  maxBodyBytes: 65_536,
 };
 
 const buildToolSnapshot = (ops: readonly NamedOperation[]): ServerSnapshot => {
@@ -202,7 +202,7 @@ const baseConfig = (overrides: Partial<ExecutorConfig> = {}): ExecutorConfig => 
   reservedHeaderNames: new Set(SYSTEM_HEADERS),
   redactor: createRedactor([]),
   timeoutMs: 5000,
-  maxResponseBytes: 65536,
+  maxResponseBytes: 65_536,
   outboundBudgets: budgets,
   maxConcurrent: 16,
   validators: new Map(),
@@ -524,7 +524,7 @@ describe('createExecutor — fail-closed wiring', () => {
   // reach the client raw. Built via String.fromCodePoint per the
   // escape-sequence discipline — never pasted.
   it('sanitizes a spec-derived wireName containing an RLO out of the buildRequest error text', async () => {
-    const rlo = String.fromCodePoint(0x202e);
+    const rlo = String.fromCodePoint(0x20_2e);
     const hostileName = `x-hdr${rlo}evil`;
     const hostileOp: NamedOperation = {
       toolName: 'hostileThing',

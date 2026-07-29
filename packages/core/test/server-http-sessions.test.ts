@@ -218,7 +218,7 @@ describe('createStreamableHttpServer wiring — idle-expiry sweep bound to the H
     } finally {
       await server.close();
     }
-  }, 20000);
+  }, 20_000);
 });
 
 // A block of distinct ports, one PER TEST, disjoint from both
@@ -299,7 +299,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('rejects a fresh-initialize POST with an oversized body (400/-32600) and invalid JSON (400/-32700), and a non-initialize POST with no session id (400/-32000)', async () => {
     const port = 4612;
@@ -313,7 +313,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       });
       expect(oversized.status).toBe(400);
       const oversizedBody = (await oversized.json()) as { error?: { code: number } };
-      expect(oversizedBody.error?.code).toBe(-32600);
+      expect(oversizedBody.error?.code).toBe(-32_600);
 
       const badJson = await fetch(urlFor(port), {
         method: 'POST',
@@ -322,7 +322,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       });
       expect(badJson.status).toBe(400);
       const badJsonBody = (await badJson.json()) as { error?: { code: number } };
-      expect(badJsonBody.error?.code).toBe(-32700);
+      expect(badJsonBody.error?.code).toBe(-32_700);
 
       // An invalid UTF-8 byte (0xFF, built at runtime, never pasted — never
       // valid anywhere in a UTF-8 byte sequence) EMBEDDED inside an
@@ -345,7 +345,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       });
       expect(badUtf8.status).toBe(400);
       const badUtf8Body = (await badUtf8.json()) as { error?: { code: number } };
-      expect(badUtf8Body.error?.code).toBe(-32700);
+      expect(badUtf8Body.error?.code).toBe(-32_700);
 
       const notInit = await fetch(urlFor(port), {
         method: 'POST',
@@ -354,11 +354,11 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       });
       expect(notInit.status).toBe(400);
       const notInitBody = (await notInit.json()) as { error?: { code: number } };
-      expect(notInitBody.error?.code).toBe(-32000);
+      expect(notInitBody.error?.code).toBe(-32_000);
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('a malformed initialize (missing Accept header) 406s WITHOUT ever registering a session (session-slot rollback, direct)', async () => {
     const port = 4613;
@@ -387,7 +387,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('an unknown session id 404s on POST, GET, and DELETE alike', async () => {
     const port = 4614;
@@ -419,7 +419,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   // `fetch()` cannot send a DUPLICATED header (its Headers object dedupes on
   // write), so this drives a raw `node:net` socket instead — the same
@@ -475,7 +475,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       socket.destroy();
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('a live session handles tools/list (POST), an SSE stream (GET), body-cap/parse-error POSTs, and DELETE termination', async () => {
     const port = 4615;
@@ -540,7 +540,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('a second listen() on an already-bound port rejects instead of hanging (EADDRINUSE surfaces via the error listener)', async () => {
     const port = 4616;
@@ -552,7 +552,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await first.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('a client that aborts mid-body (destroys the socket before sending Content-Length bytes) is handled cleanly — no crash, and the server keeps serving later requests', async () => {
     const port = 4617;
@@ -593,7 +593,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('a request stuck mid-body (no session yet, so the session-drain phase never touches it) forces close() to fall back to closeAllConnections() at ~SHUTDOWN_FORCE_MS, rather than hang forever', async () => {
     const port = 4618;
@@ -640,7 +640,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       socket.destroy();
     }
-  }, 12000);
+  }, 12_000);
 
   it('a fresh initialize whose body only finishes arriving AFTER shutdown has begun is rejected with 503, never admitted (shutdown admission fence)', async () => {
     const port = 4619;
@@ -704,7 +704,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       socket.destroy();
       await (closePromise ?? server.close());
     }
-  }, 15000);
+  }, 15_000);
 });
 
 describe('createStreamableHttpServer — HTTP request/header timeout hardening', () => {
@@ -756,5 +756,5 @@ describe('createStreamableHttpServer — HTTP request/header timeout hardening',
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 });

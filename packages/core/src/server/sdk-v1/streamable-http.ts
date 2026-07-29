@@ -196,12 +196,12 @@ export const createStreamableHttpServer = (
     // session-drain snapshot (sessions.values()) has already been taken,
     // which would otherwise leave that session undrained forever.
     if (closing) {
-      jsonRpcError(res, 503, -32000, 'server is shutting down');
+      jsonRpcError(res, 503, -32_000, 'server is shutting down');
       return;
     }
     const reservation = sessions.create(sessionId, reserved as HttpSessionValue, nowMs);
     if (!reservation.ok) {
-      jsonRpcError(res, 503, -32000, 'session capacity exceeded');
+      jsonRpcError(res, 503, -32_000, 'session capacity exceeded');
       return;
     }
     // The slot reserved just above must be released if this attempt never
@@ -339,16 +339,16 @@ export const createStreamableHttpServer = (
     if (req.method === 'POST' && rawSessionIdHeader === undefined) {
       const bodyRead = await readBodyCapped(req, BODY_CAP_BYTES);
       if (!bodyRead.ok) {
-        jsonRpcError(res, 400, -32600, `request body exceeds the ${BODY_CAP_BYTES}-byte cap`);
+        jsonRpcError(res, 400, -32_600, `request body exceeds the ${BODY_CAP_BYTES}-byte cap`);
         return;
       }
       const parsed = parseJsonBody(bodyRead.buffer);
       if (!parsed.ok) {
-        jsonRpcError(res, 400, -32700, 'Parse error: request body is not valid JSON');
+        jsonRpcError(res, 400, -32_700, 'Parse error: request body is not valid JSON');
         return;
       }
       if (!isInitializeRequest(parsed.body)) {
-        jsonRpcError(res, 400, -32000, 'no session id and not an initialize request');
+        jsonRpcError(res, 400, -32_000, 'no session id and not an initialize request');
         return;
       }
       await handleFreshInitialize(req, res, parsed.body);
@@ -360,7 +360,7 @@ export const createStreamableHttpServer = (
     // lookup would be redundant with this one.
     const existingSession = sessionId === undefined ? undefined : sessions.get(sessionId, nowMs);
     if (sessionId === undefined || existingSession === undefined) {
-      jsonRpcError(res, 404, -32001, 'unknown or expired session');
+      jsonRpcError(res, 404, -32_001, 'unknown or expired session');
       return;
     }
     sessions.touch(sessionId, nowMs);
@@ -368,12 +368,12 @@ export const createStreamableHttpServer = (
     if (req.method === 'POST') {
       const bodyRead = await readBodyCapped(req, BODY_CAP_BYTES);
       if (!bodyRead.ok) {
-        jsonRpcError(res, 400, -32600, `request body exceeds the ${BODY_CAP_BYTES}-byte cap`);
+        jsonRpcError(res, 400, -32_600, `request body exceeds the ${BODY_CAP_BYTES}-byte cap`);
         return;
       }
       const parsed = parseJsonBody(bodyRead.buffer);
       if (!parsed.ok) {
-        jsonRpcError(res, 400, -32700, 'Parse error: request body is not valid JSON');
+        jsonRpcError(res, 400, -32_700, 'Parse error: request body is not valid JSON');
         return;
       }
       await transport.handleRequest(req, res, parsed.body);

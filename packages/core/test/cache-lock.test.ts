@@ -7,7 +7,7 @@ const LAYOUT = cacheLayout('/cache', 'abcdef0123456789');
 describe('withNamespaceLock', () => {
   it('creates the namespace directory, holds the lock, and releases it', async () => {
     const fs = memoryCacheFs();
-    const result = await withNamespaceLock(LAYOUT, fs, 1_000, async () => {
+    const result = await withNamespaceLock(LAYOUT, fs, 1000, async () => {
       expect(await fs.pathExists(LAYOUT.lockPath)).toBe(true);
       return 'done';
     });
@@ -18,12 +18,12 @@ describe('withNamespaceLock', () => {
 
   it('records the holder as a JSON object with an owner token and a timestamp', async () => {
     const fs = memoryCacheFs();
-    await withNamespaceLock(LAYOUT, fs, 1_234, () => {
+    await withNamespaceLock(LAYOUT, fs, 1234, () => {
       const record = JSON.parse(fs.files.get(LAYOUT.lockPath) ?? '') as {
         owner: string;
         acquiredAt: number;
       };
-      expect(record.acquiredAt).toBe(1_234);
+      expect(record.acquiredAt).toBe(1234);
       expect(record.owner).toMatch(/^[0-9a-f-]{36}$/u);
       return Promise.resolve();
     });
@@ -31,18 +31,18 @@ describe('withNamespaceLock', () => {
 
   it('refuses a second holder while the lock is live', async () => {
     const fs = memoryCacheFs();
-    await withNamespaceLock(LAYOUT, fs, 1_000, async () => {
+    await withNamespaceLock(LAYOUT, fs, 1000, async () => {
       await expect(
-        withNamespaceLock(LAYOUT, fs, 1_000, () => Promise.resolve('inner')),
+        withNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve('inner')),
       ).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
     });
   });
 
   it('names the namespace but nothing else in the contention message', async () => {
     const fs = memoryCacheFs();
-    await withNamespaceLock(LAYOUT, fs, 1_000, async () => {
+    await withNamespaceLock(LAYOUT, fs, 1000, async () => {
       await expect(
-        withNamespaceLock(LAYOUT, fs, 1_000, () => Promise.resolve(0)),
+        withNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve(0)),
       ).rejects.toThrowError(new RegExp(LAYOUT.namespace, 'u'));
     });
   });
@@ -124,7 +124,7 @@ describe('withNamespaceLock', () => {
   it('releases the lock when the guarded work throws', async () => {
     const fs = memoryCacheFs();
     await expect(
-      withNamespaceLock(LAYOUT, fs, 1_000, () => Promise.reject(new Error('boom'))),
+      withNamespaceLock(LAYOUT, fs, 1000, () => Promise.reject(new Error('boom'))),
     ).rejects.toThrowError('boom');
     expect(await fs.pathExists(LAYOUT.lockPath)).toBe(false);
   });
@@ -134,11 +134,11 @@ describe('withNamespaceLock', () => {
     // fresh lock a third process took while it was running — this is what the
     // owner token buys that a pid could not (pids are reused)
     const fs = memoryCacheFs();
-    await withNamespaceLock(LAYOUT, fs, 1_000, async () => {
+    await withNamespaceLock(LAYOUT, fs, 1000, async () => {
       await fs.removeFile(LAYOUT.lockPath);
       await fs.createExclusive(
         LAYOUT.lockPath,
-        JSON.stringify({ owner: 'someone-else', acquiredAt: 2_000 }),
+        JSON.stringify({ owner: 'someone-else', acquiredAt: 2000 }),
       );
     });
     expect(await fs.pathExists(LAYOUT.lockPath)).toBe(true);
@@ -161,14 +161,14 @@ describe('withNamespaceLock', () => {
       return Promise.reject(new Error('unexpected path'));
     };
     await expect(
-      withNamespaceLock(LAYOUT, fs, 1_000, () => Promise.resolve('ok')),
+      withNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve('ok')),
     ).rejects.toMatchObject({ code: 'validation', exitCode: 3 });
   });
 
   it('propagates a non-absence read failure hit while releasing instead of completing silently', async () => {
     const fs = memoryCacheFs();
     await expect(
-      withNamespaceLock(LAYOUT, fs, 1_000, () => {
+      withNamespaceLock(LAYOUT, fs, 1000, () => {
         // Fails only once acquisition is done and the guarded work is running,
         // so this exercises the release-time readLockHolder call, not the
         // contention one.

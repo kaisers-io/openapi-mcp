@@ -258,7 +258,7 @@ describe('serve — stdio subprocess E2E', () => {
       expect(parsed.jsonrpc).toBe('2.0');
     }
     expect(stderrLines.every((line) => !line.includes('{'))).toBe(true); // Stderr carries plain-text diagnostics, not JSON-RPC
-  }, 10000);
+  }, 10_000);
 
   // FALSIFICATION target: pointing buildTools back at
   // SYSTEM_HEADERS only (dropping the `...apiConfig.reservedHeaderNames`
@@ -486,7 +486,7 @@ describe('serve — stdio subprocess E2E', () => {
       child?.once('exit', (exitCode) => resolve(exitCode));
     });
     expect(code).toBe(0);
-  }, 10000);
+  }, 10_000);
 
   // The executor's cleartext gate (executor.ts's
   // `cleartextBlocked` — a secret `--header-env` header over a cleartext
@@ -605,5 +605,5 @@ describe('serve — stdio subprocess E2E', () => {
       permitted.once('exit', () => resolve());
     });
     child = undefined;
-  }, 10000);
+  }, 10_000);
 });

@@ -3,14 +3,14 @@ import { buildRequest, type OutboundBudgets, type RequestMapper } from '../src/i
 
 const budgets: OutboundBudgets = {
   maxUrlLength: 8192,
-  maxHeaderBytes: 16384,
-  maxBodyBytes: 65536,
+  maxHeaderBytes: 16_384,
+  maxBodyBytes: 65_536,
 };
 
 // An unpaired UTF-16 surrogate: valid as a JS string but `encodeURIComponent`
 // throws a URIError on it. Used to exercise the encode-failure branch of
 // `encodeLeaf`, distinct from the value-shape guard.
-const LONE_SURROGATE = String.fromCodePoint(0xd800);
+const LONE_SURROGATE = String.fromCodePoint(0xd8_00);
 
 const ok = (result: ReturnType<typeof buildRequest>) => {
   if (!('ok' in result)) {
@@ -564,8 +564,8 @@ describe('buildRequest — outbound budgets', () => {
     };
     const tinyBudgets: OutboundBudgets = {
       maxUrlLength: 10,
-      maxHeaderBytes: 16384,
-      maxBodyBytes: 65536,
+      maxHeaderBytes: 16_384,
+      maxBodyBytes: 65_536,
     };
     const message = err(
       buildRequest(
@@ -595,7 +595,7 @@ describe('buildRequest — outbound budgets', () => {
     const tinyBudgets: OutboundBudgets = {
       maxUrlLength: 8192,
       maxHeaderBytes: 8,
-      maxBodyBytes: 65536,
+      maxBodyBytes: 65_536,
     };
     const message = err(
       buildRequest(
@@ -619,7 +619,7 @@ describe('buildRequest — outbound budgets', () => {
     };
     const tinyBudgets: OutboundBudgets = {
       maxUrlLength: 8192,
-      maxHeaderBytes: 16384,
+      maxHeaderBytes: 16_384,
       maxBodyBytes: 8,
     };
     const message = err(

@@ -21,7 +21,7 @@ export const LOCK_STALE_MS = 60_000;
 // file larger than a kilobyte is evidence of tampering, and the same
 // fail-closed reasoning that governs a corrupt cache entry applies here too —
 // fail closed and let an operator decide.
-const LOCK_FILE_MAX_BYTES = 1_024;
+const LOCK_FILE_MAX_BYTES = 1024;
 
 interface LockHolder {
   owner: string;
