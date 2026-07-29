@@ -327,7 +327,7 @@ describe('applyFilters — aggregate work budget', () => {
 
   it('fails closed with a validation error rather than running unbounded', () => {
     const budget = createMatchBudget(5);
-    expect(() => applyFilters(named(fixture), patterns('*a*a*a*a*'), [], budget)).toThrowError(
+    expect(() => applyFilters(named(fixture), patterns('*a*a*a*a*'), [], budget)).toThrow(
       /work budget/u,
     );
   });
@@ -356,7 +356,7 @@ describe('applyFilters — aggregate work budget', () => {
     // instead of throwing.
     const candidates = Array.from({ length: 20 }, (_, index) => `${'x'.repeat(200)}${index}`);
     const budget = createMatchBudget(50);
-    expect(() => closestMatch('y'.repeat(200), candidates, budget)).toThrowError(/work budget/u);
+    expect(() => closestMatch('y'.repeat(200), candidates, budget)).toThrow(/work budget/u);
   });
 
   it('shares the aggregate budget between matching and the suggestion phase', () => {
@@ -374,7 +374,7 @@ describe('applyFilters — aggregate work budget', () => {
     );
     const decoyPattern = `zz${'y'.repeat(200)}`;
     const budget = createMatchBudget(50_000);
-    expect(() => applyFilters(named(longOps), patterns(decoyPattern), [], budget)).toThrowError(
+    expect(() => applyFilters(named(longOps), patterns(decoyPattern), [], budget)).toThrow(
       /work budget/u,
     );
   });

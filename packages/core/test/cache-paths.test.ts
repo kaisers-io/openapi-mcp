@@ -35,7 +35,7 @@ describe('parseCacheKey', () => {
   it.each(['', 'a/b', 'a b', 'a\\b', 'x\u0000y', 'tab\there', 'sl/ash'])(
     'rejects the unusable key %j',
     (raw) => {
-      expect(() => parseCacheKey(raw)).toThrowError(OpenapiMcpError);
+      expect(() => parseCacheKey(raw)).toThrow(OpenapiMcpError);
     },
   );
 
@@ -47,7 +47,7 @@ describe('parseCacheKey', () => {
   });
 
   it('rejects a key longer than the cap', () => {
-    expect(() => parseCacheKey('x'.repeat(CACHE_KEY_MAX_LENGTH + 1))).toThrowError(
+    expect(() => parseCacheKey('x'.repeat(CACHE_KEY_MAX_LENGTH + 1))).toThrow(
       /at most 64 characters/u,
     );
   });
@@ -82,8 +82,8 @@ describe('parseCacheId', () => {
     ['a non-hex character', 'abcdef012345678g'],
     ['a trailing newline', 'abcdef0123456789\n'],
   ])('rejects %s so --id can never reach a path join', (_label, raw) => {
-    expect(() => parseCacheId(raw)).toThrowError(OpenapiMcpError);
-    expect(() => parseCacheId(raw)).toThrowError(/16-character lowercase hexadecimal/u);
+    expect(() => parseCacheId(raw)).toThrow(OpenapiMcpError);
+    expect(() => parseCacheId(raw)).toThrow(/16-character lowercase hexadecimal/u);
   });
 
   it('reports a usage error, not a validation error', () => {
@@ -109,7 +109,7 @@ describe('parseContentHash', () => {
     ['empty', ''],
     ['non-hex', `${'a'.repeat(63)}z`],
   ])('rejects %s', (_label, raw) => {
-    expect(() => parseContentHash(raw)).toThrowError(/64-character lowercase hexadecimal/u);
+    expect(() => parseContentHash(raw)).toThrow(/64-character lowercase hexadecimal/u);
   });
 });
 

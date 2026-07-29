@@ -42,9 +42,9 @@ describe('withNamespaceLock', () => {
   it('names the namespace but nothing else in the contention message', async () => {
     const fs = memoryCacheFs();
     await withNamespaceLock(LAYOUT, fs, 1000, async () => {
-      await expect(
-        withNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve(0)),
-      ).rejects.toThrowError(new RegExp(LAYOUT.namespace, 'u'));
+      await expect(withNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve(0))).rejects.toThrow(
+        new RegExp(LAYOUT.namespace, 'u'),
+      );
     });
   });
 
@@ -76,7 +76,7 @@ describe('withNamespaceLock', () => {
     await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'dead', acquiredAt: 0 }));
     await expect(
       withNamespaceLock(LAYOUT, fs, LOCK_STALE_MS * 2, () => Promise.resolve('ok')),
-    ).rejects.toThrowError(/cache unlock/u);
+    ).rejects.toThrow(/cache unlock/u);
   });
 
   it('contends on an unparsable or malformed lock file rather than assuming it is dead', async () => {
@@ -126,7 +126,7 @@ describe('withNamespaceLock', () => {
     const fs = memoryCacheFs();
     await expect(
       withNamespaceLock(LAYOUT, fs, 1000, () => Promise.reject(new Error('boom'))),
-    ).rejects.toThrowError('boom');
+    ).rejects.toThrow('boom');
     expect(await fs.pathExists(LAYOUT.lockPath)).toBe(false);
   });
 

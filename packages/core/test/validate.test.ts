@@ -39,13 +39,13 @@ describe('validateOpenApiDocument', () => {
   it('rejects a 3.1 document violating the meta-schema', () => {
     const doc = minimal31();
     doc['paths'] = { '/pets': { get: { responses: 'not-an-object' } } };
-    expect(() => validateOpenApiDocument(doc)).toThrowError(OpenapiMcpError);
+    expect(() => validateOpenApiDocument(doc)).toThrow(OpenapiMcpError);
   });
 
   it('rejects swagger 2.0 documents with a targeted message', () => {
     expect(() =>
       validateOpenApiDocument({ swagger: '2.0', info: { title: 'T', version: '1' }, paths: {} }),
-    ).toThrowError(/OpenAPI 2.0 \(swagger\)/u);
+    ).toThrow(/OpenAPI 2.0 \(swagger\)/u);
   });
 
   it.each(['4.0.0', '3.2.0', '2.0', 'three'])(
@@ -57,14 +57,12 @@ describe('validateOpenApiDocument', () => {
           info: { title: 'T', version: '1' },
           paths: {},
         }),
-      ).toThrowError(/3\.0\.x or 3\.1\.x/u);
+      ).toThrow(/3\.0\.x or 3\.1\.x/u);
     },
   );
 
   it('rejects a document without an openapi field', () => {
-    expect(() => validateOpenApiDocument({ info: { title: 'T' } })).toThrowError(
-      /3\.0\.x or 3\.1\.x/u,
-    );
+    expect(() => validateOpenApiDocument({ info: { title: 'T' } })).toThrow(/3\.0\.x or 3\.1\.x/u);
   });
 
   it('caps the reported error list at 10 entries', () => {

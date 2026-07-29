@@ -95,8 +95,6 @@
         "vitest/prefer-strict-equal": "off",
         // Off per task-3 brief: primitives.test.ts asserts safeParse(...).success with toBe(false) verbatim
         "vitest/prefer-to-be-falsy": "off",
-        // Off per task-3 brief: primitives.test.ts uses toThrowError verbatim
-        "vitest/no-alias-methods": "off",
         // Off per task-3 brief: primitives.test.ts asserts inside a try/catch verbatim
         "vitest/no-conditional-expect": "off",
         // Off per task-4 brief: context.test.ts asserts typeof ctx.homeDir() with toBe('string') verbatim

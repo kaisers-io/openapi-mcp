@@ -152,7 +152,7 @@ describe('realContext cacheFs', () => {
     try {
       await expect(
         realContext().cacheFs.writeFileAtomic(join(target, 'meta.json'), 'new'),
-      ).rejects.toThrowError();
+      ).rejects.toThrow();
     } finally {
       await chmod(target, 0o700);
     }
@@ -257,7 +257,7 @@ describe('realContext cacheFs', () => {
   it('rejects a missing file rather than returning empty text', async () => {
     await expect(
       realContext().cacheFs.readFileTextCapped(join(dir, 'nope'), 100),
-    ).rejects.toThrowError();
+    ).rejects.toThrow();
   });
 
   it('creates a lock file exclusively at 0600 and reports an existing one', async () => {

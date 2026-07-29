@@ -19,7 +19,7 @@ describe('parseSpecSource', () => {
   it.each(['ftp://example.com/spec.json', 'file:///etc/spec.json', 'ssh://host/x'])(
     'rejects the non-http(s) scheme in %s',
     (raw) => {
-      expect(() => parseSpecSource(raw, cwd)).toThrowError(/only http: and https:/u);
+      expect(() => parseSpecSource(raw, cwd)).toThrow(/only http: and https:/u);
     },
   );
 
@@ -35,22 +35,22 @@ describe('parseSpecSource', () => {
   });
 
   it('rejects a syntactically invalid URL with a scheme', () => {
-    expect(() => parseSpecSource('https://', cwd)).toThrowError(OpenapiMcpError);
+    expect(() => parseSpecSource('https://', cwd)).toThrow(OpenapiMcpError);
   });
 
   it('rejects an empty source', () => {
-    expect(() => parseSpecSource('', cwd)).toThrowError(OpenapiMcpError);
+    expect(() => parseSpecSource('', cwd)).toThrow(OpenapiMcpError);
   });
 
   it.each(['file:/etc/spec.json', 'data:text/plain,x', 'mailto:x@example.com'])(
     'rejects scheme-prefixed non-http(s) input %s (no :// required)',
     (raw) => {
-      expect(() => parseSpecSource(raw, cwd)).toThrowError(/only http: and https:/u);
+      expect(() => parseSpecSource(raw, cwd)).toThrow(/only http: and https:/u);
     },
   );
 
   it('treats a relative path containing a colon as a scheme and hints at the ./ escape', () => {
-    expect(() => parseSpecSource('specs:v1.json', cwd)).toThrowError(/\.\//u);
+    expect(() => parseSpecSource('specs:v1.json', cwd)).toThrow(/\.\//u);
   });
 
   it.each(['api_key', 'token', 'ACCESS_TOKEN', 'x-auth', 'signature'])(

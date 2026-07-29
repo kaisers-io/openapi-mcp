@@ -492,7 +492,7 @@ describe('a crash during the FIRST-EVER commit', () => {
       path === LAYOUT.metaPath
         ? Promise.reject(new Error('crash during the first commit'))
         : inner(path, data);
-    await expect(writeAccepted(LAYOUT, fs, acceptedInput())).rejects.toThrowError();
+    await expect(writeAccepted(LAYOUT, fs, acceptedInput())).rejects.toThrow();
     // An orphan object with no metadata claiming it is not a baseline
     expect(objectNamesOf(fs)).toEqual([`${hashContent(DOC_TEXT)}.json`]);
     expect(await readCacheEntry(LAYOUT, fs)).toEqual({ kind: 'miss' });
@@ -622,7 +622,7 @@ describe('the persisted-size preflight is exact', () => {
     // write-then-read invariant for any caller of the exported store.
     // Concretely: JSON.stringify({x:[undefined]}) is 12 bytes and an earlier
     // walker counted 8.
-    expect(() => serializedSizeWithin(value, 1_000_000)).toThrowError(/round-trip exactly/u);
+    expect(() => serializedSizeWithin(value, 1_000_000)).toThrow(/round-trip exactly/u);
   });
 
   it.each([
@@ -633,7 +633,7 @@ describe('the persisted-size preflight is exact', () => {
     // JSON.stringify(new Number(5)) is '5'; a walker using Object.entries sees
     // no entries and counts '{}' — a boxed primitive would look like an empty
     // plain-object tree and be accepted, when it must be refused.
-    expect(() => serializedSizeWithin(value, 1_000_000)).toThrowError(/round-trip exactly/u);
+    expect(() => serializedSizeWithin(value, 1_000_000)).toThrow(/round-trip exactly/u);
   });
 
   it('refuses an enumerable getter, which could answer twice', () => {
@@ -651,11 +651,11 @@ describe('the persisted-size preflight is exact', () => {
         return calls === 1 ? 'a' : 'z'.repeat(100_000_000);
       },
     });
-    expect(() => serializedSizeWithin(value, 1_000_000)).toThrowError(/round-trip exactly/u);
+    expect(() => serializedSizeWithin(value, 1_000_000)).toThrow(/round-trip exactly/u);
   });
 
   it('refuses a top-level undefined, which stringifies to no string at all', () => {
-    expect(() => serializedSizeWithin(undefined, 1_000_000)).toThrowError(/not a JSON object/u);
+    expect(() => serializedSizeWithin(undefined, 1_000_000)).toThrow(/not a JSON object/u);
   });
 
   it('still accepts a null-prototype object, which stringifies normally', () => {
@@ -775,7 +775,7 @@ describe('crash between the object write and the metadata commit', () => {
     failAfterObjectWrite(fs);
     await expect(
       writeAccepted(LAYOUT, fs, acceptedInput({ document: DOC_V2, fetchedAt: 1_700_000_100_000 })),
-    ).rejects.toThrowError('crash before the metadata commit');
+    ).rejects.toThrow('crash before the metadata commit');
 
     // The critical assertion: a reader still gets the PREVIOUS generation,
     // hash-verified. Under the old fixed-path layout this read corrupt, because the
@@ -794,7 +794,7 @@ describe('crash between the object write and the metadata commit', () => {
     failAfterObjectWrite(fs);
     await expect(
       writeAccepted(LAYOUT, fs, acceptedInput({ document: DOC_V2, fetchedAt: 1_700_000_100_000 })),
-    ).rejects.toThrowError();
+    ).rejects.toThrow();
     // Both objects exist; meta.json decides which one counts, and it still
     // names the old one
     expect(objectNamesOf(fs)).toContain(`${hashContent(DOC_V2_TEXT)}.json`);
@@ -806,7 +806,7 @@ describe('crash between the object write and the metadata commit', () => {
     failAfterObjectWrite(fs);
     await expect(
       writeAccepted(LAYOUT, fs, acceptedInput({ document: DOC_V2, fetchedAt: 1_700_000_100_000 })),
-    ).rejects.toThrowError();
+    ).rejects.toThrow();
     expect(objectNamesOf(fs)).toHaveLength(2);
 
     // A later successful write collects whatever the crashed attempt left
@@ -822,7 +822,7 @@ describe('crash between the object write and the metadata commit', () => {
     failAfterObjectWrite(fs);
     await expect(
       writeAccepted(LAYOUT, fs, acceptedInput({ document: DOC_V2, fetchedAt: 1_700_000_100_000 })),
-    ).rejects.toThrowError();
+    ).rejects.toThrow();
     expect(fs.files.has(LAYOUT.lockPath)).toBe(false);
   });
 });
@@ -1308,7 +1308,7 @@ describe('serializedSizeWithin: array-specific enforcement', () => {
   it('refuses an array cycle', () => {
     const arr: unknown[] = [];
     arr.push(arr);
-    expect(() => serializedSizeWithin({ x: arr }, 1_000_000)).toThrowError(/round-trip exactly/u);
+    expect(() => serializedSizeWithin({ x: arr }, 1_000_000)).toThrow(/round-trip exactly/u);
   });
 
   it('refuses an array subclass, which is outside the domain', () => {
@@ -1316,12 +1316,12 @@ describe('serializedSizeWithin: array-specific enforcement', () => {
     const subclassed = new MyArray();
     subclassed.push(1, 2, 3);
     const value = { x: subclassed as unknown };
-    expect(() => serializedSizeWithin(value, 1_000_000)).toThrowError(/round-trip exactly/u);
+    expect(() => serializedSizeWithin(value, 1_000_000)).toThrow(/round-trip exactly/u);
   });
 
   it('refuses an array carrying a toJSON hook', () => {
     const arr = Object.assign([1, 2, 3], { toJSON: () => 'not an array' });
-    expect(() => serializedSizeWithin({ x: arr }, 1_000_000)).toThrowError(/round-trip exactly/u);
+    expect(() => serializedSizeWithin({ x: arr }, 1_000_000)).toThrow(/round-trip exactly/u);
   });
 });
 
@@ -1889,9 +1889,7 @@ describe('a corrupt baseline cannot be laundered by restarting', () => {
   it('names cache clear as the deliberate reset path, and clearing works', async () => {
     const fs = await seeded();
     fs.files.set(LAYOUT.metaPath, 'wrecked');
-    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toThrowError(
-      /openapi-mcp cache clear/u,
-    );
+    await expect(promoteCandidate(LAYOUT, fs, NOW, {})).rejects.toThrow(/openapi-mcp cache clear/u);
     expect(await clearNamespace(LAYOUT, fs, NOW)).toBe(true);
     // Only after the explicit reset is the source a miss again, i.e. TOFU-able
     expect(await readCacheEntry(LAYOUT, fs)).toEqual({ kind: 'miss' });

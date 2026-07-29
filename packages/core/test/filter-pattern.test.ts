@@ -85,11 +85,11 @@ describe('parseFilterPattern — form detection', () => {
 
 describe('parseFilterPattern — rejections', () => {
   it('rejects an empty pattern', () => {
-    expect(() => parseFilterPattern('')).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('')).toThrow(OpenapiMcpError);
   });
 
   it('rejects a bare "tag:" with no glob', () => {
-    expect(() => parseFilterPattern('tag:')).toThrowError(/needs a tag glob/u);
+    expect(() => parseFilterPattern('tag:')).toThrow(/needs a tag glob/u);
   });
 
   it('rejects an unknown method in the methodPath form', () => {
@@ -104,35 +104,35 @@ describe('parseFilterPattern — rejections', () => {
   });
 
   it('rejects a lowercase method — the language is case-sensitive', () => {
-    expect(() => parseFilterPattern('get /users')).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('get /users')).toThrow(OpenapiMcpError);
   });
 
   it('rejects OPTIONS and TRACE, which are never exposed in v1', () => {
-    expect(() => parseFilterPattern('OPTIONS /users')).toThrowError(OpenapiMcpError);
-    expect(() => parseFilterPattern('TRACE /users')).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('OPTIONS /users')).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPattern('TRACE /users')).toThrow(OpenapiMcpError);
   });
 
   it('rejects a methodPath whose path does not start with a slash', () => {
-    expect(() => parseFilterPattern('GET users')).toThrowError(/must start with "\/"/u);
+    expect(() => parseFilterPattern('GET users')).toThrow(/must start with "\/"/u);
   });
 
   it('rejects two spaces — exactly one separates method from path (grammar rule 7)', () => {
-    expect(() => parseFilterPattern('GET  /users')).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('GET  /users')).toThrow(OpenapiMcpError);
   });
 
   it('rejects a trailing space', () => {
-    expect(() => parseFilterPattern('GET ')).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('GET ')).toThrow(OpenapiMcpError);
   });
 
   it('never degrades a spaced pattern into an operationId glob (grammar rule 7)', () => {
     // An operationId containing a space is unreachable by design: silently
     // parsing "list pets!" as an operationId would surface later as a dead
     // pattern instead of as the usage error it is
-    expect(() => parseFilterPattern('list pets!')).toThrowError(/must start with one of/u);
+    expect(() => parseFilterPattern('list pets!')).toThrow(/must start with one of/u);
   });
 
   it('rejects an over-long pattern', () => {
-    expect(() => parseFilterPattern('x'.repeat(FILTER_PATTERN_MAX_LENGTH + 1))).toThrowError(
+    expect(() => parseFilterPattern('x'.repeat(FILTER_PATTERN_MAX_LENGTH + 1))).toThrow(
       /at most 256 characters/u,
     );
   });
@@ -171,16 +171,14 @@ describe('parseFilterPatterns — the list bound', () => {
   });
 
   it('rejects one pattern over the count cap', () => {
-    expect(() => parseFilterPatterns(many(FILTER_PATTERN_MAX_COUNT + 1))).toThrowError(
-      /at most 128/u,
-    );
+    expect(() => parseFilterPatterns(many(FILTER_PATTERN_MAX_COUNT + 1))).toThrow(/at most 128/u);
   });
 
   it('enforces the count before parsing, so an over-long list fails on the count', () => {
     // The bound is a cheap gate in front of 129 compilations, not a summary of them
     expect(() =>
       parseFilterPatterns(Array.from({ length: FILTER_PATTERN_MAX_COUNT + 1 }, () => '')),
-    ).toThrowError(/at most 128/u);
+    ).toThrow(/at most 128/u);
   });
 
   it('still parses and validates every element', () => {
@@ -192,8 +190,8 @@ describe('parseFilterPatterns — the list bound', () => {
       glob: '/users/**',
       raw: 'GET /users/**',
     });
-    expect(() => parseFilterPatterns(['listPets', 'FETCH /users'])).toThrowError(OpenapiMcpError);
-    expect(() => parseFilterPatterns(['**a'.repeat(11)])).toThrowError(/at most 10 wildcards/u);
+    expect(() => parseFilterPatterns(['listPets', 'FETCH /users'])).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPatterns(['**a'.repeat(11)])).toThrow(/at most 10 wildcards/u);
   });
 });
 
@@ -348,7 +346,7 @@ describe('compileGlob — wildcards (grammar rules 1, 2, 4)', () => {
 describe('compileGlob — sanity bounds', () => {
   it('rejects a pattern with more than the allowed number of wildcard groups', () => {
     const glob = '**a'.repeat(FILTER_PATTERN_MAX_WILDCARDS + 1);
-    expect(() => compileGlob(glob)).toThrowError(/at most 10 wildcards/u);
+    expect(() => compileGlob(glob)).toThrow(/at most 10 wildcards/u);
   });
 
   it('accepts a pattern exactly at the wildcard cap', () => {
@@ -361,9 +359,9 @@ describe('compileGlob — sanity bounds', () => {
   });
 
   it('surfaces the cap through parseFilterPattern for every form', () => {
-    expect(() => parseFilterPattern('**a'.repeat(11))).toThrowError(OpenapiMcpError);
-    expect(() => parseFilterPattern(`tag:${'**a'.repeat(11)}`)).toThrowError(OpenapiMcpError);
-    expect(() => parseFilterPattern(`GET /${'**a'.repeat(11)}`)).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('**a'.repeat(11))).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPattern(`tag:${'**a'.repeat(11)}`)).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPattern(`GET /${'**a'.repeat(11)}`)).toThrow(OpenapiMcpError);
   });
 
   it('is a sanity bound only — it is no longer what provides the safety property', () => {
@@ -437,7 +435,7 @@ describe('globMatches — no backtracking', () => {
   it('refuses with a validation error once the budget is exhausted', () => {
     const compiled = compileGlob('**a'.repeat(FILTER_PATTERN_MAX_WILDCARDS));
     const budget = createMatchBudget(100);
-    expect(() => globMatches(compiled, 'a'.repeat(10_000), budget)).toThrowError(/work budget/u);
+    expect(() => globMatches(compiled, 'a'.repeat(10_000), budget)).toThrow(/work budget/u);
   });
 
   it('freezes the measured budget', () => {
