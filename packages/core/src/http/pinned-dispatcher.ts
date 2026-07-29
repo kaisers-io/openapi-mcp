@@ -89,7 +89,9 @@ export const pinnedLookup =
     // `resolve` still reaches the .catch below instead of leaving the
     // callback — and the request — hanging.
     Promise.resolve()
+      // oxlint-disable-next-line promise/prefer-await-to-then -- bridges into LookupFunction's Node-style (hostname, options, callback) contract; the callback has no async form to await into
       .then(() => resolve(hostname))
+      // oxlint-disable-next-line promise/prefer-await-to-then -- continues the same callback-contract bridge chain as the .then above
       .then((addresses) => {
         if (addresses.length === 0) {
           return settle(
@@ -133,6 +135,7 @@ export const pinnedLookup =
         // kept total per the lookup contract's non-`all` form.
         return settle(null, first ?? '', first === undefined ? undefined : isIP(first));
       })
+      // oxlint-disable-next-line promise/prefer-await-to-then -- terminal handler of the same callback-contract bridge chain; settles the LookupFunction callback on any rejection
       .catch((error: unknown) => settle(asError(error), []));
   };
 
@@ -383,6 +386,7 @@ const readCapped = async (
   let aborted = false;
   const onAbort = (): void => {
     aborted = true;
+    // oxlint-disable-next-line promise/prefer-await-to-then -- detached from a synchronous 'abort' event listener, which cannot be awaited; a rejection here has nowhere to go but this catch
     reader.cancel().catch(() => {});
   };
   if (signal.aborted) {
@@ -438,6 +442,7 @@ export const pinnedRequest = async (
     // caller's trust.
     const trusted = hop === 0 ? opts.baseTrusted : false;
     const policy: PinnedPolicy = { allowPrivateNetwork: opts.allowPrivateNetwork, trusted };
+    // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
     const sync = validateHopUrlSync(url, policy);
     if (sync !== undefined) {
       return { kind: 'error', reason: 'egress', detail: sync };

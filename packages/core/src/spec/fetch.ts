@@ -111,6 +111,7 @@ const fetchChain = async (
     // closes that gap for EVERY hop (including hop 0, which previously got
     // no address validation at all). Reuses pinnedRequest's own guard rather
     // than reimplementing it.
+    // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
     const syncViolation = validateHopUrlSync(url, policy);
     if (syncViolation !== undefined) {
       throw validationError(`spec URL ${displaySource(url)} rejected: ${syncViolation}`);

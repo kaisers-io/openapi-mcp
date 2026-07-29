@@ -240,6 +240,7 @@ type HeaderMapping = Extract<FieldMapping, { destination: 'header' }>;
 // control or DEL in a header value is a request-smuggling vector. A header
 // value has no percent-encoding layer, so a control character must be
 // rejected outright — never stripped, never encoded.
+// oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it rejects them outright)
 const HEADER_CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
 
 // `mapping.wireName` is spec-derived, untrusted text (the header parameter's

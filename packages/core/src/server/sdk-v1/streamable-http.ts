@@ -75,6 +75,7 @@ const strictSingleHeader = (value: string[] | undefined): string | undefined =>
 type BodyReadResult = { ok: true; buffer: Buffer } | { ok: false; reason: 'too-large' };
 
 const readBodyCapped = (req: IncomingMessage, capBytes: number): Promise<BodyReadResult> =>
+  // oxlint-disable-next-line promise/avoid-new -- wraps IncomingMessage's data/end/error event-emitter interface, which has no native promise form
   new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
@@ -158,6 +159,7 @@ export const createStreamableHttpServer = (
   // complexity without freeing anything a waiting request needs.
   const evictExpiredSessions = (nowMs: number): void => {
     for (const expired of sessions.sweepExpired(nowMs)) {
+      // oxlint-disable-next-line promise/prefer-await-to-then -- detached best-effort cleanup during a synchronous sweep loop; nothing here awaits it, so a rejection has nowhere to go but this catch
       void expired.transport.close().catch(() => {
         // Best-effort during eviction — nothing more actionable if it fails.
       });
@@ -388,6 +390,7 @@ export const createStreamableHttpServer = (
   };
 
   const httpServer = createServer((req, res) => {
+    // oxlint-disable-next-line promise/prefer-await-to-then -- node:http's request-event callback is synchronous void by contract; it cannot be awaited, so a rejection must be caught explicitly here instead
     handleRequest(req, res).catch(() => {
       if (!res.headersSent) {
         res.writeHead(500).end();
@@ -417,6 +420,7 @@ export const createStreamableHttpServer = (
 
   return {
     listen: () =>
+      // oxlint-disable-next-line promise/avoid-new -- wraps httpServer's listening/error event-emitter interface; net.Server#listen has no promise form
       new Promise((resolve, reject) => {
         // The listen() call does not throw/reject on EADDRINUSE — the
         // failure surfaces asynchronously via 'error'. Without this
@@ -472,6 +476,7 @@ export const createStreamableHttpServer = (
       let sessionForceTimer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
         Promise.allSettled(sessionValues.map((session) => session.server.close().catch(() => {}))),
+        // oxlint-disable-next-line promise/avoid-new -- deadline branch racing the session-drain settle; setTimeout's callback has no promise form to await directly
         new Promise<void>((resolve) => {
           sessionForceTimer = setTimeout(resolve, SHUTDOWN_FORCE_MS);
         }),
@@ -480,9 +485,11 @@ export const createStreamableHttpServer = (
 
       let listenerForceTimer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
+        // oxlint-disable-next-line promise/avoid-new -- wraps httpServer.close(callback), which has no promise form
         new Promise<void>((resolve) => {
           httpServer.close(() => resolve());
         }),
+        // oxlint-disable-next-line promise/avoid-new -- deadline branch racing the listener close above; pairs with it via Promise.race, same setTimeout-has-no-promise-form reason
         new Promise<void>((resolve) => {
           listenerForceTimer = setTimeout(() => {
             httpServer.closeAllConnections();

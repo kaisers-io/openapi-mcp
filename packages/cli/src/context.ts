@@ -308,9 +308,11 @@ export const resolveErrWidth = (
 const realLookup = async (hostname: string, signal: AbortSignal): Promise<readonly string[]> => {
   signal.throwIfAborted();
   const pending = dnsLookup(hostname, { all: true });
+  // oxlint-disable-next-line promise/prefer-await-to-then -- detached late-rejection handler: `pending` may still reject after `aborted` wins the race below, and an unconsumed rejection would surface as an unhandledRejection
   pending.catch(() => {
     // Consume a late rejection if the race below is lost to the deadline
   });
+  // oxlint-disable-next-line promise/avoid-new -- wraps the non-abortable dns.promises.lookup race: the signal's 'abort' event has no promise form, so this bridges it into one
   const aborted = new Promise<never>((_resolve, reject) => {
     signal.addEventListener(
       'abort',
@@ -320,6 +322,7 @@ const realLookup = async (hostname: string, signal: AbortSignal): Promise<readon
       { once: true },
     );
   });
+  // oxlint-disable-next-line promise/prefer-await-to-then -- detached late-rejection handler: `aborted` never resolves and would surface as an unhandledRejection once `pending` wins the race below
   aborted.catch(() => {
     // Consume the deadline rejection if the lookup won the race
   });
@@ -340,6 +343,7 @@ export const realContext = (): CliContext => ({
   now: () => Date.now(),
   nodeVersion: process.versions.node,
   homeDir: () => homedir(),
+  // oxlint-disable-next-line node/no-sync -- CliContext's pathExists contract returns boolean, not Promise<boolean>; existsSync is the only fs primitive matching that synchronous shape
   pathExists: (path) => existsSync(path),
   readFileText: (path) => readFile(path, 'utf8'),
   fileSizeBytes: async (path) => {

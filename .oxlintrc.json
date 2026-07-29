@@ -32,10 +32,6 @@
     "import/prefer-default-export": "off",
     "unicorn/require-module-specifiers": "off",
     "no-ternary": "off", // ternary used by core errors.ts per task-2 brief
-    // Off per task-2 brief: sanitize.ts's control/bidi-stripping regex matches control-character ranges verbatim
-    "no-control-regex": "off",
-    // Off per task-4 brief: context.ts uses node:fs existsSync verbatim
-    "node/no-sync": "off",
     // Off per task-11 brief (M2b): cache.ts's promoteCandidate/withNamespaceLock
     // call sites take four parameters verbatim
     "max-params": "off",
@@ -43,10 +39,6 @@
     "max-statements": "off",
     // Off per task-4 brief (M2a): load.ts's stat/read try-catch blocks assign url/size/text after declaration verbatim
     "init-declarations": "off",
-    // Deferred/race primitives around the non-abortable dns.promises.lookup:
-    // a legitimate promise-constructor use plus detached late-rejection handlers
-    "promise/avoid-new": "off",
-    "promise/prefer-await-to-then": "off",
     // Off per task-5 brief (M2a): egress.ts's classifyIpv4/classifyAddress branch
     // comments are inline per condition verbatim
     "no-inline-comments": "off",
@@ -146,7 +138,21 @@
         // unboxed-literal replacement these rules suggest is a plain primitive,
         // which defeats the test, verbatim
         "unicorn/new-for-builtins": "off",
-        "no-new-wrappers": "off"
+        "no-new-wrappers": "off",
+        // Off for tests: race/deadline scenarios (session eviction, shutdown
+        // timers, cache-lock contention, DNS-abort races) are constructed
+        // directly with `new Promise` to control exactly when a fixture
+        // settles, mirroring the same non-abortable/event-emitter primitives
+        // the src-side sites wrap
+        "promise/avoid-new": "off",
+        // Off for tests: fixtures assert against detached late-rejection
+        // handlers and callback-contract bridges (mirroring pinnedLookup and
+        // the DNS-race consumers in src) via `.then()`/`.catch()` chains
+        "promise/prefer-await-to-then": "off",
+        // Off for tests: fixtures call gzipSync/spawnSync/validateHopUrlSync
+        // synchronously by design to set up deterministic input before
+        // exercising the code under test
+        "node/no-sync": "off"
       }
     },
     {

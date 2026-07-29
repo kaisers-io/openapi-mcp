@@ -342,6 +342,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         // `server.onclose`, and `server.close()` is unconditional afterward
         // (the transport is never already self-closed, so no double-close
         // guard is needed here).
+        // oxlint-disable-next-line promise/avoid-new -- races three independent event sources (SIGINT/SIGTERM/stdin 'end') with no single promise-returning API that covers all three
         await new Promise<void>((resolve) => {
           process.once('SIGINT', () => resolve());
           process.once('SIGTERM', () => resolve());
@@ -371,6 +372,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         // Block until a graceful shutdown signal — there is no client
         // stdin stream to watch for EOF in HTTP mode (unlike the stdio
         // branch below), so SIGINT/SIGTERM are the only shutdown triggers.
+        // oxlint-disable-next-line promise/avoid-new -- races two independent process signal events (SIGINT/SIGTERM) with no single promise-returning API that covers both
         await new Promise<void>((resolve) => {
           process.once('SIGINT', () => resolve());
           process.once('SIGTERM', () => resolve());

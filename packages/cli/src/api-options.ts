@@ -18,6 +18,7 @@ const collect = (value: string, previous: readonly string[]): readonly string[] 
 // Mirrors http/headers.ts's non-exported CONTROL_CHAR_RE (a static --header
 // has no env-var indirection layer, so this file owns its own copy): any C0
 // control or DEL in a header value is a request-smuggling vector.
+// oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it rejects them)
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
 
 // Names that read as a credential regardless of what --header actually
