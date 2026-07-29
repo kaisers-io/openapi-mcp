@@ -77,6 +77,7 @@ const isError = (outcome: ToolCallOutcome): string => {
 
 describe('compileEnvelopeValidator', () => {
   it('returns undefined for an undefined outputSchema', () => {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- outputSchema is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
     expect(compileEnvelopeValidator(undefined)).toBeUndefined();
   });
 

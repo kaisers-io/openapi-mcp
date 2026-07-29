@@ -32,8 +32,6 @@
     "no-control-regex": "off",
     // Off per task-4 brief: context.ts uses node:fs existsSync verbatim
     "node/no-sync": "off",
-    // Off per task-4 brief: context.ts testContext().homeDir default returns undefined verbatim
-    "unicorn/no-useless-undefined": "off",
     // Off per task-11 brief (M2b): cache.ts's promoteCandidate/withNamespaceLock
     // call sites take four parameters verbatim
     "max-params": "off",

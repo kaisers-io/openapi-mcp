@@ -737,7 +737,6 @@ describe('serializeWithinBudget: the single pass the sizer and the writer now sh
       get() {
         getterRan = true;
         (doc as { a: number }).a = 999;
-        return undefined;
       },
     });
     expect(() => serializeWithinBudget(doc, 10_000)).toThrow(/round-trip exactly/u);

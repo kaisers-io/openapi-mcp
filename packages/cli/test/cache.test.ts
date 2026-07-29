@@ -800,7 +800,7 @@ describe('cache namespacing and secrets', () => {
   });
 
   it('fails with exit 3 when no home directory is available', async () => {
-    const { ctx } = cacheCtx([specText], { homeDir: () => undefined });
+    const { ctx } = cacheCtx([specText], { homeDir: () => {} });
     const code = await run(ctx, ['node', 'openapi-mcp', 'cache', 'list']);
     expect(code).toBe(EXIT.VALIDATION);
   });

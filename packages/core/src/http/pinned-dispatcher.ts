@@ -362,7 +362,7 @@ const readCapped = async (
   if (isIdentityEncoding(response.headers.get('content-encoding')) && contentLength !== null) {
     const declared = Number(contentLength);
     if (Number.isFinite(declared) && declared > maxBytes) {
-      await response.body?.cancel().catch(() => undefined);
+      await response.body?.cancel().catch(() => {});
       throw new TooLargeError(
         `declared content-length ${declared} exceeds the ${maxBytes}-byte budget`,
       );
@@ -381,7 +381,7 @@ const readCapped = async (
   let aborted = false;
   const onAbort = (): void => {
     aborted = true;
-    reader.cancel().catch(() => undefined);
+    reader.cancel().catch(() => {});
   };
   if (signal.aborted) {
     onAbort();
@@ -399,14 +399,14 @@ const readCapped = async (
       }
       received += value.byteLength;
       if (received > maxBytes) {
-        await reader.cancel().catch(() => undefined);
+        await reader.cancel().catch(() => {});
         throw new TooLargeError(`decompressed body exceeds the ${maxBytes}-byte budget`);
       }
       chunks.push(value);
     }
   } catch (error) {
     if (!(error instanceof TooLargeError)) {
-      await reader.cancel().catch(() => undefined);
+      await reader.cancel().catch(() => {});
     }
     throw error;
   } finally {
@@ -463,7 +463,7 @@ export const pinnedRequest = async (
     } catch (error) {
       // Exceptional path: destroy(), never the graceful close() that may
       // await a live response.
-      await agent.destroy().catch(() => undefined);
+      await agent.destroy().catch(() => {});
       if (signal.aborted) {
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
@@ -472,7 +472,7 @@ export const pinnedRequest = async (
     let exceptional = false;
     try {
       if (REDIRECT_STATUSES.has(response.status)) {
-        await response.body?.cancel().catch(() => undefined);
+        await response.body?.cancel().catch(() => {});
         if (WRITE_METHODS.has(method.toUpperCase())) {
           return { kind: 'error', reason: 'redirect-write-method' };
         }
@@ -513,7 +513,7 @@ export const pinnedRequest = async (
       // Every non-exceptional path (a plain 200, or a redirect hop whose
       // body was already cancelled above) closes gracefully; every
       // exceptional path above already destroyed. Runs even on `continue`.
-      await (exceptional ? agent.destroy() : agent.close()).catch(() => undefined);
+      await (exceptional ? agent.destroy() : agent.close()).catch(() => {});
     }
   }
   return { kind: 'error', reason: 'redirect-loop' };

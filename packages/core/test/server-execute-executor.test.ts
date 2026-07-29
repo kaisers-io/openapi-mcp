@@ -449,7 +449,7 @@ describe('createExecutor — global concurrency semaphore', () => {
   it('rejects a second overlapping call once maxConcurrent is reached', async () => {
     const snapshot = buildToolSnapshot([pingOp]);
     const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
-    let releaseFirst: (response: Response) => void = () => undefined;
+    let releaseFirst: (response: Response) => void = () => {};
     const pending = new Promise<Response>((resolve) => {
       releaseFirst = resolve;
     });

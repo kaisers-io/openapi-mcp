@@ -91,6 +91,7 @@ describe('errWidth', () => {
     expect(resolveErrWidth(false, 120)).toBeUndefined(); // Not a TTY -> no wrap
     expect(resolveErrWidth(true, 120)).toBe(120); // A real column count is used
     expect(resolveErrWidth(true, 0)).toBe(80); // TTY, no columns -> fallback
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- resolveErrWidth's columns is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
     expect(resolveErrWidth(true, undefined)).toBe(80); // TTY, columns unknown -> fallback
   });
 });

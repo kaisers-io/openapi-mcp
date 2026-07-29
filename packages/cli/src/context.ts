@@ -203,7 +203,7 @@ const realCacheFs = (): CacheFs => ({
       await rename(tmp, path);
     } catch (error) {
       if (handle !== undefined) {
-        await handle.close().catch(() => undefined);
+        await handle.close().catch(() => {});
       }
       await rm(tmp, { force: true });
       throw error;
@@ -288,7 +288,7 @@ const realCacheFs = (): CacheFs => ({
       // successful acquisition into a rejection (which would orphan the lock
       // we just published, since withNamespaceLock has not yet entered its
       // release finally). A stray .tmp is harmless.
-      await rm(tmp, { force: true }).catch(() => undefined);
+      await rm(tmp, { force: true }).catch(() => {});
     }
   },
   removeFile: (path) => rm(path, { force: true }),
@@ -374,11 +374,11 @@ export const testContext = (overrides: TestContextOverrides = {}): CliContext =>
     errLine: (line) => {
       errLines.push(line);
     },
-    errWidth: () => undefined,
+    errWidth: () => {},
     fetcher: () => Promise.reject(new Error('no fetcher configured in testContext')),
     now: () => 0,
     nodeVersion: '24.12.0',
-    homeDir: () => undefined,
+    homeDir: () => {},
     pathExists: () => false,
     readFileText: () => Promise.reject(new Error('no file access configured in testContext')),
     fileSizeBytes: () => Promise.reject(new Error('no file access configured in testContext')),

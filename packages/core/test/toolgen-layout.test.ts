@@ -382,6 +382,7 @@ describe('buildLayout — body classification', () => {
   });
 
   it('reports bodyMode none with no request body', () => {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- bodyOp's requestBody is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
     const l = layout(buildLayout(bodyOp(undefined), new Set()));
     expect(l.mapper.bodyMode).toBe('none');
     expect(l.mapper.bodyContentType).toBeUndefined();

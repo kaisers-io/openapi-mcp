@@ -86,7 +86,8 @@ export const parseSpecText = (raw: string): Record<string, unknown> => {
     parsed =
       sniffed.startsWith('{') || sniffed.startsWith('[')
         ? parseJsonFirst(text)
-        : parseAsYaml(text, undefined);
+        : // oxlint-disable-next-line unicorn/no-useless-undefined -- parseAsYaml's jsonError is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
+          parseAsYaml(text, undefined);
   } catch (error) {
     if (error instanceof RangeError) {
       // V8 recursion limit hit before the depth budget below could run

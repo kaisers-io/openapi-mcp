@@ -70,6 +70,7 @@ describe('extractBearerToken', () => {
     expect(extractBearerToken(`Bearer  ${TOKEN}`)).toBe(TOKEN); // Two spaces
   });
   it('returns undefined for an absent, malformed, or wrong-scheme header', () => {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- authorizationHeader is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
     expect(extractBearerToken(undefined)).toBeUndefined();
     expect(extractBearerToken('Basic abc')).toBeUndefined();
     expect(extractBearerToken('Bearer')).toBeUndefined();
