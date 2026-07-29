@@ -102,12 +102,19 @@ export const paramFields = (
         ? converted.ok.describe(sanitizeSpecText(param['description'], SPEC_BUDGETS.maxTextLength))
         : converted.ok;
     const required = location === 'path' ? true : param['required'] === true;
-    const mapping: FieldMapping =
-      location === 'path'
-        ? { destination: 'path', wireName: name, style: 'simple', explode, required: true }
-        : location === 'query'
-          ? { destination: 'query', wireName: name, style: 'form', explode, required }
-          : { destination: 'header', wireName: name, style: 'simple', explode, required };
+    const mapping: FieldMapping = ((): FieldMapping => {
+      switch (location) {
+        case 'path': {
+          return { destination: 'path', wireName: name, style: 'simple', explode, required: true };
+        }
+        case 'query': {
+          return { destination: 'query', wireName: name, style: 'form', explode, required };
+        }
+        default: {
+          return { destination: 'header', wireName: name, style: 'simple', explode, required };
+        }
+      }
+    })();
     fields.push({ preferred: name, name, location, schema, required, mapping });
   }
   return { ok: fields };

@@ -272,13 +272,6 @@
     {
       "files": ["packages/core/src/toolgen/layout.ts"],
       "rules": {
-        // Off to support task-3's verbatim converged code (M3, owner decision round-15): paramFields's
-        // location -> FieldMapping selection is the converged three-way ternary
-        // verbatim; the path/query/header branches are parallel literal-object
-        // picks, not sequential decision logic, so an if-else rewrite would not
-        // improve on it
-        "no-nested-ternary": "off",
-        "unicorn/no-nested-ternary": "off",
         // Off per task-4 brief (M3): layout.ts is the whole field-layout module -
         // paramFields, the body classification (bodyFields/isFlattenableRoot/
         // selectMedia), collision resolution, and buildLayout's assembly
