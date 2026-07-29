@@ -183,8 +183,8 @@ describe('fetchSpec', () => {
           { fetcher, lookup: publicLookup },
         );
         expect.unreachable('expected a validation error');
-      } catch (err) {
-        const { message } = err as Error;
+      } catch (error) {
+        const { message } = error as Error;
         // The decoded name contained a line break; the display copy is single-line
         expect(message).toContain('token forged');
         expect(message).not.toMatch(/[\n\u2028\u2029]/u);

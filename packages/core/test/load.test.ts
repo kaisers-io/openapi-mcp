@@ -27,10 +27,10 @@ describe('parseSpecSource', () => {
     try {
       parseSpecSource('https://user:pass@example.com/spec.json', cwd);
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('usage');
-      expect((err as OpenapiMcpError).message).toContain('--spec-header-env');
-      expect((err as OpenapiMcpError).message).not.toContain('pass');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('usage');
+      expect((error as OpenapiMcpError).message).toContain('--spec-header-env');
+      expect((error as OpenapiMcpError).message).not.toContain('pass');
     }
   });
 
@@ -59,10 +59,10 @@ describe('parseSpecSource', () => {
       try {
         parseSpecSource(`https://api.example.com/spec.json?${name}=hunter2`, cwd);
         expect.unreachable('expected a usage error');
-      } catch (err) {
-        expect((err as OpenapiMcpError).code).toBe('usage');
-        expect((err as OpenapiMcpError).message).toContain(name);
-        expect((err as OpenapiMcpError).message).not.toContain('hunter2');
+      } catch (error) {
+        expect((error as OpenapiMcpError).code).toBe('usage');
+        expect((error as OpenapiMcpError).message).toContain(name);
+        expect((error as OpenapiMcpError).message).not.toContain('hunter2');
       }
     },
   );

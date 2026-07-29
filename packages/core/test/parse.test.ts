@@ -22,10 +22,10 @@ describe('parseSpecText — JSON', () => {
     try {
       parseSpecText('{"a": 1,,}');
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('JSON');
-      expect((err as OpenapiMcpError).message).toContain('YAML');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('JSON');
+      expect((error as OpenapiMcpError).message).toContain('YAML');
     }
   });
 });
@@ -48,9 +48,9 @@ describe('parseSpecText — YAML', () => {
     try {
       parseSpecText(bomb);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('alias');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('alias');
     }
   });
 
@@ -83,9 +83,9 @@ describe('parseSpecText — structure budgets', () => {
     try {
       parseSpecText(extreme);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('deep');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('deep');
     }
   });
 

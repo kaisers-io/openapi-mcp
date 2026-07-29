@@ -886,8 +886,8 @@ describe('cache writes and secret hygiene', () => {
         acceptedInput({ displaySource: 'https://api.example.com/o.json?token=super-secret' }),
       );
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as Error).message).not.toContain('super-secret');
+    } catch (error) {
+      expect((error as Error).message).not.toContain('super-secret');
     }
   });
 
@@ -2222,7 +2222,7 @@ describe('clearNamespace (under the lock)', () => {
         // sequence.
         // eslint-disable promise/prefer-await-to-callbacks -- fire-and-forget capture, not a callback-style API; block form because oxfmt wraps the statement across lines
         writeAttempt = writeAccepted(LAYOUT, fs, acceptedInput({ fetchedAt: NOW + 1 })).catch(
-          (err: unknown) => err,
+          (error: unknown) => error,
         );
         // eslint-enable promise/prefer-await-to-callbacks
       }

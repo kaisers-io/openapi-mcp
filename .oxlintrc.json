@@ -37,8 +37,6 @@
     // Off per task-11 brief (M2b): cache.ts's promoteCandidate/withNamespaceLock
     // call sites take four parameters verbatim
     "max-params": "off",
-    // Off per task-4 brief: output.ts wrapAction() catch binding is named "err" verbatim
-    "unicorn/catch-error-name": "off",
     // Off per task-5 brief: main.ts imports `{ emitError, type OutputOptions }` from './output.ts' verbatim
     "import/consistent-type-specifier-style": "off",
     // Off per task-3 brief (M2a): headers.ts's resolveHeaderEnvMappings has 14 statements verbatim

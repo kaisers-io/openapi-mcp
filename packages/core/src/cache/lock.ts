@@ -46,9 +46,9 @@ const readLockHolder = async (
   let raw: string;
   try {
     raw = await fs.readFileTextCapped(layout.lockPath, LOCK_FILE_MAX_BYTES);
-  } catch (err) {
-    if (!isCacheAbsence(err)) {
-      throw err;
+  } catch (error) {
+    if (!isCacheAbsence(error)) {
+      throw error;
     }
     return undefined;
   }

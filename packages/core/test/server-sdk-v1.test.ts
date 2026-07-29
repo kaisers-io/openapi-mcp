@@ -275,8 +275,8 @@ describe('createProtocolSession — InMemory integration', () => {
     let caught: unknown;
     try {
       await client.callTool({ name: hostileName, arguments: {} });
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(Error);
     const { message } = caught as Error;

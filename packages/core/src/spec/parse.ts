@@ -52,14 +52,14 @@ const parseAsYaml = (text: string, jsonError: unknown): unknown => {
   }
   try {
     return doc.toJS({ maxAliasCount: SPEC_BUDGETS.maxYamlAliases });
-  } catch (err) {
-    if (err instanceof RangeError) {
-      throw err;
+  } catch (error) {
+    if (error instanceof RangeError) {
+      throw error;
     }
-    if (err instanceof ReferenceError) {
+    if (error instanceof ReferenceError) {
       throw validationError(`spec exceeds the YAML alias budget of ${SPEC_BUDGETS.maxYamlAliases}`);
     }
-    throw combinedError(jsonError, err);
+    throw combinedError(jsonError, error);
   }
 };
 
@@ -87,12 +87,12 @@ export const parseSpecText = (raw: string): Record<string, unknown> => {
       sniffed.startsWith('{') || sniffed.startsWith('[')
         ? parseJsonFirst(text)
         : parseAsYaml(text, undefined);
-  } catch (err) {
-    if (err instanceof RangeError) {
+  } catch (error) {
+    if (error instanceof RangeError) {
       // V8 recursion limit hit before the depth budget below could run
       throw validationError('spec nesting is too deep to parse');
     }
-    throw err;
+    throw error;
   }
   checkDepth(parsed, SPEC_BUDGETS.maxParseDepth);
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {

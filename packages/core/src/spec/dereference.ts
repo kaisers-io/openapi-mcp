@@ -115,11 +115,11 @@ export const dereference = (document: Record<string, unknown>): Record<string, u
 
   try {
     return walk(document, []) as Record<string, unknown>;
-  } catch (err) {
-    if (err instanceof RangeError) {
+  } catch (error) {
+    if (error instanceof RangeError) {
       // Backstop: structural depth is budget-capped upstream, but fail closed anyway
       throw validationError('spec dereference aborted: nesting too deep');
     }
-    throw err;
+    throw error;
   }
 };

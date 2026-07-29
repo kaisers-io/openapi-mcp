@@ -63,9 +63,9 @@ describe('parseDuration', () => {
     expect(() => parseDuration('5w')).toThrowError(OpenapiMcpError);
     try {
       parseDuration('5w');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('usage');
-      expect((err as OpenapiMcpError).message).toContain('5w');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('usage');
+      expect((error as OpenapiMcpError).message).toContain('5w');
     }
   });
 
@@ -104,9 +104,9 @@ describe('parseByteSize', () => {
     expect(() => parseByteSize('10GB')).toThrowError(OpenapiMcpError);
     try {
       parseByteSize('10GB');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('usage');
-      expect((err as OpenapiMcpError).message).toContain('10GB');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('usage');
+      expect((error as OpenapiMcpError).message).toContain('10GB');
     }
   });
 

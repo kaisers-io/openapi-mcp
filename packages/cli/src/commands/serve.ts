@@ -266,9 +266,9 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         }
         try {
           validators.set(tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema));
-        } catch (err) {
+        } catch (error) {
           throw usageError(
-            `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(err)}`,
+            `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
           );
         }
       }
@@ -375,8 +375,8 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         await httpServer.close();
       }
       state.exitCode = EXIT.OK;
-    } catch (err) {
-      state.exitCode = emitError(ctx, errorOpts, err);
+    } catch (error) {
+      state.exitCode = emitError(ctx, errorOpts, error);
     }
   });
 };

@@ -319,8 +319,8 @@ export const assertAllowedRedirectTarget = async (
     // Bound to the caller's whole-chain deadline: a hanging resolver must not
     // outlive the fetch timeout budget
     addresses = await lookup(hostname, signal);
-  } catch (err) {
-    throw validationError(`cannot resolve redirect target "${lower}": ${describeCause(err)}`);
+  } catch (error) {
+    throw validationError(`cannot resolve redirect target "${lower}": ${describeCause(error)}`);
   }
   if (addresses.length === 0) {
     throw validationError(`redirect target "${lower}" did not resolve to any address`);

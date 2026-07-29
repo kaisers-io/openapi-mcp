@@ -87,9 +87,9 @@ describe('dereference — failure modes', () => {
     try {
       dereference({ a: { $ref: ref } });
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('external');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('external');
     }
   });
 
@@ -160,9 +160,9 @@ describe('dereference — cycles and budgets', () => {
     try {
       dereference(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('node budget');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('node budget');
     }
   });
 

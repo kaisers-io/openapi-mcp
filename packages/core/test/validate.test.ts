@@ -30,9 +30,9 @@ describe('validateOpenApiDocument', () => {
     try {
       validateOpenApiDocument(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('/info');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('/info');
     }
   });
 
@@ -78,8 +78,8 @@ describe('validateOpenApiDocument', () => {
     try {
       validateOpenApiDocument(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      const lines = (err as OpenapiMcpError).message.split('\n');
+    } catch (error) {
+      const lines = (error as OpenapiMcpError).message.split('\n');
       // Header line + max 10 error lines + optional "and N more" line
       expect(lines.length).toBeLessThanOrEqual(12);
     }
@@ -101,8 +101,8 @@ describe('validateOpenApiDocument', () => {
     try {
       validateOpenApiDocument(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      const { message } = err as OpenapiMcpError;
+    } catch (error) {
+      const { message } = error as OpenapiMcpError;
       expect(message).not.toContain('\u001B');
       expect(message).not.toContain('\u0007');
       expect(message).toContain('3.0.]0;PWNED');
@@ -114,9 +114,9 @@ describe('validateOpenApiDocument', () => {
     try {
       validateOpenApiDocument(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
+    } catch (error) {
       // 32-char cap on the version fragment, not on the whole message
-      expect((err as OpenapiMcpError).message).not.toContain('x'.repeat(40));
+      expect((error as OpenapiMcpError).message).not.toContain('x'.repeat(40));
     }
   });
 });

@@ -35,7 +35,7 @@ export const withCacheErrors =
   async (...args: A): Promise<R> => {
     try {
       return await fn(...args);
-    } catch (err) {
-      throw asCacheError(operation, err);
+    } catch (error) {
+      throw asCacheError(operation, error);
     }
   };

@@ -131,7 +131,7 @@ export const pinnedLookup =
         // kept total per the lookup contract's non-`all` form.
         return settle(null, first ?? '', first === undefined ? undefined : isIP(first));
       })
-      .catch((err: unknown) => settle(asError(err), []));
+      .catch((error: unknown) => settle(asError(error), []));
   };
 
 export const createPinnedAgent = (policy: PinnedPolicy, resolve: Resolve): Agent =>
@@ -404,11 +404,11 @@ const readCapped = async (
       }
       chunks.push(value);
     }
-  } catch (err) {
-    if (!(err instanceof TooLargeError)) {
+  } catch (error) {
+    if (!(error instanceof TooLargeError)) {
       await reader.cancel().catch(() => undefined);
     }
-    throw err;
+    throw error;
   } finally {
     signal.removeEventListener('abort', onAbort);
   }
@@ -460,14 +460,14 @@ export const pinnedRequest = async (
         redirect: 'manual',
         signal,
       });
-    } catch (err) {
+    } catch (error) {
       // Exceptional path: destroy(), never the graceful close() that may
       // await a live response.
       await agent.destroy().catch(() => undefined);
       if (signal.aborted) {
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
-      return { kind: 'error', reason: classifyFetchError(err), detail: describeCause(err) };
+      return { kind: 'error', reason: classifyFetchError(error), detail: describeCause(error) };
     }
     let exceptional = false;
     try {
@@ -500,15 +500,15 @@ export const pinnedRequest = async (
         ...(contentType === null ? {} : { contentType }),
         bodyBytes,
       };
-    } catch (capErr) {
+    } catch (error) {
       exceptional = true;
       if (signal.aborted) {
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
-      if (capErr instanceof TooLargeError) {
+      if (error instanceof TooLargeError) {
         return { kind: 'error', reason: 'too-large' };
       }
-      return { kind: 'error', reason: 'network', detail: describeCause(capErr) };
+      return { kind: 'error', reason: 'network', detail: describeCause(error) };
     } finally {
       // Every non-exceptional path (a plain 200, or a redirect hop whose
       // body was already cancelled above) closes gracefully; every

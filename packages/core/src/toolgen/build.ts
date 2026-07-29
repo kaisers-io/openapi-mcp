@@ -79,13 +79,13 @@ export const buildTools = (
     let wireSchema: WireSchema;
     try {
       wireSchema = z.toJSONSchema(layout.ok.inputSchema);
-    } catch (err) {
+    } catch (error) {
       // Defensive: our schemas are representable (proven), but fail closed if a
       // future construct is not — omit rather than emit a nonconforming schema.
       omitted.push({
         method,
         path: named.operation.path,
-        reason: `input schema cannot be represented as JSON Schema: ${describeCause(err)}`,
+        reason: `input schema cannot be represented as JSON Schema: ${describeCause(error)}`,
       });
       continue;
     }

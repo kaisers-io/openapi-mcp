@@ -95,19 +95,19 @@ export const run = async (
   try {
     await program.parseAsync([...argv]);
     return state.exitCode;
-  } catch (err) {
+  } catch (error) {
     if (
-      err instanceof CommanderError &&
-      (err.code === 'commander.helpDisplayed' || err.code === 'commander.version')
+      error instanceof CommanderError &&
+      (error.code === 'commander.helpDisplayed' || error.code === 'commander.version')
     ) {
       return EXIT.OK;
     }
     const errorOpts = isServeInvocation(argv)
       ? { json: false, verbose: false }
       : getGlobalOpts(program);
-    if (err instanceof CommanderError) {
-      return emitError(ctx, errorOpts, usageError(stripCommanderPrefix(err.message)));
+    if (error instanceof CommanderError) {
+      return emitError(ctx, errorOpts, usageError(stripCommanderPrefix(error.message)));
     }
-    return emitError(ctx, errorOpts, err);
+    return emitError(ctx, errorOpts, error);
   }
 };

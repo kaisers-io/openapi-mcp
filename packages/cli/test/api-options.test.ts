@@ -20,11 +20,11 @@ const expectUsageError = (fn: () => unknown, messagePart: string): void => {
   try {
     fn();
     expect.unreachable('expected a usage error');
-  } catch (err) {
-    expect(err).toBeInstanceOf(OpenapiMcpError);
-    expect((err as OpenapiMcpError).code).toBe('usage');
+  } catch (error) {
+    expect(error).toBeInstanceOf(OpenapiMcpError);
+    expect((error as OpenapiMcpError).code).toBe('usage');
     if (messagePart !== '') {
-      expect((err as OpenapiMcpError).message).toContain(messagePart);
+      expect((error as OpenapiMcpError).message).toContain(messagePart);
     }
   }
 };
@@ -87,8 +87,8 @@ describe('resolveApiConfig — --header-env (secret)', () => {
     let caught: unknown;
     try {
       resolve(['--header-env', 'Authorization=API_KEY'], { API_KEY: hostile });
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');
@@ -123,8 +123,8 @@ describe('resolveApiConfig — --header (static)', () => {
     let caught: unknown;
     try {
       resolve(['--header', 'NoColon']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');
@@ -272,8 +272,8 @@ describe('resolveApiConfig — --base-url', () => {
     let caught: unknown;
     try {
       resolve(['--base-url', 'not a url']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).message).not.toContain('not a url');
@@ -291,8 +291,8 @@ describe('resolveApiConfig — --base-url', () => {
     let caught: unknown;
     try {
       resolve(['--base-url', 'https://user:pw@host/']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');
@@ -306,8 +306,8 @@ describe('resolveApiConfig — --base-url', () => {
     let caught: unknown;
     try {
       resolve(['--base-url', 'https://h/?token=SECRET']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');
@@ -320,8 +320,8 @@ describe('resolveApiConfig — --base-url', () => {
     let caught: unknown;
     try {
       resolve(['--base-url', 'https://api.example.com#zzz999']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');

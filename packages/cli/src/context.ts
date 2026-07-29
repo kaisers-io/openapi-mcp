@@ -130,9 +130,9 @@ const realCacheFs = (): CacheFs => ({
       try {
         await stat(cursor);
         break;
-      } catch (err) {
-        if (!isAbsenceError(err)) {
-          throw err;
+      } catch (error) {
+        if (!isAbsenceError(error)) {
+          throw error;
         }
         missing.unshift(cursor);
         const parent = dirname(cursor);
@@ -145,11 +145,16 @@ const realCacheFs = (): CacheFs => ({
     for (const component of missing) {
       try {
         await mkdir(component);
-      } catch (err) {
+      } catch (error) {
         // A concurrent process may have created it between our stat and our
         // mkdir; anything else is a real failure
-        if (err === null || typeof err !== 'object' || !('code' in err) || err.code !== 'EEXIST') {
-          throw err;
+        if (
+          error === null ||
+          typeof error !== 'object' ||
+          !('code' in error) ||
+          error.code !== 'EEXIST'
+        ) {
+          throw error;
         }
         // A symlink planted at `component` between our walk-up `stat` and
         // this `mkdir` also surfaces as EEXIST here, since mkdir does not
@@ -196,12 +201,12 @@ const realCacheFs = (): CacheFs => ({
       await handle.close();
       handle = undefined;
       await rename(tmp, path);
-    } catch (err) {
+    } catch (error) {
       if (handle !== undefined) {
         await handle.close().catch(() => undefined);
       }
       await rm(tmp, { force: true });
-      throw err;
+      throw error;
     }
   },
   readFileTextCapped: async (path, maxBytes) => {
@@ -233,11 +238,11 @@ const realCacheFs = (): CacheFs => ({
     try {
       await stat(path);
       return true;
-    } catch (err) {
-      if (isAbsenceError(err)) {
+    } catch (error) {
+      if (isAbsenceError(error)) {
         return false;
       }
-      throw err;
+      throw error;
     }
   },
   createExclusive: async (path, data) => {
@@ -266,11 +271,16 @@ const realCacheFs = (): CacheFs => ({
       }
       try {
         await link(tmp, path);
-      } catch (err) {
-        if (err !== null && typeof err === 'object' && 'code' in err && err.code === 'EEXIST') {
+      } catch (error) {
+        if (
+          error !== null &&
+          typeof error === 'object' &&
+          'code' in error &&
+          error.code === 'EEXIST'
+        ) {
           return false;
         }
-        throw err;
+        throw error;
       }
       return true;
     } finally {

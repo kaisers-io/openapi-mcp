@@ -151,8 +151,8 @@ export const runSpecPipeline = async (
     // for this case. cacheIoError makes the declared exit code real.
     try {
       await deps.cacheFs.mkdirSecure(policy.layout.dir);
-    } catch (err) {
-      throw asCacheError(`prepare the namespace for ${policy.layout.namespace}`, err);
+    } catch (error) {
+      throw asCacheError(`prepare the namespace for ${policy.layout.namespace}`, error);
     }
     ({ layout } = policy);
   }
@@ -271,12 +271,12 @@ export const runSpecPipeline = async (
       // Only the fetch and the validation may fall back.
       processedRefresh = processSpecText(refreshed.loaded.text);
     }
-  } catch (err) {
+  } catch (error) {
     if (cached === undefined) {
-      throw err;
+      throw error;
     }
     warnings.push(
-      `spec refresh failed, serving the last known good accepted baseline: ${describeCause(err)}`,
+      `spec refresh failed, serving the last known good accepted baseline: ${describeCause(error)}`,
     );
     const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
     return finish(spec, opts, warnings, {

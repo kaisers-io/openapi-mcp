@@ -1069,8 +1069,8 @@ describe('pinnedRequest', () => {
       );
       try {
         await undiciFetch(`http://origin.test:${denialServer.port}/`, { dispatcher: agent });
-      } catch (err) {
-        capturedCause = err instanceof Error ? err.cause : undefined;
+      } catch (error) {
+        capturedCause = error instanceof Error ? error.cause : undefined;
       }
       await agent.close();
     } finally {

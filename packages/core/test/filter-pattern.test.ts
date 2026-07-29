@@ -97,8 +97,8 @@ describe('parseFilterPattern — rejections', () => {
     try {
       parseFilterPattern('FETCH /users');
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      const typed = err as OpenapiMcpError;
+    } catch (error) {
+      const typed = error as OpenapiMcpError;
       expect(typed.code).toBe('usage');
       expect(typed.message).toContain('GET');
     }
@@ -147,8 +147,8 @@ describe('parseFilterPattern — rejections', () => {
     try {
       parseFilterPattern('SNIFF /x');
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).message).not.toContain('SNIFF');
+    } catch (error) {
+      expect((error as OpenapiMcpError).message).not.toContain('SNIFF');
     }
   });
 

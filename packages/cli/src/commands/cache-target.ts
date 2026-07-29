@@ -86,7 +86,7 @@ export const clearAllNamespaces = async (
       if (await clearNamespace(cacheLayout(root, id), cacheFs, now)) {
         cleared += 1;
       }
-    } catch (err) {
+    } catch (error) {
       // A namespace-shaped NAME that is not a real directory (a planted file
       // or symlink) is not ours to clear — skip it and continue the sweep
       // rather than aborting every remaining healthy namespace. mkdirSecure's
@@ -97,8 +97,8 @@ export const clearAllNamespaces = async (
       // path, and it is reachable here via the lock read), still propagates.
       // The discriminator is the CODE, never the message, so an
       // attacker-controlled cache path can never spoof the skip signal.
-      if (!(err instanceof OpenapiMcpError && err.code === 'cache_path_type')) {
-        throw err;
+      if (!(error instanceof OpenapiMcpError && error.code === 'cache_path_type')) {
+        throw error;
       }
     }
   }

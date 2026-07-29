@@ -61,8 +61,8 @@ describe('parseCacheKey', () => {
     try {
       parseCacheKey('../../etc/passwd');
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).message).not.toContain('passwd');
+    } catch (error) {
+      expect((error as OpenapiMcpError).message).not.toContain('passwd');
     }
   });
 });
@@ -90,9 +90,9 @@ describe('parseCacheId', () => {
     try {
       parseCacheId('nope');
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('usage');
-      expect((err as OpenapiMcpError).exitCode).toBe(2);
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('usage');
+      expect((error as OpenapiMcpError).exitCode).toBe(2);
     }
   });
 });
@@ -308,8 +308,8 @@ describe('resolveCachePolicy', () => {
     try {
       resolveCachePolicy({ ...base, authenticated: true });
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      const typed = err as OpenapiMcpError;
+    } catch (error) {
+      const typed = error as OpenapiMcpError;
       expect(typed.code).toBe('usage');
       expect(typed.message).toContain('--cache-key');
       expect(typed.message).toContain('--trust-spec-updates');
@@ -329,8 +329,8 @@ describe('resolveCachePolicy', () => {
     try {
       resolveCachePolicy({ ...base, authenticated: true, cacheRoot: undefined });
       expect.unreachable('expected a usage error, not a bypass');
-    } catch (err) {
-      const typed = err as OpenapiMcpError;
+    } catch (error) {
+      const typed = error as OpenapiMcpError;
       expect(typed.code).toBe('usage');
       expect(typed.exitCode).toBe(2);
       expect(typed.message).toContain('--cache-key');

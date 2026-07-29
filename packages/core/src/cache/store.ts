@@ -255,16 +255,16 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
   };
   try {
     walk(value);
-  } catch (err) {
-    if (err === overflow) {
+  } catch (error) {
+    if (error === overflow) {
       return undefined;
     }
-    if (err === unsupported) {
+    if (error === unsupported) {
       throw validationError(
         'refusing to cache a document containing values JSON cannot round-trip exactly (undefined or sparse array members, a toJSON hook, a bigint, a function, or a cycle)',
       );
     }
-    throw err;
+    throw error;
   }
   return parts.join('');
 };
@@ -407,18 +407,18 @@ const readMetaFile = async (layout: CacheLayout, fs: CacheFs): Promise<MetaReadR
   let raw: string;
   try {
     raw = await fs.readFileTextCapped(layout.metaPath, CACHE_META_MAX_BYTES);
-  } catch (err) {
+  } catch (error) {
     // The pathExists probe above and this read are two separate calls: a
     // concurrent clear can unlink meta.json in between (TOCTOU). That is a
     // legitimate miss (the one outcome that may re-enter trust-on-first-use),
     // not corruption — the entry was raced away, not damaged.
-    if (isCacheAbsence(err)) {
+    if (isCacheAbsence(error)) {
       return { kind: 'miss' };
     }
     // The read above throws a typed validationError ONLY for over-budget; a
     // raw Node error (EACCES/EIO) means the file could not be read at all.
     // Split the wording so the operator message matches the cause.
-    const overBudget = err instanceof OpenapiMcpError && err.code === 'validation';
+    const overBudget = error instanceof OpenapiMcpError && error.code === 'validation';
     return {
       kind: 'corrupt',
       reason: overBudget
@@ -554,13 +554,13 @@ const assertAcceptedObjectIntact = async (
       objectPath(layout, meta.acceptedContentHash),
       CACHE_MAX_PERSISTED_BYTES,
     );
-  } catch (err) {
+  } catch (error) {
     // Only genuine absence is corruption. Anything else (EACCES, EIO)
     // rethrows unchanged, so withCacheErrors types it at the definition
     // boundary as validation exit 3 itself, rather than this call
     // mislabelling an I/O failure as a corrupt entry.
-    if (!isCacheAbsence(err)) {
-      throw err;
+    if (!isCacheAbsence(error)) {
+      throw error;
     }
     throw corruptEntryError(`the accepted spec for cache entry ${layout.namespace} cannot be read`);
   }
@@ -841,9 +841,9 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
         objectPath(layout, meta.acceptedContentHash),
         CACHE_MAX_PERSISTED_BYTES,
       );
-    } catch (err) {
+    } catch (error) {
       // An over-budget object is genuine corruption, not a lost race.
-      if (err instanceof OpenapiMcpError && err.code === 'validation') {
+      if (error instanceof OpenapiMcpError && error.code === 'validation') {
         return {
           kind: 'corrupt',
           reason: `the accepted spec for cache entry ${layout.namespace} exceeds its ${CACHE_MAX_PERSISTED_BYTES}-byte budget`,
@@ -854,8 +854,8 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
       // concurrent commit or deletion, and must propagate like every other
       // isCacheAbsence site in this module rather than being retried toward
       // an eventual, misleading "corrupt" report.
-      if (!isCacheAbsence(err)) {
-        throw err;
+      if (!isCacheAbsence(error)) {
+        throw error;
       }
       const recheck = await readMetaFile(layout, fs);
       if (recheck.kind === 'miss') {
@@ -982,15 +982,15 @@ const promoteCandidateImpl = async (
         objectPath(layout, candidate.contentHash),
         CACHE_MAX_PERSISTED_BYTES,
       );
-    } catch (err) {
+    } catch (error) {
       // Only genuine absence means "the candidate is gone, refresh before
       // promoting". Catching EVERY failure here and returning conflict exit 5
       // would let an EACCES on the candidate object silently contradict the
       // frozen validation exit 3 for persistent-cache I/O — and, being
       // already typed as a conflictError, it would sail through the
       // definition-level wrapper unchanged.
-      if (!isCacheAbsence(err)) {
-        throw err;
+      if (!isCacheAbsence(error)) {
+        throw error;
       }
       throw conflictError(
         `the candidate spec for cache entry ${layout.namespace} cannot be read — refresh before promoting`,
@@ -1064,13 +1064,13 @@ const clearNamespaceImpl = async (
     let objectNames: readonly string[] = [];
     try {
       objectNames = await fs.readDirNames(layout.objectsDir);
-    } catch (err) {
+    } catch (error) {
       // Only a genuinely absent objects directory means "nothing to remove".
       // Swallowing every failure here and then deleting meta.json anyway
       // would manufacture the metadata-without-spec corruption this function
       // exists to avoid producing.
-      if (!isCacheAbsence(err)) {
-        throw cacheIoError(`list the objects of cache entry ${layout.namespace}`, err);
+      if (!isCacheAbsence(error)) {
+        throw cacheIoError(`list the objects of cache entry ${layout.namespace}`, error);
       }
     }
     // Meta.json first: it is the commit point, so removing it invalidates the
@@ -1143,11 +1143,11 @@ const summarize = async (
 const namespaceRootNames = async (root: string, fs: CacheFs): Promise<readonly string[]> => {
   try {
     return await fs.readDirNames(root);
-  } catch (err) {
-    if (isCacheAbsence(err)) {
+  } catch (error) {
+    if (isCacheAbsence(error)) {
       return [];
     }
-    throw cacheIoError('list the cache root', err);
+    throw cacheIoError('list the cache root', error);
   }
 };
 

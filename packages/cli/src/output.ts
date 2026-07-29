@@ -147,7 +147,7 @@ export const wrapAction = async (
     const result = await run();
     emit(ctx, opts, result);
     return EXIT.OK;
-  } catch (err) {
-    return emitError(ctx, opts, err);
+  } catch (error) {
+    return emitError(ctx, opts, error);
   }
 };

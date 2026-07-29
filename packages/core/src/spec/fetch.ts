@@ -155,15 +155,15 @@ const fetchChain = async (
         redirect: 'manual',
         signal,
       });
-    } catch (err) {
+    } catch (error) {
       // Exceptional path: destroy(), never the graceful close() that may
       // await a live response (mirrors pinnedRequest's Agent lifecycle).
       await agent.destroy().catch(ignoreError);
-      const name = errorName(err);
+      const name = errorName(error);
       if (name === 'TimeoutError' || name === 'AbortError') {
         throw validationError(`spec fetch timed out after ${timeoutMs}ms (${displaySource(url)})`);
       }
-      throw validationError(`spec fetch failed for ${displaySource(url)}: ${describeCause(err)}`);
+      throw validationError(`spec fetch failed for ${displaySource(url)}: ${describeCause(error)}`);
     }
     let exceptional = false;
     try {
@@ -237,9 +237,9 @@ const fetchChain = async (
         ...(etag === undefined ? {} : { etag }),
         ...(lastModified === undefined ? {} : { lastModified }),
       };
-    } catch (err) {
+    } catch (error) {
       exceptional = true;
-      throw err;
+      throw error;
     } finally {
       // Every non-exceptional path (a plain 200/304, or a redirect hop whose
       // body was already cancelled above) closes gracefully; every

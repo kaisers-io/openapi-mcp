@@ -82,8 +82,8 @@ export const loadSpecFromFile = async (
   let size: number;
   try {
     size = await deps.fileSizeBytes(path);
-  } catch (err) {
-    throw notFoundError(`cannot read spec file "${path}": ${describeCause(err)}`);
+  } catch (error) {
+    throw notFoundError(`cannot read spec file "${path}": ${describeCause(error)}`);
   }
   if (size > maxBytes) {
     throw validationError(
@@ -93,8 +93,8 @@ export const loadSpecFromFile = async (
   let text: string;
   try {
     text = await deps.readFileText(path);
-  } catch (err) {
-    throw notFoundError(`cannot read spec file "${path}": ${describeCause(err)}`);
+  } catch (error) {
+    throw notFoundError(`cannot read spec file "${path}": ${describeCause(error)}`);
   }
   const byteLength = Buffer.byteLength(text, 'utf8');
   if (byteLength > maxBytes) {
