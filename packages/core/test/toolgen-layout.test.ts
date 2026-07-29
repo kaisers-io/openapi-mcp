@@ -129,17 +129,16 @@ describe('paramFields', () => {
         ),
     ).toBe(true);
     // A VALID reserved header is still dropped (not exposed), leaving other fields.
-    expect(
-      okFields(
-        paramFields(
-          op([
-            { name: 'Authorization', in: 'header', schema: { type: 'string' } },
-            { name: 'keep', in: 'query', schema: { type: 'string' } },
-          ]),
-          new Set(['authorization']),
-        ),
-      ).map((f) => f.preferred),
-    ).toEqual(['keep']);
+    const fields = okFields(
+      paramFields(
+        op([
+          { name: 'Authorization', in: 'header', schema: { type: 'string' } },
+          { name: 'keep', in: 'query', schema: { type: 'string' } },
+        ]),
+        new Set(['authorization']),
+      ),
+    );
+    expect(fields.map((f) => f.preferred)).toEqual(['keep']);
   });
 
   it('omits on an unsupported style', () => {
@@ -222,21 +221,15 @@ const layout = (r: ReturnType<typeof buildLayout>) => {
 
 describe('buildLayout — body classification', () => {
   it('flattens a closed non-empty object body', () => {
-    const l = layout(
-      buildLayout(
-        bodyOp(
-          jsonBody(
-            {
-              type: 'object',
-              properties: { total: { type: 'integer' }, note: { type: 'string' } },
-              required: ['total'],
-            },
-            true,
-          ),
-        ),
-        new Set(),
-      ),
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { total: { type: 'integer' }, note: { type: 'string' } },
+        required: ['total'],
+      },
+      true,
     );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.mapper.bodyMode).toBe('flattened');
     expect(l.mapper.bodyContentType).toBe('application/json');
     expect(l.mapper.fields['total']).toEqual({
@@ -256,43 +249,29 @@ describe('buildLayout — body classification', () => {
 
   it('does NOT flatten an object body carrying an unsupported keyword — omits it', () => {
     // The root `not` must not be bypassed by flattening (root-schema validation).
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                not: {},
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        not: {},
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(body), new Set())).toBe(true);
   });
 
   it('omits a flattened body whose required name is not a declared property', () => {
     // The flatten path iterates declared properties; a required name with no
     // property would silently lose the constraint. Omit instead.
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                required: ['missing'],
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        required: ['missing'],
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(body), new Set())).toBe(true);
   });
 
   it('omits a flattened body with a malformed required array', () => {
@@ -300,44 +279,29 @@ describe('buildLayout — body classification', () => {
     // validate the root `required` itself: a non-string element or a duplicate is
     // an invalid Schema Object and omits (fail-closed), not silently filtered
     // as objectSchema's convertSchema path would otherwise do.
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                required: [123],
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                required: ['a', 'a'],
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
+    const nonStringBody = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        required: [123],
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(nonStringBody), new Set())).toBe(true);
+    const duplicateBody = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        required: ['a', 'a'],
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(duplicateBody), new Set())).toBe(true);
   });
 
   it('wraps an array-root body in a single body field', () => {
-    const l = layout(
-      buildLayout(bodyOp(jsonBody({ type: 'array', items: { type: 'string' } }, true)), new Set()),
-    );
+    const body = jsonBody({ type: 'array', items: { type: 'string' } }, true);
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.mapper.bodyMode).toBe('single');
     expect(l.mapper.fields['body']).toEqual({ destination: 'body', bodyPath: [], required: true });
     expect(l.inputSchema.safeParse({ body: ['a'] }).success).toBe(true);
@@ -345,18 +309,12 @@ describe('buildLayout — body classification', () => {
   });
 
   it('wraps an open object body (additionalProperties true) as single body', () => {
-    const l = layout(
-      buildLayout(
-        bodyOp(
-          jsonBody({
-            type: 'object',
-            additionalProperties: true,
-            properties: { a: { type: 'string' } },
-          }),
-        ),
-        new Set(),
-      ),
-    );
+    const body = jsonBody({
+      type: 'object',
+      additionalProperties: true,
+      properties: { a: { type: 'string' } },
+    });
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.mapper.bodyMode).toBe('single');
   });
 
@@ -364,22 +322,15 @@ describe('buildLayout — body classification', () => {
     // additionalProperties:7 is neither absent/false nor true/schema; it must not be
     // silently ignored by flattening. isFlattenableRoot routes it to the single-body
     // path, where convertSchema omits it.
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                additionalProperties: 7,
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        additionalProperties: 7,
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(body), new Set())).toBe(true);
   });
 
   it('reports bodyMode none with no request body', () => {
@@ -423,14 +374,11 @@ describe('buildLayout — body classification', () => {
   it('does NOT flatten a 3.1 nullable object body — wraps it as single body', () => {
     // type ['object','null'] is not a plain object root; flattening would lose
     // the null alternative, so it routes to the single `body` field.
-    const l = layout(
-      buildLayout(
-        bodyOp(
-          jsonBody({ type: ['object', 'null'], properties: { id: { type: 'string' } } }, true),
-        ),
-        new Set(),
-      ),
+    const body = jsonBody(
+      { type: ['object', 'null'], properties: { id: { type: 'string' } } },
+      true,
     );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.mapper.bodyMode).toBe('single');
     expect(l.inputSchema.safeParse({ body: null }).success).toBe(true);
     expect(l.inputSchema.safeParse({ body: { id: 'a' } }).success).toBe(true);
@@ -449,15 +397,13 @@ describe('buildLayout — body classification', () => {
 
 describe('buildLayout — collisions and optional body', () => {
   it('prefixes colliding names by location', () => {
+    const body = jsonBody(
+      { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      true,
+    );
     const l = layout(
       buildLayout(
-        bodyOp(
-          jsonBody(
-            { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
-            true,
-          ),
-          [{ name: 'id', in: 'query', schema: { type: 'string' } }],
-        ),
+        bodyOp(body, [{ name: 'id', in: 'query', schema: { type: 'string' } }]),
         new Set(),
       ),
     );
@@ -473,40 +419,32 @@ describe('buildLayout — collisions and optional body', () => {
   it('omits when a prefixed name still collides', () => {
     // A query param literally named `query_id` plus a query `id` → both want
     // query_id after prefixing (id collides with a body id) → residual collision.
+    const body = jsonBody(
+      { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      true,
+    );
     expect(
       'unrepresentable' in
         buildLayout(
-          bodyOp(
-            jsonBody(
-              { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
-              true,
-            ),
-            [
-              { name: 'id', in: 'query', schema: { type: 'string' } },
-              { name: 'query_id', in: 'query', schema: { type: 'string' } },
-            ],
-          ),
+          bodyOp(body, [
+            { name: 'id', in: 'query', schema: { type: 'string' } },
+            { name: 'query_id', in: 'query', schema: { type: 'string' } },
+          ]),
           new Set(),
         ),
     ).toBe(true);
   });
 
   it('enforces the optional-body all-or-nothing rule', () => {
-    const l = layout(
-      buildLayout(
-        bodyOp(
-          jsonBody(
-            {
-              type: 'object',
-              properties: { id: { type: 'string' }, note: { type: 'string' } },
-              required: ['id'],
-            },
-            false,
-          ),
-        ),
-        new Set(),
-      ),
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { id: { type: 'string' }, note: { type: 'string' } },
+        required: ['id'],
+      },
+      false,
     );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.inputSchema.safeParse({}).success).toBe(true);
     expect(l.inputSchema.safeParse({ id: 'a', note: 'b' }).success).toBe(true);
     expect(l.inputSchema.safeParse({ id: 'a' }).success).toBe(true);

@@ -286,12 +286,7 @@
         // `paramFields` or the lowercase JSON-Schema/OpenAPI keyword
         // `allowReserved`, verbatim (same rationale as the
         // toolgen-schema.test.ts override above)
-        "capitalized-comments": "off",
-        // Off to support task-3's verbatim converged code (M3): the round-15 reserved-header assertions
-        // nest `expect(okFields(paramFields(op([...` (4 calls) verbatim, one
-        // level deeper than the file's usual `const fields = okFields(paramFields(op([...`
-        // assignment form, to assert the mapped result inline
-        "unicorn/max-nested-calls": "off"
+        "capitalized-comments": "off"
       }
     },
     {
