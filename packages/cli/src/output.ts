@@ -114,7 +114,7 @@ export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): n
         error: {
           code: rendered.code,
           message: rendered.message,
-          ...(rendered.stack !== undefined ? { stack: rendered.stack } : {}),
+          ...(rendered.stack === undefined ? {} : { stack: rendered.stack }),
         },
       }),
     );
@@ -125,9 +125,9 @@ export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): n
   // sanitize line-preservingly so multi-line validation output stays readable.
   const message = sanitizeDisplayText(rendered.message, DISPLAY_TEXT_MAX);
   const stack =
-    rendered.stack !== undefined
-      ? sanitizeDisplayText(rendered.stack, DISPLAY_TEXT_MAX)
-      : undefined;
+    rendered.stack === undefined
+      ? undefined
+      : sanitizeDisplayText(rendered.stack, DISPLAY_TEXT_MAX);
   // Compact only for a single short line with no stack: nothing to spoof.
   if (stack === undefined && !message.includes('\n') && fitsCompact(message, ctx.errWidth())) {
     ctx.errLine(`openapi-mcp: ${message}`);

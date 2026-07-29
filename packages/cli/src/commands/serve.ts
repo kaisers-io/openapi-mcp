@@ -312,35 +312,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
       ]);
-      if (httpConfig !== undefined) {
-        const guard: RequestGuardOptions = {
-          // No CLI flag for browser Origins (documented scope: a single
-          // local, non-browser client) — an empty allowlist means every
-          // PRESENT Origin 403s; an absent Origin still works with a valid
-          // bearer.
-          allowedOrigins: new Set(),
-          allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
-          bearer: { configuredToken: httpConfig.token },
-        };
-        const httpServer = createStreamableHttpServer({
-          name: 'openapi-mcp',
-          version: pkg.version,
-          snapshot,
-          dispatcherDeps,
-          guard,
-          port: httpConfig.port,
-          now: ctx.now,
-        });
-        await httpServer.listen();
-        // Block until a graceful shutdown signal — there is no client
-        // stdin stream to watch for EOF in HTTP mode (unlike the stdio
-        // branch below), so SIGINT/SIGTERM are the only shutdown triggers.
-        await new Promise<void>((resolve) => {
-          process.once('SIGINT', () => resolve());
-          process.once('SIGTERM', () => resolve());
-        });
-        await httpServer.close();
-      } else {
+      if (httpConfig === undefined) {
         const server = createProtocolSession({
           name: 'openapi-mcp',
           version: pkg.version,
@@ -373,6 +345,34 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           process.stdin.once('end', () => resolve());
         });
         await server.close();
+      } else {
+        const guard: RequestGuardOptions = {
+          // No CLI flag for browser Origins (documented scope: a single
+          // local, non-browser client) — an empty allowlist means every
+          // PRESENT Origin 403s; an absent Origin still works with a valid
+          // bearer.
+          allowedOrigins: new Set(),
+          allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
+          bearer: { configuredToken: httpConfig.token },
+        };
+        const httpServer = createStreamableHttpServer({
+          name: 'openapi-mcp',
+          version: pkg.version,
+          snapshot,
+          dispatcherDeps,
+          guard,
+          port: httpConfig.port,
+          now: ctx.now,
+        });
+        await httpServer.listen();
+        // Block until a graceful shutdown signal — there is no client
+        // stdin stream to watch for EOF in HTTP mode (unlike the stdio
+        // branch below), so SIGINT/SIGTERM are the only shutdown triggers.
+        await new Promise<void>((resolve) => {
+          process.once('SIGINT', () => resolve());
+          process.once('SIGTERM', () => resolve());
+        });
+        await httpServer.close();
       }
       state.exitCode = EXIT.OK;
     } catch (err) {
