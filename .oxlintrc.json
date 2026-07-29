@@ -99,8 +99,17 @@
         "vitest/prefer-to-be-truthy": "off",
         // Off per task-1 brief: main.test.ts defines inline CommandRegistrar closures (boom/helpToStderr) verbatim
         "unicorn/consistent-function-scoping": "off",
-        // Off per task-3 brief (M2a): headers.test.ts's expectUsageError helper wraps the assertions verbatim
-        "vitest/expect-expect": "off",
+        // Configured (not off): these are the repo's assertion-wrapper
+        // helpers, so the rule can't see the expect(...) calls buried inside
+        // them without this list - headers.test.ts and api-options.test.ts
+        // each define their own local expectUsageError, filter-pattern.test.ts's
+        // agree wraps the glob-vs-oracle expect, and http-pinned-dispatcher.test.ts's
+        // rejectsWithCause wraps the rejects.toMatchObject expect. The rule
+        // stays live for genuinely assertion-free tests.
+        "vitest/expect-expect": [
+          "error",
+          { "assertFunctionNames": ["expect", "expectUsageError", "agree", "rejectsWithCause"] }
+        ],
         // Off per task-4 brief (M2a): load.test.ts narrows source.kind with an if inside the test verbatim
         "vitest/no-conditional-in-test": "off",
         // Off per task-5 brief (M2a): fetch.test.ts's fixtures use the Fetch API's
