@@ -21,6 +21,7 @@ import {
   CACHE_DISPLAY_MAX,
   clearAllNamespaces,
   collect,
+  entryDisplayLines,
   globalOptsOf,
   layoutForId,
   layoutForSpec,
@@ -47,23 +48,8 @@ const registerList: CommandRegistrar = (program, ctx, state) => {
         }
         const humanLines = [
           `${entries.length} cache ${entries.length === 1 ? 'entry' : 'entries'} under ${displayRoot}`,
+          ...entries.flatMap((entry) => entryDisplayLines(entry)),
         ];
-        for (const entry of entries) {
-          humanLines.push(
-            `  ${entry.id}  ${sanitizeSpecText(entry.title, CACHE_DISPLAY_MAX)} ${sanitizeSpecText(
-              entry.specVersion,
-              CACHE_DISPLAY_MAX,
-            )}`,
-            `    source:    ${sanitizeSpecText(entry.displaySource, CACHE_DISPLAY_MAX)}`,
-            // The label is charset-restricted and never secret, so it prints raw
-            `    key:       ${entry.cacheKey ?? '(none)'}`,
-            `    fetched:   ${new Date(entry.fetchedAt).toISOString()}`,
-            `    accepted:  ${entry.acceptedContentHash}`,
-            ...(entry.candidateContentHash === undefined
-              ? []
-              : [`    candidate: ${entry.candidateContentHash} (pending promotion)`]),
-          );
-        }
         return { data, humanLines };
       });
     });

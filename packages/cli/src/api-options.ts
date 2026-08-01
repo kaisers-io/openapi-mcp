@@ -183,20 +183,17 @@ const parseSecretHeaders = (
   });
 };
 
-// RFC 9110 OWS: strip a leading/trailing run of SP only — tabs stay, they are
-// C0 control chars and are rejected below rather than normalized.
-const trimOptionalSpace = (value: string): string => {
-  let start = 0;
-  let end = value.length;
-  while (start < end && value.codePointAt(start) === 0x20) {
-    start += 1;
-  }
-  while (end > start && value.codePointAt(end - 1) === 0x20) {
-    end -= 1;
-  }
-  return value.slice(start, end);
-};
+// Strips a leading/trailing run of SP (U+0020) only — deliberately NARROWER
+// than RFC 9110 OWS, which would also cover HTAB: a tab in a header value is
+// a C0 control character here and is rejected below rather than normalized
+// away, keeping the smuggling guard strict.
+const trimOptionalSpace = (value: string): string => value.replace(/^ +/u, '').replace(/ +$/u, '');
 
+// Imperative on purpose: `seen` accumulates across iterations (duplicate
+// detection depends on every prior entry, not just the current one) and each
+// of the seven checks below throws in encounter order — a map/filter
+// pipeline would evaluate every entry before any throw could surface,
+// changing which malformed --header the operator sees first.
 const parseStaticHeaders = (raw: readonly string[]): { name: string; value: string }[] => {
   const seen = new Set<string>();
   const result: { name: string; value: string }[] = [];
@@ -248,25 +245,26 @@ const crossValidateHeaders = (
   secretHeaders: readonly NamedHeader[],
 ): ReadonlySet<string> => {
   const secretNames = new Set(secretHeaders.map((header) => header.name.toLowerCase()));
-  const names = new Set<string>(SYSTEM_HEADERS);
-  for (const header of staticHeaders) {
-    const lower = header.name.toLowerCase();
-    if (secretNames.has(lower)) {
-      throw usageError(`header "${header.name}" is configured via both --header and --header-env`);
-    }
-    names.add(lower);
+  // `find` (not a combined build-and-check loop) preserves which header the
+  // operator sees named in the error: the first --header entry that
+  // collides, in the operator's own list order.
+  const conflict = staticHeaders.find((header) => secretNames.has(header.name.toLowerCase()));
+  if (conflict !== undefined) {
+    throw usageError(`header "${conflict.name}" is configured via both --header and --header-env`);
   }
-  for (const header of secretHeaders) {
-    names.add(header.name.toLowerCase());
-  }
+  const names = new Set<string>([
+    ...SYSTEM_HEADERS,
+    ...staticHeaders.map((header) => header.name.toLowerCase()),
+    ...secretHeaders.map((header) => header.name.toLowerCase()),
+  ]);
   const total = staticHeaders.length + secretHeaders.length;
   if (total > MAX_HEADER_COUNT) {
     throw usageError(`too many API headers configured (${total} > ${MAX_HEADER_COUNT})`);
   }
-  let aggregate = 0;
-  for (const header of [...staticHeaders, ...secretHeaders]) {
-    aggregate += byteLength(header.name) + byteLength(header.value);
-  }
+  const aggregate = [...staticHeaders, ...secretHeaders].reduce(
+    (sum, header) => sum + byteLength(header.name) + byteLength(header.value),
+    0,
+  );
   if (aggregate > MAX_HEADER_AGGREGATE_BYTES) {
     throw usageError(`API headers exceed the ${MAX_HEADER_AGGREGATE_BYTES}-byte aggregate budget`);
   }
@@ -278,11 +276,17 @@ const crossValidateHeaders = (
 // credentials or a secret-bearing query/fragment back to stderr/logs.
 const redactedBaseUrl = (url: URL): string => `${url.origin}${url.pathname}`;
 
-const validateBaseUrl = (raw: string): string => {
-  let url: URL;
+const tryParseUrl = (raw: string): URL | undefined => {
   try {
-    url = new URL(raw);
+    return new URL(raw);
   } catch {
+    return undefined;
+  }
+};
+
+const validateBaseUrl = (raw: string): string => {
+  const url = tryParseUrl(raw);
+  if (url === undefined) {
     // Unparseable and therefore un-redactable — name only the flag/problem.
     throw usageError('invalid --base-url — must be an absolute http(s) URL');
   }

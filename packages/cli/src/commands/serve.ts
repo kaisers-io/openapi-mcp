@@ -51,6 +51,14 @@ const MAX_CONCURRENT_UPSTREAM_CALLS = 16;
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+const tryParseUrl = (raw: string): URL | undefined => {
+  try {
+    return new URL(raw);
+  } catch {
+    return undefined;
+  }
+};
+
 // Same scheme/userinfo/query/fragment shape api-options.ts's own
 // `validateBaseUrl` enforces on an operator-supplied `--base-url` — applied
 // here uniformly to EVERY resolved base (trusted or spec-derived) so the
@@ -105,10 +113,8 @@ export const resolveBaseUrl = (
       'the spec has no absolute server URL to use as the API base — pass --base-url <url>',
     );
   }
-  let documentBase: URL;
-  try {
-    documentBase = new URL(displaySource);
-  } catch {
+  const documentBase = tryParseUrl(displaySource);
+  if (documentBase === undefined) {
     throw usageError(
       'the spec has no absolute server URL to use as the API base — pass --base-url <url>',
     );
@@ -147,6 +153,44 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       '--http-token-env <ENV>',
       'env var holding the bearer token required for HTTP requests',
     );
+  // Orphaned HTTP-only flags without --http are a usage error, not a
+  // silent no-op: `--port` carries a default ('3044'), so a plain value
+  // comparison would MISS an explicit `--port 3044`. Commander records
+  // per-option provenance — `getOptionValueSource('port') === 'cli'`
+  // distinguishes "the user actually passed --port" from "the default
+  // applied" regardless of whether the passed value happens to equal
+  // the default.
+  const resolveHttpConfig = (
+    cmdOpts: ServeCmdOpts,
+  ): { token: string; port: number } | undefined => {
+    if (
+      cmdOpts.http !== true &&
+      (cmdOpts.httpTokenEnv !== undefined || command.getOptionValueSource('port') === 'cli')
+    ) {
+      throw usageError('--port and --http-token-env require --http');
+    }
+    if (cmdOpts.http !== true) {
+      return undefined;
+    }
+    if (cmdOpts.httpTokenEnv === undefined) {
+      throw usageError('--http requires --http-token-env <ENV>');
+    }
+    const token = ctx.env[cmdOpts.httpTokenEnv];
+    if (token === undefined || token === '') {
+      throw validationError(`env var "${cmdOpts.httpTokenEnv}" is not set`);
+    }
+    if (!isValidBearerToken(token)) {
+      throw validationError(
+        `the token in "${cmdOpts.httpTokenEnv}" must decode to exactly 32 bytes (256 bits) — 43 unpadded ` +
+          'Base64URL characters, or 44-character padded standard Base64 (e.g. `openssl rand -base64 32`)',
+      );
+    }
+    const port = Number(cmdOpts.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+      throw usageError(`--port "${cmdOpts.port}" is not a valid port number`);
+    }
+    return { token, port };
+  };
   // `.option()` chained onto a Command whose Opts type already carries
   // SpecCmdOpts's own index signature does not narrow any further through
   // @commander-js/extra-typings' literal-flag inference (it falls back to a
@@ -166,40 +210,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // fast with NO side effects (no spec fetch, no cache write). This
       // matches "validated once at CLI startup" rather than discovering
       // the mistake only after paying for a spec fetch.
-      let httpConfig: { token: string; port: number } | undefined;
-      // Orphaned HTTP-only flags without --http are a usage error, not a
-      // silent no-op: `--port` carries a default ('3044'), so a plain value
-      // comparison would MISS an explicit `--port 3044`. Commander records
-      // per-option provenance — `getOptionValueSource('port') === 'cli'`
-      // distinguishes "the user actually passed --port" from "the default
-      // applied" regardless of whether the passed value happens to equal
-      // the default.
-      if (
-        cmdOpts.http !== true &&
-        (cmdOpts.httpTokenEnv !== undefined || command.getOptionValueSource('port') === 'cli')
-      ) {
-        throw usageError('--port and --http-token-env require --http');
-      }
-      if (cmdOpts.http === true) {
-        if (cmdOpts.httpTokenEnv === undefined) {
-          throw usageError('--http requires --http-token-env <ENV>');
-        }
-        const token = ctx.env[cmdOpts.httpTokenEnv];
-        if (token === undefined || token === '') {
-          throw validationError(`env var "${cmdOpts.httpTokenEnv}" is not set`);
-        }
-        if (!isValidBearerToken(token)) {
-          throw validationError(
-            `the token in "${cmdOpts.httpTokenEnv}" must decode to exactly 32 bytes (256 bits) — 43 unpadded ` +
-              'Base64URL characters, or 44-character padded standard Base64 (e.g. `openssl rand -base64 32`)',
-          );
-        }
-        const port = Number(cmdOpts.port);
-        if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
-          throw usageError(`--port "${cmdOpts.port}" is not a valid port number`);
-        }
-        httpConfig = { token, port };
-      }
+      const httpConfig = resolveHttpConfig(cmdOpts);
       // Resolved BEFORE buildTools (below): its reservedHeaderNames must be
       // unioned into buildTools' reservedHeaders so a spec header parameter
       // colliding with a configured auth header name is dropped from the
@@ -270,19 +281,18 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // first matching call. `validators.has` is the executor's fail-closed
       // contract — every upstream tool gets an entry, `undefined` only for a
       // genuine no-outputSchema tool.
-      const validators = new Map<string, EnvelopeValidator | undefined>();
-      for (const tool of snapshot.tools) {
-        if (tool.kind !== 'upstream') {
-          continue;
-        }
-        try {
-          validators.set(tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema));
-        } catch (error) {
-          throw usageError(
-            `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
-          );
-        }
-      }
+      const validatorEntries = snapshot.tools
+        .filter((tool) => tool.kind === 'upstream')
+        .map((tool) => {
+          try {
+            return [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)] as const;
+          } catch (error) {
+            throw usageError(
+              `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
+            );
+          }
+        });
+      const validators = new Map<string, EnvelopeValidator | undefined>(validatorEntries);
 
       const executorConfig: ExecutorConfig = {
         baseUrl: resolvedBase.url.toString(),

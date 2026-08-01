@@ -5,6 +5,7 @@ import {
   SYSTEM_HEADERS,
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
+import type { GeneratedTool } from '@kaisers-io/openapi-mcp-core';
 import { getGlobalOpts, wrapAction } from '../output.ts';
 import {
   deadPatternMessage,
@@ -23,6 +24,14 @@ type ToolRow = {
   summary?: string;
   deprecated: boolean;
 };
+
+const toToolRow = (generated: GeneratedTool): ToolRow => ({
+  name: generated.toolName,
+  method: generated.operation.method.toUpperCase(),
+  path: generated.operation.path,
+  deprecated: generated.operation.deprecated,
+  ...(generated.operation.summary === undefined ? {} : { summary: generated.operation.summary }),
+});
 
 export const registerTools: CommandRegistrar = (program, ctx, state) => {
   registerSpecOptions(program.command('tools'))
@@ -44,18 +53,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           openapiVersion: result.spec.openapiVersion,
         });
         const allOmitted = [...result.spec.omitted, ...built.omitted];
-        const tools: ToolRow[] = built.tools.map((generated) => {
-          const row: ToolRow = {
-            name: generated.toolName,
-            method: generated.operation.method.toUpperCase(),
-            path: generated.operation.path,
-            deprecated: generated.operation.deprecated,
-          };
-          if (generated.operation.summary !== undefined) {
-            row.summary = generated.operation.summary;
-          }
-          return row;
-        });
+        const tools: ToolRow[] = built.tools.map(toToolRow);
         const data = {
           source: result.displaySource,
           title: result.spec.title,
@@ -71,23 +69,22 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           omitted: allOmitted,
           deadPatterns: result.deadPatterns,
         };
-        const humanLines: string[] = [
+        const nameWidth = tools.reduce((width, tool) => Math.max(width, tool.name.length), 4);
+        const humanLines: readonly string[] = [
           `${data.title} ${data.specVersion} (OpenAPI ${data.openapiVersion}) — ${tools.length} ${
             tools.length === 1 ? 'tool' : 'tools'
           }`,
           `source: ${sanitizeSpecText(data.source, PATH_DISPLAY_MAX)}`,
           `cache: ${data.cacheStatus}`,
-        ];
-        const nameWidth = tools.reduce((width, tool) => Math.max(width, tool.name.length), 4);
-        for (const tool of tools) {
           // Paths are untrusted spec text: sanitize the display copy only (the
           // JSON envelope keeps raw paths — JSON encoding escapes controls)
-          humanLines.push(
-            `  ${tool.name.padEnd(nameWidth)}  ${tool.method.padEnd(6)} ${sanitizeSpecText(tool.path, PATH_DISPLAY_MAX)}${
-              tool.summary === undefined ? '' : ` — ${tool.summary}`
-            }${tool.deprecated ? ' [deprecated]' : ''}`,
-          );
-        }
+          ...tools.map(
+            (tool) =>
+              `  ${tool.name.padEnd(nameWidth)}  ${tool.method.padEnd(6)} ${sanitizeSpecText(tool.path, PATH_DISPLAY_MAX)}${
+                tool.summary === undefined ? '' : ` — ${tool.summary}`
+              }${tool.deprecated ? ' [deprecated]' : ''}`,
+          ),
+        ];
         // Omissions, dead patterns, and cache degradation are all non-fatal
         // conditions: they belong on the warnings channel, not on stdout
         return {

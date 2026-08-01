@@ -10,9 +10,10 @@ import {
   parseCacheId,
   parseCacheKey,
   parseSpecSource,
+  sanitizeSpecText,
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
-import type { CacheLayout } from '@kaisers-io/openapi-mcp-core';
+import type { CacheEntrySummary, CacheLayout } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from '../context.ts';
 import { getGlobalOpts } from '../output.ts';
 
@@ -37,6 +38,25 @@ export const rootOf = (ctx: CliContext): string => {
   }
   return defaultCacheRoot(home);
 };
+
+// One entry's display block for `cache list`: 4 fixed lines, plus a 5th only
+// when a candidate is pending promotion. Split out here (rather than kept
+// inline in cache.ts's flatMap) alongside cache.ts's other line-budget
+// extractions (see clearAllNamespaces below).
+export const entryDisplayLines = (entry: CacheEntrySummary): readonly string[] => [
+  `  ${entry.id}  ${sanitizeSpecText(entry.title, CACHE_DISPLAY_MAX)} ${sanitizeSpecText(
+    entry.specVersion,
+    CACHE_DISPLAY_MAX,
+  )}`,
+  `    source:    ${sanitizeSpecText(entry.displaySource, CACHE_DISPLAY_MAX)}`,
+  // The label is charset-restricted and never secret, so it prints raw
+  `    key:       ${entry.cacheKey ?? '(none)'}`,
+  `    fetched:   ${new Date(entry.fetchedAt).toISOString()}`,
+  `    accepted:  ${entry.acceptedContentHash}`,
+  ...(entry.candidateContentHash === undefined
+    ? []
+    : [`    candidate: ${entry.candidateContentHash} (pending promotion)`]),
+];
 
 export const layoutForSpec = (
   ctx: CliContext,
