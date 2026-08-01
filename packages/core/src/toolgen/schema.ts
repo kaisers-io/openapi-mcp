@@ -35,36 +35,39 @@ export const isDangerousKey = (name: string): boolean => DANGEROUS_KEYS.has(name
 // the exclusive-bound FORM: OAS 3.0 uses the boolean modifier, 3.1/
 // JSON-Schema-2020-12 the numeric form; a wrong-version form is malformed and
 // omits (fail-closed). Returns the offending keyword, or undefined.
-const nonNegInt = (v: unknown): boolean => typeof v === 'number' && Number.isInteger(v) && v >= 0;
-const finite = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v);
+const nonNegInt = (value: unknown): boolean =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0;
+const finite = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value);
 
 const malformedKeyword = (
   node: Record<string, unknown>,
   version: OpenapiVersion,
 ): string | undefined => {
-  for (const k of ['minLength', 'maxLength', 'minItems', 'maxItems']) {
-    if (k in node && !nonNegInt(node[k])) {
-      return k;
+  for (const keyword of ['minLength', 'maxLength', 'minItems', 'maxItems']) {
+    if (keyword in node && !nonNegInt(node[keyword])) {
+      return keyword;
     }
   }
-  for (const k of ['minimum', 'maximum']) {
-    if (k in node && !finite(node[k])) {
-      return k;
+  for (const keyword of ['minimum', 'maximum']) {
+    if (keyword in node && !finite(node[keyword])) {
+      return keyword;
     }
   }
-  for (const k of ['exclusiveMinimum', 'exclusiveMaximum']) {
+  for (const keyword of ['exclusiveMinimum', 'exclusiveMaximum']) {
     // Version-gated: 3.1 uses the numeric form; 3.0/draft-4 uses the boolean
     // modifier form, which per draft-4 REQUIRES its paired `minimum`/`maximum`.
     // A wrong-version form (numeric under 3.0, boolean under 3.1) OR a 3.0 boolean
     // bound with no pair is malformed and omits (fail-closed) rather than being
     // silently reinterpreted or ignored. A pairless boolean would leave the number
     // unconstrained — a silent widening.
-    if (k in node) {
-      const pair = k === 'exclusiveMinimum' ? 'minimum' : 'maximum';
+    if (keyword in node) {
+      const pair = keyword === 'exclusiveMinimum' ? 'minimum' : 'maximum';
       const wellFormed =
-        version === '3.0' ? typeof node[k] === 'boolean' && pair in node : finite(node[k]);
+        version === '3.0'
+          ? typeof node[keyword] === 'boolean' && pair in node
+          : finite(node[keyword]);
       if (!wellFormed) {
-        return k;
+        return keyword;
       }
     }
   }
@@ -80,9 +83,9 @@ const malformedKeyword = (
   if ('format' in node && typeof node['format'] !== 'string') {
     return 'format';
   }
-  for (const k of ['enum', 'allOf', 'oneOf', 'anyOf', 'required']) {
-    if (k in node && !Array.isArray(node[k])) {
-      return k;
+  for (const keyword of ['enum', 'allOf', 'oneOf', 'anyOf', 'required']) {
+    if (keyword in node && !Array.isArray(node[keyword])) {
+      return keyword;
     }
   }
   // `required` must be an array of UNIQUE strings (JSON Schema meta-schema
@@ -92,7 +95,7 @@ const malformedKeyword = (
   // Schema Object — a fail-open this gate exists to prevent.
   if (Array.isArray(node['required'])) {
     const req = node['required'];
-    if (!req.every((k) => typeof k === 'string') || new Set(req).size !== req.length) {
+    if (!req.every((name) => typeof name === 'string') || new Set(req).size !== req.length) {
       return 'required';
     }
   }
@@ -213,7 +216,7 @@ const valueMatchesType = (value: unknown, type: string): boolean => {
 };
 
 const conflictingCombination = (node: Record<string, unknown>): string | undefined => {
-  const determiners = SHAPE_DETERMINERS.filter((k) => node[k] !== undefined);
+  const determiners = SHAPE_DETERMINERS.filter((keyword) => node[keyword] !== undefined);
   if (determiners.length > 1) {
     return `multiple shape-determining keywords (${determiners.join(', ')})`;
   }
@@ -221,7 +224,7 @@ const conflictingCombination = (node: Record<string, unknown>): string | undefin
     return undefined;
   }
   const determiner = determiners[0] as (typeof SHAPE_DETERMINERS)[number];
-  const extra = Object.keys(node).find((k) => ASSERTION_KEYWORDS.has(k));
+  const extra = Object.keys(node).find((keyword) => ASSERTION_KEYWORDS.has(keyword));
   if (extra !== undefined) {
     return `"${determiner}" combined with the sibling constraint "${extra}"`;
   }
@@ -236,7 +239,7 @@ const conflictingCombination = (node: Record<string, unknown>): string | undefin
   }
   if (determiner === 'enum') {
     const values = Array.isArray(node['enum']) ? node['enum'] : [];
-    return values.every((v) => valueMatchesType(v, type))
+    return values.every((value) => valueMatchesType(value, type))
       ? undefined
       : `"enum" values incompatible with the sibling type "${type}"`;
   }
@@ -286,13 +289,13 @@ const stringSchema = (node: Record<string, unknown>): SchemaResult => {
   const max = node['maxLength'];
   const withMin =
     typeof min === 'number'
-      ? base.refine((v) => [...(v as string)].length >= min, {
+      ? base.refine((value) => [...(value as string)].length >= min, {
           message: `must be at least ${min} character(s)`,
         })
       : base;
   const withMax =
     typeof max === 'number'
-      ? withMin.refine((v) => [...(v as string)].length <= max, {
+      ? withMin.refine((value) => [...(value as string)].length <= max, {
           message: `must be at most ${max} character(s)`,
         })
       : withMin;
@@ -335,7 +338,7 @@ const numberSchema = (node: Record<string, unknown>, isInteger: boolean): z.ZodT
     // `v % m === 0` uses IEEE fmod, which is EXACT for integer `m` at any magnitude
     // and a narrowing (fail-safe) for float `m` where the remainder is imprecise.
     // multipleOf is advertised via .meta in convertSchema.
-    return withExclMax.refine((v) => v % multipleOf === 0, {
+    return withExclMax.refine((value) => value % multipleOf === 0, {
       message: `must be a multiple of ${multipleOf}`,
     });
   }
@@ -381,11 +384,11 @@ const enumSchema = (values: readonly unknown[]): SchemaResult => {
   if (new Set(values).size !== values.length) {
     return { unrepresentable: 'an enum with duplicate values' };
   }
-  if (values.every((v) => typeof v === 'string')) {
+  if (values.every((value) => typeof value === 'string')) {
     return { ok: z.enum(values as [string, ...string[]]) };
   }
-  const members = values.map((v) =>
-    v === null ? z.null() : z.literal(v as string | number | boolean),
+  const members = values.map((value) =>
+    value === null ? z.null() : z.literal(value as string | number | boolean),
   );
   if (members.length === 1) {
     return { ok: members[0] as z.ZodType };
@@ -459,7 +462,7 @@ const mergeAllOf = (
     if (
       part['required'] !== undefined &&
       (!Array.isArray(part['required']) ||
-        !part['required'].every((k) => typeof k === 'string') ||
+        !part['required'].every((name) => typeof name === 'string') ||
         new Set(part['required']).size !== part['required'].length)
     ) {
       return { unrepresentable: 'an allOf member with a malformed "required" array' };
@@ -513,7 +516,7 @@ const objectSchema = (
   const properties = isRecord(node['properties']) ? node['properties'] : {};
   const required = new Set(
     Array.isArray(node['required'])
-      ? node['required'].filter((k): k is string => typeof k === 'string')
+      ? node['required'].filter((name): name is string => typeof name === 'string')
       : [],
   );
   const shape: Record<string, z.ZodType> = {};
@@ -678,7 +681,7 @@ const buildTyped = (
     // A typeless node carrying an assertion we cannot attach to a type must not
     // widen to `unknown` — omit. (Object roots via `properties` already routed
     // above; a bare `{}` or a description-only node stays `unknown`.)
-    const orphan = Object.keys(node).find((k) => ASSERTION_KEYWORDS.has(k));
+    const orphan = Object.keys(node).find((keyword) => ASSERTION_KEYWORDS.has(keyword));
     return orphan === undefined
       ? { ok: z.unknown() }
       : { unrepresentable: `the constraint "${orphan}" on a typeless schema` };
@@ -712,7 +715,7 @@ const normalizeType = (
   if (new Set(rawType).size !== rawType.length) {
     return { unrepresentable: 'a "type" array with duplicate entries' };
   }
-  const nonNull = rawType.filter((t) => t !== 'null');
+  const nonNull = rawType.filter((typeName) => typeName !== 'null');
   const nullable = rawType.includes('null') || (version === '3.0' && nodeNullable);
   if (nonNull.length === 0) {
     // `['null']` (or repeated 'null') is the pure-null type. An EMPTY `type: []`

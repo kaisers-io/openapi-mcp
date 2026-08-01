@@ -26,14 +26,18 @@
     // primitives.ts's DURATION_RE capture group and its UNIT_MS lookup
     // table (seconds/minutes/hours/days); z is the conventional
     // single-letter alias for the zod import used throughout the schema
-    // modules. A and R are cache/errors.ts's withCacheErrors generic type
-    // parameters (the wrapped function's argument tuple and return type),
-    // and T is cache/lock.ts's withNamespaceLockImpl generic return type.
-    // v, k, and t are toolgen/schema.ts's single-letter parameter/
-    // loop-variable names used throughout malformedKeyword,
-    // conflictingCombination, stringSchema, numberSchema, enumSchema, and
-    // build.
-    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z", "A", "R", "T", "v", "k", "t"] }],
+    // modules. T is the idiomatic single-type-parameter name used across
+    // several unrelated single-generic functions (cache/lock.ts's
+    // withNamespaceLockImpl, spec/load.ts's readOrNotFound,
+    // server/snapshot.ts's deepFreeze, and server/http/sessions.ts's
+    // Session/SessionStore/createSessionStore) — renaming any one of them
+    // would not let this exception be dropped, since the others still need
+    // it, so it stays as the shared single-generic convention. cache/errors.ts's
+    // withCacheErrors generic type parameters (formerly A and R) are named
+    // TArgs/TResult instead, and toolgen/schema.ts's and toolgen/layout.ts's
+    // single-letter locals (formerly v/k/t) are named value/keyword/name/
+    // typeName per call site, so those exceptions are no longer needed.
+    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z", "T"] }],
     // Configured (not off): the top-level import-type style splits value and
     // type imports from the same module into two statements by design;
     // genuine duplicate value imports are still flagged.

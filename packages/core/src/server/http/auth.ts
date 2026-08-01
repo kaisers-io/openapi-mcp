@@ -35,7 +35,7 @@ export const isValidBearerToken = (token: string): boolean => {
 // so comparison time never leaks the token's length or content via timing.
 // sha256 produces a fixed 32-byte digest regardless of input length.
 // Params are named left/right, not a/b: the repo's id-length override (min 2)
-// exempts A/R/T/v/k/t/s/m/h/d/z but not single-letter a/b, so a/b would fail lint.
+// exempts s/m/h/d/z/T but not single-letter a/b, so a/b would fail lint.
 export const constantTimeEquals = (left: string, right: string): boolean => {
   const digestLeft = createHash('sha256').update(left, 'utf8').digest();
   const digestRight = createHash('sha256').update(right, 'utf8').digest();

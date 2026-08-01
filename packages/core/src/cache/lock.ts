@@ -170,7 +170,7 @@ const unlockNamespaceImpl = async (
 // validation exit 3. `asCacheError` passes a typed OpenapiMcpError through
 // untouched, so the contention conflictError above keeps exit 5 and its message.
 //
-// The generic matters: withCacheErrors is declared <A extends unknown[], R>
+// The generic matters: withCacheErrors is declared <TArgs extends unknown[], TResult>
 // over the whole signature precisely so withNamespaceLock keeps its own type
 // parameter T here.
 export const withNamespaceLock = withCacheErrors(

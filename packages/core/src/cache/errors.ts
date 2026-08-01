@@ -28,11 +28,11 @@ export const asCacheError = (operation: string, err: unknown): unknown =>
 // so coverage is structural. Generic over the whole signature so it preserves
 // withNamespaceLock's own type parameter.
 export const withCacheErrors =
-  <A extends unknown[], R>(
+  <TArgs extends unknown[], TResult>(
     operation: string,
-    fn: (...args: A) => Promise<R>,
-  ): ((...args: A) => Promise<R>) =>
-  async (...args: A): Promise<R> => {
+    fn: (...args: TArgs) => Promise<TResult>,
+  ): ((...args: TArgs) => Promise<TResult>) =>
+  async (...args: TArgs): Promise<TResult> => {
     try {
       return await fn(...args);
     } catch (error) {

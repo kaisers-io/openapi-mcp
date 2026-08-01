@@ -230,7 +230,7 @@ const bodyFields = (
     if (
       requiredRaw !== undefined &&
       (!Array.isArray(requiredRaw) ||
-        !requiredRaw.every((k) => typeof k === 'string') ||
+        !requiredRaw.every((name) => typeof name === 'string') ||
         new Set(requiredRaw).size !== requiredRaw.length)
     ) {
       return { unrepresentable: 'the request body has a malformed "required" array' };
