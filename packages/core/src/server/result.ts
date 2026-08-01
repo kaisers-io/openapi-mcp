@@ -2,11 +2,11 @@
 // needs WITHOUT importing the SDK — server/sdk-v1/protocol.ts is the only
 // place that ever imports the SDK's own CallToolResult type and maps this
 // onto it.
-export interface ToolCallOutcome {
+export type ToolCallOutcome = {
   isError: boolean;
   content: readonly { type: 'text'; text: string }[];
   structuredContent?: Record<string, unknown>;
-}
+};
 
 export const textOutcome = (text: string, isError = false): ToolCallOutcome => ({
   isError,

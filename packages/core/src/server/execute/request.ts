@@ -7,19 +7,19 @@ import type { FieldMapping, RequestMapper } from '../../toolgen/layout.ts';
 // bytes. The final URL (base URL + this pathname/query) and the full header
 // set (incl. auth) are re-budgeted by the executor; this module only bounds
 // the components it itself produces.
-export interface OutboundBudgets {
+export type OutboundBudgets = {
   maxUrlLength: number;
   maxHeaderBytes: number;
   maxBodyBytes: number;
-}
+};
 
-export interface BuiltRequest {
+export type BuiltRequest = {
   pathname: string;
   query: string;
   headers: Record<string, string>;
   body?: Uint8Array;
   contentType?: string;
-}
+};
 
 export type BuildRequestResult = { ok: BuiltRequest } | { error: string };
 
@@ -152,10 +152,10 @@ const serializePathValue = (
   return { ok: segment };
 };
 
-interface QueryPair {
+type QueryPair = {
   key: string;
   value: string;
-}
+};
 
 type QueryMapping = Extract<FieldMapping, { destination: 'query' }>;
 
@@ -386,10 +386,10 @@ const formBody = (value: Record<string, unknown>): { ok: Uint8Array } | { error:
   return { ok: new TextEncoder().encode(params.toString()) };
 };
 
-interface SerializedBody {
+type SerializedBody = {
   body?: Uint8Array;
   contentType?: string;
-}
+};
 
 const serializeBody = (
   mapper: RequestMapper,

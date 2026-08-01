@@ -26,20 +26,20 @@ import type { LoadedSpecText } from './load.ts';
 // index.ts's public barrel keeps its import path.
 export { MAX_REDIRECTS } from '../http/pinned-dispatcher.ts';
 
-export interface FetchSpecOptions {
+export type FetchSpecOptions = {
   headers: readonly ResolvedHeader[];
   timeoutMs?: number;
   maxBytes?: number;
   allowPrivateNetwork?: boolean;
-}
+};
 
-export interface FetchSpecDeps {
+export type FetchSpecDeps = {
   // Undici's OWN fetch, never Node's global fetch (dual-package hazard: the
   // global fetch rejects an installed-undici `Agent` as its `dispatcher`,
   // probe-confirmed in pinned-dispatcher.ts).
   fetcher: UndiciFetch;
   lookup: DnsLookup;
-}
+};
 
 // A 304 carries readable headers (probed); discarding them would leave a
 // revalidation unable to refresh the validators it replays on the next run.

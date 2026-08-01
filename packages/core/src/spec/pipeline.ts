@@ -25,7 +25,7 @@ import { parseSpecText } from './parse.ts';
 import { validateOpenApiDocument } from './validate.ts';
 import type { OpenapiVersion } from './validate.ts';
 
-export interface SpecPipelineOptions {
+export type SpecPipelineOptions = {
   specHeaders: readonly ResolvedHeader[];
   timeoutMs: number;
   cwd: string;
@@ -37,9 +37,9 @@ export interface SpecPipelineOptions {
   trustSpecUpdates: boolean;
   cacheRoot: string | undefined;
   nowMs: number;
-}
+};
 
-export interface SpecPipelineDeps {
+export type SpecPipelineDeps = {
   // Matches FetchSpecDeps.fetcher — undici's own fetch, never Node's global
   // fetch (dual-package hazard: the global fetch rejects an installed-undici
   // Agent as its dispatcher).
@@ -48,7 +48,7 @@ export interface SpecPipelineDeps {
   readFileText: (path: string) => Promise<string>;
   fileSizeBytes: (path: string) => Promise<number>;
   cacheFs: CacheFs;
-}
+};
 
 export type CacheStatus =
   | 'bypassed'
@@ -59,7 +59,7 @@ export type CacheStatus =
   | 'candidate'
   | 'stale';
 
-export interface SpecPipelineResult {
+export type SpecPipelineResult = {
   spec: NormalizedSpec;
   namedOperations: readonly NamedOperation[];
   contentHash: string;
@@ -68,12 +68,12 @@ export interface SpecPipelineResult {
   deadPatterns: readonly DeadPattern[];
   warnings: readonly string[];
   cacheStatus: CacheStatus;
-}
+};
 
-interface ProcessedSpec {
+type ProcessedSpec = {
   spec: NormalizedSpec;
   document: Record<string, unknown>;
-}
+};
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -334,7 +334,7 @@ export const runSpecPipeline = async (
   });
 };
 
-interface FinishInput {
+type FinishInput = {
   contentHash: string;
   candidateContentHash?: string | undefined;
   displaySource: string;
@@ -342,7 +342,7 @@ interface FinishInput {
   // The entry being served, when one is. A candidate recorded in it must
   // surface on EVERY such result, not only on the run that created it.
   cached?: CacheEntry | undefined;
-}
+};
 
 const PENDING_PROMOTION_WARNING =
   'a refreshed spec is waiting as a candidate; the accepted baseline is being served — run "openapi-mcp cache promote" to accept it';
@@ -380,11 +380,11 @@ const finish = (
   };
 };
 
-interface Refreshed {
+type Refreshed = {
   loaded: LoadedSpecText;
   etag?: string | undefined;
   lastModified?: string | undefined;
-}
+};
 
 // Written as an if-else chain, not a nested ternary, purely for lint-rule
 // compliance (no-nested-ternary) — the three-way branch itself is unchanged

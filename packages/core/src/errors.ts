@@ -46,12 +46,12 @@ export const notFoundError = (message: string): OpenapiMcpError =>
 export const conflictError = (message: string): OpenapiMcpError =>
   new OpenapiMcpError('conflict', message, EXIT.CONFLICT);
 
-export interface RenderedError {
+export type RenderedError = {
   code: string;
   exitCode: ExitCode;
   message: string;
   stack?: string;
-}
+};
 
 export const renderError = (err: unknown, opts: { verbose: boolean }): RenderedError => {
   if (err instanceof OpenapiMcpError) {

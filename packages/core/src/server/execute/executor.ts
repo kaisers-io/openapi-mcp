@@ -21,7 +21,7 @@ import type { EnvelopeValidator } from './response.ts';
 // byte leaves the process, so it re-checks fail-closed rather than trusting
 // an earlier stage never regresses.
 
-export interface ExecutorConfig {
+export type ExecutorConfig = {
   // Resolved+validated final base (resolved from --base-url or serverUrl).
   baseUrl: string;
   // True iff from --base-url.
@@ -40,12 +40,12 @@ export interface ExecutorConfig {
   // By tool name; compiled eagerly once at server startup — this module only
   // looks the map up per call.
   validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
-}
+};
 
-export interface ExecutorDeps {
+export type ExecutorDeps = {
   // { fetch, resolve, timeoutSignal } — the narrow project-owned interface.
   transport: PinnedDeps;
-}
+};
 
 const textEncoder = new TextEncoder();
 const byteLength = (value: string): number => textEncoder.encode(value).length;

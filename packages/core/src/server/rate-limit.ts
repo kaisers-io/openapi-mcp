@@ -4,14 +4,14 @@
 // factory silently becomes per-session, defeating the requirement) — the
 // clock is injected (`nowMs` on every call) so tests are deterministic and
 // this module never touches a real timer.
-export interface RateLimiter {
+export type RateLimiter = {
   consume: (nowMs: number) => boolean;
-}
+};
 
-export interface RateLimiterOptions {
+export type RateLimiterOptions = {
   readonly maxCalls: number;
   readonly windowMs: number;
-}
+};
 
 // A finite default only — there is deliberately no "unlimited" option; the
 // spec MUST is unconditional. Frozen so this shared module-level constant

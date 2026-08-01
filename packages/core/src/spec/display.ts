@@ -14,18 +14,18 @@ export const FRAME_MAX_LINES = 40;
 // residual, accepted.
 export const FRAME_MIN_CONTENT_WIDTH = 8;
 
-export interface GutterFrameOptions {
+export type GutterFrameOptions = {
   gutter: string;
   terminalWidth: number | undefined;
   perLineMax: number;
   maxLines: number;
-}
+};
 
-export interface GutteredBody {
+export type GutteredBody = {
   lines: readonly string[];
   logicalShown: number;
   truncated: boolean;
-}
+};
 
 // Conservative terminal cell width. A dumb terminal renders a wide (CJK,
 // fullwidth, most astral) code point in TWO cells; anything non-ASCII is

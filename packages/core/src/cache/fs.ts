@@ -1,7 +1,7 @@
 // The cache's only contact with the filesystem. Core depends on this interface;
 // the single real implementation lives in the CLI's realContext() so that
 // realContext stays the only place touching node:fs.
-export interface CacheFs {
+export type CacheFs = {
   // Creates the directory and every missing parent at 0700, repairing the mode
   // on a directory that already exists
   mkdirSecure: (path: string) => Promise<void>;
@@ -20,4 +20,4 @@ export interface CacheFs {
   createExclusive: (path: string, data: string) => Promise<boolean>;
   // Tolerates a missing path — removing an already-absent file is not an error
   removeFile: (path: string) => Promise<void>;
-}
+};

@@ -20,13 +20,13 @@ export type FieldMapping =
     }
   | { destination: 'body'; bodyPath: readonly string[]; required: boolean };
 
-export interface RequestMapper {
+export type RequestMapper = {
   bodyMode: 'flattened' | 'single' | 'none';
   bodyContentType?: 'application/json' | 'application/x-www-form-urlencoded';
   fields: Record<string, FieldMapping>;
-}
+};
 
-export interface Field {
+export type Field = {
   preferred: string;
   name: string;
   location: 'path' | 'query' | 'header' | 'body';
@@ -34,7 +34,7 @@ export interface Field {
   required: boolean;
   mapping: FieldMapping;
   bodyGroup?: { requiredWhenPresent: boolean };
-}
+};
 
 const STYLE_SUPPORT: Readonly<Record<'path' | 'query' | 'header', 'simple' | 'form'>> = {
   path: 'simple',
@@ -120,18 +120,18 @@ export const paramFields = (
   return { ok: fields };
 };
 
-export interface LayoutResult {
+export type LayoutResult = {
   inputSchema: z.ZodType;
   mapper: RequestMapper;
-}
+};
 
 type BodyContentType = 'application/json' | 'application/x-www-form-urlencoded';
 
-interface BodyResult {
+type BodyResult = {
   fields: Field[];
   mode: 'flattened' | 'single' | 'none';
   contentType?: BodyContentType;
-}
+};
 
 // Keys allowed on a body object-root for it to be FLATTENED. Anything else
 // (not, enum, allOf, minProperties, nullable, ...) routes the body to the single

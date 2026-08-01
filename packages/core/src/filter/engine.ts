@@ -14,18 +14,18 @@ const SUGGESTION_MAX_LENGTH = 256;
 // A floor so that short patterns ("gt" for "get") still get a suggestion
 const MIN_SUGGESTION_DISTANCE = 2;
 
-export interface DeadPattern {
+export type DeadPattern = {
   raw: string;
   // Which flag supplied the pattern, so the CLI never has to rebuild a
   // raw-string-to-flag map — a pattern given to both flags appears twice
   flag: 'allow' | 'deny';
   suggestion?: string | undefined;
-}
+};
 
-export interface FilterDecision {
+export type FilterDecision = {
   exposed: readonly NamedOperation[];
   deadPatterns: readonly DeadPattern[];
-}
+};
 
 // The budget is threaded through rather than created per call, because the
 // bound that matters is the aggregate over patterns x operations x candidate

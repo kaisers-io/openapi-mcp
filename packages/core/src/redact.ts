@@ -19,11 +19,11 @@ const variantsOf = (secret: string): string[] => {
   return out;
 };
 
-export interface Redactor {
+export type Redactor = {
   redactString: (value: string) => string;
   redactJson: (value: unknown) => unknown;
   scanForSecret: (value: unknown) => boolean;
-}
+};
 
 export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
   if (rawSecrets.length > MAX_SECRETS) {

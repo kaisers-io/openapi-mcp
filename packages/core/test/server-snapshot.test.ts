@@ -30,7 +30,7 @@ const namedOp = (toolName: string, path: string): NamedOperation => ({
   },
 });
 
-interface PipelineOverrides {
+type PipelineOverrides = {
   spec?: {
     title?: string;
     specVersion?: string;
@@ -40,7 +40,7 @@ interface PipelineOverrides {
   candidateContentHash?: string;
   displaySource?: string;
   deadPatterns?: readonly DeadPattern[];
-}
+};
 
 // Spec.omitted defaults to [] — the normalization-level omission source
 // (cookie parameters, OPTIONS/TRACE, webhooks, ...) merged alongside

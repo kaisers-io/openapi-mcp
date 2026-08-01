@@ -15,10 +15,10 @@ import { sanitizeSpecText } from './sanitize.ts';
 // namespaces without construct/call signatures, while at runtime the binding
 // (and its .default) is the class/function in every module system in play
 // (Node ESM, Vite, rolldown — probed). Unwrap once, typed.
-interface AjvInstance {
+type AjvInstance = {
   addFormat: (name: string, format: true) => unknown;
   compile: (schema: object) => ValidateFunction;
-}
+};
 type AjvConstructor = new (opts: Options) => AjvInstance;
 
 const unwrapDefault = <Unwrapped>(moduleValue: unknown): Unwrapped => {
@@ -32,10 +32,10 @@ const addFormats = unwrapDefault<(ajv: AjvInstance) => unknown>(addFormatsModule
 
 export type OpenapiVersion = '3.0' | '3.1';
 
-export interface ValidatedSpec {
+export type ValidatedSpec = {
   document: Record<string, unknown>;
   version: OpenapiVersion;
-}
+};
 
 const compiledValidators: Partial<Record<OpenapiVersion, ValidateFunction>> = {};
 
@@ -58,10 +58,10 @@ const getValidator = (version: OpenapiVersion): ValidateFunction => {
 // The declared version is spec content: bound it before it reaches any message
 const DECLARED_VERSION_MAX = 32;
 
-interface AjvErrorLike {
+type AjvErrorLike = {
   instancePath?: string;
   message?: string;
-}
+};
 
 const formatAjvErrors = (errors: readonly AjvErrorLike[]): string => {
   const lines = errors

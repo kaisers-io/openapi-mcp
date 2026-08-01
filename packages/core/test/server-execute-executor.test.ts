@@ -225,10 +225,10 @@ const rejectingResolve: PinnedDeps['resolve'] = () =>
 const timeoutSignal = (_ms: number): AbortSignal => new AbortController().signal;
 const freshSignal = (): AbortSignal => new AbortController().signal;
 
-interface FetchCall {
+type FetchCall = {
   url: string;
   init: { headers?: Record<string, string>; signal?: AbortSignal | null; body?: unknown };
-}
+};
 
 const recordingTransport = (
   handler: (call: FetchCall) => Response | Promise<Response>,

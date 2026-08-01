@@ -8,10 +8,10 @@ import type { FetchSpecDeps } from '../src/index.ts';
 // their definitions in fetch.ts).
 import { chainResolve, ignoreError } from '../src/spec/fetch.ts';
 
-interface RecordedCall {
+type RecordedCall = {
   url: string;
   headers: Headers;
-}
+};
 
 // `FetchSpecDeps.fetcher` is typed via undici's own fetch (never a real
 // network call in these tests either way). The fake never touches

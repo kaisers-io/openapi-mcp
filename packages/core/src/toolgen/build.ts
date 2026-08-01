@@ -12,7 +12,7 @@ import type { JsonSchemaRecord } from './output-schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
 
-export interface GeneratedTool {
+export type GeneratedTool = {
   toolName: string;
   operation: OperationRecord;
   inputSchema: z.ZodType;
@@ -21,12 +21,12 @@ export interface GeneratedTool {
   description: string;
   annotations: ToolAnnotations;
   outputSchema?: JsonSchemaRecord;
-}
+};
 
-export interface BuildToolsResult {
+export type BuildToolsResult = {
   tools: readonly GeneratedTool[];
   omitted: readonly OmittedOperation[];
-}
+};
 
 // Request headers the tool boundary never exposes as inputs: the auth header
 // is injected from env at request time; hop/entity headers are managed by the

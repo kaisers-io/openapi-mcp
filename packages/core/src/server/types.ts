@@ -8,17 +8,17 @@ import type { OmittedOperation } from '../spec/normalize.ts';
 // Every field is `readonly` (a STATIC guard — see snapshot.ts's `deepFreeze`
 // for the RUNTIME guard that actually enforces it: TS `readonly` alone is
 // erased at compile time and does nothing at runtime).
-export interface WireTool {
+export type WireTool = {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Readonly<Record<string, unknown>>;
   readonly outputSchema?: Readonly<Record<string, unknown>>;
   readonly annotations: Readonly<Record<string, unknown>>;
-}
+};
 
 export type SnapshotToolKind = 'meta' | 'upstream';
 
-export interface SnapshotTool {
+export type SnapshotTool = {
   readonly kind: SnapshotToolKind;
   readonly name: string;
   readonly wireTool: WireTool;
@@ -31,7 +31,7 @@ export interface SnapshotTool {
   // Present only for an upstream (OpenAPI-generated) tool; the meta tool has
   // no OpenAPI mapper to execute against.
   readonly generated?: GeneratedTool;
-}
+};
 
 // Read-only, package-authored status content. specTitle/specVersion
 // already passed through normalizeSpec's own sanitizeSpecText call;
@@ -41,7 +41,7 @@ export interface SnapshotTool {
 // spec-derived text (a path segment, an unrepresentable-parameter name in a
 // `reason` string, or a local absolute file path) that normalizeSpec never
 // touches.
-export interface MetaSummary {
+export type MetaSummary = {
   readonly specTitle: string;
   readonly specVersion: string;
   readonly displaySource: string;
@@ -50,9 +50,9 @@ export interface MetaSummary {
   readonly omittedReasons: readonly OmittedOperation[];
   readonly acceptedContentHash: string;
   readonly deadPatternCount: number;
-}
+};
 
-export interface ServerSnapshot {
+export type ServerSnapshot = {
   readonly tools: readonly SnapshotTool[];
   // A frozen, null-prototype lookup record — NOT a `Map` (see snapshot.ts's
   // `buildSnapshot` for why: a `Map`'s entries live outside its own
@@ -63,4 +63,4 @@ export interface ServerSnapshot {
   // bare indexing, to distinguish "not present" from a stored `undefined`.
   readonly toolsByName: Readonly<Record<string, SnapshotTool | undefined>>;
   readonly meta: MetaSummary;
-}
+};

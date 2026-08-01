@@ -37,14 +37,14 @@ const TEXT_MAX = 256;
 // replaced. Nesting makes "a candidate
 // is waiting" all-or-none by construction. Title and version live here too, so
 // promotion no longer has to recover them from the document it is promoting.
-export interface CacheCandidate {
+export type CacheCandidate = {
   contentHash: string;
   sourceContentHash: string;
   title: string;
   specVersion: string;
-}
+};
 
-export interface CacheMeta {
+export type CacheMeta = {
   schemaVersion: number;
   displaySource: string;
   cacheKey?: string | undefined;
@@ -64,7 +64,7 @@ export interface CacheMeta {
   // Info.version is NOT the OpenAPI version: normalizeSpec needs the 3.0/3.1
   // discriminator, and persisting it is what lets a cache hit skip revalidation
   openapiVersion: OpenapiVersion;
-}
+};
 
 const zContentHash = z.string().regex(CONTENT_HASH_RE);
 const zValidator = z.string().min(1).max(VALIDATOR_MAX).regex(VALIDATOR_RE);

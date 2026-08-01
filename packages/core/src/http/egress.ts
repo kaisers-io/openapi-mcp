@@ -20,9 +20,9 @@ import { validationError } from '../errors.ts';
 
 export type DnsLookup = (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
 
-export interface EgressPolicyOptions {
+export type EgressPolicyOptions = {
   allowPrivateNetwork: boolean;
-}
+};
 
 export type AddressClass = 'public' | 'private' | 'metadata';
 

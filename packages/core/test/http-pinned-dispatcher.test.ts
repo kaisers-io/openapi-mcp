@@ -20,11 +20,11 @@ import type {
   Resolve,
 } from '../src/http/pinned-dispatcher.ts';
 
-interface TestServer {
+type TestServer = {
   port: number;
   hits: string[];
   close: () => Promise<void>;
-}
+};
 
 // A real 127.0.0.1 server (never a fake fetcher — the pinning happens at the
 // socket layer, so only a real server proves the Agent actually connects to
@@ -289,17 +289,17 @@ describe('pinnedLookup', () => {
 // runs; distinct origins come from distinct PORTS (the origin tuple includes
 // the port), not distinct hostnames.
 
-interface RecordedRequest {
+type RecordedRequest = {
   method: string;
   url: string;
   headers: IncomingMessage['headers'];
-}
+};
 
-interface FlexServer {
+type FlexServer = {
   port: number;
   requests: RecordedRequest[];
   close: () => Promise<void>;
-}
+};
 
 const startFlexServer = async (
   handler: (req: IncomingMessage, res: ServerResponse, hitIndex: number) => void,

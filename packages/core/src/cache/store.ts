@@ -759,10 +759,10 @@ const touchRevalidatedImpl = (
 // weaker substitute rather than a clean write/read separation.
 // ---------------------------------------------------------------------------
 
-export interface CacheEntry {
+export type CacheEntry = {
   meta: CacheMeta;
   acceptedDocument: Record<string, unknown>;
-}
+};
 
 // Absent, usable, and corrupt are three distinct outcomes, and only "miss"
 // may become an accepted baseline without operator action
@@ -910,7 +910,7 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
 // surface, built on top of readCacheEntry and the write paths defined above.
 // ---------------------------------------------------------------------------
 
-export interface CacheEntrySummary {
+export type CacheEntrySummary = {
   id: string;
   displaySource: string;
   cacheKey?: string | undefined;
@@ -919,7 +919,7 @@ export interface CacheEntrySummary {
   fetchedAt: number;
   acceptedContentHash: string;
   candidateContentHash?: string | undefined;
-}
+};
 
 // Namespaces are 16-char sha256 prefixes; anything else in the root is not ours
 const NAMESPACE_RE = /^[0-9a-f]{16}$/u;

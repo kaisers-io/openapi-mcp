@@ -217,10 +217,10 @@ describe('runSpecPipeline — URL sources', () => {
   });
 });
 
-interface MemoryCacheFs extends CacheFs {
+type MemoryCacheFs = CacheFs & {
   files: Map<string, string>;
   calls: string[];
-}
+};
 
 const memoryCacheFs = (): MemoryCacheFs => {
   const files = new Map<string, string>();

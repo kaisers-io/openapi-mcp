@@ -1,14 +1,14 @@
-interface Session<T> {
+type Session<T> = {
   value: T;
   lastSeenMs: number;
-}
+};
 
-export interface SessionStoreOptions {
+export type SessionStoreOptions = {
   maxSessions: number;
   idleMs: number;
-}
+};
 
-export interface SessionStore<T> {
+export type SessionStore<T> = {
   create: (id: string, value: T, nowMs: number) => { ok: true } | { ok: false; reason: 'capacity' };
   get: (id: string, nowMs: number) => T | undefined;
   touch: (id: string, nowMs: number) => void;
@@ -23,7 +23,7 @@ export interface SessionStore<T> {
   // transport must be closed regardless of idle state.
   values: () => readonly T[];
   size: () => number;
-}
+};
 
 // Pure, in-memory, injected-clock session bookkeeping — decoupled from the
 // SDK transport entirely so it is unit-testable without any HTTP machinery.

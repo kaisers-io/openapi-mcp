@@ -60,7 +60,7 @@ export const GLOBSTAR = 2; // Zero or more code points, "/" included
 
 export type GlobToken = string | typeof STAR | typeof GLOBSTAR;
 
-export interface CompiledGlob {
+export type CompiledGlob = {
   tokens: readonly GlobToken[];
   // Prefilters. Each is a cheap necessary condition, so a non-match usually
   // costs O(1) instead of a full simulation.
@@ -68,7 +68,7 @@ export interface CompiledGlob {
   prefix: string;
   suffix: string;
   hasWildcard: boolean;
-}
+};
 
 export const compileGlob = (glob: string): CompiledGlob => {
   if (glob.length > FILTER_PATTERN_MAX_LENGTH) {
@@ -157,9 +157,9 @@ export const compileGlob = (glob: string): CompiledGlob => {
 // is a worse failure than a slow refusal of a hostile one.
 export const FILTER_MAX_MATCH_STEPS = 200_000_000;
 
-export interface MatchBudget {
+export type MatchBudget = {
   remaining: number;
-}
+};
 
 export const createMatchBudget = (limit: number = FILTER_MAX_MATCH_STEPS): MatchBudget => ({
   remaining: limit,

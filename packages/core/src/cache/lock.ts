@@ -23,10 +23,10 @@ export const LOCK_STALE_MS = 60_000;
 // fail closed and let an operator decide.
 const LOCK_FILE_MAX_BYTES = 1024;
 
-interface LockHolder {
+type LockHolder = {
   owner: string;
   acquiredAt: number;
-}
+};
 
 // Returns undefined for a lock file that is genuinely ABSENT or MALFORMED —
 // two states that carry no expiry information.

@@ -89,7 +89,7 @@ export const cacheNamespace = (canonicalSource: string, cacheKey?: string): stri
   return createHash('sha256').update(material, 'utf8').digest('hex').slice(0, NAMESPACE_LENGTH);
 };
 
-export interface CacheLayout {
+export type CacheLayout = {
   root: string;
   dir: string;
   metaPath: string;
@@ -101,7 +101,7 @@ export interface CacheLayout {
   // before the metadata itself is updated.
   objectsDir: string;
   namespace: string;
-}
+};
 
 export const cacheLayout = (root: string, namespace: string): CacheLayout => {
   const dir = join(root, namespace);

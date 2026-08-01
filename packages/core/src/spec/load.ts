@@ -61,16 +61,16 @@ export const parseSpecSource = (raw: string, opts: { cwd: string }): SpecSource 
 export const hashContent = (text: string): string =>
   createHash('sha256').update(text, 'utf8').digest('hex');
 
-export interface LoadedSpecText {
+export type LoadedSpecText = {
   text: string;
   contentHash: string;
   displaySource: string;
-}
+};
 
-export interface FileLoadDeps {
+export type FileLoadDeps = {
   readFileText: (path: string) => Promise<string>;
   fileSizeBytes: (path: string) => Promise<number>;
-}
+};
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 

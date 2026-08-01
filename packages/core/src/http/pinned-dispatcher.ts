@@ -19,12 +19,12 @@ import { classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
 // redirect to 127.0.0.1 or 169.254.169.254) — that synchronous per-hop check
 // is validateHopUrlSync's job, called from pinnedRequest before every hop.
 
-export interface PinnedPolicy {
+export type PinnedPolicy = {
   allowPrivateNetwork: boolean;
   // Hop 0 from --base-url: skip the private-address deny (metadata is still
   // always denied). A redirect hop is never trusted.
   trusted: boolean;
-}
+};
 
 // Bound to the call's abort signal by the caller (pinnedRequest).
 export type Resolve = (hostname: string) => Promise<readonly string[]>;
@@ -160,27 +160,27 @@ export type PinnedErrorReason =
   | 'redirect-invalid'
   | 'network';
 
-export interface PinnedResponse {
+export type PinnedResponse = {
   kind: 'response';
   status: number;
   // Raw response Content-Type header, undefined if absent.
   contentType?: string;
   // Decompressed, capped.
   bodyBytes: Uint8Array;
-}
+};
 
 export type PinnedOutcome =
   | PinnedResponse
   | { kind: 'error'; reason: PinnedErrorReason; detail?: string };
 
-export interface HopHeaders {
+export type HopHeaders = {
   // Sent only while still on the original origin (auth + tool + content).
   sameOriginHeaders: Record<string, string>;
   // The minimal safe set for a foreign origin (content only).
   crossOriginHeaders: Record<string, string>;
-}
+};
 
-export interface PinnedRequestOptions {
+export type PinnedRequestOptions = {
   method: string;
   headers: HopHeaders;
   // Already-serialized; never sent on GET/HEAD or after hop 0.
@@ -192,7 +192,7 @@ export interface PinnedRequestOptions {
   maxResponseBytes: number;
   // The MCP client-cancel signal (extra.signal).
   signal: AbortSignal;
-}
+};
 
 // Typed via undici's own fetch, never Node's global fetch (dual-package
 // hazard: the global fetch rejects an installed-undici Agent) — a type-only
@@ -201,12 +201,12 @@ export interface PinnedRequestOptions {
 type UndiciFetch = typeof undiciFetchType;
 type UndiciResponse = Awaited<ReturnType<UndiciFetch>>;
 
-export interface PinnedDeps {
+export type PinnedDeps = {
   fetch: UndiciFetch;
   resolve: (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
   // Default () => AbortSignal.timeout(ms); injectable for tests.
   timeoutSignal: (ms: number) => AbortSignal;
-}
+};
 
 export const MAX_REDIRECTS = 5;
 

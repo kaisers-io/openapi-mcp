@@ -20,12 +20,12 @@ const BODY_CAP_BYTES = 4 * 1024 * 1024;
 // bound, force-destroy remaining connections rather than hang the process.
 const SHUTDOWN_FORCE_MS = 5000;
 
-interface HttpSessionValue {
+type HttpSessionValue = {
   transport: StreamableHTTPServerTransport;
   server: Server;
-}
+};
 
-export interface StreamableHttpOptions {
+export type StreamableHttpOptions = {
   name: string;
   version: string;
   snapshot: ServerSnapshot;
@@ -33,12 +33,12 @@ export interface StreamableHttpOptions {
   guard: RequestGuardOptions;
   port: number;
   now: () => number;
-}
+};
 
-export interface StreamableHttpServerHandle {
+export type StreamableHttpServerHandle = {
   listen: () => Promise<void>;
   close: () => Promise<void>;
-}
+};
 
 // A JSON-RPC-shaped error response — used for EVERY rejection this module
 // writes itself (guard denials aside, which have no body), so a client never

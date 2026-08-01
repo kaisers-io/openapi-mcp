@@ -22,9 +22,9 @@ import type { ToolCallOutcome } from '../result.ts';
 // stays executor-local, not entangled with spec/validate.ts's
 // meta-schema-validator cache — an unrelated cache key (the two official
 // OpenAPI meta-schemas vs. one compiled validator per tool outputSchema).
-interface AjvInstance {
+type AjvInstance = {
   compile: (schema: object) => ValidateFunction;
-}
+};
 type AjvConstructor = new (opts: Options) => AjvInstance;
 
 const unwrapDefault = <Unwrapped>(moduleValue: unknown): Unwrapped => {
@@ -53,7 +53,7 @@ export const compileEnvelopeValidator = (
   return (envelope: unknown): boolean => validate(envelope) === true;
 };
 
-export interface MapResponseOptions {
+export type MapResponseOptions = {
   outcome: PinnedOutcome;
   // Undefined => no outputSchema => the plain-text/JSON-as-text path.
   validator: EnvelopeValidator | undefined;
@@ -64,7 +64,7 @@ export interface MapResponseOptions {
   envVarHint?: string;
   // Text display cap for the no-outputSchema success path, in bytes.
   maxTextBytes: number;
-}
+};
 
 // Fixed, reason-keyed text — never the PinnedOutcome's own `detail` string,
 // which can embed a hostname or an underlying network-library message never
@@ -108,10 +108,10 @@ const isTextEssence = (essence: string): boolean => essence.startsWith('text/');
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
-interface OutputBranch {
+type OutputBranch = {
   status: number;
   contentType: string;
-}
+};
 
 // Reads the `oneOf` branches straight off the generated outputSchema shape
 // (toolgen/output-schema.ts: `{type:'object', oneOf:[{properties:{status:

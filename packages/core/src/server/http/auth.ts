@@ -42,9 +42,9 @@ export const constantTimeEquals = (left: string, right: string): boolean => {
   return timingSafeEqual(digestLeft, digestRight);
 };
 
-export interface BearerCheck {
+export type BearerCheck = {
   configuredToken: string; // Already validated via isValidBearerToken at startup
-}
+};
 
 // RFC 7235 §2.1: the auth-scheme token is case-insensitive (`i` flag), and
 // RFC 7235's `credentials = auth-scheme [ 1*SP ... ]` allows one-or-more SP

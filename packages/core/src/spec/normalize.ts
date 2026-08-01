@@ -10,7 +10,7 @@ const NEVER_EXPOSED_METHODS = ['options', 'trace'] as const;
 
 const TITLE_MAX_LENGTH = 256;
 
-export interface OperationRecord {
+export type OperationRecord = {
   method: HttpMethod;
   path: string;
   operationId?: string;
@@ -21,15 +21,15 @@ export interface OperationRecord {
   parameters: readonly Record<string, unknown>[];
   requestBody?: Record<string, unknown>;
   responses: Record<string, unknown>;
-}
+};
 
-export interface OmittedOperation {
+export type OmittedOperation = {
   method: string;
   path: string;
   reason: string;
-}
+};
 
-export interface NormalizedSpec {
+export type NormalizedSpec = {
   title: string;
   specVersion: string;
   openapiVersion: OpenapiVersion;
@@ -42,7 +42,7 @@ export interface NormalizedSpec {
   // True when `serverUrl` is a relative reference (no scheme) that still
   // needs a document base to resolve into an absolute URL.
   serverUrlIsRelative?: boolean;
-}
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);

@@ -7,10 +7,10 @@ const ENV_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 // oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it rejects them)
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
 
-export interface HeaderEnvMapping {
+export type HeaderEnvMapping = {
   headerName: string;
   envVar: string;
-}
+};
 
 export const parseHeaderEnvMapping = (raw: string): HeaderEnvMapping => {
   const separatorIndex = raw.indexOf('=');
@@ -30,10 +30,10 @@ export const parseHeaderEnvMapping = (raw: string): HeaderEnvMapping => {
   return { headerName, envVar };
 };
 
-export interface ResolvedHeader {
+export type ResolvedHeader = {
   name: string;
   value: string;
-}
+};
 
 export const resolveHeaderEnvMappings = (
   mappings: readonly HeaderEnvMapping[],

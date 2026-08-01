@@ -114,12 +114,12 @@ const assertObjectRoot = (
 // `built.omitted` (buildTools' toolgen-level omissions: unrepresentable
 // schemas, reserved-header conflicts). Both are real, distinct "why isn't
 // this operation a tool" sources and both must reach the meta tool.
-export interface SnapshotPipelineInput {
+export type SnapshotPipelineInput = {
   spec: { title: string; specVersion: string; omitted: readonly OmittedOperation[] };
   contentHash: string;
   displaySource: string;
   deadPatterns: readonly DeadPattern[];
-}
+};
 
 // Recursively freezes a snapshot subgraph so the exposed ServerSnapshot is
 // DEEP-immutable, not just the outer `tools` array — every nested WireTool,

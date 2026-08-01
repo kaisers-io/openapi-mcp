@@ -2,10 +2,10 @@ import { dirname } from 'node:path';
 import { validationError } from '../../src/index.ts';
 import type { CacheFs } from '../../src/index.ts';
 
-export interface MemoryCacheFs extends CacheFs {
+export type MemoryCacheFs = CacheFs & {
   files: Map<string, string>;
   dirs: Set<string>;
-}
+};
 
 const ancestors = (path: string): readonly string[] => {
   const collected: string[] = [];

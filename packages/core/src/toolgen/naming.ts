@@ -30,10 +30,10 @@ const hashSuffix = (operation: OperationRecord, length: number): string =>
 const withSuffix = (base: string, suffix: string): string =>
   `${base.slice(0, TOOL_NAME_MAX_LENGTH - suffix.length)}${suffix}`;
 
-export interface NamedOperation {
+export type NamedOperation = {
   operation: OperationRecord;
   toolName: string;
-}
+};
 
 const collisionCounts = (entries: readonly { toolName: string }[]): Map<string, number> => {
   const counts = new Map<string, number>();

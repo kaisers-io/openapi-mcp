@@ -35,7 +35,7 @@ export type MetaExecutor = (
   signal: AbortSignal,
 ) => Promise<ToolCallOutcome>;
 
-export interface DispatcherDeps {
+export type DispatcherDeps = {
   snapshot: ServerSnapshot;
   limiter: Pick<RateLimiter, 'consume'>;
   now: () => number;
@@ -46,18 +46,18 @@ export interface DispatcherDeps {
   // executor and any future executor get the same defense, not just the
   // built-in upstream one.
   redactor: Redactor;
-}
+};
 
-export interface CallRequest {
+export type CallRequest = {
   name: string;
   arguments: unknown;
   signal: AbortSignal;
-}
+};
 
-interface ZodIssueLike {
+type ZodIssueLike = {
   path: readonly (string | number | symbol)[];
   code: string;
-}
+};
 
 // A path SEGMENT can itself be caller-controlled (a dynamic object key from
 // a catchall/additionalProperties schema) — sanitize (strip control/bidi)
