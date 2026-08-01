@@ -131,6 +131,13 @@ const assembleHeaders = (
   contentType: string | undefined,
   toolHeaders: Readonly<Record<string, string>>,
 ): HopHeaders => {
+  // Kept as sequential bracket assignments (not a spread build): the write
+  // ORDER is the precedence contract, and bracket assignment on a plain
+  // object routes a header literally named "__proto__" through the
+  // prototype setter — silently dropping it — while a spread/fromEntries
+  // build would create it as an own property and change what goes on the
+  // wire. Preserving that exact key semantics matters more here than the
+  // functional shape.
   const sameOriginHeaders: Record<string, string> = {};
   if (contentType !== undefined) {
     sameOriginHeaders['content-type'] = contentType;
@@ -162,10 +169,12 @@ const overFinalBudget = (
   if (finalUrl.href.length > budgets.maxUrlLength) {
     return true;
   }
-  let headerBytes = 0;
-  for (const [name, value] of Object.entries(sameOriginHeaders)) {
-    headerBytes += byteLength(name) + byteLength(value);
-  }
+  // Loop body is a pure sum expression over an already-assembled, bounded
+  // header record — a single-expression `reduce` rewrite.
+  const headerBytes = Object.entries(sameOriginHeaders).reduce(
+    (sum, [name, value]) => sum + byteLength(name) + byteLength(value),
+    0,
+  );
   return headerBytes > budgets.maxHeaderBytes;
 };
 
@@ -192,6 +201,12 @@ const runUpstreamCall = async (
     return isError('no response validator is registered for this tool');
   }
   const validator = config.validators.get(tool.name);
+  // Imperative on purpose (security-module rule: no control-flow
+  // restructuring / helper extraction across a guard boundary here):
+  // `new URL` can throw synchronously on a malformed string, and the catch
+  // branch below returns early — extracting this into a helper that returns
+  // a tagged result would move the try/catch across this function's own
+  // early-return boundary for no provable benefit.
   let base: URL;
   try {
     base = new URL(config.baseUrl);
@@ -278,6 +293,10 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Tool
   // A closure counter, NOT a module-level singleton: the caller constructs
   // exactly one createExecutor and shares it between the stdio and HTTP
   // transports, so this one counter bounds concurrency across BOTH.
+  // Imperative on purpose: `inFlight` is genuinely mutable shared state (a
+  // semaphore) — incremented before the guarded call and decremented in
+  // `finally` regardless of success, failure, or abort. The acquire/release
+  // pair must stay a plain mutable counter, not a derived pure value.
   let inFlight = 0;
   return async (tool, args, signal) => {
     if (inFlight >= config.maxConcurrent) {

@@ -53,18 +53,13 @@ export const createSessionStore = <T>(opts: SessionStoreOptions): SessionStore<T
       sessions.delete(id);
     },
     sweepExpired: (nowMs) => {
-      const expiredIds: string[] = [];
-      const expiredValues: T[] = [];
-      for (const [id, session] of sessions) {
-        if (isExpired(session, nowMs)) {
-          expiredIds.push(id);
-          expiredValues.push(session.value);
-        }
-      }
-      for (const id of expiredIds) {
+      const expired = [...sessions].filter(([, session]) => isExpired(session, nowMs));
+      // Deletion stays a for-of, side-effecting Map mutation — the store's
+      // whole point is the Map itself, which nothing pure can stand in for.
+      for (const [id] of expired) {
         sessions.delete(id);
       }
-      return expiredValues;
+      return expired.map(([, session]) => session.value);
     },
     values: () => [...sessions.values()].map((session) => session.value),
     size: () => sessions.size,

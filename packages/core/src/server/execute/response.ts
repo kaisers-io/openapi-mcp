@@ -83,6 +83,18 @@ const PINNED_ERROR_TEXT: Record<PinnedErrorReason, string> = {
 const mapPinnedError = (reason: PinnedErrorReason): ToolCallOutcome =>
   textOutcome(`tool execution failed: ${PINNED_ERROR_TEXT[reason]}`, true);
 
+// `JSON.parse` throws on malformed JSON; every call site below treats a
+// parse failure as its own fail-closed branch rather than letting the throw
+// escape, so this shares one pure attempt-wrapper (same try/catch, just
+// named) instead of repeating it three times.
+const tryParseJson = (text: string): { ok: true; value: unknown } | { ok: false } => {
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    return { ok: false };
+  }
+};
+
 const decodeUtf8 = (bytes: Uint8Array): { ok: string } | { error: true } => {
   try {
     return { ok: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
@@ -121,24 +133,22 @@ const branchesOf = (outputSchema: Record<string, unknown>): readonly OutputBranc
   if (!Array.isArray(oneOf)) {
     return [];
   }
-  const branches: OutputBranch[] = [];
-  for (const branch of oneOf) {
+  return oneOf.flatMap((branch): OutputBranch[] => {
     if (!isRecord(branch) || !isRecord(branch['properties'])) {
-      continue;
+      return [];
     }
     const { properties } = branch;
     const statusProp = properties['status'];
     const contentTypeProp = properties['contentType'];
     if (!isRecord(statusProp) || !isRecord(contentTypeProp)) {
-      continue;
+      return [];
     }
     const statusConst = statusProp['const'];
     const contentTypeConst = contentTypeProp['const'];
-    if (typeof statusConst === 'number' && typeof contentTypeConst === 'string') {
-      branches.push({ status: statusConst, contentType: contentTypeConst });
-    }
-  }
-  return branches;
+    return typeof statusConst === 'number' && typeof contentTypeConst === 'string'
+      ? [{ status: statusConst, contentType: contentTypeConst }]
+      : [];
+  });
 };
 
 const findBranch = (
@@ -163,15 +173,21 @@ const truncateUtf8 = (text: string, maxBytes: number): string => {
     return text;
   }
   const markerBytes = textEncoder.encode(TRUNCATION_MARKER).byteLength;
-  let budget = Math.max(0, maxBytes - markerBytes);
-  for (;;) {
+  // Imperative on purpose (recursion, not a mutable loop counter): walks the
+  // byte budget back one byte at a time until it lands on a valid UTF-8
+  // boundary. `TextDecoder`'s `fatal: true` throws when a cut splits a
+  // multi-byte code point, so each retry needs its own decode attempt inside
+  // a try/catch; recursion depth is inherently tiny (a UTF-8 sequence is at
+  // most 4 bytes, so at most 3 retries are ever needed).
+  const walkBack = (budget: number): string => {
     try {
       const decoded = new TextDecoder('utf-8', { fatal: true }).decode(encoded.slice(0, budget));
       return `${decoded}${TRUNCATION_MARKER}`;
     } catch {
-      budget -= 1;
+      return walkBack(budget - 1);
     }
-  }
+  };
+  return walkBack(Math.max(0, maxBytes - markerBytes));
 };
 
 // Byte-capped excerpt budget for a 4xx/5xx error body. Reuses
@@ -227,14 +243,8 @@ const mapHttpError = (
   // the escaped form verbatim).
   const essence = mediaEssence(contentType);
   if (essence !== undefined && JSON_ESSENCE_RE.test(essence)) {
-    let parsed: unknown;
-    let parsedOk = true;
-    try {
-      parsed = JSON.parse(decoded.ok);
-    } catch {
-      parsedOk = false;
-    }
-    if (parsedOk && scanSafely(redactor, parsed)) {
+    const attempt = tryParseJson(decoded.ok);
+    if (attempt.ok && scanSafely(redactor, attempt.value)) {
       return textOutcome(`upstream request failed with status ${status}`, true);
     }
   }
@@ -290,14 +300,8 @@ const mapNoSchemaSuccess = (
   // whose Content-Type claims JSON but does not parse falls through to the
   // existing text handling below, unchanged.
   if (essence !== undefined && JSON_ESSENCE_RE.test(essence)) {
-    let parsed: unknown;
-    let parsedOk = true;
-    try {
-      parsed = JSON.parse(decoded.ok);
-    } catch {
-      parsedOk = false;
-    }
-    if (parsedOk && scanSafely(redactor, parsed)) {
+    const attempt = tryParseJson(decoded.ok);
+    if (attempt.ok && scanSafely(redactor, attempt.value)) {
       // Never emit a body that contains the secret in escaped form: no
       // string-redacted fallback here, a generic isError with no body.
       return textOutcome(GENERIC_UNSAFE_TEXT, true);
@@ -337,13 +341,15 @@ const mapSchemaSuccess = (
   if ('error' in decoded) {
     return textOutcome('upstream response body was not valid UTF-8 text', true);
   }
-  let data: unknown;
-  try {
-    data = JSON.parse(decoded.ok);
-  } catch {
+  const parseAttempt = tryParseJson(decoded.ok);
+  if (!parseAttempt.ok) {
     return textOutcome(`upstream response for status ${status} was not valid JSON`, true);
   }
-  const envelope: Record<string, unknown> = { status, contentType: branch.contentType, data };
+  const envelope: Record<string, unknown> = {
+    status,
+    contentType: branch.contentType,
+    data: parseAttempt.value,
+  };
   // A secret anywhere in the structured data downgrades to a generic
   // isError — never a redacted-but-successful structuredContent. The
   // envelope's DATA is never itself rewritten: either it is secret-free and

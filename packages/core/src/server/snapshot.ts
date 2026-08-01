@@ -161,6 +161,11 @@ const deepFreeze = <T>(value: T, seen = new WeakSet<object>()): T => {
   if (seen.has(asObject)) {
     return value;
   }
+  // Imperative on purpose: cycle detection during a recursive walk needs a
+  // set that is genuinely mutated as traversal proceeds — a purely
+  // functional "seen" set would have to be threaded through and returned
+  // from every recursive call instead, which buys nothing here since the set
+  // is never observed outside this walk.
   seen.add(asObject);
   for (const key of Object.keys(asObject)) {
     deepFreeze((asObject as Record<string, unknown>)[key], seen);
@@ -197,6 +202,11 @@ export const buildSnapshot = (
     string,
     SnapshotTool | undefined
   >;
+  // Imperative on purpose: this is validate-then-write, not a plain
+  // accumulation — `Object.fromEntries`/`reduce` would either silently let a
+  // later duplicate name overwrite an earlier tool (losing the throw
+  // entirely) or need the same hasOwn-then-throw check re-embedded in a
+  // reducer callback for no readability gain over the loop below.
   for (const tool of all) {
     if (Object.hasOwn(toolsByName, tool.name)) {
       throw validationError(`duplicate tool name "${tool.name}" in the server snapshot`);

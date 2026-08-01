@@ -107,6 +107,14 @@ const serializePathValue = (
       ? { error: `path parameter "${mapping.wireName}" could not be encoded` }
       : { ok: encoded };
   };
+  // Imperative on purpose: each per-leaf `leaf()` call below can fail (a
+  // dangerous segment, an unencodable value), and the array/object branches
+  // must stop at the FIRST failing leaf rather than encoding every remaining
+  // one — `shape.values`/`shape.entries` come from a caller-supplied tool
+  // argument, so an eager map/reduce that encodes every leaf before checking
+  // for an error would do unbounded extra work on a large hostile array
+  // before ever reporting the failure. `segment` still needs a `let` because
+  // exactly one of the three branches below produces it.
   let segment: string;
   if (shape.kind === 'primitive') {
     const result = leaf(String(shape.value));
@@ -179,6 +187,11 @@ const serializeQueryValue = (
   if ('error' in wireKey) {
     return wireKey;
   }
+  // Imperative on purpose (applies to every per-leaf loop below): `enc()`
+  // can fail per leaf, and the array/object branches must stop at the FIRST
+  // failing leaf — `shape.values`/`shape.entries` come from a caller-supplied
+  // tool argument, so eagerly encoding every remaining leaf via map/reduce
+  // before surfacing an error would do unbounded extra work on hostile input.
   if (shape.kind === 'primitive') {
     const result = enc(String(shape.value));
     if ('error' in result) {
@@ -275,6 +288,10 @@ const serializeHeaderValue = (
     }
     return { ok: raw };
   };
+  // Imperative on purpose: same rationale as serializePathValue/
+  // serializeQueryValue above — `clean()` can fail per leaf, and the
+  // array/object branches must stop at the FIRST failing leaf rather than
+  // validating every remaining one in a caller-supplied array/object.
   if (shape.kind === 'primitive') {
     return clean(String(shape.value), []);
   }
@@ -327,13 +344,18 @@ const buildBodyObject = (
   data: Record<string, unknown>,
 ): { object: Record<string, unknown>; anyPresent: boolean } | { error: string } => {
   const root: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-  let anyPresent = false;
+  // Imperative on purpose: this walks and MUTATES a nested chain of freshly
+  // created (never caller-visible) objects to reassemble the flattened body
+  // fields, checking `isDangerousKey` on every segment BEFORE writing it — a
+  // fail-fast prototype-pollution guard that must run per segment, in path
+  // order, before any write. A pure rebuild would still need to reconstruct
+  // the same mutable-pointer walk internally; doing it directly here keeps
+  // the check-then-write order visible.
   for (const [name, mapping] of bodyFieldEntries) {
     const value = data[name];
     if (value === undefined) {
       continue;
     }
-    anyPresent = true;
     if (mapping.bodyPath.length === 0) {
       return { error: `body field "${name}" has no destination path` };
     }
@@ -356,6 +378,11 @@ const buildBodyObject = (
     }
     target[last] = value;
   }
+  // Pure and independent of the mutation walk above: a field "is present"
+  // iff its value in `data` is not undefined — the same predicate the loop
+  // above used to test before mutating, just computed standalone since
+  // nothing else in the loop depends on this flag until the return below.
+  const anyPresent = bodyFieldEntries.some(([name]) => data[name] !== undefined);
   return { object: root, anyPresent };
 };
 
@@ -363,13 +390,11 @@ const buildBodyObject = (
 // `toJSON` — any of which would otherwise escape this module's never-throw
 // `{ok}|{error}` contract. Fail closed instead.
 const jsonBody = (value: unknown): { ok: Uint8Array } | { error: string } => {
-  let serialized: string;
   try {
-    serialized = JSON.stringify(value);
+    return { ok: new TextEncoder().encode(JSON.stringify(value)) };
   } catch {
     return { error: 'the request body could not be serialized to JSON' };
   }
-  return { ok: new TextEncoder().encode(serialized) };
 };
 
 const formBody = (value: Record<string, unknown>): { ok: Uint8Array } | { error: string } => {
@@ -467,6 +492,19 @@ export const buildRequest = (
   data: Record<string, unknown>,
   budgets: OutboundBudgets,
 ): BuildRequestResult => {
+  // Imperative on purpose: this single pass builds THREE interdependent
+  // accumulators (the progressively-substituted `pathname` string, the
+  // ordered `queryPairs` list, and the `headers` record) and enforces
+  // fail-fast validation per field in ITERATION order — never a pure
+  // map/reduce here, because: (1) each path substitution is applied to the
+  // CURRENT `pathname` via `.split(placeholder).join(...)`, so a later
+  // field's placeholder match depends on every earlier substitution having
+  // already run (a substituted value that happens to contain literal
+  // placeholder syntax for a later field must not be re-substituted, which
+  // only holds if substitutions apply strictly in field order); and (2) a
+  // missing-required/null-required/duplicate-query-key error must abort
+  // before any later field is processed, matching a for-of loop's early
+  // `return` far more directly than an eagerly-evaluated array transform.
   let pathname = pathTemplate;
   const queryPairs: QueryPair[] = [];
   const usedQueryKeys = new Set<string>();
@@ -538,10 +576,12 @@ export const buildRequest = (
   if (urlLength > budgets.maxUrlLength) {
     return { error: 'the built request URL exceeds the outbound URL length budget' };
   }
-  let headerBytes = 0;
-  for (const [key, headerValue] of Object.entries(headers)) {
-    headerBytes += byteLength(key) + byteLength(headerValue);
-  }
+  // Loop body is a pure sum expression over the already-built, bounded
+  // headers record — a single-expression `reduce` rewrite.
+  const headerBytes = Object.entries(headers).reduce(
+    (sum, [key, headerValue]) => sum + byteLength(key) + byteLength(headerValue),
+    0,
+  );
   if (headerBytes > budgets.maxHeaderBytes) {
     return { error: 'the built request headers exceed the outbound header byte budget' };
   }
