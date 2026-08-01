@@ -78,8 +78,7 @@
     // functions would scatter one validation pass across multiple call
     // frames for no gain in clarity.
     "max-statements": "off",
-    // Off: attempted removal in the Task 31b FP pass found 52 remaining
-    // sites across 22 files (packages/core/src/cache/store.ts,
+    // Off: 52 sites remain across 22 files (packages/core/src/cache/store.ts,
     // packages/core/src/spec/pipeline.ts, packages/core/src/spec/fetch.ts,
     // packages/core/src/http/pinned-dispatcher.ts, packages/core/src/http/egress.ts,
     // packages/core/src/cache/lock.ts, packages/core/src/filter/engine.ts,
@@ -87,9 +86,9 @@
     // packages/core/src/server/execute/executor.ts,
     // packages/core/src/server/sdk-v1/streamable-http.ts,
     // packages/cli/src/context.ts, and ten *.test.ts files), each falling
-    // into one of two inherent shapes reviewed and kept during the FP pass:
-    // (1) a fallible value declared before a try so it is still visible to
-    // code after the try/finally once the try assigns it (TDZ-safe
+    // into one of two inherent shapes reviewed and kept in the functional-
+    // style pass: (1) a fallible value declared before a try so it is still
+    // visible to code after the try/finally once the try assigns it (TDZ-safe
     // declare-then-assign, the sole way to escape a try block without an
     // `any`-typed outer binding), including test bodies that capture a
     // thrown error into a `caught` variable this way; and (2) a loop-carried

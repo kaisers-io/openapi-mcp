@@ -360,9 +360,9 @@ export const realContext = (): CliContext => ({
   },
 });
 
-// Hand-checked (Task 24): TestContextOverrides adds only `lines`/`errLines`,
-// neither of which is a CliContext member name, so this intersection cannot
-// silently collapse an inherited member's type to `never`.
+// TestContextOverrides adds only `lines`/`errLines`, neither of which is a
+// CliContext member name, so this intersection cannot silently collapse an
+// inherited member's type to `never`.
 export type TestContextOverrides = Partial<CliContext> & {
   lines?: string[];
   errLines?: string[];

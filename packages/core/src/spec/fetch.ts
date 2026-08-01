@@ -152,10 +152,10 @@ const fetchChain = async (
     // deadline (`signal`) so DNS cannot outlive the fetch budget.
     const agent = createPinnedAgent(policy, chainResolve(deps.lookup, signal));
     // Seam hazard + security module: `deps.fetcher` is an injected
-    // Promise-returning transport (a fake in tests may throw synchronously,
-    // matching Task 25's lesson), and the catch below performs a required
-    // cleanup (agent.destroy()) before mapping the error — collapsing this to
-    // `.catch()` would narrow that catch boundary around the cleanup.
+    // Promise-returning transport (a fake in tests may throw synchronously),
+    // and the catch below performs a required cleanup (agent.destroy())
+    // before mapping the error — collapsing this to `.catch()` would narrow
+    // that catch boundary around the cleanup.
     let response: UndiciResponse;
     try {
       response = await deps.fetcher(url, {

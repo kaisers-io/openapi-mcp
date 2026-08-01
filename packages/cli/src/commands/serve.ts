@@ -128,13 +128,13 @@ export const resolveBaseUrl = (
 
 // Mirrors SpecCmdOpts's own "hand-written mirror of the accumulated option
 // shape" idiom (see spec-options.ts's comment on registerSpecOptions).
-// Hand-checked (Task 24): SpecCmdOpts's members (spec/allow/deny/
-// strictFilters/specHeaderEnv/timeout/ttl/cacheKey/trustSpecUpdates/
-// allowPrivateNetwork) and ApiCmdOpts's members (baseUrl/headerEnv/header/
-// maxResponseBytes/allowInsecureHttp) share no name with each other or with
-// this type's own http/port/httpTokenEnv, and both share the identical
-// `[key: string]: unknown` index signature, so the three-way intersection
-// below cannot silently collapse any inherited member's type to `never`.
+// SpecCmdOpts's members (spec/allow/deny/strictFilters/specHeaderEnv/timeout/
+// ttl/cacheKey/trustSpecUpdates/allowPrivateNetwork) and ApiCmdOpts's members
+// (baseUrl/headerEnv/header/maxResponseBytes/allowInsecureHttp) share no name
+// with each other or with this type's own http/port/httpTokenEnv, and both
+// share the identical `[key: string]: unknown` index signature, so the
+// three-way intersection below cannot silently collapse any inherited
+// member's type to `never`.
 type ServeCmdOpts = SpecCmdOpts &
   ApiCmdOpts & {
     http?: boolean;
