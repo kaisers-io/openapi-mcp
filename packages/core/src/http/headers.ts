@@ -41,6 +41,11 @@ export const resolveHeaderEnvMappings = (
 ): readonly ResolvedHeader[] => {
   const seen = new Set<string>();
   const resolved: ResolvedHeader[] = [];
+  // Imperative on purpose: each mapping validates (and, on failure, throws)
+  // in encounter order while `seen` accumulates duplicate-detection state.
+  // A `map` whose callback mutated that dedup state and threw would be
+  // technically equivalent, but it would hide the side effects inside a
+  // mapping — the explicit loop keeps them visible.
   for (const mapping of mappings) {
     const lower = mapping.headerName.toLowerCase();
     if (seen.has(lower)) {

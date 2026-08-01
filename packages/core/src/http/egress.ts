@@ -80,20 +80,23 @@ const classifyIpv4 = (address: string): AddressClass => {
 const ipv4FromGroups = (high: number, low: number): string =>
   `${Math.floor(high / 256)}.${high % 256}.${Math.floor(low / 256)}.${low % 256}`;
 
+// Converts an embedded dotted-IPv4 tail (e.g. the "1.2.3.4" in
+// "::ffff:1.2.3.4") into its two hex groups, appended after the preserved
+// head, so the rest of ipv6Groups only ever deals with colon-hex notation.
+const embeddedIpv4Hex = (head: string | undefined, v4: string | undefined): string => {
+  const [octet1 = 0, octet2 = 0, octet3 = 0, octet4 = 0] = (v4 ?? '').split('.').map(Number);
+  return `${head}${(octet1 * 256 + octet2).toString(16)}:${(octet3 * 256 + octet4).toString(16)}`;
+};
+
 // Parses a valid IPv6 literal (isIP === 6) into its eight 16-bit groups,
 // converting an embedded dotted-IPv4 tail into two hex groups first
 const ipv6Groups = (raw: string): readonly number[] | undefined => {
-  let address = raw.toLowerCase();
-  const dotted = /^(?<head>.*:)(?<v4>\d+\.\d+\.\d+\.\d+)$/u.exec(address);
-  if (dotted?.groups !== undefined) {
-    const [octet1 = 0, octet2 = 0, octet3 = 0, octet4 = 0] = (dotted.groups['v4'] ?? '')
-      .split('.')
-      .map(Number);
-    address = `${dotted.groups['head']}${(octet1 * 256 + octet2).toString(16)}:${(
-      octet3 * 256 +
-      octet4
-    ).toString(16)}`;
-  }
+  const lowered = raw.toLowerCase();
+  const dotted = /^(?<head>.*:)(?<v4>\d+\.\d+\.\d+\.\d+)$/u.exec(lowered);
+  const address =
+    dotted?.groups === undefined
+      ? lowered
+      : embeddedIpv4Hex(dotted.groups['head'], dotted.groups['v4']);
   const halves = address.split('::');
   if (halves.length > 2) {
     return undefined;
@@ -314,6 +317,10 @@ export const assertAllowedRedirectTarget = async (
     }
     return;
   }
+  // Declared then assigned inside try/catch (not `.catch()`): a resolver
+  // rejection here must be re-thrown as this function's own validationError
+  // carrying the redirect-target context, not the raw cause — a `.catch()`
+  // chain risks the sync-throw seam hazard this codebase avoids elsewhere.
   let addresses: readonly string[];
   try {
     // Bound to the caller's whole-chain deadline: a hanging resolver must not

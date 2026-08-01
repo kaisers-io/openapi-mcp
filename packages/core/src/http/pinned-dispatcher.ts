@@ -227,6 +227,18 @@ const hostnameOf = (url: URL): string => {
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+// Sync try/catch confined entirely to this helper — `new URL` throws
+// synchronously on an invalid Location header. A `.catch()` chain has no
+// meaning for a non-Promise call, and this stays purely local: no lock,
+// abort, or cleanup boundary is crossed by extracting it.
+const parseRedirectLocation = (location: string, base: URL): URL | undefined => {
+  try {
+    return new URL(location, base);
+  } catch {
+    return undefined;
+  }
+};
+
 type AbortWinner = 'cancelled' | 'timeout';
 
 // Discriminates the abort WINNER by which component signal actually fired
@@ -435,6 +447,10 @@ export const pinnedRequest = async (
   // live listener for the whole call (see trackAbortWinner's design note).
   const getAbortWinner = trackAbortWinner(opts.signal, timeoutSig);
   const originalOrigin = initialUrl.origin;
+  // Imperative on purpose: `url`/`crossed` carry state across redirect hops
+  // and `hop` bounds a loop whose body performs a real network fetch per
+  // iteration — map/filter cannot express a sequential, early-returning,
+  // side-effecting hop chain capped at MAX_REDIRECTS.
   let url = initialUrl;
   let crossed = false;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
@@ -457,6 +473,12 @@ export const pinnedRequest = async (
     const { method } = opts;
     const sendBody =
       hop === 0 && opts.body !== undefined && !GET_HEAD_METHODS.has(method.toUpperCase());
+    // Declared then assigned inside try/catch (not `.catch()`): a fetch
+    // rejection must first destroy() the agent and classify the error
+    // (cancelled vs timeout vs egress vs network) before this function can
+    // decide what to return — that sequence cannot be expressed as a value
+    // produced by a `.catch()` handler without duplicating the
+    // classification logic.
     let response: UndiciResponse;
     try {
       response = await deps.fetch(url, {
@@ -476,6 +498,11 @@ export const pinnedRequest = async (
       }
       return { kind: 'error', reason: classifyFetchError(error), detail: describeCause(error) };
     }
+    // Threaded through the try/catch/finally below on purpose: the finally
+    // block chooses destroy() vs close() based on whether the try body
+    // threw, and that choice must be made in the SAME finally regardless of
+    // which return path fired above — extracting it would move cleanup
+    // across the try/finally boundary.
     let exceptional = false;
     try {
       if (REDIRECT_STATUSES.has(response.status)) {
@@ -487,10 +514,8 @@ export const pinnedRequest = async (
         if (location === null) {
           return { kind: 'error', reason: 'redirect-invalid', detail: 'no Location header' };
         }
-        let next: URL;
-        try {
-          next = new URL(location, url);
-        } catch {
+        const next = parseRedirectLocation(location, url);
+        if (next === undefined) {
           return { kind: 'error', reason: 'redirect-invalid', detail: 'invalid Location header' };
         }
         if (next.origin !== originalOrigin) {
