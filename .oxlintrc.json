@@ -48,10 +48,6 @@
     // would separate a declaration from its export for no benefit.
     "import/group-exports": "off",
     "import/no-nodejs-modules": "off", // Off: this is a Node runtime -- node: imports are the platform.
-    // Off: this codebase has no side-effect-only imports (`import './x'`
-    // with no bindings) for the rule to guard against; enabling it today
-    // would be a no-op.
-    "import/no-unassigned-import": "off",
     // Off: same reasoning as import/group-exports above -- exports are
     // declared inline at their definition site, not collected at the
     // bottom of the file.
@@ -61,10 +57,6 @@
     // describe) rather than switching to `export default` for just that
     // one file.
     "import/prefer-default-export": "off",
-    // Off: fires only on empty `import {}` / `export {}` specifier braces;
-    // this codebase never produces any, so enabling it today would also be
-    // a no-op.
-    "unicorn/require-module-specifiers": "off",
     // Off: errors.ts's error-normalization helpers use single-line
     // ternaries (e.g. `err instanceof Error ? err.message : String(err)`)
     // to extract a value from an unknown error type; if/else would triple
