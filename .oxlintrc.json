@@ -82,11 +82,25 @@
     // functions would scatter one validation pass across multiple call
     // frames for no gain in clarity.
     "max-statements": "off",
-    // Off: load.ts's stat/read try-catch blocks declare url/size/text
-    // before the try so the value assigned inside the try is visible after
-    // it (the catch re-throws); TDZ-safe declare-then-assign is how a
-    // fallible value escapes a try block in TypeScript without an `any`-typed
-    // outer binding.
+    // Off: attempted removal in the Task 31b FP pass found 52 remaining
+    // sites across 22 files (packages/core/src/cache/store.ts,
+    // packages/core/src/spec/pipeline.ts, packages/core/src/spec/fetch.ts,
+    // packages/core/src/http/pinned-dispatcher.ts, packages/core/src/http/egress.ts,
+    // packages/core/src/cache/lock.ts, packages/core/src/filter/engine.ts,
+    // packages/core/src/server/execute/request.ts,
+    // packages/core/src/server/execute/executor.ts,
+    // packages/core/src/server/sdk-v1/streamable-http.ts,
+    // packages/cli/src/context.ts, and ten *.test.ts files), each falling
+    // into one of two inherent shapes reviewed and kept during the FP pass:
+    // (1) a fallible value declared before a try so it is still visible to
+    // code after the try/finally once the try assigns it (TDZ-safe
+    // declare-then-assign, the sole way to escape a try block without an
+    // `any`-typed outer binding), including test bodies that capture a
+    // thrown error into a `caught` variable this way; and (2) a loop-carried
+    // "best so far" accumulator (e.g. engine.ts's nearest-match search)
+    // that must exist before the loop starts. The concentration (22 files)
+    // is too broad for file-scoped overrides to stay honest, so the
+    // exception stays global.
     "init-declarations": "off",
     // Off: egress.ts's classifyIpv4/classifyAddress put each branch's IANA
     // range/RFC citation as an inline comment directly on the condition it
