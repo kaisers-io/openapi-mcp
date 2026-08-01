@@ -205,6 +205,16 @@ describe('convertSchema — enum, const, null', () => {
     expect(ok(convertSchema({ type: ['integer'] })).safeParse(1.5).success).toBe(false);
   });
 
+  it('keeps the 3.0 nullable flag when type is an array without a null member', () => {
+    // type:['string'] (a single-element array, no 'null' member) plus a sibling
+    // 3.0 nullable:true must still admit null. The array branch's nullable
+    // must OR in the 3.0 nodeNullable flag, not derive solely from whether
+    // 'null' appears among the array's own elements.
+    const s = ok(convertSchema({ type: ['string'], nullable: true }, '3.0'));
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse('x').success).toBe(true);
+  });
+
   // The `required` element/uniqueness gate lives inside malformedKeyword, which
   // also handles the scalar keyword misuse checked above; its object-path
   // falsification (a non-string or duplicate `required` element) is tested

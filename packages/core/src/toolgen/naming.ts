@@ -35,13 +35,11 @@ export type NamedOperation = {
   toolName: string;
 };
 
-const collisionCounts = (entries: readonly { toolName: string }[]): Map<string, number> => {
-  const counts = new Map<string, number>();
-  for (const entry of entries) {
+const collisionCounts = (entries: readonly { toolName: string }[]): Map<string, number> =>
+  entries.reduce((counts, entry) => {
     counts.set(entry.toolName, (counts.get(entry.toolName) ?? 0) + 1);
-  }
-  return counts;
-};
+    return counts;
+  }, new Map<string, number>());
 
 export const assignToolNames = (
   operations: readonly OperationRecord[],
@@ -51,6 +49,15 @@ export const assignToolNames = (
     const base = fromId === '' ? methodPathName(operation.method, operation.path) : fromId;
     return { operation, base, toolName: base };
   });
+  // Imperative on purpose: this is a two-pass fixed-point rename (try an
+  // 8-char suffix, escalate to 16 only if collisions remain) with an early
+  // `break` once a pass resolves everything — a map/reduce restatement would
+  // still need to mutate-or-rebuild `entries` between passes and would hide
+  // the early exit that skips the second, more expensive hashing pass
+  // entirely. `entries` was just built by the `.map` above and is never
+  // observed outside this function before the final `.map` below returns
+  // fresh `{ operation, toolName }` records, so renaming `.toolName` in
+  // place carries no caller-visible side effect.
   // Collisions get a stable content-hash suffix derived from METHOD + path, so
   // names never change when the spec is reordered. The second,
   // longer pass covers operationIds crafted to mimic a suffixed name.

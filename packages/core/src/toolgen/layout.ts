@@ -53,6 +53,12 @@ export const paramFields = (
 ): { ok: Field[] } | { unrepresentable: string } => {
   const fields: Field[] = [];
   const seenHeaders = new Set<string>();
+  // Imperative on purpose (like headers.ts's mapping loop): each parameter is
+  // validated — and, on failure, the WHOLE operation is omitted — in
+  // encounter order, while `seenHeaders` accumulates case-insensitive
+  // dedup state across iterations. A `map`/`filter` restatement would need
+  // its callback to both early-return the outer function AND mutate that
+  // shared dedup state, hiding both effects inside a mapping.
   for (const param of operation.parameters) {
     const { name } = param;
     const location = param['in'];
@@ -239,6 +245,13 @@ const bodyFields = (
       }
     }
     const fields: Field[] = [];
+    // Imperative on purpose: any single malformed property aborts the WHOLE
+    // request body (fail-closed) before later properties are even converted.
+    // `properties` is spec-controlled (a hostile document can declare many
+    // properties, each with a deep schema) — mapping every property through
+    // convertSchema first and checking afterward would turn this
+    // short-circuit into forced conversion work for every property on
+    // hostile input, even past the first failure.
     for (const [prop, child] of Object.entries(properties)) {
       const converted = convertSchema(child, version, 1);
       if (!('ok' in converted)) {
@@ -287,6 +300,11 @@ const pathPlaceholders = (path: string): { names: Set<string> } | { malformed: t
   const names = new Set<string>();
   let inBrace = false;
   let current = '';
+  // Imperative on purpose: a single left-to-right character scan carrying
+  // brace-depth state (`inBrace`) and the in-progress placeholder text
+  // (`current`) — a streaming state machine, not an accumulation a
+  // map/filter/reduce could restate without reintroducing the same mutable
+  // state as its accumulator.
   for (const char of path) {
     if (char === '{') {
       if (inBrace) {
@@ -324,22 +342,30 @@ const pathPlaceholders = (path: string): { names: Set<string> } | { malformed: t
 // into what should be plain path text. Malformed percent-encoding fails closed
 // too.
 const isDangerousStaticSegment = (segment: string): boolean => {
-  let decoded: string;
   try {
-    decoded = decodeURIComponent(segment);
+    const decoded = decodeURIComponent(segment);
+    return (
+      decoded === '.' ||
+      decoded === '..' ||
+      decoded.includes('/') ||
+      decoded.includes('\\') ||
+      decoded.includes('?') ||
+      decoded.includes('#')
+    );
   } catch {
     return true;
   }
-  return (
-    decoded === '.' ||
-    decoded === '..' ||
-    decoded.includes('/') ||
-    decoded.includes('\\') ||
-    decoded.includes('?') ||
-    decoded.includes('#')
-  );
 };
 
+// Imperative on purpose (collision resolution + dedup, like headers.ts's
+// mapping loop): count by preferred name, then rename in encounter order,
+// then verify the renamed set is collision-free — the three passes must run
+// in this sequence before any field participates in the path/prototype
+// validation below. The Field objects were just built by paramFields/
+// bodyFields and are never observed by any caller before this function
+// returns them, so renaming `.name` in place carries no caller-visible side
+// effect; rebuilding via `.map` would be equivalent but adds an allocation
+// per field on every generation run for no behavioural gain.
 const resolveCollisions = (fields: Field[]): { ok: Field[] } | { unrepresentable: string } => {
   const preferredCounts = new Map<string, number>();
   for (const field of fields) {
@@ -403,12 +429,14 @@ export const buildLayout = (
   if ('malformed' in placeholders) {
     return { unrepresentable: 'the path template has a malformed "{...}" placeholder' };
   }
-  const pathWireNames = new Set<string>();
-  for (const field of resolved.ok) {
-    if (field.mapping.destination === 'path') {
-      pathWireNames.add(field.mapping.wireName);
-    }
-  }
+  // `flatMap` (rather than `filter().map()`) keeps the `destination === 'path'`
+  // narrowing in scope for the `wireName` read below — TS does not carry a
+  // `.filter` predicate's narrowing into a later `.map` on the union type.
+  const pathWireNames = new Set(
+    resolved.ok.flatMap((field) =>
+      field.mapping.destination === 'path' ? [field.mapping.wireName] : [],
+    ),
+  );
   const placeholdersMatch =
     placeholders.names.size === pathWireNames.size &&
     [...placeholders.names].every((name) => pathWireNames.has(name));
@@ -425,18 +453,29 @@ export const buildLayout = (
       return { unrepresentable: `a field named "${field.preferred}"` };
     }
   }
-  const shape: Record<string, z.ZodType> = {};
-  for (const field of resolved.ok) {
-    shape[field.name] = field.required ? field.schema : field.schema.optional();
-  }
-  let inputSchema: z.ZodType = z.strictObject(shape);
+  // Every field.name here already passed the dangerous-key gate above (via
+  // field.preferred), so a plain Object.fromEntries build is safe.
+  const shape: Record<string, z.ZodType> = Object.fromEntries(
+    resolved.ok.map(
+      (field) => [field.name, field.required ? field.schema : field.schema.optional()] as const,
+    ),
+  );
+  const strictSchema = z.strictObject(shape);
   const group = resolved.ok.filter((field) => field.bodyGroup !== undefined);
   const requiredNames = group
     .filter((field) => field.bodyGroup?.requiredWhenPresent === true)
     .map((field) => field.name);
-  if (group.length > 0 && requiredNames.length > 0) {
+  // `groupNames` is computed once here, at generation time, and captured by
+  // the refine closure below — NOT inside the predicate, which re-runs on
+  // every tool call at request time. Kept as a named helper (not a ternary)
+  // so that hot-path cost stays exactly where the original `let` version put
+  // it: computed once per generated tool, not once per validated request.
+  const withBodyGroupRefinement = (schema: z.ZodType): z.ZodType => {
+    if (group.length === 0 || requiredNames.length === 0) {
+      return schema;
+    }
     const groupNames = group.map((field) => field.name);
-    inputSchema = inputSchema.refine(
+    return schema.refine(
       (value) => {
         const record = value as Record<string, unknown>;
         const anyPresent = groupNames.some((name) => record[name] !== undefined);
@@ -444,11 +483,11 @@ export const buildLayout = (
       },
       { message: 'provide all required body fields together, or omit the body entirely' },
     );
-  }
-  const fields: Record<string, FieldMapping> = {};
-  for (const field of resolved.ok) {
-    fields[field.name] = field.mapping;
-  }
+  };
+  const inputSchema = withBodyGroupRefinement(strictSchema);
+  const fields: Record<string, FieldMapping> = Object.fromEntries(
+    resolved.ok.map((field) => [field.name, field.mapping] as const),
+  );
   const mapper: RequestMapper = {
     bodyMode: body.ok.mode,
     ...(body.ok.contentType === undefined ? {} : { bodyContentType: body.ok.contentType }),

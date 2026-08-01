@@ -24,42 +24,36 @@ const isErrorStatus = (key: string): boolean => {
 // ECMAScript own-property-key-order spec, so no explicit sort is needed for
 // the common case; non-numeric keys ("default") sort after, which is fine
 // since they are filtered out by isErrorStatus anyway.
-const documentedErrors = (responses: Record<string, unknown>): string[] => {
-  const entries: string[] = [];
-  for (const [status, response] of Object.entries(responses)) {
-    if (!isErrorStatus(status) || entries.length >= MAX_ERROR_ENTRIES) {
-      continue;
-    }
-    const description =
-      isRecord(response) && typeof response['description'] === 'string'
-        ? response['description']
-        : undefined;
-    entries.push(description === undefined ? status : `${status}: ${description}`);
-  }
-  return entries;
-};
+// Filter-then-slice, in that order, preserves the original loop's semantics
+// exactly: the cap counts qualifying (error-status) entries only, not raw
+// entries, and Object.entries' ascending-numeric-then-insertion order is
+// unaffected by either step.
+const documentedErrors = (responses: Record<string, unknown>): string[] =>
+  Object.entries(responses)
+    .filter(([status]) => isErrorStatus(status))
+    .slice(0, MAX_ERROR_ENTRIES)
+    .map(([status, response]) => {
+      const description =
+        isRecord(response) && typeof response['description'] === 'string'
+          ? response['description']
+          : undefined;
+      return description === undefined ? status : `${status}: ${description}`;
+    });
 
 export const composeDescription = (operation: OperationRecord): string => {
-  const parts: string[] = [];
-  // `[DEPRECATED]` is pushed FIRST, before sanitizeSpecText's cap runs below —
-  // prefixing after the cap (the original bug) could push the composed
-  // description past SPEC_BUDGETS.maxTextLength. Pushing it as its own part
-  // (rather than string-concatenating it onto the eventual result) also means
-  // an operation with no summary/description/errors yields a clean
-  // "[DEPRECATED]" with no trailing space, since parts.join(' ') never
-  // inserts a separator after the last element.
-  if (operation.deprecated) {
-    parts.push('[DEPRECATED]');
-  }
-  if (operation.summary !== undefined) {
-    parts.push(operation.summary);
-  }
-  if (operation.description !== undefined && operation.description !== operation.summary) {
-    parts.push(operation.description);
-  }
   const errors = documentedErrors(operation.responses);
-  if (errors.length > 0) {
-    parts.push(`Errors: ${errors.join('; ')}`);
-  }
+  // `[DEPRECATED]` is listed FIRST, before sanitizeSpecText's cap runs below —
+  // appending it after the cap (the original bug) could push the composed
+  // description past SPEC_BUDGETS.maxTextLength. Listing it as its own
+  // element (rather than string-concatenating it onto the eventual result)
+  // also means an operation with no summary/description/errors yields a
+  // clean "[DEPRECATED]" with no trailing space, since parts.join(' ') never
+  // inserts a separator after the last element.
+  const parts = [
+    operation.deprecated ? '[DEPRECATED]' : undefined,
+    operation.summary,
+    operation.description === operation.summary ? undefined : operation.description,
+    errors.length > 0 ? `Errors: ${errors.join('; ')}` : undefined,
+  ].filter((part): part is string => part !== undefined);
   return sanitizeSpecText(parts.join(' '), SPEC_BUDGETS.maxTextLength);
 };
