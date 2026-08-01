@@ -80,10 +80,14 @@ const boundedDistance = (
       throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
     }
   };
-  let previous: number[] = [];
-  for (let column = 0; column <= right.length; column += 1) {
-    previous.push(column);
-  }
+  // The first row is 0..right.length by definition (deleting the whole
+  // prefix of `right`); built directly since it never reads a prior row.
+  let previous: number[] = Array.from({ length: right.length + 1 }, (_unused, column) => column);
+  // Imperative on purpose: each cell reads BOTH the previous row and the
+  // cell just computed to its own left in the same row, so a row cannot be
+  // produced by mapping over its own output. The per-row budget spend and
+  // early abort below must also run before the next row starts, mirroring
+  // globMatches's spend discipline in pattern.ts exactly.
   for (let row = 1; row <= left.length; row += 1) {
     // One unit per cell in the row about to be computed, charged before it
     spend(right.length);
@@ -123,6 +127,9 @@ export const closestMatch = (
   let best: string | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
   let bestRatio = Number.POSITIVE_INFINITY;
+  // Kept as a loop (not reduce): reduce skips array holes, silently changing
+  // behaviour for a sparse candidates array on this exported function; the
+  // loop visits every index.
   for (const candidate of candidates) {
     if (candidate.length > SUGGESTION_MAX_LENGTH) {
       continue;
@@ -158,19 +165,27 @@ const candidateSpace = (
   pattern: FilterPattern,
   operations: readonly OperationRecord[],
 ): readonly string[] => {
-  const candidates = new Set<string>();
-  for (const op of operations) {
-    if (pattern.kind === 'tag') {
+  // Pattern.kind is invariant across the walk, so it is branched on once
+  // rather than re-tested per operation; the Set still dedups in the same
+  // first-occurrence order the accumulating loop produced.
+  if (pattern.kind === 'tag') {
+    // Streams into the Set on purpose: tag occurrences are unbounded in a
+    // hostile spec; flatMap would materialize every occurrence before
+    // deduplication.
+    const tags = new Set<string>();
+    for (const op of operations) {
       for (const tag of op.tags) {
-        candidates.add(tag);
+        tags.add(tag);
       }
-    } else if (pattern.kind === 'methodPath') {
-      candidates.add(`${op.method.toUpperCase()} ${op.path}`);
-    } else if (op.operationId !== undefined) {
-      candidates.add(op.operationId);
     }
+    return [...tags];
   }
-  return [...candidates];
+  if (pattern.kind === 'methodPath') {
+    return [...new Set(operations.map((op) => `${op.method.toUpperCase()} ${op.path}`))];
+  }
+  return [
+    ...new Set(operations.flatMap((op) => (op.operationId === undefined ? [] : [op.operationId]))),
+  ];
 };
 
 // A tag pattern's raw form carries the "tag:" prefix, which the candidates do

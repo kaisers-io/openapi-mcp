@@ -83,6 +83,11 @@ export const compileGlob = (glob: string): CompiledGlob => {
   // equivalent.
   const points = [...glob];
   const tokens: GlobToken[] = [];
+  // Imperative on purpose: a "*" run consumes a variable number of code
+  // points in one step (so the index can jump by more than one), and the
+  // wildcard cap must be checked at the moment a run is counted — neither is
+  // expressible as a map over a fixed-size array without reintroducing this
+  // same index-tracking state.
   let index = 0;
   let wildcards = 0;
   while (index < points.length) {
@@ -110,27 +115,19 @@ export const compileGlob = (glob: string): CompiledGlob => {
     tokens.push(ch as string);
     index += 1;
   }
-  let minLength = 0;
-  for (const token of tokens) {
-    if (token !== STAR && token !== GLOBSTAR) {
-      minLength += 1;
-    }
-  }
-  let prefix = '';
-  for (const token of tokens) {
-    if (token === STAR || token === GLOBSTAR) {
-      break;
-    }
-    prefix += token;
-  }
-  let suffix = '';
-  for (let pos = tokens.length - 1; pos >= 0; pos -= 1) {
-    const token = tokens[pos];
-    if (token === STAR || token === GLOBSTAR) {
-      break;
-    }
-    suffix = `${token as string}${suffix}`;
-  }
+  const minLength = tokens.filter((token) => token !== STAR && token !== GLOBSTAR).length;
+  // The prefix is every literal token before the FIRST wildcard; slicing to
+  // that index and joining is the pure equivalent of concatenating until the
+  // break, and `join('')` on the literal-only slice concatenates exactly like
+  // the `+=` loop did (no separator, no wildcard tokens can be present in it).
+  const firstWildcard = tokens.findIndex((token) => token === STAR || token === GLOBSTAR);
+  const prefix = (firstWildcard === -1 ? tokens : tokens.slice(0, firstWildcard)).join('');
+  // The suffix is every literal token after the LAST wildcard, in original
+  // (left-to-right) order — the backward loop rebuilt that order by
+  // prepending; slicing from just past the last wildcard and joining forward
+  // produces the identical string without needing the prepend.
+  const lastWildcard = tokens.findLastIndex((token) => token === STAR || token === GLOBSTAR);
+  const suffix = tokens.slice(lastWildcard + 1).join('');
   return {
     tokens,
     minLength,
