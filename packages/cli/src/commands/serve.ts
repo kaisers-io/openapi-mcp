@@ -73,13 +73,13 @@ export const assertBaseUrlShape = (url: URL): void => {
   }
 };
 
-export interface ResolvedBase {
+export type ResolvedBase = {
   url: URL;
   // True iff the base came from the OPERATOR-supplied --base-url — a trusted
   // origin skips the startup address (egress) check below; a spec-derived
   // base is always untrusted regardless of --allow-private-network.
   trusted: boolean;
-}
+};
 
 // Base-URL resolution order: `--base-url` wins (trusted); else an ABSOLUTE
 // `servers[0]` candidate is used as-is (untrusted); else a RELATIVE/absent
@@ -122,11 +122,19 @@ export const resolveBaseUrl = (
 
 // Mirrors SpecCmdOpts's own "hand-written mirror of the accumulated option
 // shape" idiom (see spec-options.ts's comment on registerSpecOptions).
-interface ServeCmdOpts extends SpecCmdOpts, ApiCmdOpts {
-  http?: boolean;
-  port: string;
-  httpTokenEnv?: string;
-}
+// Hand-checked (Task 24): SpecCmdOpts's members (spec/allow/deny/
+// strictFilters/specHeaderEnv/timeout/ttl/cacheKey/trustSpecUpdates/
+// allowPrivateNetwork) and ApiCmdOpts's members (baseUrl/headerEnv/header/
+// maxResponseBytes/allowInsecureHttp) share no name with each other or with
+// this type's own http/port/httpTokenEnv, and both share the identical
+// `[key: string]: unknown` index signature, so the three-way intersection
+// below cannot silently collapse any inherited member's type to `never`.
+type ServeCmdOpts = SpecCmdOpts &
+  ApiCmdOpts & {
+    http?: boolean;
+    port: string;
+    httpTokenEnv?: string;
+  };
 
 export const registerServe: CommandRegistrar = (program, ctx, state) => {
   const command = registerApiOptions(registerSpecOptions(program.command('serve')))

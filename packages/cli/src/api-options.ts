@@ -83,14 +83,14 @@ const MIN_SECRET_REGISTRATION_LENGTH = 8;
 const textEncoder = new TextEncoder();
 const byteLength = (value: string): number => textEncoder.encode(value).length;
 
-export interface ApiSecretHeader {
+export type ApiSecretHeader = {
   name: string;
   value: string;
   // Retained so a 401/403 hint can name the env var without echoing the value.
   envVar: string;
-}
+};
 
-export interface ResolvedApiConfig {
+export type ResolvedApiConfig = {
   baseUrlOverride?: string;
   staticHeaders: { name: string; value: string }[];
   secretHeaders: ApiSecretHeader[];
@@ -109,9 +109,9 @@ export interface ResolvedApiConfig {
   secretValues: string[];
   maxResponseBytes: number;
   allowInsecureHttp: boolean;
-}
+};
 
-export interface ApiCmdOpts {
+export type ApiCmdOpts = {
   // Same commander generic-constraint workaround as SpecCmdOpts
   // (spec-options.ts): a plain object literal type is rejected by
   // `Command<[], Opts>`'s `Opts extends OptionValues` constraint without an
@@ -122,7 +122,7 @@ export interface ApiCmdOpts {
   header: readonly string[];
   maxResponseBytes: string;
   allowInsecureHttp?: boolean;
-}
+};
 
 // The --base-url/--header-env/--header/--max-response-bytes/
 // --allow-insecure-http flags for the runtime API executor — separate from
@@ -234,10 +234,10 @@ const parseStaticHeaders = (raw: readonly string[]): { name: string; value: stri
   return result;
 };
 
-interface NamedHeader {
+type NamedHeader = {
   name: string;
   value: string;
-}
+};
 
 // Cross-group uniqueness, the reservedHeaderNames union, and the header
 // count/aggregate-byte budgets in one pass: all three walk the same two

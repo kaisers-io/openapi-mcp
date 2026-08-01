@@ -49,14 +49,14 @@ const startUpstream = (): Promise<{
 const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 
-interface JsonRpcMessage {
+type JsonRpcMessage = {
   jsonrpc: '2.0';
   id?: number;
   method?: string;
   params?: unknown;
   result?: Record<string, unknown>;
   error?: { code: number; message: string };
-}
+};
 
 // StdioServerTransport frames JSON-RPC messages one-per-line (verified
 // against the SDK's shared/stdio.js ReadBuffer/serializeMessage).
@@ -64,7 +64,7 @@ const send = (proc: ReturnType<typeof spawn>, message: JsonRpcMessage): void => 
   proc.stdin?.write(`${JSON.stringify(message)}\n`);
 };
 
-interface Collected {
+type Collected = {
   stdoutLines: string[];
   stderrLines: string[];
   // The RAW, un-split accumulation — used for the airtight end-of-process
@@ -72,7 +72,7 @@ interface Collected {
   // including a possible unterminated trailing fragment `stdoutLines`
   // (incremental, newline-delimited) would silently drop.
   rawStdout: () => string;
-}
+};
 
 const collectLines = (proc: ReturnType<typeof spawn>): Collected => {
   const stdoutLines: string[] = [];

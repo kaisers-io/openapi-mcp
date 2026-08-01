@@ -8,11 +8,11 @@ import { run } from '../src/main.ts';
 
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 
-interface Capture {
+type Capture = {
   lines: string[];
   errLines: string[];
   ctx: CliContext;
-}
+};
 
 const fileCtx = (overrides: Parameters<typeof testContext>[0] = {}): Capture => {
   const lines: string[] = [];

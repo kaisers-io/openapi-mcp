@@ -30,13 +30,13 @@ const specOf = (version: string, extra: boolean): string =>
     },
   });
 
-interface Fixture {
+type Fixture = {
   home: string;
   root: string;
   url: string;
   server: Server;
   body: { text: string };
-}
+};
 
 let fixture: Fixture;
 

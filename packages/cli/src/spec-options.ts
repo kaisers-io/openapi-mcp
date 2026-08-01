@@ -51,10 +51,10 @@ export const omissionWarningLines = (allOmitted: readonly OmittedOperation[]): r
       `omitted ${omission.method} ${sanitizeSpecText(omission.path, PATH_DISPLAY_MAX)} — ${sanitizeSpecText(omission.reason, PATH_DISPLAY_MAX)}`,
   );
 
-export interface ParsedFilters {
+export type ParsedFilters = {
   allow: readonly FilterPattern[];
   deny: readonly FilterPattern[];
-}
+};
 
 // Patterns parse in the command layer so a syntax error, an over-long
 // pattern, a wildcard bomb, or too many patterns is a usage error (exit 2)
@@ -72,7 +72,7 @@ const cacheRootOf = (ctx: CliContext): string | undefined => {
   return home === undefined || home === '' ? undefined : defaultCacheRoot(home);
 };
 
-export interface SpecCmdOpts {
+export type SpecCmdOpts = {
   // Commander's own `Command<Args, Opts, GlobalOpts>` generic constrains
   // `Opts` to `OptionValues` (`Record<string, any>`), which TS's generic
   // constraint check only accepts from a type carrying an explicit index
@@ -90,7 +90,7 @@ export interface SpecCmdOpts {
   cacheKey?: string;
   trustSpecUpdates?: boolean;
   allowPrivateNetwork?: boolean;
-}
+};
 
 // The --spec/--allow/--deny/... flags shared by every command that runs the
 // spec pipeline (`tools`, `serve`). Registering them in one place keeps their
@@ -131,12 +131,12 @@ export const registerSpecOptions = (command: Command): Command<[], SpecCmdOpts> 
       'permit private/loopback redirect targets during the spec fetch (never cloud-metadata)',
     );
 
-export interface SpecPipelineArgs {
+export type SpecPipelineArgs = {
   source: string;
   options: SpecPipelineOptions;
   deps: SpecPipelineDeps;
   filters: ParsedFilters;
-}
+};
 
 // Builds the exact runSpecPipeline call shape both `tools` and `serve` need,
 // so their spec/cache/filter behaviour can never silently diverge.

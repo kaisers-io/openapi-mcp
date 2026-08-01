@@ -119,15 +119,14 @@
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
     {
-      "files": ["packages/core/**/*.ts"],
+      "files": ["packages/core/**/*.ts", "packages/cli/**/*.ts"],
       "rules": {
-        // Configured (not off): packages/core mandates `type` over
-        // `interface` everywhere an object shape is declared (interface
-        // survives only where TypeScript technically requires it, each such
-        // site carrying its own justifying comment) -- the plugin default
-        // enforces the opposite direction, so this flips it to match the
-        // package's actual convention. Scoped to packages/core only; the
-        // rest of the repo still follows the plugin default.
+        // Configured (not off): both shipped packages (core and cli)
+        // mandate `type` over `interface` everywhere an object shape is
+        // declared (interface survives only where TypeScript technically
+        // requires it, each such site carrying its own justifying comment)
+        // -- the plugin default enforces the opposite direction, so this
+        // flips it to match the packages' actual convention.
         "typescript/consistent-type-definitions": ["error", "type"]
       }
     },

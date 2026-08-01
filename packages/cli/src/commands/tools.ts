@@ -16,13 +16,13 @@ import {
 import type { SpecCmdOpts } from '../spec-options.ts';
 import type { CommandRegistrar } from './registry.ts';
 
-interface ToolRow {
+type ToolRow = {
   name: string;
   method: string;
   path: string;
   summary?: string;
   deprecated: boolean;
-}
+};
 
 export const registerTools: CommandRegistrar = (program, ctx, state) => {
   registerSpecOptions(program.command('tools'))

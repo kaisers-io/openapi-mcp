@@ -21,7 +21,7 @@ import { cachePathTypeError, validationError } from '@kaisers-io/openapi-mcp-cor
 import type { CacheFs, PinnedDeps } from '@kaisers-io/openapi-mcp-core';
 import { fetch as undiciFetch } from 'undici';
 
-export interface CliContext {
+export type CliContext = {
   env: Readonly<Record<string, string | undefined>>;
   out: (line: string) => void;
   errLine: (line: string) => void;
@@ -49,7 +49,7 @@ export interface CliContext {
   // hazard), `resolve` bound to this same `lookup`, and a real per-call
   // timeout signal factory.
   transport: PinnedDeps;
-}
+};
 
 const CACHE_FS_ERROR = 'no cache filesystem configured in testContext';
 
@@ -360,10 +360,13 @@ export const realContext = (): CliContext => ({
   },
 });
 
-export interface TestContextOverrides extends Partial<CliContext> {
+// Hand-checked (Task 24): TestContextOverrides adds only `lines`/`errLines`,
+// neither of which is a CliContext member name, so this intersection cannot
+// silently collapse an inherited member's type to `never`.
+export type TestContextOverrides = Partial<CliContext> & {
   lines?: string[];
   errLines?: string[];
-}
+};
 
 export const testContext = (overrides: TestContextOverrides = {}): CliContext => {
   const { lines = [], errLines = [], ...rest } = overrides;

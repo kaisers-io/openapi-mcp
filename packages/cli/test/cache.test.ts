@@ -15,10 +15,13 @@ import { run } from '../src/main.ts';
 const HOME = '/home/tester';
 const ROOT = `${HOME}/.kaisers-io/openapi-mcp/cache`;
 
-interface MemoryCacheFs extends CacheFs {
+// Hand-checked (Task 24): MemoryCacheFs adds only `files`/`calls`, neither
+// of which is a CacheFs member name, so this intersection cannot silently
+// collapse an inherited member's type to `never`.
+type MemoryCacheFs = CacheFs & {
   files: Map<string, string>;
   calls: string[];
-}
+};
 
 const memoryCacheFs = (): MemoryCacheFs => {
   const files = new Map<string, string>();
@@ -115,12 +118,12 @@ const changedText = JSON.stringify({
   },
 });
 
-interface Capture {
+type Capture = {
   lines: string[];
   errLines: string[];
   cacheFs: MemoryCacheFs;
   ctx: CliContext;
-}
+};
 
 const cacheCtx = (
   bodies: readonly string[] = [specText],

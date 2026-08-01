@@ -6,9 +6,9 @@ import { emitError, getGlobalOpts } from './output.ts';
 import { REGISTRARS } from './commands/registry.ts';
 import type { CommandRegistrar } from './commands/registry.ts';
 
-export interface RunState {
+export type RunState = {
   exitCode: number;
-}
+};
 
 export const buildProgram = (
   ctx: CliContext,

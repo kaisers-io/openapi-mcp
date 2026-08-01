@@ -12,10 +12,10 @@ import {
 } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
 
-export interface OutputOptions {
+export type OutputOptions = {
   json: boolean;
   verbose: boolean;
-}
+};
 
 // Warnings are single-line by contract; this bounds one hostile spec-derived value
 const WARNING_DISPLAY_MAX = 1024;
@@ -27,12 +27,12 @@ export const getGlobalOpts = (program: Command): OutputOptions => {
   return { json: opts['json'] === true, verbose: opts['verbose'] === true };
 };
 
-export interface ActionResult {
+export type ActionResult = {
   data: unknown;
   humanLines: readonly string[];
   // The exactOptionalPropertyTypes flag forces the explicit undefined
   warnings?: readonly string[] | undefined;
-}
+};
 
 // Warnings go to stderr: stdout stays reserved for the command's own output so
 // it remains pipeable. Warnings can carry untrusted spec text (omitted paths,
