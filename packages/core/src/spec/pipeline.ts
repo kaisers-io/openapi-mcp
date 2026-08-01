@@ -136,6 +136,11 @@ export const runSpecPipeline = async (
   });
 
   const warnings: string[] = [];
+  // Composition root, imperative on purpose: `layout` stays undefined on the
+  // bypass branch and is only assigned after the awaited mkdirSecure below
+  // succeeds — a ternary/ helper would either call mkdirSecure unconditionally
+  // or hide the awaited side effect inside a value-producing expression,
+  // reordering it relative to the `warnings.push` above.
   let layout: CacheLayout | undefined;
   if (policy.kind === 'bypass') {
     // This is the ONLY way storage is skipped. A bypass is a policy decision
@@ -159,6 +164,9 @@ export const runSpecPipeline = async (
     ({ layout } = policy);
   }
 
+  // Composition root, imperative on purpose: `cached` stays undefined unless
+  // the awaited read below both runs (layout defined) and reports a hit;
+  // the corrupt-entry throw in between is a fail-closed exit, not a value.
   let cached: CacheEntry | undefined;
   if (layout !== undefined) {
     // The reader itself distinguishes absence from failure; anything it
@@ -203,6 +211,12 @@ export const runSpecPipeline = async (
   // a failed fetch or a failed validation of the REFRESHED spec falls back to
   // the accepted baseline. The corrupt-entry throw above is deliberately outside
   // it, because a corrupt anchor is never a recoverable condition.
+  // Composition root, imperative on purpose: `refreshed` and
+  // `notModifiedValidators` below are assigned deep inside the try's
+  // conditional branches and read after it — the staged
+  // fail-closed-read/conditional-refresh/last-known-good-fallback sequence is
+  // sequential by contract (see the shared brief), not a candidate for
+  // restructuring into a value expression.
   let refreshed:
     | { loaded: LoadedSpecText; etag?: string | undefined; lastModified?: string | undefined }
     | 'not-modified';

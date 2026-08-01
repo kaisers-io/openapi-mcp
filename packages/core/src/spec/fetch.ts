@@ -95,12 +95,19 @@ const fetchChain = async (
   // private/loopback literal is still allowed, but cloud-metadata is denied
   // even for an operator-supplied --spec URL — a deliberate hardening, not a
   // regression).
+  // Security module, imperative on purpose: `url` is the manual redirect
+  // loop's per-hop cursor, reassigned only at the bottom of the loop body
+  // once a redirect target has cleared every hop check — restructuring this
+  // into a fold would move that reassignment past checks whose ORDER is the
+  // security property (validate-then-advance, never the reverse).
   let url = initialUrl;
   validateHopUrl(url);
   // MONOTONIC (matches the API path's monotonic stripping): once the chain
   // has left the original origin, it never regains credentials — even
   // bouncing back to the original origin later. Set once true, never reset.
   let crossed = false;
+  // Loop induction bound to MAX_REDIRECTS, checked per hop so the abort-on-
+  // throw budget below is enforced at every iteration, not computed upfront.
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     // Hop 0 (--spec) carries the operator's trust; every redirect hop is
     // untrusted, same split as pinnedRequest's baseTrusted/hop===0 rule.
@@ -122,7 +129,12 @@ const fetchChain = async (
     });
     if (!crossed && url.origin === originalOrigin) {
       // Auth headers are never forwarded to a foreign origin, and
-      // neither are cache validators: they describe the original origin's copy
+      // neither are cache validators: they describe the original origin's copy.
+      // Security module: `headers` is a local, freshly-constructed Headers
+      // instance (line above) whose mutation never escapes this hop — building
+      // it via spread/Object.fromEntries instead would restructure the
+      // trust-boundary conditional this block enforces, which the
+      // locally-provable-only rule for this file disallows.
       for (const header of opts.headers) {
         headers.set(header.name, header.value);
       }
@@ -139,6 +151,11 @@ const fetchChain = async (
     // pre-fetch DNS lookup would leave open. Bound to the whole-chain
     // deadline (`signal`) so DNS cannot outlive the fetch budget.
     const agent = createPinnedAgent(policy, chainResolve(deps.lookup, signal));
+    // Seam hazard + security module: `deps.fetcher` is an injected
+    // Promise-returning transport (a fake in tests may throw synchronously,
+    // matching Task 25's lesson), and the catch below performs a required
+    // cleanup (agent.destroy()) before mapping the error — collapsing this to
+    // `.catch()` would narrow that catch boundary around the cleanup.
     let response: UndiciResponse;
     try {
       response = await deps.fetcher(url, {
@@ -163,6 +180,10 @@ const fetchChain = async (
       }
       throw validationError(`spec fetch failed for ${displaySource(url)}: ${describeCause(error)}`);
     }
+    // `exceptional` is read in the `finally` below to choose destroy() vs the
+    // graceful close() — a flag threaded from `catch` across a cleanup
+    // boundary is exactly what the semantic preconditions say must stay
+    // imperative (security module besides).
     let exceptional = false;
     try {
       // Verified by probe: fetch surfaces a 304 with ok === false and
@@ -191,6 +212,10 @@ const fetchChain = async (
         if (location === null) {
           throw validationError(`redirect from ${displaySource(url)} has no Location header`);
         }
+        // Security module: only locally-provable rewrites are allowed here
+        // (single-expression, let→const-without-restructuring, pure
+        // loop→map); extracting this try/catch into a helper isn't on that
+        // list, so the declare-then-assign stays.
         let next: URL;
         try {
           next = new URL(location, url);

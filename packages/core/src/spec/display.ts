@@ -36,6 +36,11 @@ const cellWidth = (codePoint: number): number => (codePoint < 0x7f ? 1 : 2);
 
 // Chunk by DISPLAY CELLS, iterating code POINTS (for..of), so a surrogate pair
 // is never split and no physical line exceeds the cell budget.
+// Imperative on purpose: `current`/`cells` co-evolve per code point and reset
+// together on a chunk boundary; a reduce accumulator would need to copy `out`
+// (`[...out, current]`) on every chunk boundary, an O(n^2) hot-path copy over
+// per-code-point input that the catalogue's "no hot-path copying" rule rules
+// out — the mutable `out` array is the cheaper, equally-safe alternative.
 const chunkByCells = (text: string, cellBudget: number): string[] => {
   const out: string[] = [];
   let current = '';
@@ -60,6 +65,10 @@ const chunkByCells = (text: string, cellBudget: number): string[] => {
 // pair is never split. Returns [text, capped]; the marker is appended when
 // anything was dropped (a small marker overrun is harmless — chunkByCells wraps
 // the result afterward). This is cell-aware, unlike sanitize's length-based cap.
+// Imperative on purpose: the loop must return the moment the budget is
+// exceeded (an early abort mid-string), carrying the string built so far —
+// there's no array method that stops on a computed condition of an
+// accumulating value and returns that accumulator inline the way this needs.
 const truncateCells = (text: string, maxCells: number): [string, boolean] => {
   let cells = 0;
   let out = '';
@@ -74,41 +83,50 @@ const truncateCells = (text: string, maxCells: number): [string, boolean] => {
   return [out, false];
 };
 
+// The gutter is ASCII, so its cell width equals its code-unit length. Only a
+// non-positive raw budget (gutter as wide as or wider than the terminal) is
+// floored to FRAME_MIN_CONTENT_WIDTH; a small-but-positive budget (e.g. a
+// narrow-but-usable terminal) is honoured as-is.
+const computeCellBudget = (
+  terminalWidth: number | undefined,
+  gutterLength: number,
+): number | undefined => {
+  if (terminalWidth === undefined) {
+    return undefined;
+  }
+  const rawBudget = terminalWidth - gutterLength;
+  return rawBudget > 0 ? rawBudget : FRAME_MIN_CONTENT_WIDTH;
+};
+
 export const gutterFrame = (
   logicalLines: readonly string[],
   opts: GutterFrameOptions,
 ): GutteredBody => {
   const shown = logicalLines.slice(0, opts.maxLines);
+  const cellBudget =
+    opts.terminalWidth === undefined
+      ? undefined
+      : computeCellBudget(opts.terminalWidth, opts.gutter.length);
+  // One map, in the same order as the original for-of: each logical line still
+  // calls truncateCells and (conditionally) chunkByCells exactly once, so the
+  // side-effect-free per-line work is neither skipped nor duplicated.
+  const perLine = shown.map((logical) => {
+    const [capped, wasCut] = truncateCells(logical, opts.perLineMax);
+    const pieces = cellBudget === undefined ? [capped] : chunkByCells(capped, cellBudget);
+    return { pieces, wasCut };
+  });
+  const lines = perLine.flatMap(({ pieces }) => pieces.map((piece) => `${opts.gutter}${piece}`));
   // Truncated flags BOTH dropped logical lines AND any per-line cell cut, so the
   // footer's "DETAILS TRUNCATED" is honest for either.
-  let truncated = logicalLines.length > shown.length;
-  // The gutter is ASCII, so its cell width equals its code-unit length. Only a
-  // non-positive raw budget (gutter as wide as or wider than the terminal) is
-  // floored to FRAME_MIN_CONTENT_WIDTH; a small-but-positive budget (e.g. a
-  // narrow-but-usable terminal) is honoured as-is.
-  let cellBudget: number | undefined;
-  if (opts.terminalWidth === undefined) {
-    cellBudget = undefined;
-  } else {
-    const rawBudget = opts.terminalWidth - opts.gutter.length;
-    cellBudget = rawBudget > 0 ? rawBudget : FRAME_MIN_CONTENT_WIDTH;
-  }
-  const lines: string[] = [];
-  for (const logical of shown) {
-    const [capped, wasCut] = truncateCells(logical, opts.perLineMax);
-    if (wasCut) {
-      truncated = true;
-    }
-    const pieces = cellBudget === undefined ? [capped] : chunkByCells(capped, cellBudget);
-    for (const piece of pieces) {
-      lines.push(`${opts.gutter}${piece}`);
-    }
-  }
+  const truncated = logicalLines.length > shown.length || perLine.some(({ wasCut }) => wasCut);
   return { lines, logicalShown: shown.length, truncated };
 };
 
 // Total display cells a string occupies (code-point aware). Used by emitError to
 // decide compact vs framed: a single line that fits the width in CELLS is safe.
+// Imperative on purpose: streams code points with O(1) auxiliary memory; this
+// is exported and accepts unbounded input, so materializing [...text] first
+// would double peak memory.
 export const displayCells = (text: string): number => {
   let cells = 0;
   for (const ch of text) {

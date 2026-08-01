@@ -1,6 +1,14 @@
 import { validationError } from '../errors.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 
+const decodeSegment = (rawSegment: string, ref: string): string => {
+  try {
+    return decodeURIComponent(rawSegment);
+  } catch {
+    throw validationError(`$ref "${ref}" contains an invalid URI escape`);
+  }
+};
+
 const resolvePointer = (document: Record<string, unknown>, ref: string): unknown => {
   const pointer = ref.slice(1);
   if (pointer === '') {
@@ -11,31 +19,36 @@ const resolvePointer = (document: Record<string, unknown>, ref: string): unknown
       `unsupported $ref "${ref}" — only JSON-pointer fragments ("#/...") are supported`,
     );
   }
-  let current: unknown = document;
-  for (const rawSegment of pointer.slice(1).split('/')) {
-    let segment: string;
-    try {
-      segment = decodeURIComponent(rawSegment);
-    } catch {
-      throw validationError(`$ref "${ref}" contains an invalid URI escape`);
-    }
-    segment = segment.replaceAll('~1', '/').replaceAll('~0', '~');
-    if (Array.isArray(current)) {
-      const index = Number(segment);
-      if (!Number.isInteger(index) || index < 0 || index >= current.length) {
-        throw validationError(`$ref "${ref}" does not resolve (bad array index "${segment}")`);
+  // Fold left-to-right over the pointer's segments, same order and same
+  // per-segment throw points as the original loop — each step still resolves
+  // exactly one array index or object key before the next segment is read.
+  return pointer
+    .slice(1)
+    .split('/')
+    .reduce<unknown>((current, rawSegment) => {
+      const segment = decodeSegment(rawSegment, ref).replaceAll('~1', '/').replaceAll('~0', '~');
+      if (Array.isArray(current)) {
+        const index = Number(segment);
+        if (!Number.isInteger(index) || index < 0 || index >= current.length) {
+          throw validationError(`$ref "${ref}" does not resolve (bad array index "${segment}")`);
+        }
+        return current[index];
       }
-      current = current[index];
-    } else if (current !== null && typeof current === 'object' && Object.hasOwn(current, segment)) {
-      current = (current as Record<string, unknown>)[segment];
-    } else {
+      if (current !== null && typeof current === 'object' && Object.hasOwn(current, segment)) {
+        return (current as Record<string, unknown>)[segment];
+      }
       throw validationError(`$ref "${ref}" does not resolve`);
-    }
-  }
-  return current;
+    }, document);
 };
 
 export const dereference = (document: Record<string, unknown>): Record<string, unknown> => {
+  // Imperative on purpose: nodeCount is a running total shared across every
+  // recursive `walk` call (a single budget for the whole expansion, not a
+  // per-branch one), incremented as a side effect so the budget check fires
+  // the instant the total is exceeded. Threading it through return values
+  // instead would mean every return path of `walk` — including the
+  // pass-through/cycle short-circuits — carries a count, entangling the
+  // dereferencing result type with budget bookkeeping for no behavioural gain.
   let nodeCount = 0;
 
   const countNode = (): void => {

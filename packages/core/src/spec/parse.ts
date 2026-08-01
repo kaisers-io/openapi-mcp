@@ -76,19 +76,12 @@ const parseJsonFirst = (text: string): unknown => {
   }
 };
 
-export const parseSpecText = (raw: string): Record<string, unknown> => {
-  const text = stripBom(raw);
-  const sniffed = text.trimStart();
-  if (sniffed === '') {
-    throw validationError('spec document is empty');
-  }
-  let parsed: unknown;
+const parseTextOrThrow = (text: string, sniffed: string): unknown => {
   try {
-    parsed =
-      sniffed.startsWith('{') || sniffed.startsWith('[')
-        ? parseJsonFirst(text)
-        : // oxlint-disable-next-line unicorn/no-useless-undefined -- parseAsYaml's jsonError is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
-          parseAsYaml(text, undefined);
+    return sniffed.startsWith('{') || sniffed.startsWith('[')
+      ? parseJsonFirst(text)
+      : // oxlint-disable-next-line unicorn/no-useless-undefined -- parseAsYaml's jsonError is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
+        parseAsYaml(text, undefined);
   } catch (error) {
     if (error instanceof RangeError) {
       // V8 recursion limit hit before the depth budget below could run
@@ -96,6 +89,15 @@ export const parseSpecText = (raw: string): Record<string, unknown> => {
     }
     throw error;
   }
+};
+
+export const parseSpecText = (raw: string): Record<string, unknown> => {
+  const text = stripBom(raw);
+  const sniffed = text.trimStart();
+  if (sniffed === '') {
+    throw validationError('spec document is empty');
+  }
+  const parsed = parseTextOrThrow(text, sniffed);
   checkDepth(parsed, SPEC_BUDGETS.maxParseDepth);
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw validationError('spec root must be a JSON/YAML object');

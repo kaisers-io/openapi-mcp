@@ -21,18 +21,21 @@ export const findSensitiveQueryParam = (url: URL): string | undefined => {
   return undefined;
 };
 
+const parseUrlOrThrow = (raw: string): URL => {
+  try {
+    return new URL(raw);
+  } catch {
+    // Do not echo the raw input: an unparsable URL may still carry a credential
+    throw usageError('invalid spec URL');
+  }
+};
+
 export const parseSpecSource = (raw: string, opts: { cwd: string }): SpecSource => {
   if (raw === '') {
     throw usageError('--spec must not be empty');
   }
   if (SCHEME_RE.test(raw)) {
-    let url: URL;
-    try {
-      url = new URL(raw);
-    } catch {
-      // Do not echo the raw input: an unparsable URL may still carry a credential
-      throw usageError('invalid spec URL');
-    }
+    const url = parseUrlOrThrow(raw);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       throw usageError(
         `unsupported URL scheme "${url.protocol}" for --spec — only http: and https: are allowed` +
@@ -74,28 +77,31 @@ export type FileLoadDeps = {
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+// Named seam wrapper: `read` is an injected async dependency (fileSizeBytes /
+// readFileText) that the caller may swap for a fake in tests, so the
+// try/catch stays — collapsing it to `.catch()` would narrow the catch
+// boundary around a Promise-typed seam that a fake can still reject or throw
+// through in ways the real implementation wouldn't.
+const readOrNotFound = async <T>(read: () => Promise<T>, path: string): Promise<T> => {
+  try {
+    return await read();
+  } catch (error) {
+    throw notFoundError(`cannot read spec file "${path}": ${describeCause(error)}`);
+  }
+};
+
 export const loadSpecFromFile = async (
   path: string,
   maxBytes: number,
   deps: FileLoadDeps,
 ): Promise<LoadedSpecText> => {
-  let size: number;
-  try {
-    size = await deps.fileSizeBytes(path);
-  } catch (error) {
-    throw notFoundError(`cannot read spec file "${path}": ${describeCause(error)}`);
-  }
+  const size = await readOrNotFound(() => deps.fileSizeBytes(path), path);
   if (size > maxBytes) {
     throw validationError(
       `spec file "${path}" is ${size} bytes — exceeds the ${maxBytes}-byte budget`,
     );
   }
-  let text: string;
-  try {
-    text = await deps.readFileText(path);
-  } catch (error) {
-    throw notFoundError(`cannot read spec file "${path}": ${describeCause(error)}`);
-  }
+  const text = await readOrNotFound(() => deps.readFileText(path), path);
   const byteLength = Buffer.byteLength(text, 'utf8');
   if (byteLength > maxBytes) {
     // TOCTOU guard: the file may have grown between stat and read

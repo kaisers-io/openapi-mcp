@@ -21,14 +21,12 @@ const truncate = (cleaned: string, maxLength: number): string => {
     return cleaned;
   }
   const hardCut = maxLength <= TRUNCATION_MARKER.length;
-  let end = hardCut ? maxLength : maxLength - TRUNCATION_MARKER.length;
-  // Never slice between a high and low surrogate: codePointAt(end - 1) only
-  // exceeds 0xffff when the unit at `end - 1` and the unit at `end` form a
-  // genuine astral pair, so step back one unit to keep it whole.
-  const codePoint = end > 0 ? cleaned.codePointAt(end - 1) : 0;
-  if (codePoint !== undefined && codePoint > 0xff_ff) {
-    end -= 1;
-  }
+  const rawEnd = hardCut ? maxLength : maxLength - TRUNCATION_MARKER.length;
+  // Never slice between a high and low surrogate: codePointAt(rawEnd - 1) only
+  // exceeds 0xffff when the unit at `rawEnd - 1` and the unit at `rawEnd` form
+  // a genuine astral pair, so step back one unit to keep it whole.
+  const codePoint = rawEnd > 0 ? cleaned.codePointAt(rawEnd - 1) : 0;
+  const end = codePoint !== undefined && codePoint > 0xff_ff ? rawEnd - 1 : rawEnd;
   const head = cleaned.slice(0, end);
   return hardCut ? head : `${head}${TRUNCATION_MARKER}`;
 };

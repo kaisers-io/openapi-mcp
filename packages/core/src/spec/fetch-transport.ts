@@ -72,6 +72,11 @@ export const readBodyCapped = async (
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
+  // Imperative on purpose: a streamed body read is inherently serial — each
+  // chunk must be awaited, measured against the running total, and (on
+  // overrun) cause an immediate reader.cancel() before the next chunk is
+  // even requested. No array/stream combinator preserves that per-chunk
+  // abort point.
   let received = 0;
   for (;;) {
     const { done, value } = await reader.read();
