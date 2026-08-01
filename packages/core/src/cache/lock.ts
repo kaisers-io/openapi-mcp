@@ -43,6 +43,11 @@ const readLockHolder = async (
   layout: CacheLayout,
   fs: CacheFs,
 ): Promise<LockHolder | undefined> => {
+  // Imperative on purpose: the catch below `return`s `undefined` — a type
+  // distinct from the `string` this variable holds on success — so folding
+  // it into `.catch(...)` would need a sentinel checked afterward, i.e. a
+  // control-flow restructuring, and this lock primitive's imperative shape
+  // is deliberately left alone.
   let raw: string;
   try {
     raw = await fs.readFileTextCapped(layout.lockPath, LOCK_FILE_MAX_BYTES);
@@ -52,6 +57,9 @@ const readLockHolder = async (
     }
     return undefined;
   }
+  // Imperative on purpose: JSON.parse is synchronous, so there is no promise
+  // to `.catch`, and a try-as-expression here would need an IIFE this repo's
+  // style forbids for its own sake.
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);

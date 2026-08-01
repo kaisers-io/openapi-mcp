@@ -39,6 +39,9 @@ const assertRedactedDisplaySource = (displaySource: string): void => {
   if (!URL_DISPLAY_SOURCE_RE.test(displaySource)) {
     return;
   }
+  // Imperative on purpose: `new URL` is synchronous, so there is no `.catch`
+  // to inline into, and this security module forbids the helper extraction
+  // or IIFE a try-as-expression would otherwise need.
   let url: URL;
   try {
     url = new URL(displaySource);
@@ -100,6 +103,11 @@ const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
 // invariant this preflight exists to establish: JSON.stringify({x:'é' +
 // EMOJI}) is 11 UTF-16 units but 14 UTF-8 bytes.
 export const serializeWithinBudget = (value: unknown, budget: number): string | undefined => {
+  // Imperative on purpose, for `used`, `parts`, and `seen` alike: this is the
+  // accumulate-then-abort shape the design note above requires — a
+  // map/filter/reduce pipeline would build the whole string (or the whole
+  // membership set) before any abort could happen, which is exactly the
+  // unbounded-allocation-before-refusal this preflight exists to prevent.
   let used = 0;
   const parts: string[] = [];
   const overflow = Symbol('overflow');
@@ -175,8 +183,18 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       ) {
         throw unsupported;
       }
+      // Imperative on purpose: `seen.add`/`seen.delete` (here and in the
+      // object branch below) track cycle-detection membership shared across
+      // the whole recursive walk — a value read afterward by every nested
+      // `walk` call, not a local accumulation a map/filter could replace.
       seen.add(node);
       emit('[');
+      // Imperative on purpose: the index is used to fetch
+      // `Object.getOwnPropertyDescriptor(node, index)` rather than
+      // `node[index]` specifically so an own accessor is never invoked (see
+      // the descriptor comment below). A for-of over the array's values, or
+      // `.entries()`, would read through `[[Get]]` and trigger exactly the
+      // getter this loop exists to avoid calling.
       for (let index = 0; index < node.length; index += 1) {
         // Own DATA descriptor, captured value walked exactly once (a hole or
         // explicit undefined serializes as null, which the domain refuses).
@@ -222,6 +240,11 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       }
       seen.add(node);
       emit('{');
+      // Imperative on purpose: `first` tracks the first member actually
+      // EMITTED, not the first key iterated — a skipped member (the
+      // `continue` below, for an undefined/function/symbol value) must not
+      // still cause the next real member to render a leading comma, so this
+      // cannot be replaced by an index-based iteration.
       let first = true;
       // Object.keys is exactly the set JSON.stringify iterates, in the same
       // order; getOwnPropertyDescriptor captures each value once (an accessor is
@@ -349,10 +372,11 @@ const commitEntry = async (
 // succeeded, and leaving a stray object is a wasted inode, not a correctness
 // problem — turning it into an error would fail a write that actually worked.
 const collectGarbage = async (layout: CacheLayout, fs: CacheFs, meta: CacheMeta): Promise<void> => {
-  const referenced = new Set<string>([`${meta.acceptedContentHash}.json`]);
-  if (meta.candidate !== undefined) {
-    referenced.add(`${meta.candidate.contentHash}.json`);
-  }
+  const referenced = new Set<string>(
+    meta.candidate === undefined
+      ? [`${meta.acceptedContentHash}.json`]
+      : [`${meta.acceptedContentHash}.json`, `${meta.candidate.contentHash}.json`],
+  );
   try {
     for (const name of await fs.readDirNames(layout.objectsDir)) {
       if (!referenced.has(name)) {
@@ -404,6 +428,11 @@ const readMetaFile = async (layout: CacheLayout, fs: CacheFs): Promise<MetaReadR
     // The orphans are reclaimed by the next successful commit's GC.
     return { kind: 'miss' };
   }
+  // Imperative on purpose: unlike the `.catch`-eligible reads below, both
+  // catch branches here `return` a MetaReadResult — a type distinct from the
+  // `string` this variable holds on success — so folding this into
+  // `.catch(...)` would need a sentinel checked afterward, i.e. control-flow
+  // restructuring this security module forbids.
   let raw: string;
   try {
     raw = await fs.readFileTextCapped(layout.metaPath, CACHE_META_MAX_BYTES);
@@ -426,6 +455,9 @@ const readMetaFile = async (layout: CacheLayout, fs: CacheFs): Promise<MetaReadR
         : `cache metadata for entry ${layout.namespace} could not be read`,
     };
   }
+  // Imperative on purpose: JSON.parse is synchronous, so there is no promise
+  // to `.catch`, and a try-as-expression here would need an IIFE or a helper
+  // extraction, neither of which this security module allows.
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -473,6 +505,9 @@ export const declaredOpenapiVersion = (
 };
 
 const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
+  // Imperative on purpose: same reasoning as readMetaFile's JSON.parse above
+  // — synchronous, so no `.catch` applies, and this security module allows
+  // neither an IIFE nor a helper extraction to make it an expression.
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -548,6 +583,7 @@ const assertAcceptedObjectIntact = async (
   fs: CacheFs,
   meta: CacheMeta,
 ): Promise<void> => {
+  // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
   let acceptedText: string;
   try {
     acceptedText = await fs.readFileTextCapped(
@@ -801,6 +837,11 @@ const generationKey = (meta: CacheMeta): string =>
   `${meta.acceptedContentHash}:${String(meta.fetchedAt)}`;
 
 const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<CacheReadResult> => {
+  // Imperative on purpose: these three are a bounded retry state machine
+  // across an unbounded `for (;;)` — each is reassigned from a different
+  // branch on a different iteration, so there is no pure accumulation
+  // (map/reduce) shape to fold them into without changing when the loop
+  // retries versus gives up.
   let advanceRetries = 0;
   let staticConfirms = 0;
   let previousGenKey: string | undefined;
@@ -835,6 +876,10 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
       staticConfirms = 0;
     }
     previousGenKey = genKey;
+    // Imperative on purpose: the catch below can `continue` the enclosing
+    // `for (;;)` loop to retry against a new generation — a control-flow
+    // move `.catch` cannot express and this security module forbids
+    // restructuring around.
     let acceptedText: string;
     try {
       acceptedText = await fs.readFileTextCapped(
@@ -976,6 +1021,7 @@ const promoteCandidateImpl = async (
         `no candidate is waiting for promotion in cache entry ${layout.namespace}`,
       );
     }
+    // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
     let candidateText: string;
     try {
       candidateText = await fs.readFileTextCapped(
@@ -1061,6 +1107,7 @@ const clearNamespaceImpl = async (
     // the probe above and the acquisition, and "removed something" has to
     // describe what THIS call actually removed
     const hadMeta = await fs.pathExists(layout.metaPath);
+    // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
     let objectNames: readonly string[] = [];
     try {
       objectNames = await fs.readDirNames(layout.objectsDir);
