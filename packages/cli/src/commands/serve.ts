@@ -88,7 +88,9 @@ export const createTransportWarningRoute = (
     const dropped = suppressed;
     suppressed = 0;
     emitWarnings(ctx, [
-      ...(dropped === 0 ? [] : [`${label}: ${String(dropped)} more warnings suppressed`]),
+      ...(dropped === 0
+        ? []
+        : [`${label}: ${String(dropped)} more warning${dropped === 1 ? '' : 's'} suppressed`]),
       `${label}: ${error.message}`,
     ]);
   };
@@ -433,11 +435,17 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         // Block until a graceful shutdown signal — there is no client
         // stdin stream to watch for EOF in HTTP mode (unlike the stdio
         // branch above), so SIGINT/SIGTERM are the only shutdown triggers.
-        // oxlint-disable-next-line promise/avoid-new -- races two independent process signal events (SIGINT/SIGTERM) with no single promise-returning API that covers both
-        await new Promise<void>((resolve) => {
-          process.once('SIGINT', () => resolve());
-          process.once('SIGTERM', () => resolve());
-        });
+        // Named handler + removeListener, mirroring the stdio branch above:
+        // whichever signal loses the race would otherwise keep a listener on
+        // the process throughout close(), so a second signal during a hung
+        // teardown would be swallowed instead of getting default behavior.
+        const shutdown = Promise.withResolvers<void>();
+        const onShutdownSignal = (): void => shutdown.resolve();
+        process.once('SIGINT', onShutdownSignal);
+        process.once('SIGTERM', onShutdownSignal);
+        await shutdown.promise;
+        process.removeListener('SIGINT', onShutdownSignal);
+        process.removeListener('SIGTERM', onShutdownSignal);
         await httpServer.close();
       }
       state.exitCode = EXIT.OK;

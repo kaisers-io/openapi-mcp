@@ -71,7 +71,10 @@ describe('createTransportWarningRoute', () => {
     nowMs = 6001;
     route(new Error('third'));
     expect(errLines).toHaveLength(4);
-    expect(errLines[2]).toContain('http transport: 1 more warnings suppressed');
+    // Singular grammar: exactly one drop reads "1 more warning suppressed",
+    // not "1 more warnings suppressed".
+    expect(errLines[2]).toContain('http transport: 1 more warning suppressed');
+    expect(errLines[2]).not.toContain('1 more warnings suppressed');
   });
 
   it('labels each route independently — the stdio and HTTP sinks do not share a budget', () => {
