@@ -5,7 +5,7 @@ import type { OpenapiVersion } from './validate.ts';
 export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head'] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
-// OPTIONS and TRACE operations are never exposed in v1
+// OPTIONS and TRACE operations are never exposed
 const NEVER_EXPOSED_METHODS = ['options', 'trace'] as const;
 
 const TITLE_MAX_LENGTH = 256;
@@ -206,7 +206,7 @@ const buildPathEntries = (
   ).map((method) => ({
     method: method.toUpperCase(),
     path,
-    reason: `${method.toUpperCase()} operations are never exposed in v1`,
+    reason: `${method.toUpperCase()} operations are never exposed`,
   }));
   const perMethod = HTTP_METHODS.flatMap((method): (OperationRecord | OmittedOperation)[] => {
     const op = item[method];

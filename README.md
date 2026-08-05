@@ -248,6 +248,11 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
 
 Clients must send `Authorization: Bearer <token>`. `--port` defaults to `3044`.
 
+The server speaks MCP revision `2026-07-28` and is stateless: each request is served on its
+own, with no `initialize` handshake and no session state (no `Mcp-Session-Id`). Older, 2025-era
+clients are served the same stateless way. The endpoint is POST-only — `GET` and `DELETE`
+return `405`. Cancellation is the client closing the request stream.
+
 ## Upgrading
 
 Host config examples above pin an exact version

@@ -107,7 +107,7 @@ describe('parseFilterPattern — rejections', () => {
     expect(() => parseFilterPattern('get /users')).toThrow(OpenapiMcpError);
   });
 
-  it('rejects OPTIONS and TRACE, which are never exposed in v1', () => {
+  it('rejects OPTIONS and TRACE, which are never exposed', () => {
     expect(() => parseFilterPattern('OPTIONS /users')).toThrow(OpenapiMcpError);
     expect(() => parseFilterPattern('TRACE /users')).toThrow(OpenapiMcpError);
   });
