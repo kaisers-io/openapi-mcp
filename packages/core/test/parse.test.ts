@@ -22,10 +22,10 @@ describe('parseSpecText — JSON', () => {
     try {
       parseSpecText('{"a": 1,,}');
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('JSON');
-      expect((err as OpenapiMcpError).message).toContain('YAML');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('JSON');
+      expect((error as OpenapiMcpError).message).toContain('YAML');
     }
   });
 });
@@ -48,26 +48,26 @@ describe('parseSpecText — YAML', () => {
     try {
       parseSpecText(bomb);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('alias');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('alias');
     }
   });
 
   it('rejects duplicate mapping keys', () => {
-    expect(() => parseSpecText('a: 1\na: 2\n')).toThrowError(/unique/iu);
+    expect(() => parseSpecText('a: 1\na: 2\n')).toThrow(/unique/iu);
   });
 
   it('rejects unresolved tags fail-closed', () => {
-    expect(() => parseSpecText('a: !!js/function "x"\n')).toThrowError(OpenapiMcpError);
+    expect(() => parseSpecText('a: !!js/function "x"\n')).toThrow(OpenapiMcpError);
   });
 
   it('rejects multi-document streams', () => {
-    expect(() => parseSpecText('a: 1\n---\nb: 2\n')).toThrowError(OpenapiMcpError);
+    expect(() => parseSpecText('a: 1\n---\nb: 2\n')).toThrow(OpenapiMcpError);
   });
 
   it('rejects invalid YAML with the parser message', () => {
-    expect(() => parseSpecText('a: [unclosed\n')).toThrowError(/YAML/u);
+    expect(() => parseSpecText('a: [unclosed\n')).toThrow(/YAML/u);
   });
 });
 
@@ -75,7 +75,7 @@ describe('parseSpecText — structure budgets', () => {
   it('rejects nesting beyond the parse-depth budget', () => {
     const deep = `${'['.repeat(200)}1${']'.repeat(200)}`;
     // Array root would also be rejected, but depth fails first
-    expect(() => parseSpecText(deep)).toThrowError(/depth/u);
+    expect(() => parseSpecText(deep)).toThrow(/depth/u);
   });
 
   it('rejects extreme nesting via the iterative depth walker (V8 JSON.parse no longer recurses)', () => {
@@ -83,9 +83,9 @@ describe('parseSpecText — structure budgets', () => {
     try {
       parseSpecText(extreme);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('deep');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('deep');
     }
   });
 
@@ -95,10 +95,10 @@ describe('parseSpecText — structure budgets', () => {
   });
 
   it.each(['[1, 2]', '"scalar"', '42', 'true'])('rejects non-object root %s', (raw) => {
-    expect(() => parseSpecText(raw)).toThrowError(/object/u);
+    expect(() => parseSpecText(raw)).toThrow(/object/u);
   });
 
   it('rejects an empty document', () => {
-    expect(() => parseSpecText('   \n')).toThrowError(/empty/u);
+    expect(() => parseSpecText('   \n')).toThrow(/empty/u);
   });
 });

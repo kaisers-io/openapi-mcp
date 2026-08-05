@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildLayout, paramFields, type HttpMethod, type OperationRecord } from '../src/index.ts';
+import { buildLayout, paramFields } from '../src/index.ts';
+import type { HttpMethod, OperationRecord } from '../src/index.ts';
 
 const op = (parameters: readonly Record<string, unknown>[]): OperationRecord => ({
   method: 'get' as HttpMethod,
@@ -11,7 +12,9 @@ const op = (parameters: readonly Record<string, unknown>[]): OperationRecord => 
 });
 
 const okFields = (r: ReturnType<typeof paramFields>) => {
-  if (!('ok' in r)) throw new Error(`unrepresentable: ${r.unrepresentable}`);
+  if (!('ok' in r)) {
+    throw new Error(`unrepresentable: ${r.unrepresentable}`);
+  }
   return r.ok;
 };
 
@@ -63,7 +66,7 @@ describe('paramFields', () => {
 
   it('drops reserved header params (case-insensitive)', () => {
     // paramFields drops a header iff its lowercased name is in the passed set;
-    // it has no built-in set. The caller (Task 5) passes SYSTEM_HEADERS ∪ auth names.
+    // it has no built-in set. The caller passes SYSTEM_HEADERS ∪ auth names.
     const fields = okFields(
       paramFields(
         op([
@@ -77,7 +80,7 @@ describe('paramFields', () => {
     expect(fields.map((f) => f.preferred)).toEqual(['keep']);
   });
 
-  it('validates a reserved header BEFORE dropping it (owner decision, round-15)', () => {
+  it('validates a reserved header BEFORE dropping it', () => {
     // A reserved header is injected, not a tool input, but it is still fully
     // validated: a malformed/unsupported reserved-header param omits the operation
     // rather than being silently discarded. A wrong-version exclusive bound:
@@ -126,17 +129,16 @@ describe('paramFields', () => {
         ),
     ).toBe(true);
     // A VALID reserved header is still dropped (not exposed), leaving other fields.
-    expect(
-      okFields(
-        paramFields(
-          op([
-            { name: 'Authorization', in: 'header', schema: { type: 'string' } },
-            { name: 'keep', in: 'query', schema: { type: 'string' } },
-          ]),
-          new Set(['authorization']),
-        ),
-      ).map((f) => f.preferred),
-    ).toEqual(['keep']);
+    const fields = okFields(
+      paramFields(
+        op([
+          { name: 'Authorization', in: 'header', schema: { type: 'string' } },
+          { name: 'keep', in: 'query', schema: { type: 'string' } },
+        ]),
+        new Set(['authorization']),
+      ),
+    );
+    expect(fields.map((f) => f.preferred)).toEqual(['keep']);
   });
 
   it('omits on an unsupported style', () => {
@@ -211,27 +213,23 @@ const jsonBody = (schema: Record<string, unknown>, required = false): Record<str
 });
 
 const layout = (r: ReturnType<typeof buildLayout>) => {
-  if (!('ok' in r)) throw new Error(`unrepresentable: ${r.unrepresentable}`);
+  if (!('ok' in r)) {
+    throw new Error(`unrepresentable: ${r.unrepresentable}`);
+  }
   return r.ok;
 };
 
 describe('buildLayout — body classification', () => {
   it('flattens a closed non-empty object body', () => {
-    const l = layout(
-      buildLayout(
-        bodyOp(
-          jsonBody(
-            {
-              type: 'object',
-              properties: { total: { type: 'integer' }, note: { type: 'string' } },
-              required: ['total'],
-            },
-            true,
-          ),
-        ),
-        new Set(),
-      ),
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { total: { type: 'integer' }, note: { type: 'string' } },
+        required: ['total'],
+      },
+      true,
     );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.mapper.bodyMode).toBe('flattened');
     expect(l.mapper.bodyContentType).toBe('application/json');
     expect(l.mapper.fields['total']).toEqual({
@@ -251,88 +249,59 @@ describe('buildLayout — body classification', () => {
 
   it('does NOT flatten an object body carrying an unsupported keyword — omits it', () => {
     // The root `not` must not be bypassed by flattening (root-schema validation).
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                not: {},
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        not: {},
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(body), new Set())).toBe(true);
   });
 
   it('omits a flattened body whose required name is not a declared property', () => {
     // The flatten path iterates declared properties; a required name with no
     // property would silently lose the constraint. Omit instead.
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                required: ['missing'],
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        required: ['missing'],
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(body), new Set())).toBe(true);
   });
 
   it('omits a flattened body with a malformed required array', () => {
     // The flatten path bypasses convertSchema on the root, so bodyFields must
     // validate the root `required` itself: a non-string element or a duplicate is
-    // an invalid Schema Object and omits (fail-closed, round-12), not silently
-    // filtered as objectSchema's convertSchema path would otherwise do.
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                required: [123],
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                required: ['a', 'a'],
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
+    // an invalid Schema Object and omits (fail-closed), not silently filtered
+    // as objectSchema's convertSchema path would otherwise do.
+    const nonStringBody = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        required: [123],
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(nonStringBody), new Set())).toBe(true);
+    const duplicateBody = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        required: ['a', 'a'],
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(duplicateBody), new Set())).toBe(true);
   });
 
   it('wraps an array-root body in a single body field', () => {
-    const l = layout(
-      buildLayout(bodyOp(jsonBody({ type: 'array', items: { type: 'string' } }, true)), new Set()),
-    );
+    const body = jsonBody({ type: 'array', items: { type: 'string' } }, true);
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.mapper.bodyMode).toBe('single');
     expect(l.mapper.fields['body']).toEqual({ destination: 'body', bodyPath: [], required: true });
     expect(l.inputSchema.safeParse({ body: ['a'] }).success).toBe(true);
@@ -340,44 +309,32 @@ describe('buildLayout — body classification', () => {
   });
 
   it('wraps an open object body (additionalProperties true) as single body', () => {
-    const l = layout(
-      buildLayout(
-        bodyOp(
-          jsonBody({
-            type: 'object',
-            additionalProperties: true,
-            properties: { a: { type: 'string' } },
-          }),
-        ),
-        new Set(),
-      ),
-    );
+    const body = jsonBody({
+      type: 'object',
+      additionalProperties: true,
+      properties: { a: { type: 'string' } },
+    });
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.mapper.bodyMode).toBe('single');
   });
 
   it('omits a body with a malformed additionalProperties (not flattened, not silently ignored)', () => {
     // additionalProperties:7 is neither absent/false nor true/schema; it must not be
     // silently ignored by flattening. isFlattenableRoot routes it to the single-body
-    // path, where convertSchema omits it (round-14).
-    expect(
-      'unrepresentable' in
-        buildLayout(
-          bodyOp(
-            jsonBody(
-              {
-                type: 'object',
-                properties: { a: { type: 'string' } },
-                additionalProperties: 7,
-              },
-              true,
-            ),
-          ),
-          new Set(),
-        ),
-    ).toBe(true);
+    // path, where convertSchema omits it.
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { a: { type: 'string' } },
+        additionalProperties: 7,
+      },
+      true,
+    );
+    expect('unrepresentable' in buildLayout(bodyOp(body), new Set())).toBe(true);
   });
 
   it('reports bodyMode none with no request body', () => {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- bodyOp's requestBody is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
     const l = layout(buildLayout(bodyOp(undefined), new Set()));
     expect(l.mapper.bodyMode).toBe('none');
     expect(l.mapper.bodyContentType).toBeUndefined();
@@ -417,14 +374,11 @@ describe('buildLayout — body classification', () => {
   it('does NOT flatten a 3.1 nullable object body — wraps it as single body', () => {
     // type ['object','null'] is not a plain object root; flattening would lose
     // the null alternative, so it routes to the single `body` field.
-    const l = layout(
-      buildLayout(
-        bodyOp(
-          jsonBody({ type: ['object', 'null'], properties: { id: { type: 'string' } } }, true),
-        ),
-        new Set(),
-      ),
+    const body = jsonBody(
+      { type: ['object', 'null'], properties: { id: { type: 'string' } } },
+      true,
     );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.mapper.bodyMode).toBe('single');
     expect(l.inputSchema.safeParse({ body: null }).success).toBe(true);
     expect(l.inputSchema.safeParse({ body: { id: 'a' } }).success).toBe(true);
@@ -443,15 +397,13 @@ describe('buildLayout — body classification', () => {
 
 describe('buildLayout — collisions and optional body', () => {
   it('prefixes colliding names by location', () => {
+    const body = jsonBody(
+      { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      true,
+    );
     const l = layout(
       buildLayout(
-        bodyOp(
-          jsonBody(
-            { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
-            true,
-          ),
-          [{ name: 'id', in: 'query', schema: { type: 'string' } }],
-        ),
+        bodyOp(body, [{ name: 'id', in: 'query', schema: { type: 'string' } }]),
         new Set(),
       ),
     );
@@ -467,40 +419,32 @@ describe('buildLayout — collisions and optional body', () => {
   it('omits when a prefixed name still collides', () => {
     // A query param literally named `query_id` plus a query `id` → both want
     // query_id after prefixing (id collides with a body id) → residual collision.
+    const body = jsonBody(
+      { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      true,
+    );
     expect(
       'unrepresentable' in
         buildLayout(
-          bodyOp(
-            jsonBody(
-              { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
-              true,
-            ),
-            [
-              { name: 'id', in: 'query', schema: { type: 'string' } },
-              { name: 'query_id', in: 'query', schema: { type: 'string' } },
-            ],
-          ),
+          bodyOp(body, [
+            { name: 'id', in: 'query', schema: { type: 'string' } },
+            { name: 'query_id', in: 'query', schema: { type: 'string' } },
+          ]),
           new Set(),
         ),
     ).toBe(true);
   });
 
   it('enforces the optional-body all-or-nothing rule', () => {
-    const l = layout(
-      buildLayout(
-        bodyOp(
-          jsonBody(
-            {
-              type: 'object',
-              properties: { id: { type: 'string' }, note: { type: 'string' } },
-              required: ['id'],
-            },
-            false,
-          ),
-        ),
-        new Set(),
-      ),
+    const body = jsonBody(
+      {
+        type: 'object',
+        properties: { id: { type: 'string' }, note: { type: 'string' } },
+        required: ['id'],
+      },
+      false,
     );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
     expect(l.inputSchema.safeParse({}).success).toBe(true);
     expect(l.inputSchema.safeParse({ id: 'a', note: 'b' }).success).toBe(true);
     expect(l.inputSchema.safeParse({ id: 'a' }).success).toBe(true);
@@ -570,11 +514,11 @@ describe('buildLayout — path template consistency', () => {
     ['/a/%2F/b'],
     ['/a/%5C/b'],
     ['/a/./b'],
-    // Final-review Fix 7 (finding 6): a static `?`/`#` baked into the path
-    // template is dangerous once decoded — joinFinalUrl (executor.ts)
-    // assembles the final URL by string concatenation of the built pathname
-    // + `?` + query, so a decoded `?`/`#` here could truncate/inject the
-    // real query string or smuggle a fragment into path text.
+    // A static `?`/`#` baked into the path template is dangerous once
+    // decoded — joinFinalUrl (executor.ts) assembles the final URL by
+    // string concatenation of the built pathname + `?` + query, so a
+    // decoded `?`/`#` here could truncate/inject the real query string or
+    // smuggle a fragment into path text.
     ['/a/%3F/b'], // Decoded: "?"
     ['/a/%23/b'], // Decoded: "#"
     ['/a/?abc/b'], // A literal "?" needs no percent-encoding to reach this check

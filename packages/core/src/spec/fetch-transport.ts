@@ -1,23 +1,23 @@
-// M6 Task 6: split out of fetch.ts (max-lines budget). Pure, per-hop
-// transport helpers shared by fetchChain — URL/redirect validation, capped
-// body reading, and validator/error mapping. No orchestration lives here.
+// Pure, per-hop transport helpers
+// shared by fetchChain — URL/redirect validation, capped body reading, and
+// validator/error mapping. No orchestration lives here.
 import type { fetch as undiciFetchType } from 'undici';
 import { validationError } from '../errors.ts';
 import { VALIDATOR_RE } from '../schemas/cache.ts';
 import { findSensitiveQueryParam } from './load.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 
-// M6 Task 6 (DNS-pin stretch): `fetcher` is undici's OWN fetch, never Node's
-// global fetch — the global fetch rejects an installed-undici `Agent` as its
-// `dispatcher` (dual-package hazard, probe-confirmed in pinned-dispatcher.ts).
-// A type-only import keeps this module free of a module-level fetch
-// singleton; the caller (context.ts) supplies the real value.
+// `fetcher` is undici's OWN fetch, never Node's global fetch — the global
+// fetch rejects an installed-undici `Agent` as its `dispatcher` (dual-package
+// hazard, probe-confirmed in pinned-dispatcher.ts). A type-only import keeps
+// this module free of a module-level fetch singleton; the caller (context.ts)
+// supplies the real value.
 export type UndiciFetch = typeof undiciFetchType;
 export type UndiciResponse = Awaited<ReturnType<UndiciFetch>>;
 
 export const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-// Redacted display form (spec §5.3): origin + path, query string dropped
+// Redacted display form: origin + path, query string dropped
 export const displaySource = (url: URL): string => `${url.origin}${url.pathname}`;
 
 // URL.hostname keeps brackets around an IPv6 literal; strip them for isIP()
@@ -38,8 +38,9 @@ export const validateHopUrl = (url: URL): void => {
   }
   const sensitiveParam = findSensitiveQueryParam(url);
   if (sensitiveParam !== undefined) {
-    // Spec §5.3 / D8 applies to every spec URL, including redirect targets.
-    // The decoded name is remote-controlled: sanitize the display copy.
+    // The sensitive-name deny-list applies to every spec URL,
+    // including redirect targets. The decoded name is remote-controlled:
+    // sanitize the display copy.
     throw validationError(
       `spec URL ${displaySource(url)} carries the credential-bearing query parameter "${sanitizeSpecText(sensitiveParam, 64)}" — query-string secrets are unsupported`,
     );
@@ -71,6 +72,11 @@ export const readBodyCapped = async (
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
+  // Imperative on purpose: a streamed body read is inherently serial — each
+  // chunk must be awaited, measured against the running total, and (on
+  // overrun) cause an immediate reader.cancel() before the next chunk is
+  // even requested. No array/stream combinator preserves that per-chunk
+  // abort point.
   let received = 0;
   for (;;) {
     const { done, value } = await reader.read();

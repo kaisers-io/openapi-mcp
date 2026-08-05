@@ -10,17 +10,18 @@ import {
   parseCacheId,
   parseCacheKey,
   parseSpecSource,
+  sanitizeSpecText,
   validationError,
-  type CacheLayout,
 } from '@kaisers-io/openapi-mcp-core';
+import type { CacheEntrySummary, CacheLayout } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from '../context.ts';
 import { getGlobalOpts } from '../output.ts';
 
-// Split out of cache.ts (Step 10, task-11 brief): once import/max-dependencies
-// is scoped to pipeline.ts only rather than disabled repository-wide, the rule
-// is back on for cache.ts too. These are the shared target-resolution helpers
-// every cache subcommand needs, so they live in their own module rather than
-// widening the override.
+// Split out of cache.ts: import/max-dependencies is scoped off only for
+// spec/pipeline.ts and cache/store.ts, not disabled for the whole repository,
+// so it is enforced for cache.ts too. These are the shared target-resolution
+// helpers every cache subcommand needs, so they live in their own module
+// rather than widening the override.
 
 export const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,
@@ -37,6 +38,25 @@ export const rootOf = (ctx: CliContext): string => {
   }
   return defaultCacheRoot(home);
 };
+
+// One entry's display block for `cache list`: 4 fixed lines, plus a 5th only
+// when a candidate is pending promotion. Split out here (rather than kept
+// inline in cache.ts's flatMap) alongside cache.ts's other line-budget
+// extractions (see clearAllNamespaces below).
+export const entryDisplayLines = (entry: CacheEntrySummary): readonly string[] => [
+  `  ${entry.id}  ${sanitizeSpecText(entry.title, CACHE_DISPLAY_MAX)} ${sanitizeSpecText(
+    entry.specVersion,
+    CACHE_DISPLAY_MAX,
+  )}`,
+  `    source:    ${sanitizeSpecText(entry.displaySource, CACHE_DISPLAY_MAX)}`,
+  // The label is charset-restricted and never secret, so it prints raw
+  `    key:       ${entry.cacheKey ?? '(none)'}`,
+  `    fetched:   ${new Date(entry.fetchedAt).toISOString()}`,
+  `    accepted:  ${entry.acceptedContentHash}`,
+  ...(entry.candidateContentHash === undefined
+    ? []
+    : [`    candidate: ${entry.candidateContentHash} (pending promotion)`]),
+];
 
 export const layoutForSpec = (
   ctx: CliContext,
@@ -63,30 +83,30 @@ export const layoutForId = (ctx: CliContext, id: string): CacheLayout =>
 export const globalOptsOf = (program: Command): ReturnType<typeof getGlobalOpts> =>
   getGlobalOpts((program.parent ?? program) as Command);
 
-// Also split out of cache.ts for the same max-lines reason: the "--all" sweep
-// belongs next to layoutForId/layoutForSpec because it walks the same
-// namespace-id space rather than a single resolved target.
+// Also split out of cache.ts to keep it under the default max-lines budget:
+// the "--all" sweep belongs next to layoutForId/layoutForSpec because it
+// walks the same namespace-id space rather than a single resolved target.
 export const clearAllNamespaces = async (
   root: string,
   cacheFs: CliContext['cacheFs'],
   now: number,
 ): Promise<number> => {
-  // Round-3 finding: --all must enumerate NAMESPACE DIRECTORIES, not readable
-  // summaries. listCacheEntries deliberately skips entries it cannot parse,
-  // so the round-3 draft could not clear precisely the corrupt entries that
-  // "clear" is the documented recovery path for — "--all" quietly meant "all
+  // --all must enumerate NAMESPACE DIRECTORIES, not readable summaries.
+  // listCacheEntries deliberately skips entries it cannot parse, so relying
+  // on it here could never clear precisely the corrupt entries that "clear"
+  // is the documented recovery path for — "--all" would quietly mean "all
   // the healthy ones".
   const namespaceIds = await listNamespaceIds(root, cacheFs);
   let cleared = 0;
   for (const id of namespaceIds) {
     try {
-      // D16(a2): each namespace is cleared under its OWN lock, exactly as a
-      // targeted clear is. A sweep is not a licence to skip the serialisation
-      // a single clear needs.
+      // Each namespace is cleared under its OWN lock, exactly as a targeted
+      // clear is. A sweep is not a licence to skip the serialisation a
+      // single clear needs.
       if (await clearNamespace(cacheLayout(root, id), cacheFs, now)) {
         cleared += 1;
       }
-    } catch (err) {
+    } catch (error) {
       // A namespace-shaped NAME that is not a real directory (a planted file
       // or symlink) is not ours to clear — skip it and continue the sweep
       // rather than aborting every remaining healthy namespace. mkdirSecure's
@@ -97,8 +117,8 @@ export const clearAllNamespaces = async (
       // path, and it is reachable here via the lock read), still propagates.
       // The discriminator is the CODE, never the message, so an
       // attacker-controlled cache path can never spoof the skip signal.
-      if (!(err instanceof OpenapiMcpError && err.code === 'cache_path_type')) {
-        throw err;
+      if (!(error instanceof OpenapiMcpError && error.code === 'cache_path_type')) {
+        throw error;
       }
     }
   }

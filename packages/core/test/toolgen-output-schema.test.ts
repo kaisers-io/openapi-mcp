@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deriveOutputSchema, type OperationRecord } from '../src/index.ts';
+import { deriveOutputSchema } from '../src/index.ts';
+import type { OperationRecord } from '../src/index.ts';
 
 const op = (responses: Record<string, unknown>): OperationRecord => ({
   method: 'get',
@@ -10,7 +11,7 @@ const op = (responses: Record<string, unknown>): OperationRecord => ({
   responses,
 });
 
-describe('deriveOutputSchema — the §6.6 object-envelope', () => {
+describe('deriveOutputSchema — the object-envelope', () => {
   it('builds an object-root oneOf envelope over every 2xx JSON branch', () => {
     const schema = deriveOutputSchema(
       op({

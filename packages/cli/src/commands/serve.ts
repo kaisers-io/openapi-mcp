@@ -18,35 +18,46 @@ import {
   SYSTEM_HEADERS,
   usageError,
   validationError,
-  type EnvelopeValidator,
-  type ExecutorConfig,
-  type NormalizedSpec,
-  type RequestGuardOptions,
+} from '@kaisers-io/openapi-mcp-core';
+import type {
+  EnvelopeValidator,
+  ExecutorConfig,
+  NormalizedSpec,
+  RequestGuardOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
-import { registerApiOptions, resolveApiConfig, type ApiCmdOpts } from '../api-options.ts';
+import { registerApiOptions, resolveApiConfig } from '../api-options.ts';
+import type { ApiCmdOpts } from '../api-options.ts';
 import { emitError, emitWarnings } from '../output.ts';
 import {
   deadPatternMessage,
   omissionWarningLines,
   parseSpecPipelineArgs,
   registerSpecOptions,
-  type SpecCmdOpts,
 } from '../spec-options.ts';
+import type { SpecCmdOpts } from '../spec-options.ts';
 import type { CommandRegistrar } from './registry.ts';
 
-// M5 Task 11: fixed operational budgets for the runtime API executor. No CLI
-// flag exists for these (Task 9's ApiCmdOpts covers auth/base-url/response
-// size/cleartext-gating only) — they bound the OUTBOUND request the way
-// --max-response-bytes bounds the inbound one, and are conservative enough
-// never to reject a well-formed request against a real API.
+// Fixed operational budgets for the runtime API executor. No CLI flag exists
+// for these (ApiCmdOpts covers auth/base-url/response size/cleartext-gating
+// only) — they bound the OUTBOUND request the way --max-response-bytes bounds
+// the inbound one, and are conservative enough never to reject a well-formed
+// request against a real API.
 const MAX_URL_LENGTH = 8192;
 const MAX_HEADER_BYTES = 16_384;
-// Global outbound-concurrency semaphore (design §7.6), shared by stdio + HTTP
-// because `createExecutor` is constructed exactly ONCE below.
+// Global outbound-concurrency semaphore, shared by stdio + HTTP because
+// `createExecutor` is constructed exactly ONCE below.
 const MAX_CONCURRENT_UPSTREAM_CALLS = 16;
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+const tryParseUrl = (raw: string): URL | undefined => {
+  try {
+    return new URL(raw);
+  } catch {
+    return undefined;
+  }
+};
 
 // Same scheme/userinfo/query/fragment shape api-options.ts's own
 // `validateBaseUrl` enforces on an operator-supplied `--base-url` — applied
@@ -70,22 +81,21 @@ export const assertBaseUrlShape = (url: URL): void => {
   }
 };
 
-export interface ResolvedBase {
+export type ResolvedBase = {
   url: URL;
   // True iff the base came from the OPERATOR-supplied --base-url — a trusted
   // origin skips the startup address (egress) check below; a spec-derived
   // base is always untrusted regardless of --allow-private-network.
   trusted: boolean;
-}
+};
 
-// M5 Task 11 / plan-review MED (base resolution): `--base-url` wins
-// (trusted); else an ABSOLUTE `servers[0]` candidate is used as-is
-// (untrusted); else a RELATIVE/absent candidate resolves against the spec's
-// own FINAL, post-redirect source URL (`displaySource`) — OpenAPI's own "no
-// servers -> root of the document's location" default — but ONLY when the
-// spec came from a URL; a FILE spec with no usable server candidate has no
-// document location to resolve against, so it is a startup usage error
-// requiring `--base-url`.
+// Base-URL resolution order: `--base-url` wins (trusted); else an ABSOLUTE
+// `servers[0]` candidate is used as-is (untrusted); else a RELATIVE/absent
+// candidate resolves against the spec's own FINAL, post-redirect source URL
+// (`displaySource`) — OpenAPI's own "no servers -> root of the document's
+// location" default — but ONLY when the spec came from a URL; a FILE spec
+// with no usable server candidate has no document location to resolve
+// against, so it is a startup usage error requiring `--base-url`.
 export const resolveBaseUrl = (
   baseUrlOverride: string | undefined,
   spec: NormalizedSpec,
@@ -103,10 +113,8 @@ export const resolveBaseUrl = (
       'the spec has no absolute server URL to use as the API base — pass --base-url <url>',
     );
   }
-  let documentBase: URL;
-  try {
-    documentBase = new URL(displaySource);
-  } catch {
+  const documentBase = tryParseUrl(displaySource);
+  if (documentBase === undefined) {
     throw usageError(
       'the spec has no absolute server URL to use as the API base — pass --base-url <url>',
     );
@@ -120,11 +128,19 @@ export const resolveBaseUrl = (
 
 // Mirrors SpecCmdOpts's own "hand-written mirror of the accumulated option
 // shape" idiom (see spec-options.ts's comment on registerSpecOptions).
-interface ServeCmdOpts extends SpecCmdOpts, ApiCmdOpts {
-  http?: boolean;
-  port: string;
-  httpTokenEnv?: string;
-}
+// SpecCmdOpts's members (spec/allow/deny/strictFilters/specHeaderEnv/timeout/
+// ttl/cacheKey/trustSpecUpdates/allowPrivateNetwork) and ApiCmdOpts's members
+// (baseUrl/headerEnv/header/maxResponseBytes/allowInsecureHttp) share no name
+// with each other or with this type's own http/port/httpTokenEnv, and both
+// share the identical `[key: string]: unknown` index signature, so the
+// three-way intersection below cannot silently collapse any inherited
+// member's type to `never`.
+type ServeCmdOpts = SpecCmdOpts &
+  ApiCmdOpts & {
+    http?: boolean;
+    port: string;
+    httpTokenEnv?: string;
+  };
 
 export const registerServe: CommandRegistrar = (program, ctx, state) => {
   const command = registerApiOptions(registerSpecOptions(program.command('serve')))
@@ -137,6 +153,44 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       '--http-token-env <ENV>',
       'env var holding the bearer token required for HTTP requests',
     );
+  // Orphaned HTTP-only flags without --http are a usage error, not a
+  // silent no-op: `--port` carries a default ('3044'), so a plain value
+  // comparison would MISS an explicit `--port 3044`. Commander records
+  // per-option provenance — `getOptionValueSource('port') === 'cli'`
+  // distinguishes "the user actually passed --port" from "the default
+  // applied" regardless of whether the passed value happens to equal
+  // the default.
+  const resolveHttpConfig = (
+    cmdOpts: ServeCmdOpts,
+  ): { token: string; port: number } | undefined => {
+    if (
+      cmdOpts.http !== true &&
+      (cmdOpts.httpTokenEnv !== undefined || command.getOptionValueSource('port') === 'cli')
+    ) {
+      throw usageError('--port and --http-token-env require --http');
+    }
+    if (cmdOpts.http !== true) {
+      return undefined;
+    }
+    if (cmdOpts.httpTokenEnv === undefined) {
+      throw usageError('--http requires --http-token-env <ENV>');
+    }
+    const token = ctx.env[cmdOpts.httpTokenEnv];
+    if (token === undefined || token === '') {
+      throw validationError(`env var "${cmdOpts.httpTokenEnv}" is not set`);
+    }
+    if (!isValidBearerToken(token)) {
+      throw validationError(
+        `the token in "${cmdOpts.httpTokenEnv}" must decode to exactly 32 bytes (256 bits) — 43 unpadded ` +
+          'Base64URL characters, or 44-character padded standard Base64 (e.g. `openssl rand -base64 32`)',
+      );
+    }
+    const port = Number(cmdOpts.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+      throw usageError(`--port "${cmdOpts.port}" is not a valid port number`);
+    }
+    return { token, port };
+  };
   // `.option()` chained onto a Command whose Opts type already carries
   // SpecCmdOpts's own index signature does not narrow any further through
   // @commander-js/extra-typings' literal-flag inference (it falls back to a
@@ -156,53 +210,20 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // fast with NO side effects (no spec fetch, no cache write). This
       // matches "validated once at CLI startup" rather than discovering
       // the mistake only after paying for a spec fetch.
-      let httpConfig: { token: string; port: number } | undefined;
-      // Orphaned HTTP-only flags without --http are a usage error, not a
-      // silent no-op: `--port` carries a default ('3044'), so a plain value
-      // comparison would MISS an explicit `--port 3044`. Commander records
-      // per-option provenance — `getOptionValueSource('port') === 'cli'`
-      // distinguishes "the user actually passed --port" from "the default
-      // applied" regardless of whether the passed value happens to equal
-      // the default.
-      if (
-        cmdOpts.http !== true &&
-        (cmdOpts.httpTokenEnv !== undefined || command.getOptionValueSource('port') === 'cli')
-      ) {
-        throw usageError('--port and --http-token-env require --http');
-      }
-      if (cmdOpts.http === true) {
-        if (cmdOpts.httpTokenEnv === undefined) {
-          throw usageError('--http requires --http-token-env <ENV>');
-        }
-        const token = ctx.env[cmdOpts.httpTokenEnv];
-        if (token === undefined || token === '') {
-          throw validationError(`env var "${cmdOpts.httpTokenEnv}" is not set`);
-        }
-        if (!isValidBearerToken(token)) {
-          throw validationError(
-            `the token in "${cmdOpts.httpTokenEnv}" must decode to exactly 32 bytes (256 bits) — 43 unpadded ` +
-              'Base64URL characters, or 44-character padded standard Base64 (e.g. `openssl rand -base64 32`)',
-          );
-        }
-        const port = Number(cmdOpts.port);
-        if (!Number.isInteger(port) || port <= 0 || port > 65535) {
-          throw usageError(`--port "${cmdOpts.port}" is not a valid port number`);
-        }
-        httpConfig = { token, port };
-      }
-      // M5 Task 11: resolved BEFORE buildTools (below) — its
-      // reservedHeaderNames must be unioned into buildTools' reservedHeaders
-      // so a spec header parameter colliding with a configured auth header
-      // name is dropped from the tool's input schema, not merely rejected
-      // later at call time. Also validated fast, before any spec/cache/
-      // network processing, matching the httpConfig check just above.
+      const httpConfig = resolveHttpConfig(cmdOpts);
+      // Resolved BEFORE buildTools (below): its reservedHeaderNames must be
+      // unioned into buildTools' reservedHeaders so a spec header parameter
+      // colliding with a configured auth header name is dropped from the
+      // tool's input schema, not merely rejected later at call time. Also
+      // validated fast, before any spec/cache/network processing, matching
+      // the httpConfig check just above.
       const apiConfig = resolveApiConfig(cmdOpts, ctx);
       const args = parseSpecPipelineArgs(cmdOpts, ctx);
       const result = await runSpecPipeline(args.source, args.options, args.deps);
       // Sanitized + suggestion-bearing, matching `tools`' strict-filters
-      // throw exactly (deadPatternMessage is the shared, spec §8-worded
-      // renderer): the raw inline form this replaced put unsanitized
-      // spec-derived text straight into a thrown error's message.
+      // throw exactly (deadPatternMessage is the shared renderer): building
+      // the message inline instead would put unsanitized spec-derived text
+      // straight into a thrown error's message.
       if (cmdOpts.strictFilters === true && result.deadPatterns.length > 0) {
         throw validationError(
           result.deadPatterns.map((dead) => deadPatternMessage(dead)).join('\n'),
@@ -211,8 +232,8 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // Union: a spec header parameter named e.g. "X-Api-Key" is dropped from
       // the tool's input schema when that same name is configured as an
       // operator auth header (--header/--header-env) — SYSTEM_HEADERS alone
-      // (the M4 baseline) would let it reappear as a caller-settable input,
-      // silently colliding with the credential the executor injects.
+      // would let it reappear as a caller-settable input, silently colliding
+      // with the credential the executor injects.
       const built = buildTools(result.namedOperations, {
         reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
         openapiVersion: result.spec.openapiVersion,
@@ -232,10 +253,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       assertBaseUrlShape(resolvedBase.url);
       const allowPrivateNetwork = cmdOpts.allowPrivateNetwork === true;
       if (!resolvedBase.trusted) {
-        // Bounded resolve + classifyAddress (Task 1/3), respecting
+        // Bounded resolve + classifyAddress, respecting
         // --allow-private-network; metadata is denied unconditionally. The
-        // per-connection DNS pin (pinnedRequest, Task 4) remains the actual
-        // runtime control — this is a fail-fast startup check only.
+        // per-connection DNS pin (pinnedRequest) remains the actual runtime
+        // control — this is a fail-fast startup check only.
         await assertAllowedRedirectTarget(
           resolvedBase.url,
           { allowPrivateNetwork },
@@ -255,24 +276,23 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...(httpConfig === undefined ? [] : [httpConfig.token]),
       ]);
 
-      // D7 eager compile (round-1 amendment): every upstream tool's
-      // outputSchema is compiled HERE, at startup, so an incompatible schema
-      // fails fast rather than on the first matching call. `validators.has`
-      // is the executor's fail-closed contract — every upstream tool gets an
-      // entry, `undefined` only for a genuine no-outputSchema tool.
-      const validators = new Map<string, EnvelopeValidator | undefined>();
-      for (const tool of snapshot.tools) {
-        if (tool.kind !== 'upstream') {
-          continue;
-        }
-        try {
-          validators.set(tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema));
-        } catch (err) {
-          throw usageError(
-            `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(err)}`,
-          );
-        }
-      }
+      // Every upstream tool's outputSchema is compiled eagerly HERE, at
+      // startup, so an incompatible schema fails fast rather than on the
+      // first matching call. `validators.has` is the executor's fail-closed
+      // contract — every upstream tool gets an entry, `undefined` only for a
+      // genuine no-outputSchema tool.
+      const validatorEntries = snapshot.tools
+        .filter((tool) => tool.kind === 'upstream')
+        .map((tool) => {
+          try {
+            return [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)] as const;
+          } catch (error) {
+            throw usageError(
+              `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
+            );
+          }
+        });
+      const validators = new Map<string, EnvelopeValidator | undefined>(validatorEntries);
 
       const executorConfig: ExecutorConfig = {
         baseUrl: resolvedBase.url.toString(),
@@ -313,35 +333,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
       ]);
-      if (httpConfig !== undefined) {
-        const guard: RequestGuardOptions = {
-          // No CLI flag for browser Origins in M4 (documented scope: a
-          // single local, non-browser client) — an empty allowlist means
-          // every PRESENT Origin 403s; an absent Origin still works with a
-          // valid bearer (Task 7).
-          allowedOrigins: new Set(),
-          allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
-          bearer: { configuredToken: httpConfig.token },
-        };
-        const httpServer = createStreamableHttpServer({
-          name: 'openapi-mcp',
-          version: pkg.version,
-          snapshot,
-          dispatcherDeps,
-          guard,
-          port: httpConfig.port,
-          now: ctx.now,
-        });
-        await httpServer.listen();
-        // Block until a graceful shutdown signal — there is no client
-        // stdin stream to watch for EOF in HTTP mode (unlike the stdio
-        // branch below), so SIGINT/SIGTERM are the only shutdown triggers.
-        await new Promise<void>((resolve) => {
-          process.once('SIGINT', () => resolve());
-          process.once('SIGTERM', () => resolve());
-        });
-        await httpServer.close();
-      } else {
+      if (httpConfig === undefined) {
         const server = createProtocolSession({
           name: 'openapi-mcp',
           version: pkg.version,
@@ -368,16 +360,46 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         // `server.onclose`, and `server.close()` is unconditional afterward
         // (the transport is never already self-closed, so no double-close
         // guard is needed here).
+        // oxlint-disable-next-line promise/avoid-new -- races three independent event sources (SIGINT/SIGTERM/stdin 'end') with no single promise-returning API that covers all three
         await new Promise<void>((resolve) => {
           process.once('SIGINT', () => resolve());
           process.once('SIGTERM', () => resolve());
           process.stdin.once('end', () => resolve());
         });
         await server.close();
+      } else {
+        const guard: RequestGuardOptions = {
+          // No CLI flag for browser Origins (documented scope: a single
+          // local, non-browser client) — an empty allowlist means every
+          // PRESENT Origin 403s; an absent Origin still works with a valid
+          // bearer.
+          allowedOrigins: new Set(),
+          allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
+          bearer: { configuredToken: httpConfig.token },
+        };
+        const httpServer = createStreamableHttpServer({
+          name: 'openapi-mcp',
+          version: pkg.version,
+          snapshot,
+          dispatcherDeps,
+          guard,
+          port: httpConfig.port,
+          now: ctx.now,
+        });
+        await httpServer.listen();
+        // Block until a graceful shutdown signal — there is no client
+        // stdin stream to watch for EOF in HTTP mode (unlike the stdio
+        // branch below), so SIGINT/SIGTERM are the only shutdown triggers.
+        // oxlint-disable-next-line promise/avoid-new -- races two independent process signal events (SIGINT/SIGTERM) with no single promise-returning API that covers both
+        await new Promise<void>((resolve) => {
+          process.once('SIGINT', () => resolve());
+          process.once('SIGTERM', () => resolve());
+        });
+        await httpServer.close();
       }
       state.exitCode = EXIT.OK;
-    } catch (err) {
-      state.exitCode = emitError(ctx, errorOpts, err);
+    } catch (error) {
+      state.exitCode = emitError(ctx, errorOpts, error);
     }
   });
 };

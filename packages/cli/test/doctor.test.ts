@@ -45,7 +45,7 @@ describe('doctor', () => {
 
   it('fails with a validation error when no home directory can be resolved', async () => {
     const errLines: string[] = [];
-    const ctx = testContext({ errLines, homeDir: () => undefined });
+    const ctx = testContext({ errLines, homeDir: () => {} });
     const code = await run(ctx, ['node', 'openapi-mcp', 'doctor']);
     expect(code).toBe(EXIT.VALIDATION);
     expect(errLines.join('\n')).toContain('home directory');

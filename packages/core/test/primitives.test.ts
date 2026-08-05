@@ -60,17 +60,17 @@ describe('parseDuration', () => {
   });
 
   it('throws a usage error naming the invalid input', () => {
-    expect(() => parseDuration('5w')).toThrowError(OpenapiMcpError);
+    expect(() => parseDuration('5w')).toThrow(OpenapiMcpError);
     try {
       parseDuration('5w');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('usage');
-      expect((err as OpenapiMcpError).message).toContain('5w');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('usage');
+      expect((error as OpenapiMcpError).message).toContain('5w');
     }
   });
 
   it('throws a usage error on overflow', () => {
-    expect(() => parseDuration('9999999d')).toThrowError(OpenapiMcpError);
+    expect(() => parseDuration('9999999d')).toThrow(OpenapiMcpError);
   });
 });
 
@@ -101,17 +101,17 @@ describe('parseByteSize', () => {
   });
 
   it('throws a usage error naming the invalid input', () => {
-    expect(() => parseByteSize('10GB')).toThrowError(OpenapiMcpError);
+    expect(() => parseByteSize('10GB')).toThrow(OpenapiMcpError);
     try {
       parseByteSize('10GB');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('usage');
-      expect((err as OpenapiMcpError).message).toContain('10GB');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('usage');
+      expect((error as OpenapiMcpError).message).toContain('10GB');
     }
   });
 
   it('throws a usage error on overflow', () => {
     const huge = `${'9'.repeat(300)}MB`;
-    expect(() => parseByteSize(huge)).toThrowError(OpenapiMcpError);
+    expect(() => parseByteSize(huge)).toThrow(OpenapiMcpError);
   });
 });

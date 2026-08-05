@@ -7,11 +7,8 @@ import {
   closestMatch,
   matchesOperation,
   parseFilterPattern,
-  type FilterPattern,
-  type HttpMethod,
-  type NamedOperation,
-  type OperationRecord,
 } from '../src/index.ts';
+import type { FilterPattern, HttpMethod, NamedOperation, OperationRecord } from '../src/index.ts';
 
 const record = (
   method: HttpMethod,
@@ -70,7 +67,7 @@ describe('matchesOperation', () => {
     expect(matchesOperation(parseFilterPattern('DELETE /pets/*'), fixture[4]!)).toBe(true);
   });
 
-  it('matches a methodPath pattern against the raw path template, braces included (D8)', () => {
+  it('matches a methodPath pattern against the raw path template, braces included', () => {
     expect(matchesOperation(parseFilterPattern('GET /pets/{petId}'), fixture[1]!)).toBe(true);
   });
 
@@ -84,7 +81,7 @@ describe('matchesOperation', () => {
     expect(matchesOperation(parseFilterPattern('tag:**'), record('get', '/x', 'x'))).toBe(false);
   });
 
-  it('matches raw spec values, not sanitized tool names (D8)', () => {
+  it('matches raw spec values, not sanitized tool names', () => {
     // AssignToolNames rewrites "list-pets!" to "list-pets_"; the filter must
     // still see the original, or a deny pattern would miss its target
     const op = record('get', '/pets', 'list-pets!');
@@ -96,17 +93,17 @@ describe('matchesOperation', () => {
 });
 
 describe('closestMatch', () => {
-  it('reproduces the suggestion documented in spec §8', () => {
-    // Explicit candidate list rather than the fixture: §8's example only holds
+  it('reproduces the worked "readPets" -> "readPetById" suggestion example', () => {
+    // Explicit candidate list rather than the fixture: this example only holds
     // when no nearer candidate exists, and stating it here keeps that visible
     expect(closestMatch('readPets', ['listPets', 'readPetById', 'deletePet'])).toBe('readPetById');
   });
 
-  it('breaks an equal-distance tie by relative distance — this is what §8 turns on', () => {
+  it('breaks an equal-distance tie by relative distance', () => {
     // "readPets" is 4 edits from BOTH "listPets" (4/8) and "readPetById"
     // (4/11). The distances tie, so the ratio decides, and it picks the longer,
-    // more-shared candidate the spec documents. Without the tiebreak this would
-    // return whichever came first and could contradict §8 — hence both orders.
+    // more-shared candidate. Without the tiebreak this would return whichever
+    // came first and could disagree between runs — hence both orders.
     expect(closestMatch('readPets', ['listPets', 'readPetById'])).toBe('readPetById');
     expect(closestMatch('readPets', ['readPetById', 'listPets'])).toBe('readPetById');
   });
@@ -116,7 +113,7 @@ describe('closestMatch', () => {
     expect(closestMatch('readPets', ['headPets', 'readPetById'])).toBe('headPets');
   });
 
-  it('never prefers a strictly farther candidate, whatever the ratios say (round-8 finding 5)', () => {
+  it('never prefers a strictly farther candidate, whatever the ratios say', () => {
     // The regression case that ratio-only ranking got wrong. "abcdeXYZ" is 3
     // edits (3/8 = 0.375); "abcdefghWXYZ" is 4 (4/12 = 0.333). Both clear the
     // admission bound, and ratio alone returns the distance-4 candidate —
@@ -167,7 +164,7 @@ describe('closestMatch', () => {
   });
 });
 
-describe('applyFilters — precedence (spec §3.2)', () => {
+describe('applyFilters — precedence', () => {
   it('rule 3: with no allow, exposes only GET and HEAD', () => {
     const decision = applyFilters(named(fixture), [], []);
     expect(exposedIds(decision)).toEqual(['listPets', 'readPetById', 'headPets']);
@@ -223,11 +220,11 @@ describe('applyFilters — precedence (spec §3.2)', () => {
   });
 });
 
-describe('applyFilters — dead patterns (spec §8)', () => {
+describe('applyFilters — dead patterns', () => {
   it('reports an allow pattern that matches nothing, flagged and with a suggestion', () => {
     // "headPets" is 1 edit from "readPets" and "readPetById" is 4: the nearer
-    // candidate wins, and that is correct even though §8 uses the other one
-    // against a candidate list that does not contain "headPets"
+    // candidate wins, and that is correct even though the worked example uses
+    // the other one against a candidate list that does not contain "headPets"
     const decision = applyFilters(named(fixture), patterns('readPets'), []);
     expect(decision.deadPatterns).toEqual([
       { raw: 'readPets', flag: 'allow', suggestion: 'headPets' },
@@ -270,8 +267,9 @@ describe('applyFilters — dead patterns (spec §8)', () => {
   });
 
   it('measures deadness against the whole inventory, not the exposed set', () => {
-    // §8 counts patterns matching zero operations in the spec: a deny that
-    // removes everything an allow selected is doing its job, not misspelled
+    // Deadness is counted against patterns matching zero operations in the
+    // spec: a deny that removes everything an allow selected is doing its job,
+    // not misspelled
     const decision = applyFilters(named(fixture), patterns('deletePet'), patterns('deletePet'));
     expect(decision.deadPatterns).toEqual([]);
   });
@@ -308,7 +306,7 @@ describe('applyFilters — dead patterns (spec §8)', () => {
   });
 });
 
-describe('applyFilters — aggregate work budget (D15 mechanism 2)', () => {
+describe('applyFilters — aggregate work budget', () => {
   it('shares one budget across exposure and dead-pattern detection', () => {
     // Not one budget per match: the reachable cost is the AGGREGATE, which is
     // what still measured 22.5 s at the maximum admitted dimensions even with a
@@ -329,7 +327,7 @@ describe('applyFilters — aggregate work budget (D15 mechanism 2)', () => {
 
   it('fails closed with a validation error rather than running unbounded', () => {
     const budget = createMatchBudget(5);
-    expect(() => applyFilters(named(fixture), patterns('*a*a*a*a*'), [], budget)).toThrowError(
+    expect(() => applyFilters(named(fixture), patterns('*a*a*a*a*'), [], budget)).toThrow(
       /work budget/u,
     );
   });
@@ -339,22 +337,17 @@ describe('applyFilters — aggregate work budget (D15 mechanism 2)', () => {
     // matching operationId, path and two tags each): 33,099,767 steps in 319 ms,
     // 16.5% of the cap, 6.0x headroom. This fixture is far smaller, so it must
     // be a rounding error against it.
-    //
-    // Round-8 cleanup: this comment previously said 5,618,160 steps and 11%,
-    // which was the figure from BEFORE the round-4 recalibration — the count
-    // that charged only some of the loops and left D15's own numbers
-    // contradicting it. One measured figure, and D15 is where it is derived.
     const budget = createMatchBudget();
     applyFilters(named(fixture), patterns('**'), [], budget);
     expect(FILTER_MAX_MATCH_STEPS - budget.remaining).toBeLessThan(10_000);
   });
 
-  // Final review, high-severity finding 1: closestMatch's
-  // boundedDistance ran unbudgeted, so the dead-pattern SUGGESTION phase
-  // escaped the D15 aggregate entirely — measured at 35,917 ms of CPU at
-  // admitted dimensions (128 dead patterns x 512 candidates x 256-char
-  // identifiers). This makes the applyFilters comment above ("ONE budget for
-  // the whole run — exposure AND dead-pattern detection alike") true.
+  // The closestMatch's boundedDistance ran unbudgeted, so the dead-pattern
+  // SUGGESTION phase escaped the aggregate work budget entirely — measured at
+  // 35,917 ms of CPU at admitted dimensions (128 dead patterns x 512
+  // candidates x 256-char identifiers). This makes the applyFilters comment
+  // above ("ONE budget for the whole run — exposure AND dead-pattern
+  // detection alike") true.
   it('bounds closestMatch itself by the work budget it is given', () => {
     // A single candidate whose length is close enough to clear the admission
     // screen already exceeds a tiny budget on the very first Levenshtein row
@@ -363,7 +356,7 @@ describe('applyFilters — aggregate work budget (D15 mechanism 2)', () => {
     // instead of throwing.
     const candidates = Array.from({ length: 20 }, (_, index) => `${'x'.repeat(200)}${index}`);
     const budget = createMatchBudget(50);
-    expect(() => closestMatch('y'.repeat(200), candidates, budget)).toThrowError(/work budget/u);
+    expect(() => closestMatch('y'.repeat(200), candidates, budget)).toThrow(/work budget/u);
   });
 
   it('shares the aggregate budget between matching and the suggestion phase', () => {
@@ -373,14 +366,15 @@ describe('applyFilters — aggregate work budget (D15 mechanism 2)', () => {
     // input length; Levenshtein is quadratic). A budget that comfortably
     // survives both matching scans (exposure + dead-pattern detection) but
     // cannot survive even one full boundedDistance call proves the
-    // suggestion phase now draws on the SAME budget applyFilters created —
-    // before this fix, this budget would have survived the whole call.
+    // suggestion phase draws on the SAME budget applyFilters created — a
+    // separate budget for the suggestion phase would let this call survive
+    // the whole matching-plus-suggestion pass instead of throwing.
     const longOps = Array.from({ length: 40 }, (_, index) =>
       record('get', `/p${index}`, `op${'x'.repeat(200)}${index}`),
     );
     const decoyPattern = `zz${'y'.repeat(200)}`;
     const budget = createMatchBudget(50_000);
-    expect(() => applyFilters(named(longOps), patterns(decoyPattern), [], budget)).toThrowError(
+    expect(() => applyFilters(named(longOps), patterns(decoyPattern), [], budget)).toThrow(
       /work budget/u,
     );
   });

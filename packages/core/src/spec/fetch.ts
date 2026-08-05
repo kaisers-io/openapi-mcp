@@ -1,13 +1,10 @@
 import { isIP } from 'node:net';
 import { validationError } from '../errors.ts';
-import { assertAllowedRedirectTarget, type DnsLookup } from '../http/egress.ts';
+import { assertAllowedRedirectTarget } from '../http/egress.ts';
+import type { DnsLookup } from '../http/egress.ts';
 import type { ResolvedHeader } from '../http/headers.ts';
-import {
-  createPinnedAgent,
-  MAX_REDIRECTS,
-  validateHopUrlSync,
-  type PinnedPolicy,
-} from '../http/pinned-dispatcher.ts';
+import { createPinnedAgent, MAX_REDIRECTS, validateHopUrlSync } from '../http/pinned-dispatcher.ts';
+import type { PinnedPolicy } from '../http/pinned-dispatcher.ts';
 import {
   describeCause,
   displaySource,
@@ -18,35 +15,35 @@ import {
   readValidator,
   REDIRECT_STATUSES,
   validateHopUrl,
-  type UndiciFetch,
-  type UndiciResponse,
 } from './fetch-transport.ts';
+import type { UndiciFetch, UndiciResponse } from './fetch-transport.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
-import { hashContent, type LoadedSpecText } from './load.ts';
+import { hashContent } from './load.ts';
+import type { LoadedSpecText } from './load.ts';
 
-// M6 Task 6: de-duplicated — `MAX_REDIRECTS` used to be defined separately
-// here and in pinned-dispatcher.ts (both `5`); this module now re-exports the
-// single source of truth so index.ts's public barrel is unchanged.
+// `MAX_REDIRECTS` has its single source of truth in pinned-dispatcher.ts —
+// both transports share one hop limit by construction. Re-exported here so
+// index.ts's public barrel keeps its import path.
 export { MAX_REDIRECTS } from '../http/pinned-dispatcher.ts';
 
-export interface FetchSpecOptions {
+export type FetchSpecOptions = {
   headers: readonly ResolvedHeader[];
   timeoutMs?: number;
   maxBytes?: number;
   allowPrivateNetwork?: boolean;
-}
+};
 
-export interface FetchSpecDeps {
-  // M6 Task 6 (DNS-pin stretch): undici's OWN fetch, never Node's global
-  // fetch (dual-package hazard: the global fetch rejects an installed-undici
-  // `Agent` as its `dispatcher`, probe-confirmed in pinned-dispatcher.ts).
+export type FetchSpecDeps = {
+  // Undici's OWN fetch, never Node's global fetch (dual-package hazard: the
+  // global fetch rejects an installed-undici `Agent` as its `dispatcher`,
+  // probe-confirmed in pinned-dispatcher.ts).
   fetcher: UndiciFetch;
   lookup: DnsLookup;
-}
+};
 
-// D16(a2): a 304 carries readable headers (probed), and the round-1 draft threw
-// them away — so a revalidation could not refresh the validators it replays on
-// the next run. The not-modified branch carries them.
+// A 304 carries readable headers (probed); discarding them would leave a
+// revalidation unable to refresh the validators it replays on the next run.
+// The not-modified branch carries them.
 export type ConditionalFetchResult =
   | { kind: 'not-modified'; etag?: string | undefined; lastModified?: string | undefined }
   | {
@@ -61,21 +58,20 @@ type ConditionalOptions = FetchSpecOptions & {
   lastModified?: string | undefined;
 };
 
-// M6 Task 6 coverage note: an inline `.catch(() => undefined)` would create a
-// fresh anonymous closure per call site that a fake-fetcher-based test can
-// never exercise — undici's real Agent.destroy()/close() never rejects
-// against a per-hop Agent that was never handed a live connection. Named and
-// exported (module-internal; not part of the public barrel) so its own
-// trivial, side-effect-free body is directly unit-testable instead of
-// depending on a live rejection to prove it.
+// Coverage note: an inline `.catch(() => undefined)` would create a fresh
+// anonymous closure per call site that a fake-fetcher-based test can never
+// exercise — undici's real Agent.destroy()/close() never rejects against a
+// per-hop Agent that was never handed a live connection. Named and exported
+// (module-internal; not part of the public barrel) so its own trivial,
+// side-effect-free body is directly unit-testable instead of depending on a
+// live rejection to prove it.
 export const ignoreError = (): undefined => undefined;
 
 // Binds the chain's `lookup` into the shape createPinnedAgent's `Resolve`
 // expects — `(hostname) => deps.lookup(hostname, signal)` — closing over the
-// whole-chain deadline (hardening item 2). Named and exported for the same
-// reason as `ignoreError` above: a fake fetcher ignores `dispatcher`
-// entirely, so this closure is otherwise unreachable through this file's
-// fake-transport tests.
+// whole-chain deadline. Named and exported for the same reason as
+// `ignoreError` above: a fake fetcher ignores `dispatcher` entirely, so this
+// closure is otherwise unreachable through this file's fake-transport tests.
 export const chainResolve =
   (lookup: DnsLookup, signal: AbortSignal) =>
   (hostname: string): Promise<readonly string[]> =>
@@ -92,41 +88,53 @@ const fetchChain = async (
   // One deadline for the whole redirect chain
   const signal = AbortSignal.timeout(timeoutMs);
   const originalOrigin = initialUrl.origin;
-  // The initial URL is operator intent (D4); it was already
-  // scheme/userinfo/query-checked by parseSpecSource. M6 Task 6 hardening: it
-  // is NOT exempt from the synchronous IP-literal guard below (hop 0 is
-  // `trusted`, so a private/loopback literal is still allowed, but
-  // cloud-metadata is now denied even for an operator-supplied --spec URL —
-  // a deliberate hardening, not a regression: see the design §7.4 note).
+  // The initial URL is operator intent; it was already
+  // scheme/userinfo/query-checked by parseSpecSource. It is NOT exempt from
+  // the synchronous IP-literal guard below (hop 0 is `trusted`, so a
+  // private/loopback literal is still allowed, but cloud-metadata is denied
+  // even for an operator-supplied --spec URL — a deliberate hardening, not a
+  // regression).
+  // Security module, imperative on purpose: `url` is the manual redirect
+  // loop's per-hop cursor, reassigned only at the bottom of the loop body
+  // once a redirect target has cleared every hop check — restructuring this
+  // into a fold would move that reassignment past checks whose ORDER is the
+  // security property (validate-then-advance, never the reverse).
   let url = initialUrl;
   validateHopUrl(url);
-  // MONOTONIC (matches the API path's monotonic stripping, M5 Task 4): once
-  // the chain has left the original origin, it never regains credentials —
-  // even bouncing back to the original origin later. Set once true, never
-  // reset.
+  // MONOTONIC (matches the API path's monotonic stripping): once the chain
+  // has left the original origin, it never regains credentials — even
+  // bouncing back to the original origin later. Set once true, never reset.
   let crossed = false;
+  // Loop induction bound to MAX_REDIRECTS, checked per hop so the abort-on-
+  // throw budget below is enforced at every iteration, not computed upfront.
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     // Hop 0 (--spec) carries the operator's trust; every redirect hop is
-    // untrusted, same split as pinnedRequest's baseTrusted/hop===0 rule.
+    // untrusted — the same hop-0/hop-n split as pinnedRequest, with hop 0
+    // unconditionally trusted here (pinnedRequest gates it on baseTrusted).
     const policy: PinnedPolicy = { allowPrivateNetwork, trusted: hop === 0 };
-    // M6 Task 6 hardening (plan-review, mandatory): undici SKIPS
-    // connect.lookup entirely for an IP-literal hostname, so
-    // createPinnedAgent's lookup below never runs for a hop whose URL is
-    // already a literal — this synchronous, pre-fetch check closes that gap
-    // for EVERY hop (including hop 0, which previously got no address
-    // validation at all). Reuses pinnedRequest's own guard rather than
-    // reimplementing it.
+    // Hardening: undici SKIPS connect.lookup entirely for an IP-literal
+    // hostname, so createPinnedAgent's lookup below never runs for a hop
+    // whose URL is already a literal — this synchronous, pre-fetch check
+    // closes that gap for EVERY hop (including hop 0, which previously got
+    // no address validation at all). Reuses pinnedRequest's own guard rather
+    // than reimplementing it.
+    // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
     const syncViolation = validateHopUrlSync(url, policy);
     if (syncViolation !== undefined) {
       throw validationError(`spec URL ${displaySource(url)} rejected: ${syncViolation}`);
     }
-    // Content-negotiation default first: configured headers override it (§3.3 precedence)
+    // Content-negotiation default first: configured headers override it
     const headers = new Headers({
       accept: 'application/json, application/yaml;q=0.9, text/yaml;q=0.8, */*;q=0.1',
     });
     if (!crossed && url.origin === originalOrigin) {
-      // Auth headers are never forwarded to a foreign origin (spec §5.1), and
-      // neither are cache validators: they describe the original origin's copy
+      // Auth headers are never forwarded to a foreign origin, and
+      // neither are cache validators: they describe the original origin's copy.
+      // Security module: `headers` is a local, freshly-constructed Headers
+      // instance (line above) whose mutation never escapes this hop — building
+      // it via spread/Object.fromEntries instead would restructure the
+      // trust-boundary conditional this block enforces, which the
+      // locally-provable-only rule for this file disallows.
       for (const header of opts.headers) {
         headers.set(header.name, header.value);
       }
@@ -137,12 +145,17 @@ const fetchChain = async (
         headers.set('if-modified-since', opts.lastModified);
       }
     }
-    // M6 Task 6: a fresh per-hop pinned Agent (never trusted past hop 0),
-    // whose connect-time lookup is the SAME resolution used to validate and
-    // to connect — closing the residual validate-then-resolve TOCTOU a
-    // separate pre-fetch DNS lookup would leave open. Bound to the
-    // whole-chain deadline (`signal`) so DNS cannot outlive the fetch budget.
+    // A fresh per-hop pinned Agent (never trusted past hop 0), whose
+    // connect-time lookup is the SAME resolution used to validate and to
+    // connect — closing the residual validate-then-resolve TOCTOU a separate
+    // pre-fetch DNS lookup would leave open. Bound to the whole-chain
+    // deadline (`signal`) so DNS cannot outlive the fetch budget.
     const agent = createPinnedAgent(policy, chainResolve(deps.lookup, signal));
+    // Seam hazard + security module: `deps.fetcher` is an injected
+    // Promise-returning transport (a fake in tests may throw synchronously),
+    // and the catch below performs a required cleanup (agent.destroy())
+    // before mapping the error — collapsing this to `.catch()` would narrow
+    // that catch boundary around the cleanup.
     let response: UndiciResponse;
     try {
       response = await deps.fetcher(url, {
@@ -157,19 +170,23 @@ const fetchChain = async (
         redirect: 'manual',
         signal,
       });
-    } catch (err) {
+    } catch (error) {
       // Exceptional path: destroy(), never the graceful close() that may
       // await a live response (mirrors pinnedRequest's Agent lifecycle).
       await agent.destroy().catch(ignoreError);
-      const name = errorName(err);
+      const name = errorName(error);
       if (name === 'TimeoutError' || name === 'AbortError') {
         throw validationError(`spec fetch timed out after ${timeoutMs}ms (${displaySource(url)})`);
       }
-      throw validationError(`spec fetch failed for ${displaySource(url)}: ${describeCause(err)}`);
+      throw validationError(`spec fetch failed for ${displaySource(url)}: ${describeCause(error)}`);
     }
+    // `exceptional` is read in the `finally` below to choose destroy() vs the
+    // graceful close() — a flag threaded from `catch` across a cleanup
+    // boundary is exactly what the semantic preconditions say must stay
+    // imperative (security module besides).
     let exceptional = false;
     try {
-      // D6, verified by probe: fetch surfaces a 304 with ok === false and
+      // Verified by probe: fetch surfaces a 304 with ok === false and
       // body === null, so it must be recognised BEFORE both the redirect branch
       // and the !response.ok branch below — otherwise a successful revalidation
       // is reported as a fetch failure, and a 304 carrying a Location header
@@ -177,10 +194,10 @@ const fetchChain = async (
       // read, so the body cancel is a no-op safety net.
       if (response.status === 304) {
         await response.body?.cancel();
-        // D16(a2): a 304 carries readable headers (probed: etag survives), and
-        // the round-1 draft discarded them — so a revalidation could never
-        // refresh the validator it replays on the next run. They are bounded by
-        // the same rule as on a 200: remote-controlled, stored, and replayed.
+        // A 304 carries readable headers (probed: etag survives); discarding
+        // them would leave a revalidation unable to refresh the validator it
+        // replays on the next run. They are bounded by the same rule as on a
+        // 200: remote-controlled, stored, and replayed.
         const etag = readValidator(response, 'etag');
         const lastModified = readValidator(response, 'last-modified');
         return {
@@ -195,6 +212,10 @@ const fetchChain = async (
         if (location === null) {
           throw validationError(`redirect from ${displaySource(url)} has no Location header`);
         }
+        // Security module: only locally-provable rewrites are allowed here
+        // (single-expression, let→const-without-restructuring, pure
+        // loop→map); extracting this try/catch into a helper isn't on that
+        // list, so the declare-then-assign stays.
         let next: URL;
         try {
           next = new URL(location, url);
@@ -203,7 +224,7 @@ const fetchChain = async (
             `redirect from ${displaySource(url)} has an invalid Location header`,
           );
         }
-        // D8 (sensitive query params) plus scheme/userinfo, unconditionally.
+        // Sensitive query params plus scheme/userinfo, checked unconditionally.
         validateHopUrl(next);
         // A literal-IP redirect target is fully covered by the next
         // iteration's `validateHopUrlSync` above (undici would skip its own
@@ -211,7 +232,7 @@ const fetchChain = async (
         // for genuine hostnames — the residual defense-in-depth layer for a
         // hostile/misconfigured resolver, bound to the same whole-chain
         // deadline. Kept deliberately narrow so the synchronous guard is
-        // provably what rejects a literal (Step 7 falsification).
+        // provably what rejects a literal.
         if (isIP(hostnameOf(next)) === 0) {
           await assertAllowedRedirectTarget(next, { allowPrivateNetwork }, deps.lookup, signal);
         }
@@ -239,9 +260,9 @@ const fetchChain = async (
         ...(etag === undefined ? {} : { etag }),
         ...(lastModified === undefined ? {} : { lastModified }),
       };
-    } catch (err) {
+    } catch (error) {
       exceptional = true;
-      throw err;
+      throw error;
     } finally {
       // Every non-exceptional path (a plain 200/304, or a redirect hop whose
       // body was already cancelled above) closes gracefully; every
@@ -268,7 +289,7 @@ export const fetchSpec = async (
   return result.loaded;
 };
 
-// Spec §5.4: revalidation of an expired baseline. Validators are sent only when
+// Revalidation of an expired baseline. Validators are sent only when
 // the cached entry actually recorded them; with neither this is a plain GET, and
 // a 304 answer is then treated as "unchanged" — the fail-safe direction, since
 // the caller keeps serving its accepted baseline.

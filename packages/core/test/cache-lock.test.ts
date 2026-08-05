@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { LOCK_STALE_MS, cacheLayout, unlockNamespace, withNamespaceLock } from '../src/index.ts';
-import { type MemoryCacheFs, memoryCacheFs } from './helpers/cache-fs.ts';
+import { memoryCacheFs } from './helpers/cache-fs.ts';
+import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
 const LAYOUT = cacheLayout('/cache', 'abcdef0123456789');
 
-describe('withNamespaceLock (D12)', () => {
+describe('withNamespaceLock', () => {
   it('creates the namespace directory, holds the lock, and releases it', async () => {
     const fs = memoryCacheFs();
-    const result = await withNamespaceLock(LAYOUT, fs, 1_000, async () => {
+    const result = await withNamespaceLock(LAYOUT, fs, 1000, async () => {
       expect(await fs.pathExists(LAYOUT.lockPath)).toBe(true);
       return 'done';
     });
@@ -18,12 +19,12 @@ describe('withNamespaceLock (D12)', () => {
 
   it('records the holder as a JSON object with an owner token and a timestamp', async () => {
     const fs = memoryCacheFs();
-    await withNamespaceLock(LAYOUT, fs, 1_234, () => {
+    await withNamespaceLock(LAYOUT, fs, 1234, () => {
       const record = JSON.parse(fs.files.get(LAYOUT.lockPath) ?? '') as {
         owner: string;
         acquiredAt: number;
       };
-      expect(record.acquiredAt).toBe(1_234);
+      expect(record.acquiredAt).toBe(1234);
       expect(record.owner).toMatch(/^[0-9a-f-]{36}$/u);
       return Promise.resolve();
     });
@@ -31,19 +32,19 @@ describe('withNamespaceLock (D12)', () => {
 
   it('refuses a second holder while the lock is live', async () => {
     const fs = memoryCacheFs();
-    await withNamespaceLock(LAYOUT, fs, 1_000, async () => {
+    await withNamespaceLock(LAYOUT, fs, 1000, async () => {
       await expect(
-        withNamespaceLock(LAYOUT, fs, 1_000, () => Promise.resolve('inner')),
+        withNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve('inner')),
       ).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
     });
   });
 
   it('names the namespace but nothing else in the contention message', async () => {
     const fs = memoryCacheFs();
-    await withNamespaceLock(LAYOUT, fs, 1_000, async () => {
-      await expect(
-        withNamespaceLock(LAYOUT, fs, 1_000, () => Promise.resolve(0)),
-      ).rejects.toThrowError(new RegExp(LAYOUT.namespace, 'u'));
+    await withNamespaceLock(LAYOUT, fs, 1000, async () => {
+      await expect(withNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve(0))).rejects.toThrow(
+        new RegExp(LAYOUT.namespace, 'u'),
+      );
     });
   });
 
@@ -56,8 +57,9 @@ describe('withNamespaceLock (D12)', () => {
     ).rejects.toMatchObject({ code: 'conflict' });
   });
 
-  it('does NOT break a lock held past LOCK_STALE_MS — staleness is not a licence (D12.3)', async () => {
-    // The round-1 draft acquired here. It cannot: see the three-owner case below
+  it('does NOT break a lock held past LOCK_STALE_MS — staleness is not a licence', async () => {
+    // A naive implementation might acquire once the lock looks stale; that is
+    // unsafe — see the three-owner case below for why.
     const fs = memoryCacheFs();
     await fs.mkdirSecure(LAYOUT.dir);
     await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'dead', acquiredAt: 0 }));
@@ -74,13 +76,13 @@ describe('withNamespaceLock (D12)', () => {
     await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'dead', acquiredAt: 0 }));
     await expect(
       withNamespaceLock(LAYOUT, fs, LOCK_STALE_MS * 2, () => Promise.resolve('ok')),
-    ).rejects.toThrowError(/cache unlock/u);
+    ).rejects.toThrow(/cache unlock/u);
   });
 
   it('contends on an unparsable or malformed lock file rather than assuming it is dead', async () => {
-    // A record that cannot be read carries NO expiry evidence. The round-1 draft
-    // treated that as stale and acquired; absent evidence, the safe reading is
-    // that someone holds it.
+    // A record that cannot be read carries NO expiry evidence. Treating that
+    // as stale and acquiring would be unsafe; absent evidence, the safe
+    // reading is that someone holds it.
     const fs = memoryCacheFs();
     await fs.mkdirSecure(LAYOUT.dir);
     await fs.createExclusive(LAYOUT.lockPath, 'not json at all');
@@ -95,13 +97,13 @@ describe('withNamespaceLock (D12)', () => {
     ).rejects.toMatchObject({ code: 'conflict' });
   });
 
-  it('never deletes a third party live lock — the three-owner takeover race (D12.3)', async () => {
+  it('never deletes a third party live lock — the three-owner takeover race', async () => {
     // This is the exact interleaving that made automatic stale breaking unsafe,
     // driven deterministically rather than by timing:
     //   1. A holds a lock whose record is already older than LOCK_STALE_MS
     //   2. B observes A's stale record and decides it may take over
     //   3. C removes A's record and acquires a FRESH lock of its own
-    //   4. B proceeds — and under the round-1 code unlinks C's live lock
+    //   4. B proceeds — and an unsafe implementation would unlink C's live lock
     const fs = memoryCacheFs();
     await fs.mkdirSecure(LAYOUT.dir);
     await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'A', acquiredAt: 0 }));
@@ -123,8 +125,8 @@ describe('withNamespaceLock (D12)', () => {
   it('releases the lock when the guarded work throws', async () => {
     const fs = memoryCacheFs();
     await expect(
-      withNamespaceLock(LAYOUT, fs, 1_000, () => Promise.reject(new Error('boom'))),
-    ).rejects.toThrowError('boom');
+      withNamespaceLock(LAYOUT, fs, 1000, () => Promise.reject(new Error('boom'))),
+    ).rejects.toThrow('boom');
     expect(await fs.pathExists(LAYOUT.lockPath)).toBe(false);
   });
 
@@ -133,11 +135,11 @@ describe('withNamespaceLock (D12)', () => {
     // fresh lock a third process took while it was running — this is what the
     // owner token buys that a pid could not (pids are reused)
     const fs = memoryCacheFs();
-    await withNamespaceLock(LAYOUT, fs, 1_000, async () => {
+    await withNamespaceLock(LAYOUT, fs, 1000, async () => {
       await fs.removeFile(LAYOUT.lockPath);
       await fs.createExclusive(
         LAYOUT.lockPath,
-        JSON.stringify({ owner: 'someone-else', acquiredAt: 2_000 }),
+        JSON.stringify({ owner: 'someone-else', acquiredAt: 2000 }),
       );
     });
     expect(await fs.pathExists(LAYOUT.lockPath)).toBe(true);
@@ -147,7 +149,7 @@ describe('withNamespaceLock (D12)', () => {
     expect(LOCK_STALE_MS).toBe(60_000);
   });
 
-  it('propagates a non-absence read failure hit during contention instead of reporting a conflict (D17)', async () => {
+  it('propagates a non-absence read failure hit during contention instead of reporting a conflict', async () => {
     // An EACCES/EIO on the lock file carries no absence-or-malformed evidence
     // at all — it must not be folded into the "someone else holds it" story.
     const fs = memoryCacheFs();
@@ -160,14 +162,14 @@ describe('withNamespaceLock (D12)', () => {
       return Promise.reject(new Error('unexpected path'));
     };
     await expect(
-      withNamespaceLock(LAYOUT, fs, 1_000, () => Promise.resolve('ok')),
+      withNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve('ok')),
     ).rejects.toMatchObject({ code: 'validation', exitCode: 3 });
   });
 
-  it('propagates a non-absence read failure hit while releasing instead of completing silently (D17)', async () => {
+  it('propagates a non-absence read failure hit while releasing instead of completing silently', async () => {
     const fs = memoryCacheFs();
     await expect(
-      withNamespaceLock(LAYOUT, fs, 1_000, () => {
+      withNamespaceLock(LAYOUT, fs, 1000, () => {
         // Fails only once acquisition is done and the guarded work is running,
         // so this exercises the release-time readLockHolder call, not the
         // contention one.
@@ -183,7 +185,7 @@ describe('withNamespaceLock (D12)', () => {
   });
 });
 
-describe('unlockNamespace (D12.3 — the explicit recovery path)', () => {
+describe('unlockNamespace — the explicit recovery path', () => {
   const held = async (acquiredAt: number, owner = 'dead'): Promise<MemoryCacheFs> => {
     const fs = memoryCacheFs();
     await fs.mkdirSecure(LAYOUT.dir);
@@ -244,7 +246,7 @@ describe('unlockNamespace (D12.3 — the explicit recovery path)', () => {
     ).resolves.toBe('ok');
   });
 
-  it('does not remove the lock file when the holder read fails with a non-absence error (D17)', async () => {
+  it('does not remove the lock file when the holder read fails with a non-absence error', async () => {
     // Even under --force this must not proceed to the unlink: a non-absence
     // read failure is not evidence of anything, staleness included.
     const fs = await held(0);

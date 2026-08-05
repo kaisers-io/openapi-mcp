@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildTools, SYSTEM_HEADERS, type HttpMethod, type NamedOperation } from '../src/index.ts';
+import { buildTools, SYSTEM_HEADERS } from '../src/index.ts';
+import type { HttpMethod, NamedOperation } from '../src/index.ts';
 
 const named = (
   toolName: string,
@@ -94,7 +95,7 @@ describe('buildTools', () => {
   });
 
   it('reserves a mixed-case operator auth header (case-insensitive set contents)', () => {
-    // M4/M5 unions operator-configured auth-header names into reservedHeaders;
+    // Operator-configured auth-header names are unioned into reservedHeaders;
     // those may be mixed-case. buildTools must lowercase the set contents so the
     // case-insensitive header lookup matches — otherwise the auth header leaks in
     // as a tool input. reservedHeaders here carries the mixed-case 'X-API-Key'.
@@ -111,7 +112,7 @@ describe('buildTools', () => {
   });
 });
 
-describe('buildTools — §6.4 wire schema + sanitization', () => {
+describe('buildTools — wire schema + sanitization', () => {
   it('propagates a body-field description into the wire schema', () => {
     const { tools } = buildTools(
       [
@@ -137,7 +138,7 @@ describe('buildTools — §6.4 wire schema + sanitization', () => {
   it('sanitizes a hostile property description in .describe() and the wire schema', () => {
     // Build the hostile string at runtime — no raw control/bidi bytes in this file.
     const bel = String.fromCodePoint(0x07);
-    const rlo = String.fromCodePoint(0x202e);
+    const rlo = String.fromCodePoint(0x20_2e);
     const hostile = `evil${bel}${rlo}text`;
     const { tools } = buildTools(
       [

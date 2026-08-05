@@ -1,29 +1,31 @@
 import { asCacheError } from '../cache/errors.ts';
 import type { CacheFs } from '../cache/fs.ts';
-import { resolveCachePolicy, type CacheLayout } from '../cache/paths.ts';
-import {
-  readCacheEntry,
-  touchRevalidated,
-  writeAccepted,
-  writeCandidate,
-  type CacheEntry,
-} from '../cache/store.ts';
+import { resolveCachePolicy } from '../cache/paths.ts';
+import type { CacheLayout } from '../cache/paths.ts';
+import { readCacheEntry, touchRevalidated, writeAccepted, writeCandidate } from '../cache/store.ts';
+import type { CacheEntry } from '../cache/store.ts';
 import { evaluateFreshness } from '../cache/ttl.ts';
 import { usageError, validationError } from '../errors.ts';
-import { applyFilters, type DeadPattern } from '../filter/engine.ts';
+import { applyFilters } from '../filter/engine.ts';
+import type { DeadPattern } from '../filter/engine.ts';
 import type { FilterPattern } from '../filter/pattern.ts';
 import type { DnsLookup } from '../http/egress.ts';
 import type { ResolvedHeader } from '../http/headers.ts';
-import { assignToolNames, type NamedOperation } from '../toolgen/naming.ts';
+import { assignToolNames } from '../toolgen/naming.ts';
+import type { NamedOperation } from '../toolgen/naming.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 import { dereference } from './dereference.ts';
-import { fetchSpecConditional, type FetchSpecDeps } from './fetch.ts';
-import { loadSpecFromFile, parseSpecSource, type LoadedSpecText } from './load.ts';
-import { normalizeSpec, type NormalizedSpec } from './normalize.ts';
+import { fetchSpecConditional } from './fetch.ts';
+import type { FetchSpecDeps } from './fetch.ts';
+import { loadSpecFromFile, parseSpecSource } from './load.ts';
+import type { LoadedSpecText } from './load.ts';
+import { normalizeSpec } from './normalize.ts';
+import type { NormalizedSpec } from './normalize.ts';
 import { parseSpecText } from './parse.ts';
-import { validateOpenApiDocument, type OpenapiVersion } from './validate.ts';
+import { validateOpenApiDocument } from './validate.ts';
+import type { OpenapiVersion } from './validate.ts';
 
-export interface SpecPipelineOptions {
+export type SpecPipelineOptions = {
   specHeaders: readonly ResolvedHeader[];
   timeoutMs: number;
   cwd: string;
@@ -35,18 +37,18 @@ export interface SpecPipelineOptions {
   trustSpecUpdates: boolean;
   cacheRoot: string | undefined;
   nowMs: number;
-}
+};
 
-export interface SpecPipelineDeps {
-  // M6 Task 6 (DNS-pin stretch): matches FetchSpecDeps.fetcher — undici's own
-  // fetch, never Node's global fetch (dual-package hazard: the global fetch
-  // rejects an installed-undici Agent as its dispatcher).
+export type SpecPipelineDeps = {
+  // Matches FetchSpecDeps.fetcher — undici's own fetch, never Node's global
+  // fetch (dual-package hazard: the global fetch rejects an installed-undici
+  // Agent as its dispatcher).
   fetcher: FetchSpecDeps['fetcher'];
   lookup: DnsLookup;
   readFileText: (path: string) => Promise<string>;
   fileSizeBytes: (path: string) => Promise<number>;
   cacheFs: CacheFs;
-}
+};
 
 export type CacheStatus =
   | 'bypassed'
@@ -57,7 +59,7 @@ export type CacheStatus =
   | 'candidate'
   | 'stale';
 
-export interface SpecPipelineResult {
+export type SpecPipelineResult = {
   spec: NormalizedSpec;
   namedOperations: readonly NamedOperation[];
   contentHash: string;
@@ -66,12 +68,12 @@ export interface SpecPipelineResult {
   deadPatterns: readonly DeadPattern[];
   warnings: readonly string[];
   cacheStatus: CacheStatus;
-}
+};
 
-interface ProcessedSpec {
+type ProcessedSpec = {
   spec: NormalizedSpec;
   document: Record<string, unknown>;
-}
+};
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -85,7 +87,7 @@ const enforceToolBudget = (spec: NormalizedSpec): void => {
 
 // Parse, validate, dereference, normalize, and enforce the tool budget. Every
 // cache write happens downstream of this function, so an unvalidated or
-// over-budget spec can never reach the disk (spec §4.1).
+// over-budget spec can never reach the disk.
 const processSpecText = (text: string): ProcessedSpec => {
   const parsed = parseSpecText(text);
   const validated = validateOpenApiDocument(parsed);
@@ -95,9 +97,9 @@ const processSpecText = (text: string): ProcessedSpec => {
   return { spec, document: dereferenced };
 };
 
-// A cached document is already parsed and already dereferenced (D14), so this
-// path skips both. It also does NOT re-validate against the meta-schema (D16b):
-// these bytes were validated before they were written and readCacheEntry has
+// A cached document is already parsed and already dereferenced, so this path
+// skips both. It also does NOT re-validate against the meta-schema: these
+// bytes were validated before they were written and readCacheEntry has
 // already checked their sha256 against meta.acceptedContentHash. The 3.0/3.1
 // discriminator that would otherwise have been the reason to revalidate comes
 // from meta.openapiVersion, which is persisted for exactly this.
@@ -124,7 +126,7 @@ export const runSpecPipeline = async (
   if (source.kind === 'file' && authenticated) {
     throw usageError('--spec-header-env only applies to URL spec sources');
   }
-  // D13: policy is a value, not an assertion — bypass means cacheFs is never touched
+  // Policy is a value, not an assertion — bypass means cacheFs is never touched
   const policy = resolveCachePolicy({
     source,
     authenticated,
@@ -134,46 +136,50 @@ export const runSpecPipeline = async (
   });
 
   const warnings: string[] = [];
+  // Composition root, imperative on purpose: `layout` stays undefined on the
+  // bypass branch and is only assigned after the awaited mkdirSecure below
+  // succeeds — a ternary/ helper would either call mkdirSecure unconditionally
+  // or hide the awaited side effect inside a value-producing expression,
+  // reordering it relative to the `warnings.push` above.
   let layout: CacheLayout | undefined;
   if (policy.kind === 'bypass') {
-    // D13/D17: the ONLY way storage is skipped. A bypass is a policy decision
+    // This is the ONLY way storage is skipped. A bypass is a policy decision
     // taken deliberately, never the fallout of an I/O error.
     warnings.push(`spec cache bypassed: ${policy.reason}`);
   } else {
-    // D17, corrected in review round 2. The round-1 draft wrapped this in a try
-    // that turned ANY failure into "continuing without it" — which serves the
-    // remote document without ever consulting the durable accepted baseline
-    // that authorizes it. That is the same authorization reset round 1's first
-    // finding prohibited, reached through the back door: an attacker who can
-    // make one mkdir fail re-enters trust-on-first-use. Once policy has
-    // resolved to persistent, an inability to prepare the namespace is a
-    // validation failure.
+    // Once policy has resolved to persistent, an inability to prepare the
+    // namespace is a validation failure, not something to silently continue
+    // past: serving the remote document without ever consulting the durable
+    // accepted baseline that authorizes it would let an attacker who can make
+    // one mkdir fail re-enter trust-on-first-use through the back door.
     //
-    // Round-3 finding 3: it must be a TYPED one. The round-3 draft simply let
-    // the raw fs error propagate, which exits 1 ("unexpected") rather than the
-    // 3 the Global Constraints declare for this case — and its tests asserted
-    // only "rejects", so the two never disagreed visibly. cacheIoError makes
-    // the declared exit code real, and the tests now assert it.
+    // The failure must be a TYPED one: letting the raw fs error propagate
+    // exits 1 ("unexpected") rather than the 3 the Global Constraints declare
+    // for this case. cacheIoError makes the declared exit code real.
     try {
       await deps.cacheFs.mkdirSecure(policy.layout.dir);
-    } catch (err) {
-      throw asCacheError(`prepare the namespace for ${policy.layout.namespace}`, err);
+    } catch (error) {
+      throw asCacheError(`prepare the namespace for ${policy.layout.namespace}`, error);
     }
     ({ layout } = policy);
   }
 
+  // Composition root, imperative on purpose: `cached` stays undefined unless
+  // the awaited read below both runs (layout defined) and reports a hit;
+  // the corrupt-entry throw in between is a fail-closed exit, not a value.
   let cached: CacheEntry | undefined;
   if (layout !== undefined) {
-    // The reader itself distinguishes absence from failure (D17); anything it
+    // The reader itself distinguishes absence from failure; anything it
     // throws is a real I/O failure and is typed here for the same reason.
-    // No wrapper here: readCacheEntry is wrapped at its own definition
-    // (Task 4 Step 3b), and double-wrapping contradicts the one-boundary design
+    // No wrapper here: readCacheEntry is wrapped at its own definition, and
+    // double-wrapping contradicts the one-boundary design
     const read = await readCacheEntry(layout, deps.cacheFs);
     if (read.kind === 'corrupt') {
-      // D5 — FAIL CLOSED. A silent refetch here would re-enter trust-on-first-use
+      // FAIL CLOSED. A silent refetch here would re-enter trust-on-first-use
       // and accept whatever the remote says now, which is exactly the rug pull
-      // §6.3 exists to prevent and is reachable by anyone who can write into the
-      // cache directory. Recovery must be an explicit operator act.
+      // that fail-closed handling of a corrupt entry exists to prevent, and is
+      // reachable by anyone who can write into the cache directory. Recovery
+      // must be an explicit operator act.
       throw validationError(
         `the spec cache entry is unusable (${read.reason}); it is the accepted baseline that authorizes this spec, so it is never refetched silently — run "openapi-mcp cache clear" to reset it deliberately`,
       );
@@ -183,7 +189,7 @@ export const runSpecPipeline = async (
     }
   }
 
-  // Spec §5.4 rule 2: file specs are re-read and hash-compared on every run, so
+  // File specs are re-read and hash-compared on every run, so
   // the TTL never short-circuits them; only URL sources take the no-network path.
   const decision =
     cached === undefined || source.kind === 'file'
@@ -201,31 +207,36 @@ export const runSpecPipeline = async (
     });
   }
 
-  // The refresh attempt. §5.4's last-known-good rule wraps exactly this block:
+  // The refresh attempt. The last-known-good rule wraps exactly this block:
   // a failed fetch or a failed validation of the REFRESHED spec falls back to
   // the accepted baseline. The corrupt-entry throw above is deliberately outside
   // it, because a corrupt anchor is never a recoverable condition.
+  // Composition root, imperative on purpose: `refreshed` and
+  // `notModifiedValidators` below are assigned deep inside the try's
+  // conditional branches and read after it — the staged
+  // fail-closed-read/conditional-refresh/last-known-good-fallback sequence is
+  // sequential by contract, not a candidate for restructuring into a value
+  // expression.
   let refreshed:
     | { loaded: LoadedSpecText; etag?: string | undefined; lastModified?: string | undefined }
     | 'not-modified';
-  // D16(a2): a 304 carries validators, and they are what the next revalidation
+  // A 304 carries validators, and they are what the next revalidation
   // replays. Captured here so the touchRevalidated call below can record them.
   let notModifiedValidators: { etag?: string | undefined; lastModified?: string | undefined } = {};
-  // Round-4 finding 3: the validated refresh is carried OUT of the try so the
-  // commit happens outside the stale-fallback catch
+  // The validated refresh is carried OUT of the try so the commit happens
+  // outside the stale-fallback catch
   let processedRefresh: ProcessedSpec | undefined;
   try {
     if (source.kind === 'url') {
-      // Task-9 finding (round 9): the brief's own draft routed a first-ever
-      // fetch (cached === undefined) through the plain, non-conditional
-      // fetchSpec, which discards any ETag/Last-Modified the server returned.
-      // That left meta.etag unset after trust-on-first-use, so the NEXT
-      // revalidation — past the TTL — could never send If-None-Match, which a
-      // live test (seeding an etag on call 1) catches directly. Routing every
-      // URL fetch through fetchSpecConditional captures validators uniformly:
-      // when cached is undefined, `decision` carries no etag/lastModified
-      // (see its construction above), so this degrades to an ordinary GET —
-      // identical bytes, but with the response's validators captured.
+      // Routing every URL fetch through fetchSpecConditional captures
+      // validators uniformly: a first-ever fetch (cached === undefined)
+      // through the plain, non-conditional fetchSpec would discard any
+      // ETag/Last-Modified the server returned, leaving meta.etag unset after
+      // trust-on-first-use so the NEXT revalidation — past the TTL — could
+      // never send If-None-Match. When cached is undefined, `decision` carries
+      // no etag/lastModified (see its construction above), so this degrades
+      // to an ordinary GET — identical bytes, but with the response's
+      // validators captured.
       const conditional = await fetchSpecConditional(
         source.url,
         {
@@ -266,22 +277,22 @@ export const runSpecPipeline = async (
       // Validation of the refreshed bytes happens inside the try, so an invalid
       // refresh degrades to last-known-good rather than killing the command.
       //
-      // Round-4 finding 3: the COMMIT deliberately does not. The round-4 draft
-      // called commitRefresh here, inside this try, so a writeAccepted or
-      // writeCandidate I/O failure — and, worse, a lock conflictError (exit 5)
-      // or a corrupt-existing-object validationError — was caught by the
+      // The COMMIT deliberately does not happen here: calling commitRefresh
+      // inside this try would let a writeAccepted or writeCandidate I/O
+      // failure — or, worse, a lock conflictError (exit 5) or a
+      // corrupt-existing-object validationError — be caught by the
       // stale-fallback below and reported as a SUCCESSFUL `stale` response. A
-      // failed cache write is not a failed refresh: §5.4's last-known-good rule
+      // failed cache write is not a failed refresh: the last-known-good rule
       // covers the network and the spec, not our own inability to persist.
       // Only the fetch and the validation may fall back.
       processedRefresh = processSpecText(refreshed.loaded.text);
     }
-  } catch (err) {
+  } catch (error) {
     if (cached === undefined) {
-      throw err;
+      throw error;
     }
     warnings.push(
-      `spec refresh failed, serving the last known good accepted baseline: ${describeCause(err)}`,
+      `spec refresh failed, serving the last known good accepted baseline: ${describeCause(error)}`,
     );
     const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
     return finish(spec, opts, warnings, {
@@ -293,16 +304,17 @@ export const runSpecPipeline = async (
     });
   }
 
-  // Round-4 finding 3: the commit runs OUTSIDE the stale-fallback catch, so a
-  // cache write failure — an I/O error, a corrupt pre-existing object, or a
-  // lock conflict (exit 5) — propagates with its own typed error instead of
-  // being laundered into a successful `stale` response.
+  // The commit runs OUTSIDE the stale-fallback catch, so a cache write
+  // failure — an I/O error, a corrupt pre-existing object, or a lock conflict
+  // (exit 5) — propagates with its own typed error instead of being
+  // laundered into a successful `stale` response.
   if (processedRefresh !== undefined && refreshed !== 'not-modified') {
-    // Round-5 finding 2: wrapped, like every other cache mutation. Moving the
-    // commit out of the stale-fallback stopped a write failure from being
-    // reported as success; this stops a RAW write failure from surfacing as an
-    // unexpected exit 1. A typed store error (notably a lock conflict, exit 5)
-    // passes through untouched.
+    // Wrapped, like every other cache mutation: committing outside the
+    // stale-fallback path keeps a write failure from being reported as
+    // success, and the typed wrap keeps a RAW write failure from surfacing
+    // as an unexpected exit 1.
+    // A typed store error (notably a lock conflict, exit 5) passes through
+    // untouched.
     return await commitRefresh(processedRefresh, refreshed, cached, layout, opts, deps, warnings);
   }
 
@@ -311,16 +323,15 @@ export const runSpecPipeline = async (
     throw validationError('the spec source reported no change but nothing is cached');
   }
   if (layout !== undefined) {
-    // D16(a2), corrected in review round 2. The round-1 draft called
-    // writeAccepted here — which rewrites the accepted entry and CLEARS the
-    // candidate, so revalidating silently destroyed a candidate awaiting
-    // promotion without ever approving it. touchRevalidated updates the
-    // timestamp and validators and preserves both slots.
+    // Calling writeAccepted here would rewrite the accepted entry and CLEAR
+    // the candidate, silently destroying a candidate awaiting promotion
+    // without ever approving it. touchRevalidated updates the timestamp and
+    // validators and preserves both slots.
     //
-    // Round-4 finding 3: typed, like every other cache mutation, so a raw fs
-    // failure here cannot surface as an unexpected exit 1. A typed
-    // OpenapiMcpError from the store (notably a lock conflict, exit 5) is
-    // passed through unchanged.
+    // Typed, like every other cache mutation, so a raw fs failure here
+    // cannot surface as an unexpected exit 1. A typed OpenapiMcpError from
+    // the store (notably a lock conflict, exit 5) is passed through
+    // unchanged.
     await touchRevalidated(layout, deps.cacheFs, opts.nowMs, {
       ...(notModifiedValidators.etag === undefined ? {} : { etag: notModifiedValidators.etag }),
       ...(notModifiedValidators.lastModified === undefined
@@ -337,15 +348,15 @@ export const runSpecPipeline = async (
   });
 };
 
-interface FinishInput {
+type FinishInput = {
   contentHash: string;
   candidateContentHash?: string | undefined;
   displaySource: string;
   cacheStatus: CacheStatus;
-  // The entry being served, when one is. D16(a2): a candidate recorded in it
-  // must surface on EVERY such result, not only on the run that created it.
+  // The entry being served, when one is. A candidate recorded in it must
+  // surface on EVERY such result, not only on the run that created it.
   cached?: CacheEntry | undefined;
-}
+};
 
 const PENDING_PROMOTION_WARNING =
   'a refreshed spec is waiting as a candidate; the accepted baseline is being served — run "openapi-mcp cache promote" to accept it';
@@ -357,14 +368,14 @@ const finish = (
   input: FinishInput,
 ): SpecPipelineResult => {
   const named = assignToolNames(spec.operations);
-  // D15: one budget for the whole filtering pass
+  // One budget for the whole filtering pass
   const filtered = applyFilters(named, opts.allow, opts.deny);
-  // D16(a2), corrected in review round 2. The round-1 draft reported the
-  // candidate only on the `candidate` status, so a later start inside the TTL
-  // returned `fresh` with no candidate hash and no warning — the candidate was
-  // on disk, gating the update, and completely invisible. The same held for
-  // `revalidated` and `stale`. A pending candidate is a property of the ENTRY,
-  // so it is reported wherever that entry is served.
+  // Reporting the candidate only on the `candidate` status would mean a
+  // later start inside the TTL returns `fresh` with no candidate hash and no
+  // warning — the candidate would be on disk, gating the update, and
+  // completely invisible. The same holds for `revalidated` and `stale`. A
+  // pending candidate is a property of the ENTRY, so it is reported wherever
+  // that entry is served.
   const pending = input.cached?.meta.candidate;
   const candidateContentHash = input.candidateContentHash ?? pending?.contentHash;
   const allWarnings =
@@ -383,11 +394,11 @@ const finish = (
   };
 };
 
-interface Refreshed {
+type Refreshed = {
   loaded: LoadedSpecText;
   etag?: string | undefined;
   lastModified?: string | undefined;
-}
+};
 
 // Written as an if-else chain, not a nested ternary, purely for lint-rule
 // compliance (no-nested-ternary) — the three-way branch itself is unchanged
@@ -407,7 +418,7 @@ const acceptedCacheStatus = (
 
 // Decides what a successfully fetched-and-validated spec becomes: the accepted
 // baseline (first use, unchanged content, or --trust-spec-updates), or a gated
-// candidate while the accepted baseline keeps serving (§5.4/§6.3).
+// candidate while the accepted baseline keeps serving.
 const commitRefresh = async (
   processed: ProcessedSpec,
   refreshed: Refreshed,
@@ -426,9 +437,9 @@ const commitRefresh = async (
       title: processed.spec.title,
       specVersion: processed.spec.specVersion,
       fetchedAt: opts.nowMs,
-      // D16(a2): the validators belong to THIS representation, which is the
-      // most recently fetched one — the round-1 draft kept the accepted
-      // entry's stale pair, so the next conditional request asked about a
+      // The validators belong to THIS representation, which is the most
+      // recently fetched one — keeping the accepted entry's stale pair
+      // instead would make the next conditional request ask about a
       // representation the cache no longer had
       ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
       ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
@@ -451,8 +462,8 @@ const commitRefresh = async (
       displaySource: refreshed.loaded.displaySource,
       title: processed.spec.title,
       specVersion: processed.spec.specVersion,
-      // D16b: the discriminator is derived inside writeAccepted from the
-      // document itself, so there is nothing to pass and nothing to disagree
+      // The discriminator is derived inside writeAccepted from the document
+      // itself, so there is nothing to pass and nothing to disagree
       fetchedAt: opts.nowMs,
       ...(opts.cacheKey === undefined ? {} : { cacheKey: opts.cacheKey }),
       ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),

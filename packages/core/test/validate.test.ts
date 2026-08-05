@@ -30,22 +30,22 @@ describe('validateOpenApiDocument', () => {
     try {
       validateOpenApiDocument(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('/info');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('/info');
     }
   });
 
   it('rejects a 3.1 document violating the meta-schema', () => {
     const doc = minimal31();
     doc['paths'] = { '/pets': { get: { responses: 'not-an-object' } } };
-    expect(() => validateOpenApiDocument(doc)).toThrowError(OpenapiMcpError);
+    expect(() => validateOpenApiDocument(doc)).toThrow(OpenapiMcpError);
   });
 
   it('rejects swagger 2.0 documents with a targeted message', () => {
     expect(() =>
       validateOpenApiDocument({ swagger: '2.0', info: { title: 'T', version: '1' }, paths: {} }),
-    ).toThrowError(/OpenAPI 2.0 \(swagger\)/u);
+    ).toThrow(/OpenAPI 2.0 \(swagger\)/u);
   });
 
   it.each(['4.0.0', '3.2.0', '2.0', 'three'])(
@@ -57,14 +57,12 @@ describe('validateOpenApiDocument', () => {
           info: { title: 'T', version: '1' },
           paths: {},
         }),
-      ).toThrowError(/3\.0\.x or 3\.1\.x/u);
+      ).toThrow(/3\.0\.x or 3\.1\.x/u);
     },
   );
 
   it('rejects a document without an openapi field', () => {
-    expect(() => validateOpenApiDocument({ info: { title: 'T' } })).toThrowError(
-      /3\.0\.x or 3\.1\.x/u,
-    );
+    expect(() => validateOpenApiDocument({ info: { title: 'T' } })).toThrow(/3\.0\.x or 3\.1\.x/u);
   });
 
   it('caps the reported error list at 10 entries', () => {
@@ -78,8 +76,8 @@ describe('validateOpenApiDocument', () => {
     try {
       validateOpenApiDocument(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      const lines = (err as OpenapiMcpError).message.split('\n');
+    } catch (error) {
+      const lines = (error as OpenapiMcpError).message.split('\n');
       // Header line + max 10 error lines + optional "and N more" line
       expect(lines.length).toBeLessThanOrEqual(12);
     }
@@ -90,9 +88,9 @@ describe('validateOpenApiDocument', () => {
     expect(validateOpenApiDocument(minimal31()).version).toBe('3.1');
   });
 
-  it('does not echo control characters from the declared openapi version (D2)', () => {
+  it('does not echo control characters from the declared openapi version', () => {
     // The version gate only checks the "3.0."/"3.1." prefix — the remainder is
-    // arbitrary spec content that reached stderr verbatim before this fix
+    // arbitrary spec content that must not reach stderr unescaped/verbatim
     const doc = {
       openapi: '3.0.\u001B]0;PWNED\u0007',
       info: { title: 'T' },
@@ -101,8 +99,8 @@ describe('validateOpenApiDocument', () => {
     try {
       validateOpenApiDocument(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      const { message } = err as OpenapiMcpError;
+    } catch (error) {
+      const { message } = error as OpenapiMcpError;
       expect(message).not.toContain('\u001B');
       expect(message).not.toContain('\u0007');
       expect(message).toContain('3.0.]0;PWNED');
@@ -114,9 +112,9 @@ describe('validateOpenApiDocument', () => {
     try {
       validateOpenApiDocument(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
+    } catch (error) {
       // 32-char cap on the version fragment, not on the whole message
-      expect((err as OpenapiMcpError).message).not.toContain('x'.repeat(40));
+      expect((error as OpenapiMcpError).message).not.toContain('x'.repeat(40));
     }
   });
 });

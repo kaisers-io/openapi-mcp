@@ -20,13 +20,13 @@ export type FieldMapping =
     }
   | { destination: 'body'; bodyPath: readonly string[]; required: boolean };
 
-export interface RequestMapper {
+export type RequestMapper = {
   bodyMode: 'flattened' | 'single' | 'none';
   bodyContentType?: 'application/json' | 'application/x-www-form-urlencoded';
   fields: Record<string, FieldMapping>;
-}
+};
 
-export interface Field {
+export type Field = {
   preferred: string;
   name: string;
   location: 'path' | 'query' | 'header' | 'body';
@@ -34,7 +34,7 @@ export interface Field {
   required: boolean;
   mapping: FieldMapping;
   bodyGroup?: { requiredWhenPresent: boolean };
-}
+};
 
 const STYLE_SUPPORT: Readonly<Record<'path' | 'query' | 'header', 'simple' | 'form'>> = {
   path: 'simple',
@@ -53,6 +53,12 @@ export const paramFields = (
 ): { ok: Field[] } | { unrepresentable: string } => {
   const fields: Field[] = [];
   const seenHeaders = new Set<string>();
+  // Imperative on purpose (like headers.ts's mapping loop): each parameter is
+  // validated — and, on failure, the WHOLE operation is omitted — in
+  // encounter order, while `seenHeaders` accumulates case-insensitive
+  // dedup state across iterations. A `map`/`filter` restatement would need
+  // its callback to both early-return the outer function AND mutate that
+  // shared dedup state, hiding both effects inside a mapping.
   for (const param of operation.parameters) {
     const { name } = param;
     const location = param['in'];
@@ -63,10 +69,10 @@ export const paramFields = (
       return { unrepresentable: 'a parameter with an unsupported location' };
     }
     // Validate EVERY parameter — including a reserved header — BEFORE deciding to
-    // keep or drop it (owner decision, round-15): the tool boundary is fully
-    // fail-closed, so a malformed/unsupported reserved-header param omits the
-    // operation rather than being silently discarded. allowReserved/content/style
-    // and the schema conversion run first; the reserved-header drop comes after.
+    // keep or drop it: the tool boundary is fully fail-closed, so a
+    // malformed/unsupported reserved-header param omits the operation rather than
+    // being silently discarded. allowReserved/content/style and the schema
+    // conversion run first; the reserved-header drop comes after.
     if (param['allowReserved'] === true) {
       return { unrepresentable: `parameter "${name}" uses allowReserved, which is not supported` };
     }
@@ -102,29 +108,36 @@ export const paramFields = (
         ? converted.ok.describe(sanitizeSpecText(param['description'], SPEC_BUDGETS.maxTextLength))
         : converted.ok;
     const required = location === 'path' ? true : param['required'] === true;
-    const mapping: FieldMapping =
-      location === 'path'
-        ? { destination: 'path', wireName: name, style: 'simple', explode, required: true }
-        : location === 'query'
-          ? { destination: 'query', wireName: name, style: 'form', explode, required }
-          : { destination: 'header', wireName: name, style: 'simple', explode, required };
+    const mapping: FieldMapping = ((): FieldMapping => {
+      switch (location) {
+        case 'path': {
+          return { destination: 'path', wireName: name, style: 'simple', explode, required: true };
+        }
+        case 'query': {
+          return { destination: 'query', wireName: name, style: 'form', explode, required };
+        }
+        default: {
+          return { destination: 'header', wireName: name, style: 'simple', explode, required };
+        }
+      }
+    })();
     fields.push({ preferred: name, name, location, schema, required, mapping });
   }
   return { ok: fields };
 };
 
-export interface LayoutResult {
+export type LayoutResult = {
   inputSchema: z.ZodType;
   mapper: RequestMapper;
-}
+};
 
 type BodyContentType = 'application/json' | 'application/x-www-form-urlencoded';
 
-interface BodyResult {
+type BodyResult = {
   fields: Field[];
   mode: 'flattened' | 'single' | 'none';
   contentType?: BodyContentType;
-}
+};
 
 // Keys allowed on a body object-root for it to be FLATTENED. Anything else
 // (not, enum, allOf, minProperties, nullable, ...) routes the body to the single
@@ -174,7 +187,7 @@ const isFlattenableRoot = (root: unknown): root is Record<string, unknown> => {
   // `true`/schema route to the single `body` field. A MALFORMED value (e.g. `7`)
   // must ALSO leave the flatten path — otherwise it is silently ignored and an
   // operation is generated; the single-body path runs it through convertSchema,
-  // which omits it (fail-closed, round-14).
+  // which omits it (fail-closed).
   if (root['additionalProperties'] !== undefined && root['additionalProperties'] !== false) {
     return false;
   }
@@ -212,12 +225,12 @@ const bodyFields = (
     // `required` bypasses schema.ts's malformedKeyword gate. Validate it here with
     // the same rule (an array of UNIQUE strings) — otherwise required:[123] or a
     // duplicate would be silently filtered, an invalid Schema Object accepted
-    // (fail-closed, round-12 review; mirrors malformedKeyword's `required` check).
+    // (fail-closed; mirrors malformedKeyword's `required` check).
     const requiredRaw = root['required'];
     if (
       requiredRaw !== undefined &&
       (!Array.isArray(requiredRaw) ||
-        !requiredRaw.every((k) => typeof k === 'string') ||
+        !requiredRaw.every((name) => typeof name === 'string') ||
         new Set(requiredRaw).size !== requiredRaw.length)
     ) {
       return { unrepresentable: 'the request body has a malformed "required" array' };
@@ -232,6 +245,13 @@ const bodyFields = (
       }
     }
     const fields: Field[] = [];
+    // Imperative on purpose: any single malformed property aborts the WHOLE
+    // request body (fail-closed) before later properties are even converted.
+    // `properties` is spec-controlled (a hostile document can declare many
+    // properties, each with a deep schema) — mapping every property through
+    // convertSchema first and checking afterward would turn this
+    // short-circuit into forced conversion work for every property on
+    // hostile input, even past the first failure.
     for (const [prop, child] of Object.entries(properties)) {
       const converted = convertSchema(child, version, 1);
       if (!('ok' in converted)) {
@@ -280,6 +300,11 @@ const pathPlaceholders = (path: string): { names: Set<string> } | { malformed: t
   const names = new Set<string>();
   let inBrace = false;
   let current = '';
+  // Imperative on purpose: a single left-to-right character scan carrying
+  // brace-depth state (`inBrace`) and the in-progress placeholder text
+  // (`current`) — a streaming state machine, not an accumulation a
+  // map/filter/reduce could restate without reintroducing the same mutable
+  // state as its accumulator.
   for (const char of path) {
     if (char === '{') {
       if (inBrace) {
@@ -309,30 +334,38 @@ const pathPlaceholders = (path: string): { names: Set<string> } | { malformed: t
 // a dot-segment or smuggles a path separator: `.`/`..` (traversal), or a
 // decoded `/`/`\` (an encoded separator baked into the spec's path template,
 // which could re-emerge once the upstream origin decodes it and escape the
-// intended base path). A decoded `?` or `#` is equally dangerous (final-review
-// Fix 7, finding 6): joinFinalUrl (executor.ts) assembles the final URL by
-// STRING CONCATENATION of the built pathname + `?` + query, so a static `?`
-// baked into the path template would either truncate/inject the real query
-// string or introduce a spec-baked query the caller never asked for, and a
-// static `#` would smuggle a fragment into what should be plain path text.
-// Malformed percent-encoding fails closed too.
+// intended base path). A decoded `?` or `#` is equally dangerous: joinFinalUrl
+// (executor.ts) assembles the final URL by STRING CONCATENATION of the built
+// pathname + `?` + query, so a static `?` baked into the path template would
+// either truncate/inject the real query string or introduce a spec-baked
+// query the caller never asked for, and a static `#` would smuggle a fragment
+// into what should be plain path text. Malformed percent-encoding fails closed
+// too.
 const isDangerousStaticSegment = (segment: string): boolean => {
-  let decoded: string;
   try {
-    decoded = decodeURIComponent(segment);
+    const decoded = decodeURIComponent(segment);
+    return (
+      decoded === '.' ||
+      decoded === '..' ||
+      decoded.includes('/') ||
+      decoded.includes('\\') ||
+      decoded.includes('?') ||
+      decoded.includes('#')
+    );
   } catch {
     return true;
   }
-  return (
-    decoded === '.' ||
-    decoded === '..' ||
-    decoded.includes('/') ||
-    decoded.includes('\\') ||
-    decoded.includes('?') ||
-    decoded.includes('#')
-  );
 };
 
+// Imperative on purpose (collision resolution + dedup, like headers.ts's
+// mapping loop): count by preferred name, then rename in encounter order,
+// then verify the renamed set is collision-free — the three passes must run
+// in this sequence before any field participates in the path/prototype
+// validation below. The Field objects were just built by paramFields/
+// bodyFields and are never observed by any caller before this function
+// returns them, so renaming `.name` in place carries no caller-visible side
+// effect; rebuilding via `.map` would be equivalent but adds an allocation
+// per field on every generation run for no behavioural gain.
 const resolveCollisions = (fields: Field[]): { ok: Field[] } | { unrepresentable: string } => {
   const preferredCounts = new Map<string, number>();
   for (const field of fields) {
@@ -396,12 +429,14 @@ export const buildLayout = (
   if ('malformed' in placeholders) {
     return { unrepresentable: 'the path template has a malformed "{...}" placeholder' };
   }
-  const pathWireNames = new Set<string>();
-  for (const field of resolved.ok) {
-    if (field.mapping.destination === 'path') {
-      pathWireNames.add(field.mapping.wireName);
-    }
-  }
+  // `flatMap` (rather than `filter().map()`) keeps the `destination === 'path'`
+  // narrowing in scope for the `wireName` read below — TS does not carry a
+  // `.filter` predicate's narrowing into a later `.map` on the union type.
+  const pathWireNames = new Set(
+    resolved.ok.flatMap((field) =>
+      field.mapping.destination === 'path' ? [field.mapping.wireName] : [],
+    ),
+  );
   const placeholdersMatch =
     placeholders.names.size === pathWireNames.size &&
     [...placeholders.names].every((name) => pathWireNames.has(name));
@@ -418,18 +453,29 @@ export const buildLayout = (
       return { unrepresentable: `a field named "${field.preferred}"` };
     }
   }
-  const shape: Record<string, z.ZodType> = {};
-  for (const field of resolved.ok) {
-    shape[field.name] = field.required ? field.schema : field.schema.optional();
-  }
-  let inputSchema: z.ZodType = z.strictObject(shape);
+  // Every field.name here already passed the dangerous-key gate above (via
+  // field.preferred), so a plain Object.fromEntries build is safe.
+  const shape: Record<string, z.ZodType> = Object.fromEntries(
+    resolved.ok.map(
+      (field) => [field.name, field.required ? field.schema : field.schema.optional()] as const,
+    ),
+  );
+  const strictSchema = z.strictObject(shape);
   const group = resolved.ok.filter((field) => field.bodyGroup !== undefined);
   const requiredNames = group
     .filter((field) => field.bodyGroup?.requiredWhenPresent === true)
     .map((field) => field.name);
-  if (group.length > 0 && requiredNames.length > 0) {
+  // `groupNames` is computed once here, at generation time, and captured by
+  // the refine closure below — NOT inside the predicate, which re-runs on
+  // every tool call at request time. Kept as a named helper (not a ternary)
+  // so that hot-path cost stays exactly where the original `let` version put
+  // it: computed once per generated tool, not once per validated request.
+  const withBodyGroupRefinement = (schema: z.ZodType): z.ZodType => {
+    if (group.length === 0 || requiredNames.length === 0) {
+      return schema;
+    }
     const groupNames = group.map((field) => field.name);
-    inputSchema = inputSchema.refine(
+    return schema.refine(
       (value) => {
         const record = value as Record<string, unknown>;
         const anyPresent = groupNames.some((name) => record[name] !== undefined);
@@ -437,11 +483,11 @@ export const buildLayout = (
       },
       { message: 'provide all required body fields together, or omit the body entirely' },
     );
-  }
-  const fields: Record<string, FieldMapping> = {};
-  for (const field of resolved.ok) {
-    fields[field.name] = field.mapping;
-  }
+  };
+  const inputSchema = withBodyGroupRefinement(strictSchema);
+  const fields: Record<string, FieldMapping> = Object.fromEntries(
+    resolved.ok.map((field) => [field.name, field.mapping] as const),
+  );
   const mapper: RequestMapper = {
     bodyMode: body.ok.mode,
     ...(body.ok.contentType === undefined ? {} : { bodyContentType: body.ok.contentType }),

@@ -5,10 +5,10 @@ const expectUsageError = (fn: () => unknown, messagePart: string): void => {
   try {
     fn();
     expect.unreachable('expected a usage error');
-  } catch (err) {
-    expect(err).toBeInstanceOf(OpenapiMcpError);
-    expect((err as OpenapiMcpError).code).toBe('usage');
-    expect((err as OpenapiMcpError).message).toContain(messagePart);
+  } catch (error) {
+    expect(error).toBeInstanceOf(OpenapiMcpError);
+    expect((error as OpenapiMcpError).code).toBe('usage');
+    expect((error as OpenapiMcpError).message).toContain(messagePart);
   }
 };
 
@@ -72,10 +72,10 @@ describe('resolveHeaderEnvMappings', () => {
     try {
       resolveHeaderEnvMappings([mapping], { SPEC_TOKEN: 'evil\r\ninjected' });
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('usage');
-      expect((err as OpenapiMcpError).message).not.toContain('evil');
-      expect((err as OpenapiMcpError).message).toContain('SPEC_TOKEN');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('usage');
+      expect((error as OpenapiMcpError).message).not.toContain('evil');
+      expect((error as OpenapiMcpError).message).toContain('SPEC_TOKEN');
     }
   });
 

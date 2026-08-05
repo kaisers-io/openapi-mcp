@@ -8,7 +8,7 @@
     "url": "git+https://github.com/kaisers-io/openapi-mcp.git"
   },
   "bin": {
-    "openapi-mcp": "./bin/openapi-mcp.mjs"
+    "openapi-mcp": "bin/openapi-mcp.mjs"
   },
   "files": [
     "bin",

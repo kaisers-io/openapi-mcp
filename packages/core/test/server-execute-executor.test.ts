@@ -10,31 +10,33 @@ import {
   createExecutor,
   createRedactor,
   SYSTEM_HEADERS,
-  type EnvelopeValidator,
-  type ExecutorConfig,
-  type ExecutorDeps,
-  type FieldMapping,
-  type NamedOperation,
-  type OutboundBudgets,
-  type PinnedDeps,
-  type RequestMapper,
-  type ServerSnapshot,
-  type SnapshotTool,
+} from '../src/index.ts';
+import type {
+  EnvelopeValidator,
+  ExecutorConfig,
+  ExecutorDeps,
+  FieldMapping,
+  NamedOperation,
+  OutboundBudgets,
+  PinnedDeps,
+  RequestMapper,
+  ServerSnapshot,
+  SnapshotTool,
 } from '../src/index.ts';
 
-// M5 Task 10: createExecutor is the integration point wiring request
-// building + the pinned transport + response mapping + redaction + a global
-// concurrency semaphore into a real ToolExecutor. `deps.transport` here is a
-// FAKE PinnedDeps whose `fetch` never touches the network — the real
-// pinnedRequest (Tasks 3-4) still runs (only its transport is faked), so
-// this suite proves the real join/header-assembly/budget/redirect-trust
-// wiring, not a reimplementation of it.
+// The createExecutor is the integration point wiring request building + the
+// pinned transport + response mapping + redaction + a global concurrency
+// semaphore into a real ToolExecutor. `deps.transport` here is a FAKE
+// PinnedDeps whose `fetch` never touches the network — the real
+// pinnedRequest still runs (only its transport is faked), so this suite
+// proves the real join/header-assembly/budget/redirect-trust wiring, not a
+// reimplementation of it.
 
 // A partial mock: `pinnedRequest` becomes a spy that still DELEGATES to the
 // real implementation by default (every test's behaviour is unaffected), so
 // a handful of tests can additionally assert the exact PinnedRequestOptions
-// executor.ts handed it (round-1 amendment: prove baseTrusted /
-// allowPrivateNetwork propagate exactly, not just "the call succeeded").
+// executor.ts handed it — proving baseTrusted / allowPrivateNetwork
+// propagate exactly, not just "the call succeeded".
 vi.mock(import('../src/http/pinned-dispatcher.ts'), async (importOriginal) => {
   const actual = await importOriginal();
   return { ...actual, pinnedRequest: vi.fn<typeof actual.pinnedRequest>(actual.pinnedRequest) };
@@ -43,7 +45,7 @@ vi.mock(import('../src/http/pinned-dispatcher.ts'), async (importOriginal) => {
 // A second partial mock, same pattern: `buildRequest` becomes a spy that
 // DELEGATES to the real implementation by default. One test below overrides
 // it once (`mockReturnValueOnce`) to prove the executor's OWN reserved-name
-// re-check lowercases a built header name before comparing — Task 7's real
+// re-check lowercases a built header name before comparing — the real
 // buildRequest always lowercases its built header keys, so a mixed-case
 // built name cannot occur through the real pipeline; this spy is what makes
 // that otherwise-unconstructable input reachable for the test.
@@ -58,8 +60,8 @@ vi.mock(import('../src/server/execute/request.ts'), async (importOriginal) => {
 // tests also invoked the spy.
 const budgets: OutboundBudgets = {
   maxUrlLength: 8192,
-  maxHeaderBytes: 16384,
-  maxBodyBytes: 65536,
+  maxHeaderBytes: 16_384,
+  maxBodyBytes: 65_536,
 };
 
 const buildToolSnapshot = (ops: readonly NamedOperation[]): ServerSnapshot => {
@@ -202,7 +204,7 @@ const baseConfig = (overrides: Partial<ExecutorConfig> = {}): ExecutorConfig => 
   reservedHeaderNames: new Set(SYSTEM_HEADERS),
   redactor: createRedactor([]),
   timeoutMs: 5000,
-  maxResponseBytes: 65536,
+  maxResponseBytes: 65_536,
   outboundBudgets: budgets,
   maxConcurrent: 16,
   validators: new Map(),
@@ -223,10 +225,10 @@ const rejectingResolve: PinnedDeps['resolve'] = () =>
 const timeoutSignal = (_ms: number): AbortSignal => new AbortController().signal;
 const freshSignal = (): AbortSignal => new AbortController().signal;
 
-interface FetchCall {
+type FetchCall = {
   url: string;
   init: { headers?: Record<string, string>; signal?: AbortSignal | null; body?: unknown };
-}
+};
 
 const recordingTransport = (
   handler: (call: FetchCall) => Response | Promise<Response>,
@@ -322,17 +324,16 @@ describe('createExecutor — header assembly', () => {
     expect(calls).toHaveLength(0);
   });
 
-  // MED (Task 10 review): the reserved-name check must lowercase the
-  // BUILT header name itself before comparing against reservedHeaderNames —
-  // HTTP header names are case-insensitive, and this is the mandatory
-  // auth-collision gate, so it must not depend on the unstated upstream
-  // invariant that Task 7's buildRequest always lowercases its built keys.
-  // A mixed-case built header name cannot occur through the real pipeline
-  // today (buildRequest always lowercases — see request.ts's
-  // `headers[mapping.wireName.toLowerCase()] = ...`), so this test injects
-  // one via a spy on buildRequest to reach the otherwise-unconstructable
-  // input and prove the executor's OWN `.toLowerCase()` closes the gate
-  // regardless of upstream casing.
+  // The reserved-name check must lowercase the BUILT header name itself
+  // before comparing against reservedHeaderNames — HTTP header names are
+  // case-insensitive, and this is the mandatory auth-collision gate, so it
+  // must not depend on the unstated upstream invariant that buildRequest
+  // always lowercases its built keys. A mixed-case built header name cannot
+  // occur through the real pipeline today (buildRequest always lowercases —
+  // see request.ts's `headers[mapping.wireName.toLowerCase()] = ...`), so
+  // this test injects one via a spy on buildRequest to reach the
+  // otherwise-unconstructable input and prove the executor's OWN
+  // `.toLowerCase()` closes the gate regardless of upstream casing.
   it('rejects a mixed-case built header colliding with a reserved name (self-contained lowercase compare)', async () => {
     const snapshot = buildToolSnapshot([pingOp]);
     const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
@@ -353,16 +354,15 @@ describe('createExecutor — header assembly', () => {
     expect(calls).toHaveLength(0);
   });
 
-  // Final-review Fix 6 (finding 5): assembleHeaders now writes content/tool-arg
-  // headers FIRST, then --header, then --header-env LAST, so a same-name
-  // secret header always wins over a static one, which always wins over a
-  // tool-argument one — design §4's precedence content < tool < --header <
-  // --header-env. Unreachable through the real pipeline (the reserved-name
-  // gate above always rejects a tool-arg name colliding with an
-  // operator-configured header before assembleHeaders ever runs), so this
-  // test reaches the fallback path the same way the mixed-case test above
-  // does: a `buildRequest` spy injects a built header name that the
-  // reservedHeaderNames set does NOT cover.
+  // The assembleHeaders function writes content/tool-arg headers FIRST, then --header,
+  // then --header-env LAST, so a same-name secret header always wins over a
+  // static one, which always wins over a tool-argument one — the precedence is
+  // content < tool < --header < --header-env. Unreachable
+  // through the real pipeline (the reserved-name gate above always rejects
+  // a tool-arg name colliding with an operator-configured header before
+  // assembleHeaders ever runs), so this test reaches the fallback path the
+  // same way the mixed-case test above does: a `buildRequest` spy injects a
+  // built header name that the reservedHeaderNames set does NOT cover.
   it('secretHeaders win over staticHeaders, which win over a colliding tool-arg header (precedence fallback)', async () => {
     const snapshot = buildToolSnapshot([pingOp]);
     const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
@@ -451,7 +451,7 @@ describe('createExecutor — global concurrency semaphore', () => {
   it('rejects a second overlapping call once maxConcurrent is reached', async () => {
     const snapshot = buildToolSnapshot([pingOp]);
     const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
-    let releaseFirst: (response: Response) => void = () => undefined;
+    let releaseFirst: (response: Response) => void = () => {};
     const pending = new Promise<Response>((resolve) => {
       releaseFirst = resolve;
     });
@@ -518,8 +518,7 @@ describe('createExecutor — fail-closed wiring', () => {
     expect(calls).toHaveLength(0);
   });
 
-  // Final-review Fix 3 (Important — unsanitized spec wireName):
-  // buildRequest's own `{error}` strings embed a header/path/query param's
+  // The buildRequest function's own `{error}` strings embed a header/path/query param's
   // spec-derived `wireName` verbatim (request.ts's serializeHeaderValue,
   // e.g. an invalid-header-name message). finalizeOutcome (dispatch.ts) only
   // redacts SECRETS, never control/bidi characters, so a hostile spec field
@@ -527,7 +526,7 @@ describe('createExecutor — fail-closed wiring', () => {
   // reach the client raw. Built via String.fromCodePoint per the
   // escape-sequence discipline — never pasted.
   it('sanitizes a spec-derived wireName containing an RLO out of the buildRequest error text', async () => {
-    const rlo = String.fromCodePoint(0x202e);
+    const rlo = String.fromCodePoint(0x20_2e);
     const hostileName = `x-hdr${rlo}evil`;
     const hostileOp: NamedOperation = {
       toolName: 'hostileThing',

@@ -21,7 +21,7 @@ describe('createExclusive atomic publish', () => {
   beforeEach(() => {
     openMock.mockReset();
     linkMock.mockReset();
-    rmMock.mockReset().mockResolvedValue(undefined);
+    rmMock.mockReset().mockResolvedValue();
   });
 
   it('never publishes or removes the lock path when the record write fails', async () => {
@@ -31,7 +31,7 @@ describe('createExclusive atomic publish', () => {
       chmod: () => Promise.resolve(),
       close: closed,
     });
-    linkMock.mockResolvedValue(undefined);
+    linkMock.mockResolvedValue();
     await expect(
       realContext().cacheFs.createExclusive('/cache/ns/.lock', 'record'),
     ).rejects.toThrow(/EIO/u);
@@ -57,7 +57,7 @@ describe('createExclusive atomic publish', () => {
       chmod: () => Promise.resolve(),
       close: () => Promise.resolve(),
     });
-    linkMock.mockResolvedValue(undefined);
+    linkMock.mockResolvedValue();
     expect(await realContext().cacheFs.createExclusive('/cache/ns/.lock', 'record')).toBe(true);
     expect(linkMock.mock.calls[0]?.[1]).toBe('/cache/ns/.lock');
     // Link's SOURCE is exactly the temp that open created (temp-first → publish).
@@ -77,13 +77,13 @@ describe('createExclusive atomic publish', () => {
     expect(await realContext().cacheFs.createExclusive('/cache/ns/.lock', 'record')).toBe(false);
   });
 
-  it('a temp-cleanup failure does not fail a successful acquisition (round-3)', async () => {
+  it('a temp-cleanup failure does not fail a successful acquisition', async () => {
     openMock.mockResolvedValue({
       writeFile: () => Promise.resolve(),
       chmod: () => Promise.resolve(),
       close: () => Promise.resolve(),
     });
-    linkMock.mockResolvedValue(undefined);
+    linkMock.mockResolvedValue();
     rmMock.mockRejectedValue(new Error('rm failed')); // Temp cleanup throws AFTER publish
     expect(await realContext().cacheFs.createExclusive('/cache/ns/.lock', 'record')).toBe(true);
   });

@@ -1,6 +1,7 @@
-import { isAuthorized, type BearerCheck } from './auth.ts';
+import { isAuthorized } from './auth.ts';
+import type { BearerCheck } from './auth.ts';
 
-export interface RequestGuardOptions {
+export type RequestGuardOptions = {
   // Exact serialized origins only — no wildcard. An empty set means every
   // PRESENT Origin is rejected (the posture for a non-browser-facing server).
   allowedOrigins: ReadonlySet<string>;
@@ -10,13 +11,13 @@ export interface RequestGuardOptions {
   // runs before the SDK transport ever sees the request.
   allowedHost: string;
   bearer: BearerCheck;
-}
+};
 
-export interface IncomingHeaders {
+export type IncomingHeaders = {
   host: string | string[] | undefined;
   origin: string | string[] | undefined;
   authorization: string | string[] | undefined;
-}
+};
 
 export type GuardDecision =
   | { outcome: 'allow' }

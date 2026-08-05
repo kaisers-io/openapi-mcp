@@ -87,26 +87,22 @@ describe('dereference — failure modes', () => {
     try {
       dereference({ a: { $ref: ref } });
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('external');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('external');
     }
   });
 
   it('fails on an unresolvable pointer', () => {
-    expect(() => dereference({ a: { $ref: '#/does/not/exist' } })).toThrowError(
-      /does not resolve/u,
-    );
+    expect(() => dereference({ a: { $ref: '#/does/not/exist' } })).toThrow(/does not resolve/u);
   });
 
   it('fails on a bad array index', () => {
-    expect(() => dereference({ a: { $ref: '#/list/9' }, list: [1] })).toThrowError(
-      /does not resolve/u,
-    );
+    expect(() => dereference({ a: { $ref: '#/list/9' }, list: [1] })).toThrow(/does not resolve/u);
   });
 
   it('fails on a non-pointer fragment', () => {
-    expect(() => dereference({ a: { $ref: '#components' } })).toThrowError(OpenapiMcpError);
+    expect(() => dereference({ a: { $ref: '#components' } })).toThrow(OpenapiMcpError);
   });
 });
 
@@ -143,7 +139,7 @@ describe('dereference — cycles and budgets', () => {
       doc[`chain${index}`] = { $ref: `#/chain${index + 1}` };
     }
     doc[`chain${SPEC_BUDGETS.maxRefDepth + 5}`] = { done: true };
-    expect(() => dereference(doc)).toThrowError(/expansion/u);
+    expect(() => dereference(doc)).toThrow(/expansion/u);
   });
 
   it('aborts an expansion bomb incrementally at the node budget', () => {
@@ -160,9 +156,9 @@ describe('dereference — cycles and budgets', () => {
     try {
       dereference(doc);
       expect.unreachable('expected a validation error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('validation');
-      expect((err as OpenapiMcpError).message).toContain('node budget');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('validation');
+      expect((error as OpenapiMcpError).message).toContain('node budget');
     }
   });
 
@@ -170,7 +166,7 @@ describe('dereference — cycles and budgets', () => {
     // A single array wider than the whole budget must fail in the capacity
     // preflight, before the destination array is allocated
     const wide = Array.from({ length: SPEC_BUDGETS.maxSchemaNodes + 10 }, () => 0);
-    expect(() => dereference({ wide })).toThrowError(/node budget/u);
+    expect(() => dereference({ wide })).toThrow(/node budget/u);
   });
 
   it('preserves an own __proto__ key instead of polluting the accumulator', () => {

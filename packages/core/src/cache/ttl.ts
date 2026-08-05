@@ -4,9 +4,9 @@ export type FreshnessDecision =
   | { kind: 'fresh' }
   | { kind: 'revalidate'; etag?: string | undefined; lastModified?: string | undefined };
 
-// Spec §5.4 step 1: a baseline inside the TTL is served with no network traffic;
-// an expired one is revalidated with whatever validators the entry recorded.
-// Absence is not a decision here — it is a readCacheEntry outcome (D5).
+// A baseline inside the TTL is served with no network traffic; an expired one
+// is revalidated with whatever validators the entry recorded.
+// Absence is not a decision here — it is a readCacheEntry outcome.
 export const evaluateFreshness = (
   meta: CacheMeta,
   nowMs: number,

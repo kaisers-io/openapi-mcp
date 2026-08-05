@@ -5,12 +5,12 @@ import type { HttpMethod } from '../spec/normalize.ts';
 // to the SDK's own type at the one boundary that needs it. All fields are
 // advisory HINTS, not an enforcement mechanism — filtering is the enforcement
 // layer (README); a client MUST NOT make authorization decisions from them.
-export interface ToolAnnotations {
+export type ToolAnnotations = {
   readOnlyHint?: boolean;
   destructiveHint?: boolean;
   idempotentHint?: boolean;
   openWorldHint?: boolean;
-}
+};
 
 // Our own HTTP-method heuristic — the spec defines no method->annotation
 // mapping. GET/HEAD are read-only, so `idempotentHint` is omitted rather than

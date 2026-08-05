@@ -2,20 +2,13 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import {
-  HTTP_METHODS,
-  hashContent,
-  parseFilterPattern,
-  runSpecPipeline,
-  type CacheFs,
-  type CacheMeta,
-  type SpecPipelineDeps,
-} from '../src/index.ts';
+import { HTTP_METHODS, hashContent, parseFilterPattern, runSpecPipeline } from '../src/index.ts';
+import type { CacheFs, CacheMeta, SpecPipelineDeps } from '../src/index.ts';
 
-// M6 Task 6 (DNS-pin stretch): SpecPipelineDeps.fetcher is now typed via
-// undici's own fetch (see fetch.test.ts's identical note). None of the fakes
-// below touch `dispatcher`; the cast bridges the two fetch type
-// declarations, not a claim about live pinning.
+// SpecPipelineDeps.fetcher is now typed via undici's own fetch (see
+// fetch.test.ts's identical note). None of the fakes below touch
+// `dispatcher`; the cast bridges the two fetch type declarations, not a
+// claim about live pinning.
 type SpecFetcher = SpecPipelineDeps['fetcher'];
 
 const fixture = (name: string): string =>
@@ -59,8 +52,8 @@ const baseOpts = {
   nowMs: 0,
 };
 
-// Matches every operation: restores the pre-filter inventory for the M2a assertions.
-// Task-9 finding (round 9): a bare "**" alone is NOT enough — it compiles to an
+// Matches every operation: restores the pre-filter inventory these assertions
+// rely on. A bare "**" alone is NOT enough — it compiles to an
 // `operationId`-kind pattern, and filter-engine.test.ts's own contract ("never
 // matches an operationId pattern against an operation without one") means it
 // skips petstore-3.0.json's GET /pets/{petId}, which has neither an
@@ -80,7 +73,7 @@ describe('runSpecPipeline — file sources', () => {
     expect(result.spec.title).toBe('Petstore');
     expect(result.spec.openapiVersion).toBe('3.0');
     expect(result.spec.omitted).toEqual([]);
-    // The read-only default (spec §3.2 rule 3) drops the POST unless allowed
+    // The read-only default drops the POST unless allowed
     expect(result.namedOperations.map((named) => named.toolName)).toEqual([
       'listPets',
       'get_pets_by_petid',
@@ -170,11 +163,11 @@ describe('runSpecPipeline — URL sources', () => {
     );
     expect(result.spec.title).toBe('Petstore');
     expect(result.namedOperations).toHaveLength(3);
-    // Benign query strings are allowed but dropped from the display source (§5.3)
+    // Benign query strings are allowed but dropped from the display source
     expect(result.displaySource).toBe('https://api.example.com/openapi.json');
   });
 
-  it('rejects credential-bearing query parameters before any fetch (D8)', async () => {
+  it('rejects credential-bearing query parameters before any fetch', async () => {
     let fetched = false;
     const deps = {
       ...fileDeps,
@@ -224,10 +217,10 @@ describe('runSpecPipeline — URL sources', () => {
   });
 });
 
-interface MemoryCacheFs extends CacheFs {
+type MemoryCacheFs = CacheFs & {
   files: Map<string, string>;
   calls: string[];
-}
+};
 
 const memoryCacheFs = (): MemoryCacheFs => {
   const files = new Map<string, string>();
@@ -373,17 +366,17 @@ describe('runSpecPipeline — cache', () => {
     expect(result.warnings).toEqual([]);
     expect(calls()).toBe(1);
     const meta = metaOf(cacheFs);
-    // D14: the source hash and the persisted-bytes hash are distinct values
+    // The source hash and the persisted-bytes hash are distinct values
     expect(meta.sourceContentHash).toBe(hashContent(remoteSpec('Remote')));
     expect(meta.acceptedContentHash).toMatch(/^[0-9a-f]{64}$/u);
     expect(meta.candidate).toBeUndefined();
-    // The redacted display source is what lands on disk (spec §5.3)
+    // The redacted display source is what lands on disk
     expect(meta.displaySource).toBe(specUrl);
     expect(meta.title).toBe('Remote');
-    // D16b: the discriminator is persisted, because a hit will not revalidate
+    // The discriminator is persisted, because a hit will not revalidate
     // to recover it
     expect(meta.openapiVersion).toBe('3.1');
-    // D14: contentHash keeps its M2a meaning — the source hash of the bytes used
+    // The contentHash keeps its established meaning — the source hash of the bytes used
     expect(result.contentHash).toBe(hashContent(remoteSpec('Remote')));
   });
 
@@ -402,14 +395,12 @@ describe('runSpecPipeline — cache', () => {
     expect(second.contentHash).toBe(hashContent(remoteSpec('Remote')));
   });
 
-  it('refuses a metadata version that contradicts the accepted bytes (round-3 finding 7)', async () => {
-    // The round-3 draft asserted the OPPOSITE of this — that the rewritten
-    // metadata simply won — and called it evidence for D16(b). That was wrong:
-    // the content hash protects the OBJECT, not meta.json, so anyone who can
-    // edit metadata could force a 3.1 document to be normalized under 3.0
-    // rules without breaking a single hash. The discriminator is verified
-    // against the document's own "openapi" field, which is one field read, not
-    // a revalidation.
+  it('refuses a metadata version that contradicts the accepted bytes', async () => {
+    // A hazard worth naming: the content hash protects the OBJECT, not
+    // meta.json, so anyone who can edit metadata could force a 3.1 document to
+    // be normalized under 3.0 rules without breaking a single hash. The
+    // discriminator is verified against the document's own "openapi" field,
+    // which is one field read, not a revalidation.
     const cacheFs = memoryCacheFs();
     const { fetcher, calls } = countingFetcher(remoteSpec('Remote'));
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
@@ -421,11 +412,11 @@ describe('runSpecPipeline — cache', () => {
       runSpecPipeline(specUrl, { ...cachedOpts, nowMs: 60_000 }, { ...fileDeps, fetcher, cacheFs }),
     ).rejects.toMatchObject({ code: 'validation' });
     // Fail-closed: no refetch, so the tampering cannot launder itself into a
-    // fresh trust-on-first-use acceptance either (D5)
+    // fresh trust-on-first-use acceptance either
     expect(calls()).toBe(1);
   });
 
-  it('still serves a hit without revalidating when metadata and bytes agree (D16b)', async () => {
+  it('still serves a hit without revalidating when metadata and bytes agree', async () => {
     const cacheFs = memoryCacheFs();
     const { fetcher, calls } = countingFetcher(remoteSpec('Remote'));
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
@@ -436,7 +427,7 @@ describe('runSpecPipeline — cache', () => {
     );
     expect(second.cacheStatus).toBe('fresh');
     expect(second.spec.openapiVersion).toBe('3.1');
-    // No network, and no Ajv pass — the point D16(b) actually makes
+    // No network, and no Ajv pass — that is the whole point of a cache hit
     expect(calls()).toBe(1);
   });
 
@@ -478,7 +469,7 @@ describe('runSpecPipeline — cache', () => {
       { ...cachedOpts, nowMs: 3_600_001 },
       { ...fileDeps, fetcher, cacheFs },
     );
-    // Spec §5.4: the changed spec waits as a candidate; the accepted baseline serves
+    // The changed spec waits as a candidate; the accepted baseline serves
     expect(second.cacheStatus).toBe('candidate');
     expect(second.namedOperations.map((named) => named.toolName)).toEqual(['listThings']);
     expect(second.warnings.join('\n')).toContain('cache promote');
@@ -488,10 +479,11 @@ describe('runSpecPipeline — cache', () => {
     expect(meta.candidate?.sourceContentHash).toBe(hashContent(remoteSpec('Remote', '/extra')));
   });
 
-  it('still reports the candidate on a restart INSIDE the TTL (D16a2)', async () => {
-    // The round-1 draft reported the candidate only on the run that created it.
-    // A later start returned `fresh` with no candidate hash and no warning —
-    // the candidate was on disk, gating the update, and invisible.
+  it('still reports the candidate on a restart INSIDE the TTL', async () => {
+    // A naive implementation reports the candidate only on the run that
+    // created it: a later start would return `fresh` with no candidate hash
+    // and no warning — the candidate would be on disk, gating the update, and
+    // invisible.
     const cacheFs = memoryCacheFs();
     let calls = 0;
     const fetcher = (() => {
@@ -522,10 +514,10 @@ describe('runSpecPipeline — cache', () => {
     expect(restart.namedOperations.map((named) => named.toolName)).toEqual(['listThings']);
   });
 
-  it('preserves and reports the candidate across a later 304 (D16a2)', async () => {
-    // The round-1 draft ran writeAccepted on a 304, which rewrites the accepted
-    // entry and CLEARS the candidate — silently discarding a candidate awaiting
-    // promotion without ever approving it.
+  it('preserves and reports the candidate across a later 304', async () => {
+    // Running writeAccepted on a 304 would rewrite the accepted entry and
+    // CLEAR the candidate — silently discarding a candidate awaiting promotion
+    // without ever approving it.
     const cacheFs = memoryCacheFs();
     let calls = 0;
     const fetcher = ((_url: string | URL | Request, _init?: RequestInit) => {
@@ -603,7 +595,7 @@ describe('runSpecPipeline — cache', () => {
     expect(after.candidate?.contentHash).toBeDefined();
   });
 
-  it('replays the candidate validators on the next revalidation (D16a2)', async () => {
+  it('replays the candidate validators on the next revalidation', async () => {
     // Meta.etag describes the most recently FETCHED representation, which is
     // the candidate once one exists
     const cacheFs = memoryCacheFs();
@@ -638,7 +630,7 @@ describe('runSpecPipeline — cache', () => {
     expect(seen[2]).toBe('"v2"');
   });
 
-  it('reports the candidate on a stale result too (D16a2)', async () => {
+  it('reports the candidate on a stale result too', async () => {
     const cacheFs = memoryCacheFs();
     let calls = 0;
     const fetcher = (() => {
@@ -677,13 +669,13 @@ describe('runSpecPipeline — cache', () => {
       );
     }) as unknown as SpecFetcher;
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
-    // Task-9 finding (round 9): the brief's own draft added `cacheKey: 'prod'`
-    // ONLY on this second call. cacheNamespace binds the namespace to the key
-    // whenever one is given, authenticated or not, so that alone points the
-    // second run at an entirely different, still-empty namespace — the read
-    // then misses, and the run reports `accepted-first` again rather than
-    // exercising the update path this test is named for. Omitting it here
-    // keeps both calls in the same namespace.
+    // Adding `cacheKey: 'prod'` ONLY on this second call would be a mistake:
+    // cacheNamespace binds the namespace to the key whenever one is given,
+    // authenticated or not, so that alone would point the second run at an
+    // entirely different, still-empty namespace — the read would then miss,
+    // and the run would report `accepted-first` again rather than exercising
+    // the update path this test is named for. Omitting it here keeps both
+    // calls in the same namespace.
     const second = await runSpecPipeline(
       specUrl,
       { ...cachedOpts, nowMs: 3_600_001, trustSpecUpdates: true },
@@ -697,7 +689,7 @@ describe('runSpecPipeline — cache', () => {
     expect(metaOf(cacheFs).candidate).toBeUndefined();
   });
 
-  it('serves the last known good baseline with a warning when a refresh fails (§5.4)', async () => {
+  it('serves the last known good baseline with a warning when a refresh fails', async () => {
     const cacheFs = memoryCacheFs();
     let calls = 0;
     const fetcher = (() => {
@@ -756,7 +748,7 @@ describe('runSpecPipeline — cache', () => {
     expect([...cacheFs.files.keys()]).toEqual([]);
   });
 
-  it('fails closed on a corrupt accepted baseline instead of refetching (D5)', async () => {
+  it('fails closed on a corrupt accepted baseline instead of refetching', async () => {
     const cacheFs = memoryCacheFs();
     const { fetcher, calls } = countingFetcher(remoteSpec('Remote'));
     await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
@@ -787,10 +779,9 @@ describe('runSpecPipeline — cache', () => {
     await expect(
       runSpecPipeline(specUrl, { ...cachedOpts, nowMs: 1000 }, { ...fileDeps, fetcher, cacheFs }),
     ).rejects.toMatchObject({ code: 'validation' });
-    // Task-9 finding (round 9): `calls` here is the plain counter this test
-    // increments itself, not the `() => number` countingFetcher() returns
-    // elsewhere in this file — `calls()` throws TypeError before the assertion
-    // is ever checked
+    // `calls` here is the plain counter this test increments itself, not the
+    // `() => number` countingFetcher() returns elsewhere in this file —
+    // `calls()` throws TypeError before the assertion is ever checked
     expect(calls).toBe(1);
     // The stored bytes are untouched: recovery is an explicit operator act
     expect(cacheFs.files.get(metaPathOf(cacheFs))).toBe('{"schemaVersion":1}');
@@ -807,12 +798,12 @@ describe('runSpecPipeline — cache', () => {
     ).rejects.toMatchObject({ code: 'validation' });
   });
 
-  it('fails closed when the namespace cannot be prepared — never a bypass (D17)', async () => {
-    // The round-1 draft treated this as a degraded mode and served the remote
-    // document anyway. That is an authorization reset: with the namespace
-    // unreachable, nothing consults the durable accepted baseline, so the run
-    // behaves exactly like trust-on-first-use. An attacker who can make one
-    // mkdir fail gets the rug pull §6.3 exists to prevent.
+  it('fails closed when the namespace cannot be prepared — never a bypass', async () => {
+    // Treating this as a degraded mode and serving the remote document
+    // anyway would be an authorization reset: with the namespace unreachable,
+    // nothing consults the durable accepted baseline, so the run behaves
+    // exactly like trust-on-first-use. An attacker who can make one mkdir fail
+    // would get exactly the rug pull this fail-closed behavior exists to prevent.
     const failing: CacheFs = {
       ...memoryCacheFs(),
       mkdirSecure: () => Promise.reject(new Error('EACCES: permission denied')),
@@ -821,9 +812,10 @@ describe('runSpecPipeline — cache', () => {
     await expect(
       runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs: failing }),
     ).rejects.toMatchObject({
-      // Round-3 finding 3: the DECLARED exit code, not merely "it rejects".
-      // The round-3 draft let a raw fs error through, which exits 1; asserting
-      // only rejection is what let that pass unnoticed.
+      // Assert the DECLARED exit code, not merely "it rejects": a raw fs
+      // error passing through unhandled would still reject, but exits 1
+      // instead of the declared code, and asserting only rejection would let
+      // that pass unnoticed.
       code: 'validation',
       exitCode: 3,
     });
@@ -831,7 +823,7 @@ describe('runSpecPipeline — cache', () => {
     expect(calls()).toBe(0);
   });
 
-  it('fails closed when the entry cannot be read, rather than treating it as absent (D17)', async () => {
+  it('fails closed when the entry cannot be read, rather than treating it as absent', async () => {
     // PathExists must not fold EACCES into "nothing cached here": a miss is the
     // one outcome that may become trust-on-first-use
     const cacheFs = memoryCacheFs();
@@ -858,7 +850,7 @@ describe('runSpecPipeline — cache', () => {
     expect(calls()).toBe(seeded);
   });
 
-  it('propagates a non-absence error from pathExists instead of reporting a miss (D17)', async () => {
+  it('propagates a non-absence error from pathExists instead of reporting a miss', async () => {
     const cacheFs: CacheFs = {
       ...memoryCacheFs(),
       pathExists: () => Promise.reject(Object.assign(new Error('EIO'), { code: 'EIO' })),
@@ -870,7 +862,7 @@ describe('runSpecPipeline — cache', () => {
     expect(calls()).toBe(0);
   });
 
-  it('bypasses ONLY through an explicit D13 policy branch', async () => {
+  it('bypasses ONLY through an explicit policy branch', async () => {
     // The complement of the three cases above: the one legitimate bypass still
     // works, and it is a policy decision rather than the fallout of an error
     const cacheFs = memoryCacheFs();
@@ -888,7 +880,7 @@ describe('runSpecPipeline — cache', () => {
     expect(cacheFs.calls).toEqual([]);
   });
 
-  it('re-reads a file source on every run and reports fresh when unchanged (§5.4)', async () => {
+  it('re-reads a file source on every run and reports fresh when unchanged', async () => {
     const cacheFs = memoryCacheFs();
     const opts = { ...cachedOpts, cwd: fixturesDir };
     const first = await runSpecPipeline('petstore-3.0.json', opts, { ...fileDeps, cacheFs });
@@ -898,12 +890,12 @@ describe('runSpecPipeline — cache', () => {
       { ...opts, nowMs: 999_999_999 },
       { ...fileDeps, cacheFs },
     );
-    // Spec §5.4 rule 2: file specs are re-read and hash-compared on every tick,
+    // File specs are re-read and hash-compared on every tick,
     // so the TTL never short-circuits them — an unchanged file still reports fresh
     expect(second.cacheStatus).toBe('revalidated');
   });
 
-  it('bypasses persistence entirely for an authenticated source under --trust-spec-updates (D13)', async () => {
+  it('bypasses persistence entirely for an authenticated source under --trust-spec-updates', async () => {
     const cacheFs = memoryCacheFs();
     const { fetcher } = countingFetcher(remoteSpec('Remote'));
     const result = await runSpecPipeline(
@@ -922,7 +914,7 @@ describe('runSpecPipeline — cache', () => {
     expect([...cacheFs.files.keys()]).toEqual([]);
   });
 
-  it('persists an authenticated source when --cache-key separates it (D13)', async () => {
+  it('persists an authenticated source when --cache-key separates it', async () => {
     const cacheFs = memoryCacheFs();
     const { fetcher } = countingFetcher(remoteSpec('Remote'));
     const result = await runSpecPipeline(
@@ -936,11 +928,11 @@ describe('runSpecPipeline — cache', () => {
     );
     expect(result.cacheStatus).toBe('accepted-first');
     expect(metaOf(cacheFs).cacheKey).toBe('prod');
-    // No secret material derived the namespace or reached the disk (§5.3)
+    // No secret material derived the namespace or reached the disk
     expect([...cacheFs.files.values()].join('\n')).not.toContain('Bearer x');
   });
 
-  it('rejects an authenticated source with no cache decision (spec §5.3, D13)', async () => {
+  it('rejects an authenticated source with no cache decision', async () => {
     const { fetcher } = countingFetcher(remoteSpec('Remote'));
     const cacheFs = memoryCacheFs();
     await expect(
@@ -1032,7 +1024,7 @@ describe('runSpecPipeline — filters', () => {
       fetcher: (() => Promise.resolve(new Response(big))) as unknown as SpecFetcher,
     };
     // Every operation is a POST the read-only default would drop: the budget
-    // still fires, because filters must never smuggle an oversized spec past §4.1
+    // still fires, because filters must never smuggle an oversized spec past the budget
     await expect(
       runSpecPipeline('https://api.example.com/big.json', baseOpts, deps),
     ).rejects.toMatchObject({ code: 'validation' });

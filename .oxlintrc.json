@@ -10,149 +10,310 @@
   },
   "rules": {
     "capitalized-comments": ["error", "always", { "ignoreConsecutiveComments": true }],
+    // Off: object key order follows domain grouping (e.g. a schema's
+    // properties ordered by protocol section), not the alphabet.
     "sort-keys": "off",
+    // Off: import order follows domain grouping (external dependencies,
+    // then internal modules grouped by subsystem), not the alphabet.
     "sort-imports": "off",
+    // Off: protocol and byte-level constants (HTTP status codes, buffer/
+    // line-length caps, timeout milliseconds, bit-shift widths) appear
+    // throughout the transport and encoding code; naming every one as a
+    // constant would bury the arithmetic in indirection without adding
+    // clarity.
     "no-magic-numbers": "off",
-    // Off per task-2 brief: A/R (cache/errors.ts's withCacheErrors) and T
-    // (cache/lock.ts's withNamespaceLockImpl) are the frozen generic type
-    // parameters from the Interface Contract's withNamespaceLock<T> signature.
-    // v/k/t added per task-1 brief (M3): toolgen/schema.ts's malformedKeyword,
-    // conflictingCombination, stringSchema, numberSchema, enumSchema, and build
-    // use these single-letter parameter/loop-variable names verbatim throughout.
-    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z", "A", "R", "T", "v", "k", "t"] }],
+    // s/m/h/d are the duration-unit suffix characters shared by
+    // primitives.ts's DURATION_RE capture group and its UNIT_MS lookup
+    // table (seconds/minutes/hours/days); z is the conventional
+    // single-letter alias for the zod import used throughout the schema
+    // modules. T is the idiomatic single-type-parameter name used across
+    // several unrelated single-generic functions (cache/lock.ts's
+    // withNamespaceLockImpl, spec/load.ts's readOrNotFound,
+    // server/snapshot.ts's deepFreeze, and server/http/sessions.ts's
+    // Session/SessionStore/createSessionStore) — renaming any one of them
+    // would not let this exception be dropped, since the others still need
+    // it, so it stays as the shared single-generic convention. cache/errors.ts's
+    // withCacheErrors generic type parameters (formerly A and R) are named
+    // TArgs/TResult instead, and toolgen/schema.ts's and toolgen/layout.ts's
+    // single-letter locals (formerly v/k/t) are named value/keyword/name/
+    // typeName per call site, so those exceptions are no longer needed.
+    "id-length": ["error", { "min": 2, "exceptions": ["s", "m", "h", "d", "z", "T"] }],
+    // Configured (not off): the top-level import-type style splits value and
+    // type imports from the same module into two statements by design;
+    // genuine duplicate value imports are still flagged.
+    "no-duplicate-imports": ["error", { "allowSeparateTypeImports": true }],
+    // Off: modules export many named symbols each (functions, types,
+    // constants); forcing a single default export per file would fight
+    // that structure rather than the other way around.
     "import/no-named-export": "off",
+    // Off: exports are declared at their definition site (`export const`,
+    // `export type`) throughout, so a module's exported surface is visible
+    // next to each definition; collecting them into one trailing statement
+    // would separate a declaration from its export for no benefit.
     "import/group-exports": "off",
-    "import/no-nodejs-modules": "off",
-    "import/no-unassigned-import": "off",
+    "import/no-nodejs-modules": "off", // Off: this is a Node runtime -- node: imports are the platform.
+    // Off: same reasoning as import/group-exports above -- exports are
+    // declared inline at their definition site, not collected at the
+    // bottom of the file.
     "import/exports-last": "off",
+    // Off: single-named-export modules keep the named export deliberately
+    // (matching the no-default-exports convention the two overrides above
+    // describe) rather than switching to `export default` for just that
+    // one file.
     "import/prefer-default-export": "off",
-    "unicorn/require-module-specifiers": "off",
-    "no-ternary": "off", // ternary used by core errors.ts per task-2 brief
-    // Off per task-2 brief: sanitize.ts's control/bidi-stripping regex matches control-character ranges verbatim
-    "no-control-regex": "off",
-    // Off per task-4 brief: context.ts uses node:fs existsSync verbatim
-    "node/no-sync": "off",
-    // Off per task-4 brief: context.ts testContext().homeDir default returns undefined verbatim
-    "unicorn/no-useless-undefined": "off",
-    // Off per task-11 brief (M2b): cache.ts's promoteCandidate/withNamespaceLock
-    // call sites take four parameters verbatim
+    // Off: 303 sites remain across 62 files (heaviest: toolgen/schema.ts,
+    // spec/pipeline.ts, spec/normalize.ts, cache/store.ts), nearly all
+    // single-line value selections — e.g. errors.ts's error-normalization
+    // `err instanceof Error ? err.message : String(err)` — where if/else
+    // would triple the line count for the same type-narrowing expression.
+    // Too broad for file-scoped overrides to stay honest, so the exception
+    // stays global.
+    "no-ternary": "off",
+    // Off: 26 sites across 17 files (heaviest: server/execute/response.ts,
+    // filter/engine.ts, cache/store.ts, spec/pipeline.ts) take more
+    // parameters than the cap without decomposing into a smaller natural
+    // grouping — e.g. cache/store.ts's promoteCandidateImpl and
+    // cache/lock.ts's withNamespaceLockImpl (layout, fs, nowMs, plus
+    // opts/run) — short of inventing an options object whose only caller
+    // is the one call site. Too broad for file-scoped overrides to stay
+    // honest, so the exception stays global.
     "max-params": "off",
-    // Off per task-4 brief: output.ts uses `!== undefined ? ... : {}` verbatim
-    "no-negated-condition": "off",
-    "unicorn/no-negated-condition": "off",
-    // Off per task-4 brief: output.ts wrapAction() catch binding is named "err" verbatim
-    "unicorn/catch-error-name": "off",
-    // Off per task-5 brief: main.ts imports `{ emitError, type OutputOptions }` from './output.ts' verbatim
-    "import/consistent-type-specifier-style": "off",
-    // Off per task-3 brief (M2a): headers.ts's resolveHeaderEnvMappings has 14 statements verbatim
+    // Off: 203 sites across 74 files (heaviest: cache-store.test.ts,
+    // toolgen/schema.ts, server-http-sessions.test.ts) exceed the
+    // statement cap, typically one linear validation or fixture-setup pass
+    // — e.g. headers.ts's resolveHeaderEnvMappings, which walks every
+    // declared header once, validating and normalizing each; splitting
+    // such a body into helper functions would scatter one pass across
+    // multiple call frames for no gain in clarity. Too broad for
+    // file-scoped overrides to stay honest, so the exception stays global.
     "max-statements": "off",
-    // Off per task-4 brief (M2a): load.ts's stat/read try-catch blocks assign url/size/text after declaration verbatim
+    // Off: 52 sites remain across 22 files (packages/core/src/cache/store.ts,
+    // packages/core/src/spec/pipeline.ts, packages/core/src/spec/fetch.ts,
+    // packages/core/src/http/pinned-dispatcher.ts, packages/core/src/http/egress.ts,
+    // packages/core/src/cache/lock.ts, packages/core/src/filter/engine.ts,
+    // packages/core/src/server/execute/request.ts,
+    // packages/core/src/server/execute/executor.ts,
+    // packages/core/src/server/sdk-v1/streamable-http.ts,
+    // packages/cli/src/context.ts, and ten *.test.ts files), each falling
+    // into one of two inherent shapes reviewed and kept in the functional-
+    // style pass: (1) a fallible value declared before a try so it is still
+    // visible to code after the try/finally once the try assigns it (TDZ-safe
+    // declare-then-assign, the sole way to escape a try block without an
+    // `any`-typed outer binding), including test bodies that capture a
+    // thrown error into a `caught` variable this way; and (2) a loop-carried
+    // "best so far" accumulator (e.g. engine.ts's nearest-match search)
+    // that must exist before the loop starts. The concentration (22 files)
+    // is too broad for file-scoped overrides to stay honest, so the
+    // exception stays global.
     "init-declarations": "off",
-    // Deferred/race primitives around the non-abortable dns.promises.lookup:
-    // a legitimate promise-constructor use plus detached late-rejection handlers
-    "promise/avoid-new": "off",
-    "promise/prefer-await-to-then": "off",
-    // Off per task-5 brief (M2a): egress.ts's classifyIpv4/classifyAddress branch
-    // comments are inline per condition verbatim
+    // Off: 149 sites across 25 files (heaviest: egress.test.ts,
+    // cli/test/serve.test.ts, http/egress.ts, server-dispatch.test.ts) put
+    // a short justification directly on the line it documents — e.g.
+    // egress.ts's classifyIpv4/classifyAddress branches, where each IANA
+    // range/RFC citation sits on the exact condition it justifies; moving
+    // those above the line would separate a citation from the check it
+    // covers. Too broad for file-scoped overrides to stay honest, so the
+    // exception stays global.
     "no-inline-comments": "off",
-    // Off per task-5 brief (M2a): egress.ts's IPv6 range constants (0xfc00,
-    // 0xfdff, 0xfe80, 0xfebf, 0xffff) are lowercase and ungrouped verbatim
+    // Off because it is unsatisfiable alongside the formatter: oxfmt rewrites
+    // hexadecimal digits to lowercase while this rule demands uppercase, and
+    // the rule accepts no configuration — enabling it would make `lint` and
+    // `fmt:check` contradict each other on every hex literal.
     "unicorn/number-literal-case": "off",
-    "unicorn/numeric-separators-style": "off",
-    // Off per task-5 brief (M2a): egress.ts's assertAllowedRedirectTarget and
-    // fetch.ts's fetchSpec exceed 50 lines verbatim
+    // Off: 191 sites across 69 files, test bodies included (heaviest:
+    // cache-store.test.ts, cache/store.ts, server-http-sessions.test.ts),
+    // exceed the line cap — fixed-order sequences of security-relevant
+    // checks like egress.ts's assertAllowedRedirectTarget and fetch.ts's
+    // fetchSpec (DNS-pinned lookup, redirect-target classification,
+    // response-size accounting), plus describe/it bodies that walk one
+    // scenario end to end; extracting steps into helpers would hide that
+    // ordering dependency (or scatter one scenario) behind function
+    // boundaries. Too broad for file-scoped overrides to stay honest, so
+    // the exception stays global and covers **/*.test.ts too.
     "max-lines-per-function": "off",
-    // Off per task-5 brief (M2a): fetch.ts's manual redirect loop and streamed
-    // body read are inherently serial (the chain and stream cannot be parallelized)
+    // Off: 45 sites across 10 files (heaviest: cli/test/serve-http.test.ts,
+    // spec/fetch.ts, cache/store.ts, http/pinned-dispatcher.ts,
+    // cli/src/context.ts), each an inherently serial loop — e.g. fetch.ts's
+    // manual redirect loop and its streamed body read, where each hop
+    // depends on the previous response's Location header and each chunk on
+    // the previous one being consumed — plus test loops that must observe
+    // one effect before causing the next. Nothing to parallelize, and too
+    // broad for file-scoped overrides to stay honest, so the exception
+    // stays global.
     "no-await-in-loop": "off",
-    // Off per task-5 brief (M2a): fetch.ts's redirect loop uses `continue` verbatim
+    // Off: 19 sites across 8 files (server/execute/request.ts 5,
+    // cache/store.ts 4, filter/pattern.ts 3, the rest spread thinner),
+    // each using `continue` to skip to the next iteration once an item is
+    // classified — e.g. fetch.ts's redirect loop advancing to the next hop
+    // once the next URL is resolved; rewriting them as nested if/else
+    // would deepen the indentation of each loop body for the same control
+    // flow. Too broad for file-scoped overrides to stay honest, so the
+    // exception stays global.
     "no-continue": "off"
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
     {
+      "files": ["packages/core/**/*.ts", "packages/cli/**/*.ts"],
+      "rules": {
+        // Configured (not off): both shipped packages (core and cli)
+        // mandate `type` over `interface` everywhere an object shape is
+        // declared (interface survives only where TypeScript technically
+        // requires it, each such site carrying its own justifying comment)
+        // -- the plugin default enforces the opposite direction, so this
+        // flips it to match the packages' actual convention.
+        "typescript/consistent-type-definitions": ["error", "type"]
+      }
+    },
+    {
       "files": ["**/*.test.ts"],
       "plugins": ["vitest"],
       "rules": {
-        // Off per task-4 brief (M4): "vitest/prefer-called-once" and
-        // "vitest/prefer-called-times" directly contradict each other for a
-        // `toHaveBeenCalledTimes(1)` call site (one demands
-        // `toHaveBeenCalledOnce()`, the other demands `toHaveBeenCalledTimes(1)`
-        // for the exact same assertion) - no rewrite satisfies both
-        // simultaneously. Kept "prefer-called-times" (it matches this
-        // codebase's existing convention, e.g.
+        // "vitest/prefer-called-once" and "vitest/prefer-called-times"
+        // directly contradict each other for a `toHaveBeenCalledTimes(1)`
+        // call site (one demands `toHaveBeenCalledOnce()`, the other
+        // demands `toHaveBeenCalledTimes(1)` for the exact same assertion)
+        // - no rewrite satisfies both simultaneously. Kept "prefer-called-times"
+        // (it matches this codebase's existing convention, e.g.
         // context-createexclusive.test.ts's `toHaveBeenCalledTimes(0)`) and
         // turned the other off here rather than weakening the "style"
         // category as a whole.
         "vitest/prefer-called-once": "off",
+        // Off: setup/teardown hooks (beforeEach/afterEach/beforeAll) are
+        // used throughout the suite to share fixture setup (temp
+        // directories, mocked clients, server instances) across the tests
+        // in a describe block; inlining them would duplicate that setup in
+        // every test body.
         "vitest/no-hooks": "off",
+        // Off: many test bodies legitimately assert several related
+        // properties of one outcome in a single test (e.g. every field of
+        // a response envelope, or every argument a mock was called with);
+        // the default cap of 5 would force splitting one cohesive
+        // assertion into several single-purpose tests that each need the
+        // same setup repeated.
         "vitest/max-expects": "off",
-        // Off per task-2 brief: spec test file omits explicit assertion counts
+        // Off: 1322 sites across all 51 test files — effectively every
+        // test in the suite — would need an expect.assertions(n) preamble;
+        // the assertions are structural throughout (e.g.
+        // spec-display.test.ts's "EXIT map" fixture asserting toEqual on a
+        // whole array), not counted one by one, so the rule is off
+        // suite-wide.
         "vitest/prefer-expect-assertions": "off",
-        // Off per task-2 brief: spec test file imports describe/it/expect from 'vitest' (globals disabled)
+        // Off: vitest globals (describe/it/expect) are deliberately
+        // disabled project-wide, so spec-display.test.ts imports them
+        // explicitly from 'vitest' instead of relying on ambient globals.
         "vitest/no-importing-vitest-globals": "off",
-        // Off per task-2 brief: spec test file uses "EXIT map" as a proper-noun-style title
+        // Off: spec-display.test.ts's "EXIT map" describe title names a
+        // fixed data structure the tests exercise, not a sentence, so it
+        // is capitalized like the identifier it names rather than
+        // lowercased like a sentence.
         "vitest/prefer-lowercase-title": "off",
-        // Off per task-2 brief: spec test file names a describe block after the imported factory
+        // Off: spec-display.test.ts names a describe block after the
+        // factory function under test rather than restating it as a
+        // sentence describing behavior.
         "vitest/prefer-describe-function-title": "off",
-        // Off per task-2 brief: spec test file uses toEqual, not toStrictEqual
+        // Off: 319 sites across 41 test files (heaviest:
+        // cache-store.test.ts, filter-engine.test.ts, pipeline.test.ts,
+        // http-pinned-dispatcher.test.ts) use toEqual (structural
+        // equality) on purpose, not toStrictEqual (which also checks
+        // prototype and undefined keys); switching any of them would
+        // change what the assertion actually verifies, which is a behavior
+        // change to the test, not a style fix.
         "vitest/prefer-strict-equal": "off",
-        // Off per task-3 brief: primitives.test.ts asserts safeParse(...).success with toBe(false) verbatim
+        // Off: primitives.test.ts asserts safeParse(...).success with
+        // toBe(false), which is stricter than the falsy-check this rule
+        // would substitute (success is typed boolean, so toBe(false) is
+        // the exact check; toBeFalsy() would also pass for 0 or '').
         "vitest/prefer-to-be-falsy": "off",
-        // Off per task-3 brief: primitives.test.ts uses toThrowError verbatim
-        "vitest/no-alias-methods": "off",
-        // Off per task-3 brief: primitives.test.ts asserts inside a try/catch verbatim
+        // Off: primitives.test.ts asserts inside a try/catch because the
+        // code under test throws on the invalid branch and returns
+        // normally on the valid one; the assertion belongs in whichever
+        // branch actually runs, which the rule cannot see is exhaustive.
         "vitest/no-conditional-expect": "off",
-        // Off per task-4 brief: context.test.ts asserts typeof ctx.homeDir() with toBe('string') verbatim
+        // Off: context.test.ts asserts `typeof ctx.homeDir()` with
+        // toBe('string') because the value under test is a plain string,
+        // not a class instance or branded type that expectTypeOf's static
+        // type check would add anything to.
         "vitest/prefer-expect-type-of": "off",
-        // Off per task-4 brief: output.test.ts uses `{ a: 1 }` as sample payload data verbatim
+        // Off: output.test.ts's sample payload fixture (`{ a: 1 }`) uses a
+        // single-letter key because the test exercises payload shape, not
+        // the key's name; renaming it to satisfy id-length would suggest a
+        // meaning the fixture doesn't have.
         "id-length": "off",
-        // Off per task-5 brief: main.test.ts's `describe('run', ...)` callback is 60 lines verbatim
-        "max-lines-per-function": "off",
-        // Off per task-6 brief: doctor.test.ts asserts envelope.ok/cacheRootExists with toBe(true) verbatim
+        // Off: 288 sites across 29 test files (heaviest:
+        // toolgen-schema.test.ts, toolgen-layout.test.ts,
+        // filter-pattern.test.ts) assert typed booleans with toBe(true) —
+        // e.g. doctor.test.ts's envelope.ok/cacheRootExists, or
+        // safeParse(...).success — which is stricter than the truthy-check
+        // this rule would substitute (toBeTruthy() also passes for 1 or 'x').
         "vitest/prefer-to-be-truthy": "off",
-        // Off per task-1 brief: main.test.ts defines inline CommandRegistrar closures (boom/helpToStderr) verbatim
+        // Off: main.test.ts defines inline CommandRegistrar closures
+        // (boom/helpToStderr) inside the test body because they capture
+        // per-test mock state (call counts, thrown errors) that a
+        // module-scoped helper couldn't isolate between tests.
         "unicorn/consistent-function-scoping": "off",
-        // Off per task-3 brief (M2a): headers.test.ts's expectUsageError helper wraps the assertions verbatim
-        "vitest/expect-expect": "off",
-        // Off per task-4 brief (M2a): load.test.ts narrows source.kind with an if inside the test verbatim
+        // Configured (not off): these are the repo's assertion-wrapper
+        // helpers, so the rule can't see the expect(...) calls buried inside
+        // them without this list - headers.test.ts and api-options.test.ts
+        // each define their own local expectUsageError, filter-pattern.test.ts's
+        // agree wraps the glob-vs-oracle expect, and http-pinned-dispatcher.test.ts's
+        // rejectsWithCause wraps the rejects.toMatchObject expect. The rule
+        // stays live for genuinely assertion-free tests.
+        "vitest/expect-expect": [
+          "error",
+          { "assertFunctionNames": ["expect", "expectUsageError", "agree", "rejectsWithCause"] }
+        ],
+        // Off: load.test.ts narrows source.kind with an if inside the test
+        // body because the fixture's SpecSource union must be narrowed
+        // before its file-only or url-only field can be read; the
+        // narrowing is the thing under test, not incidental control flow.
         "vitest/no-conditional-in-test": "off",
-        // Off per task-5 brief (M2a): fetch.test.ts's fixtures use the Fetch API's
-        // `null` response body / header values verbatim
+        // Off: 36 sites across 9 test files (heaviest:
+        // toolgen-schema.test.ts) use literal `null` because the fixture
+        // mirrors an API contract that itself uses null — e.g.
+        // fetch.test.ts's absent `Response.body`/`Headers.get` returns, or
+        // JSON Schema's null type and enum-member null — so `undefined`
+        // would change what the fixture actually exercises.
         "unicorn/no-null": "off",
-        // Off per task-5 brief (M2a): fetch.test.ts's redirect-chain test suite exceeds 300 lines
+        // Off for tests: 23 test files exceed the line cap because a
+        // coherent scenario suite lives in one file — e.g. fetch.test.ts's
+        // redirect-chain suite, where each chained-hop fixture needs its
+        // own mock response and assertions; splitting such a file would
+        // separate a scenario from the single test verifying it end to end.
         "max-lines": "off",
-        // Off per task-1 brief: sanitize.test.ts and output.test.ts embed escaped
-        // backslashes ('\\x', '\\u001b') as literal string content verbatim
+        // Off: sanitize.test.ts and output.test.ts embed escaped
+        // backslashes ('\\x', '\\u001b') as literal two-character string
+        // content because that is the exact byte sequence the sanitizer is
+        // asserted against; converting them to String.raw template
+        // literals risks silently changing which characters the fixture
+        // contains, for no runtime difference.
         "unicorn/prefer-string-raw": "off",
-        // Off per task-2 brief: cache-lock.test.ts and context.test.ts use
-        // expect(await ...) rather than await expect(...).resolves throughout, verbatim
+        // Off: cache-lock.test.ts and context.test.ts use
+        // expect(await ...) rather than await expect(...).resolves
+        // throughout because several of these assertions destructure or
+        // transform the resolved value before asserting on it, which the
+        // .resolves chain form doesn't support in the same expression.
         "vitest/prefer-expect-resolves": "off",
-        // Off per task-2 brief: context.test.ts's writeFileAtomic/readFileTextCapped
-        // failure-path tests assert only that a real fs error is thrown, not its
-        // message (the exact message is filesystem-dependent), verbatim
+        // Off: context.test.ts's writeFileAtomic/readFileTextCapped
+        // failure-path tests assert only that a real filesystem error is
+        // thrown, not its exact message, because the message text (ENOENT
+        // vs. EACCES wording, path formatting) is OS- and filesystem-
+        // dependent and would make the test flaky across platforms.
         "vitest/require-to-throw-message": "off",
-        // Off per task-2 brief: cache-paths.test.ts's D9 collision test writes the
-        // namespace material as two concatenated literals to mirror the two-part
-        // construction it is testing against, verbatim
-        "no-useless-concat": "off",
-        // Off per task-3 brief (M2b): cache-store.test.ts's mulberry32 PRNG needs
-        // the exact unsigned 32-bit wraparound `>>> 0` gives; Math.trunc keeps
-        // sign and does not wrap, which would silently change the generated
-        // sequence, verbatim
-        "unicorn/prefer-math-trunc": "off",
-        // Off per task-3 brief (M2b): cache-store.test.ts's round-5 finding 3
-        // case constructs a genuinely sparse array ([1, , 3]) to verify
-        // serializedSizeWithin rejects it - replacing the hole would test a
-        // different, already-covered value, verbatim
-        "no-sparse-arrays": "off",
-        // Off per task-3 brief (M2b): cache-store.test.ts's round-6 finding 1
-        // cases construct boxed primitives (new Number/String/Boolean)
-        // specifically to verify serializedSizeWithin refuses them; the
-        // unboxed-literal replacement these rules suggest is a plain primitive,
-        // which defeats the test, verbatim
-        "unicorn/new-for-builtins": "off",
-        "no-new-wrappers": "off"
+        // Off for tests: race/deadline scenarios (session eviction, shutdown
+        // timers, cache-lock contention, DNS-abort races) are constructed
+        // directly with `new Promise` to control exactly when a fixture
+        // settles, mirroring the same non-abortable/event-emitter primitives
+        // the src-side sites wrap
+        "promise/avoid-new": "off",
+        // Off for tests: fixtures assert against detached late-rejection
+        // handlers and callback-contract bridges (mirroring pinnedLookup and
+        // the DNS-race consumers in src) via `.then()`/`.catch()` chains
+        "promise/prefer-await-to-then": "off",
+        // Off for tests: fixtures call gzipSync/spawnSync/validateHopUrlSync
+        // synchronously by design to set up deterministic input before
+        // exercising the code under test
+        "node/no-sync": "off"
       }
     },
     {
@@ -162,285 +323,240 @@
         // subsystem and imports load, parse, validate, dereference, normalize,
         // naming, budgets, fetch, cache paths/fs/store/ttl, and the filter engine
         "import/max-dependencies": "off",
-        // Off per task-9 brief: pipeline.ts is where every M2b part meets -
-        // policy resolution, the D5 fail-closed read, the conditional refresh,
-        // the D16b cache-hit path, the last-known-good fallback, and the D16a2
-        // finish/commitRefresh helpers live together by design, and the
-        // extensive round-N rationale comments documenting each control-flow
-        // decision are load-bearing security documentation, not incidental -
-        // so it verbatim exceeds 300 lines
+        // Off: pipeline.ts is the spec subsystem's composition root -- policy
+        // resolution, the fail-closed cache read, the conditional-refresh
+        // decision, the cache-hit path, and the last-known-good fallback all
+        // live together with the rationale for why each control-flow branch
+        // is safe; splitting a branch into its own module would separate
+        // that safety rationale from the invariant it guards.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/core/src/cache/store.ts"],
       "rules": {
-        // Off per task-3 brief (M2b): cache/store.ts is the transactional store
-        // core - schema serialization, the D14 incremental size preflight, both
-        // writers, GC, the three-way meta read, and the public reader all live in
-        // one module by design (readMetaFile is private and shared by every entry
-        // point in it) - so it verbatim exceeds 300 lines
+        // Off: store.ts is the transactional cache-store core -- schema
+        // serialization, the incremental size preflight, both writers, GC,
+        // the three-way meta read, and the public reader all share the
+        // private readMetaFile helper; splitting an entry point out would
+        // separate it from the shared invariant readMetaFile enforces for
+        // all of them.
         "max-lines": "off",
-        // Off per task-11 brief (M2b): scoping import/max-dependencies to
-        // pipeline.ts only (rather than disabling it repository-wide) puts the
-        // rule back in force here too, and store.ts imports from 11 files for
-        // the same reason its max-lines override above gives - it is the
-        // transactional store core and genuinely draws on every one of them
+        // Off: scoping import/max-dependencies to pipeline.ts's override
+        // alone would leave the rule enforced here too, and store.ts
+        // imports from 11 files for the same reason as its max-lines
+        // override above -- it is the transactional store core and
+        // genuinely depends on every one of them.
         "import/max-dependencies": "off",
-        // Off per task-3 brief (M2b): store.ts's writeAccepted and writeCandidate
-        // are declared async with synchronous validation (declaredOpenapiVersion,
-        // persistableTextOrThrow, the title/specVersion length check) BEFORE the
-        // `return withNamespaceLock(...)` tail call. Removing `async` would turn
-        // those synchronous throws into synchronous exceptions at the call site
-        // instead of promise rejections, breaking every `.rejects.toMatchObject`
-        // assertion against them - not behavior-preserving
+        // Off: store.ts's writeAccepted and writeCandidate are declared
+        // async with synchronous validation (declaredOpenapiVersion,
+        // persistableTextOrThrow, the title/specVersion length check) BEFORE
+        // the `return withNamespaceLock(...)` tail call. Removing `async`
+        // would turn those synchronous throws into synchronous exceptions at
+        // the call site instead of promise rejections, breaking every
+        // `.rejects.toMatchObject` assertion against them.
         "require-await": "off"
       }
     },
     {
       "files": ["packages/core/src/filter/pattern.ts"],
       "rules": {
-        // Off per task-6 brief: pattern.ts is the whole D15 token-programme
-        // module - the grammar constants, compileGlob, the step budget, and
-        // the Thompson state-set matcher live together by design (the design
-        // rationale comments are load-bearing, not incidental), so it
-        // verbatim exceeds 300 lines
+        // Off: pattern.ts is the whole glob-compilation module -- the
+        // grammar constants, compileGlob, the step budget, and the Thompson
+        // state-set matcher live together because the step-budget
+        // accounting has to see the compiler's output and the matcher's
+        // consumption of it in the same file; splitting either out would
+        // separate the budget invariant from the code it bounds.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/core/src/http/pinned-dispatcher.ts"],
       "rules": {
-        // Off per task-3 brief (M5): pinnedLookup implements node:net's
-        // LookupFunction / undici's connect.lookup contract, which Node
-        // itself defines as a callback (hostname, options, callback) => void
-        // - there is no async/await form of this external API to refactor to
+        // Off: pinnedLookup implements node:net's LookupFunction / undici's
+        // connect.lookup contract, which Node itself defines as a callback
+        // `(hostname, options, callback) => void` -- there is no async/await
+        // form of this external API to refactor to.
         "promise/prefer-await-to-callbacks": "off",
-        // Off per task-3 brief (M5): the LookupFunction callback's first
-        // parameter is typed `NodeJS.ErrnoException | null` (not `| undefined`)
-        // by node:net itself, so the success-path calls must pass the literal
-        // `null` verbatim to satisfy that upstream type
+        // Off: the LookupFunction callback's first parameter is typed
+        // `NodeJS.ErrnoException | null` (not `| undefined`) by node:net
+        // itself, so the success-path calls must pass the literal `null` to
+        // satisfy that upstream type.
         "unicorn/no-null": "off",
-        // Off per task-4 brief (M5): the plan's own file layout puts
-        // createPinnedAgent (Task 3) and pinnedRequest (Task 4) — the
-        // DNS-pinning Agent and the shared manual-redirect transport built
-        // directly on it — in this one module by design, with load-bearing
-        // round-1 amendment rationale comments throughout, so it
-        // verbatim exceeds 300 lines (mirrors the pipeline.ts/store.ts/
-        // layout.ts/context.ts overrides above for the same reason)
+        // Off: pinned-dispatcher.ts is the whole DNS-pinned transport module
+        // -- createPinnedAgent (the pinning Agent) and pinnedRequest (the
+        // manual-redirect transport built directly on it) share the
+        // pinned-lookup invariant that every redirect hop must re-resolve
+        // through; splitting pinnedRequest into its own file would separate
+        // that invariant from the transport that depends on it holding.
         "max-lines": "off",
-        // Off per task-4 brief (M5): TooLargeError (the over-cap sentinel
-        // readCapped throws) and EgressError (the branded error the
-        // DNS-pinning lookup throws so a fetch rejection can be classified
-        // reliably via its cause chain, per the round-1 amendment) are
-        // two small, single-purpose sentinel classes serving two distinct
-        // call sites within this one shared-transport module — splitting
-        // either into its own file would separate a brand from the single
-        // guard it exists to make provable
+        // Off: TooLargeError (the over-cap sentinel readCapped throws) and
+        // EgressError (the branded error the DNS-pinning lookup throws so a
+        // fetch rejection can be classified reliably via its cause chain)
+        // are two small, single-purpose sentinel classes serving two
+        // distinct call sites within this one shared-transport module --
+        // splitting either into its own file would separate a brand from
+        // the single guard it exists to make provable.
         "max-classes-per-file": "off"
       }
     },
     {
       "files": ["packages/core/src/toolgen/schema.ts"],
       "rules": {
-        // Off per task-1 brief (M3): schema.ts is the full converter framework -
-        // the malformed-value gate, the keyword allowlist, the sibling-conflict
-        // gate, the nullable/multi-type normalization, and every leaf branch
-        // (string/number/integer/boolean/null/const/enum/typeless) live together
-        // by design (the round-N rationale comments are load-bearing security
-        // documentation, not incidental), so it verbatim exceeds 300 lines even
-        // before Task 2 adds the composite branches
+        // Off: schema.ts is the full JSON-Schema-to-Zod converter -- the
+        // malformed-value gate, the keyword allowlist, the sibling-conflict
+        // gate, nullable/multi-type normalization, and every leaf branch
+        // (string/number/integer/boolean/null/const/enum/typeless) share the
+        // same input-shape invariant the malformed-value gate establishes;
+        // splitting a leaf branch into its own file would separate it from
+        // the gate that guarantees its input is already well-formed.
         "max-lines": "off",
-        // Off per task-1 brief (M3): the "oneOf / anyOf + type" comment in
-        // conflictingCombination intentionally starts with the lowercase
-        // JSON-Schema keyword names oneOf/anyOf, verbatim
+        // Off: the "oneOf / anyOf + type" comment in conflictingCombination
+        // intentionally starts with the lowercase JSON-Schema keyword names
+        // oneOf/anyOf -- capitalizing them would misname the keywords the
+        // comment refers to.
         "capitalized-comments": "off"
       }
     },
     {
       "files": ["packages/core/test/toolgen-schema.test.ts"],
       "rules": {
-        // Off per task-1 brief (M3): several comments in this test file
-        // intentionally start with a lowercase code identifier (nullable,
-        // numberSchema, enum, pattern) to name the exact keyword/function being
-        // discussed, verbatim
-        "capitalized-comments": "off",
-        // Off per task-1 brief (M3): the `ok` test helper's early-throw guard
-        // uses a braceless `if (...) throw ...;` verbatim
-        "curly": "off",
-        // Off per task-1 brief (M3): the keyword-allowlist `it.each` fixture for
-        // the `if` keyword includes a sibling `then: {}` property because it is
-        // a literal JSON Schema `if`/`then` node under test, not a thenable,
-        // verbatim
-        "unicorn/no-thenable": "off"
+        // Off: several comments in this test file intentionally start with
+        // a lowercase code identifier (nullable, numberSchema, enum,
+        // pattern) to name the exact keyword/function being discussed --
+        // capitalizing them would misname the identifier they refer to.
+        "capitalized-comments": "off"
       }
     },
     {
       "files": ["packages/core/src/toolgen/layout.ts"],
       "rules": {
-        // Off to support task-3's verbatim converged code (M3, owner decision round-15): paramFields's
-        // location -> FieldMapping selection is the converged three-way ternary
-        // verbatim; the path/query/header branches are parallel literal-object
-        // picks, not sequential decision logic, so an if-else rewrite would not
-        // improve on it
-        "no-nested-ternary": "off",
-        "unicorn/no-nested-ternary": "off",
-        // Off per task-4 brief (M3): layout.ts is the whole field-layout module -
-        // paramFields, the body classification (bodyFields/isFlattenableRoot/
+        // Off: layout.ts is the whole field-layout module -- paramFields,
+        // the body classification (bodyFields/isFlattenableRoot/
         // selectMedia), collision resolution, and buildLayout's assembly
-        // (including the optional-body all-or-nothing refine) live together by
-        // design, with load-bearing round-N security rationale comments
-        // throughout, so it verbatim exceeds 300 lines
+        // (including the optional-body all-or-nothing refine) share the one
+        // field-collision invariant that collision resolution enforces
+        // across all of them; splitting a piece out would separate it from
+        // the invariant it depends on collision resolution upholding.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/core/test/toolgen-layout.test.ts"],
       "rules": {
-        // Off to support task-3's verbatim converged code (M3): comments in
-        // this test file intentionally start with the lowercase identifier
-        // `paramFields` or the lowercase JSON-Schema/OpenAPI keyword
-        // `allowReserved`, verbatim (same rationale as the
-        // toolgen-schema.test.ts override above)
-        "capitalized-comments": "off",
-        // Off to support task-3's verbatim converged code (M3): the
-        // `okFields` test helper's early-throw guard uses a braceless
-        // `if (...) throw ...;` verbatim (same rationale as
-        // toolgen-schema.test.ts's `ok` helper above)
-        "curly": "off",
-        // Off to support task-3's verbatim converged code (M3): the round-15 reserved-header assertions
-        // nest `expect(okFields(paramFields(op([...` (4 calls) verbatim, one
-        // level deeper than the file's usual `const fields = okFields(paramFields(op([...`
-        // assignment form, to assert the mapped result inline
-        "unicorn/max-nested-calls": "off"
+        // Off: comments in this test file intentionally start with the
+        // lowercase identifier `paramFields` or the lowercase
+        // JSON-Schema/OpenAPI keyword `allowReserved` -- capitalizing them
+        // would misname the identifier or keyword, same rationale as the
+        // toolgen-schema.test.ts override above.
+        "capitalized-comments": "off"
       }
     },
     {
       "files": ["packages/cli/src/context.ts"],
       "rules": {
-        // Off per task-12 brief (M2b final review, finding 2):
-        // context.ts is the sole home of the real cache filesystem seam, and
-        // mkdirSecure's per-component umask-0177 walk plus writeFileAtomic's
-        // D3 temp+rename and readFileTextCapped's D12 capped read already
-        // carry load-bearing round-N rationale by design. Fixing the round-10
-        // symlink-following finding added an lstat-based
-        // rejectUnlessRealDirectory guard, used in both of mkdirSecure's
-        // branches, with rationale comments that are load-bearing security
-        // documentation, not incidental. A comment-free version of the same
-        // fix still lands a few lines past 300 (there was no headroom left),
-        // so trimming the fix's own rationale could not have closed the gap
-        // either — this mirrors the pattern.ts/store.ts/pipeline.ts overrides
-        // above for the same reason
+        // Off: context.ts is the sole home of the real cache filesystem seam
+        // -- mkdirSecure's per-component umask-0177 walk, writeFileAtomic's
+        // temp-then-rename write, readFileTextCapped's capped read, and the
+        // lstat-based rejectUnlessRealDirectory symlink guard (used by both
+        // of mkdirSecure's branches) all depend on being reasoned about
+        // together as one filesystem-safety invariant; splitting any one of
+        // them out would separate it from the seam it protects.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/core/src/server/sdk-v1/streamable-http.ts"],
       "rules": {
-        // Off per task-8 brief: streamable-http.ts is the single home of the
-        // Streamable HTTP listener wiring — the session-capacity
-        // synchronous-reservation fix (C4) and its rollback (C4-rollback),
-        // the request-guard-before-transport wiring (Task 7), the 4 MB
-        // body-cap/parse-error handling, and the two-phase bounded graceful
-        // shutdown (C5) each carry load-bearing round-N security rationale
-        // comments by design (see the file's own comments for the exact
-        // SDK-source verification each one cites). Splitting any of these
-        // across files would separate a fix from the exact SDK behavior it
-        // documents, which is itself the load-bearing artifact — this
-        // mirrors the context.ts/layout.ts overrides above for the same
-        // reason
+        // Off: streamable-http.ts is the single home of the Streamable HTTP
+        // listener wiring -- the synchronous session-capacity reservation
+        // and its rollback, the request-guard-before-transport ordering,
+        // the 4 MB body-cap/parse-error handling, and the two-phase bounded
+        // graceful shutdown each depend on the exact SDK request/response
+        // lifecycle documented alongside them (see the file's own comments
+        // for the exact SDK-source behavior each one cites). Splitting any
+        // of these across files would separate that lifecycle documentation
+        // from the code it verifies, which is itself the load-bearing part.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/core/src/http/egress.ts"],
       "rules": {
-        // Off per the M5 final-review fix wave: classifyAddress's IPv6 arm
-        // already fails closed on the full set of SSRF-relevant IANA
-        // special-purpose ranges (Task 1) plus RFC 6052/8215's NAT64
-        // IPv4-embedding rules; the final-review fix additionally reclassifies
-        // the local-use NAT64 prefix 64:ff9b:1::/48 as metadata (a /96
-        // translator inside it can wrap the metadata address), which pushed
-        // the file's load-bearing rationale comments verbatim past 300 lines
-        // (mirrors the pipeline.ts/store.ts/layout.ts/pinned-dispatcher.ts/
-        // request.ts/response.ts overrides above for the same reason)
+        // Off: classifyAddress's IPv6 arm fails closed on the full set of
+        // SSRF-relevant IANA special-purpose ranges plus RFC 6052/8215's
+        // NAT64 IPv4-embedding rules, including reclassifying the local-use
+        // NAT64 prefix 64:ff9b:1::/48 as metadata (a /96 translator inside
+        // it can wrap the metadata address) -- the citation for each range
+        // sits next to the check it justifies so a future edit can't narrow
+        // a range without seeing why it exists, which pushes the file past
+        // 300 lines.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/core/src/server/execute/executor.ts"],
       "rules": {
-        // Off per the M5 final-review fix wave: executor.ts is the whole
-        // integration point wiring request-building + the pinned transport +
-        // response-mapping + redaction + the concurrency semaphore; two
-        // final-review findings (sanitizing a buildRequest error's
-        // spec-derived wireName, and reordering assembleHeaders's write order
-        // to match design §4 precedence) each added load-bearing rationale
-        // comments in place rather than splitting this one cohesive module,
-        // pushing it verbatim past 300 lines (mirrors the pipeline.ts/
-        // store.ts/layout.ts/pinned-dispatcher.ts/request.ts/response.ts
-        // overrides above for the same reason)
+        // Off: executor.ts is the whole integration point wiring
+        // request-building, the pinned transport, response-mapping,
+        // redaction, and the concurrency semaphore -- sanitizing a
+        // buildRequest error's spec-derived wireName and assembleHeaders's
+        // header-precedence write order both depend on seeing the full call
+        // sequence in one place; splitting either out would separate that
+        // ordering invariant from the code that must respect it.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/core/src/server/execute/request.ts"],
       "rules": {
-        // Off per task-7 brief (M5): request.ts is the whole request-building
-        // module — the value-shape guard, per-leaf percent-encoding, the
-        // path-traversal reject, query/header/body serialization for every
-        // style x explode combination the mapper can emit, and the outbound
-        // budget checks live together by design, with load-bearing
-        // research-citation and round-1 amendment rationale comments
-        // throughout, so it verbatim exceeds 300 lines (mirrors the
-        // pipeline.ts/store.ts/layout.ts/pinned-dispatcher.ts overrides above
-        // for the same reason)
+        // Off: request.ts is the whole request-building module -- the
+        // value-shape guard, per-leaf percent-encoding, the path-traversal
+        // reject, query/header/body serialization for every style x explode
+        // combination the mapper can emit, and the outbound budget checks
+        // all share the same percent-encoding and budget invariants;
+        // splitting a serialization branch out would separate it from the
+        // shared guard its correctness depends on.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/core/src/server/execute/response.ts"],
       "rules": {
-        // Off per task-8 brief (M5): response.ts is the whole response-mapping
-        // module — the local Ajv2020 envelope-validator compiler, the fixed
-        // PinnedOutcome-error text table, the byte-safe UTF-8 decode/redact/
-        // sanitize/truncate/scan pipeline shared by the error-excerpt and
-        // no-outputSchema text paths, and the schema-branch envelope builder
-        // live together by design, with load-bearing research-citation and
-        // round-1 amendment rationale comments throughout (see the
-        // file's own comments), so it verbatim exceeds 300 lines (mirrors the
-        // pipeline.ts/store.ts/layout.ts/pinned-dispatcher.ts/request.ts
-        // overrides above for the same reason)
+        // Off: response.ts is the whole response-mapping module -- the
+        // local Ajv2020 envelope-validator compiler, the fixed
+        // PinnedOutcome-error text table, the byte-safe UTF-8
+        // decode/redact/sanitize/truncate/scan pipeline shared by the
+        // error-excerpt and no-outputSchema text paths, and the
+        // schema-branch envelope builder all depend on the same byte-safe
+        // decoding invariant; splitting the shared pipeline out would
+        // separate it from the two callers that must both use it identically.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/cli/src/api-options.ts"],
       "rules": {
-        // Off per task-9 review-fix amendment (M5): the file was an exact
-        // 300-line fit before two credential-leak/usability findings
-        // (--base-url and --header rejections echoed raw secret
-        // values; RFC 9110 OWS trimming) added redactedBaseUrl,
-        // trimOptionalSpace, and an empty-after-trim guard in place - these
-        // stay in this module by design (they are one cohesive parse/
-        // validate pass over the same two flags), so it now verbatim
-        // exceeds 300 lines
+        // Off: api-options.ts's redactedBaseUrl (keeps --base-url/--header
+        // validation errors from echoing the raw secret value back to the
+        // user) and trimOptionalSpace (RFC 9110 optional-whitespace
+        // trimming) plus its empty-after-trim guard are one cohesive
+        // parse/validate pass over the same two flags -- splitting either
+        // out would separate the redaction behavior from the validation
+        // path it has to cover completely.
         "max-lines": "off"
       }
     },
     {
       "files": ["packages/cli/src/commands/serve.ts"],
       "rules": {
-        // Off per task-11 brief (M5, the milestone's activation): resolving
-        // the API base URL (resolveBaseUrl + assertBaseUrlShape), building
-        // the process-wide redactor, eager-compiling the per-tool output
-        // validators (D7), and constructing the ONE shared createExecutor
-        // instance all belong in this single startup action alongside the
-        // pre-existing HTTP-option/spec-pipeline wiring - splitting them into
-        // a separate module would only hide the ordering constraints the
-        // brief itself specifies (apiConfig before buildTools, base-url
-        // resolution before the executor, etc.), so it verbatim exceeds 300
-        // lines
+        // Off: serve.ts's startup action resolves the API base URL, builds
+        // the process-wide redactor, eager-compiles the per-tool output
+        // validators, and constructs the one shared createExecutor instance
+        // in a fixed order (base-url resolution before the executor,
+        // apiConfig before buildTools); moving these into a separate module
+        // would hide that ordering dependency from readers instead of
+        // keeping it visible in the one place it's enforced.
         "max-lines": "off"
       }
     }

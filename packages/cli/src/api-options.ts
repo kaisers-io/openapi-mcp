@@ -6,8 +6,8 @@ import {
   resolveHeaderEnvMappings,
   SYSTEM_HEADERS,
   usageError,
-  type HeaderEnvMapping,
 } from '@kaisers-io/openapi-mcp-core';
+import type { HeaderEnvMapping } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
 
 const collect = (value: string, previous: readonly string[]): readonly string[] => [
@@ -18,11 +18,12 @@ const collect = (value: string, previous: readonly string[]): readonly string[] 
 // Mirrors http/headers.ts's non-exported CONTROL_CHAR_RE (a static --header
 // has no env-var indirection layer, so this file owns its own copy): any C0
 // control or DEL in a header value is a request-smuggling vector.
+// oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it rejects them)
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
 
 // Names that read as a credential regardless of what --header actually
 // carries. Deny-by-pattern, not proof of non-secret — secretValues below is
-// the defense-in-depth backstop for whatever this misses (round-1 amendment).
+// the defense-in-depth backstop for whatever this misses.
 const SENSITIVE_EXACT: ReadonlySet<string> = new Set([
   'authorization',
   'proxy-authorization',
@@ -76,42 +77,41 @@ const MAX_RESPONSE_BYTES_CEILING = 104_857_600; // 100 MiB
 // Mirrors redact.ts's own (non-exported) MIN_VARIANT_LENGTH: below this
 // length, createRedactor computes no encoding variants for a needle at all,
 // so registering a short static --header value buys no defense-in-depth and
-// risks the final-review Fix 5 footgun below instead.
+// risks the marker-collision footgun described below instead.
 const MIN_SECRET_REGISTRATION_LENGTH = 8;
 
 const textEncoder = new TextEncoder();
 const byteLength = (value: string): number => textEncoder.encode(value).length;
 
-export interface ApiSecretHeader {
+export type ApiSecretHeader = {
   name: string;
   value: string;
   // Retained so a 401/403 hint can name the env var without echoing the value.
   envVar: string;
-}
+};
 
-export interface ResolvedApiConfig {
+export type ResolvedApiConfig = {
   baseUrlOverride?: string;
   staticHeaders: { name: string; value: string }[];
   secretHeaders: ApiSecretHeader[];
   reservedHeaderNames: ReadonlySet<string>;
   // Every --header-env value (always) AND every --header value that is at
-  // least MIN_SECRET_REGISTRATION_LENGTH chars (round-1 amendment, refined by
-  // final-review Fix 5): a credential mistakenly passed via the non-secret
-  // --header flag is still scrubbed from all redacted output. A SHORT static
-  // value (e.g. "da") is excluded — see resolveApiConfig's own comment for
-  // why registering it is both useless (createRedactor computes no encoding
-  // variants below that length) and actively dangerous (createRedactor
-  // throws on a value that is itself a substring of the literal
-  // '[redacted]' marker, e.g. "da"). The cleartext gate (Task 10) stays keyed
-  // on --header-env presence only — static --header is contractually
-  // non-secret (sensitive names are already rejected above), so gating
-  // cleartext on it would block legitimate non-secret headers.
+  // least MIN_SECRET_REGISTRATION_LENGTH chars: a credential mistakenly
+  // passed via the non-secret --header flag is still scrubbed from all
+  // redacted output. A SHORT static value (e.g. "da") is excluded — see
+  // resolveApiConfig's own comment for why registering it is both useless
+  // (createRedactor computes no encoding variants below that length) and
+  // actively dangerous (createRedactor throws on a value that is itself a
+  // substring of the literal '[redacted]' marker, e.g. "da"). The cleartext
+  // gate stays keyed on --header-env presence only — static --header is
+  // contractually non-secret (sensitive names are already rejected above),
+  // so gating cleartext on it would block legitimate non-secret headers.
   secretValues: string[];
   maxResponseBytes: number;
   allowInsecureHttp: boolean;
-}
+};
 
-export interface ApiCmdOpts {
+export type ApiCmdOpts = {
   // Same commander generic-constraint workaround as SpecCmdOpts
   // (spec-options.ts): a plain object literal type is rejected by
   // `Command<[], Opts>`'s `Opts extends OptionValues` constraint without an
@@ -122,11 +122,11 @@ export interface ApiCmdOpts {
   header: readonly string[];
   maxResponseBytes: string;
   allowInsecureHttp?: boolean;
-}
+};
 
 // The --base-url/--header-env/--header/--max-response-bytes/
-// --allow-insecure-http flags for the runtime API executor (Task 10/11) —
-// separate from registerSpecOptions, which governs the spec fetch instead.
+// --allow-insecure-http flags for the runtime API executor — separate from
+// registerSpecOptions, which governs the spec fetch instead.
 export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
   command
     .option('--base-url <url>', 'override the spec-derived base URL for API requests')
@@ -183,20 +183,17 @@ const parseSecretHeaders = (
   });
 };
 
-// RFC 9110 OWS: strip a leading/trailing run of SP only — tabs stay, they are
-// C0 control chars and are rejected below rather than normalized.
-const trimOptionalSpace = (value: string): string => {
-  let start = 0;
-  let end = value.length;
-  while (start < end && value.codePointAt(start) === 0x20) {
-    start += 1;
-  }
-  while (end > start && value.codePointAt(end - 1) === 0x20) {
-    end -= 1;
-  }
-  return value.slice(start, end);
-};
+// Strips a leading/trailing run of SP (U+0020) only — deliberately NARROWER
+// than RFC 9110 OWS, which would also cover HTAB: a tab in a header value is
+// a C0 control character here and is rejected below rather than normalized
+// away, keeping the smuggling guard strict.
+const trimOptionalSpace = (value: string): string => value.replace(/^ +/u, '').replace(/ +$/u, '');
 
+// Imperative on purpose: `seen` accumulates across iterations (duplicate
+// detection depends on every prior entry, not just the current one) and each
+// of the seven checks below throws in encounter order — a map/filter
+// pipeline would evaluate every entry before any throw could surface,
+// changing which malformed --header the operator sees first.
 const parseStaticHeaders = (raw: readonly string[]): { name: string; value: string }[] => {
   const seen = new Set<string>();
   const result: { name: string; value: string }[] = [];
@@ -234,10 +231,10 @@ const parseStaticHeaders = (raw: readonly string[]): { name: string; value: stri
   return result;
 };
 
-interface NamedHeader {
+type NamedHeader = {
   name: string;
   value: string;
-}
+};
 
 // Cross-group uniqueness, the reservedHeaderNames union, and the header
 // count/aggregate-byte budgets in one pass: all three walk the same two
@@ -248,25 +245,26 @@ const crossValidateHeaders = (
   secretHeaders: readonly NamedHeader[],
 ): ReadonlySet<string> => {
   const secretNames = new Set(secretHeaders.map((header) => header.name.toLowerCase()));
-  const names = new Set<string>(SYSTEM_HEADERS);
-  for (const header of staticHeaders) {
-    const lower = header.name.toLowerCase();
-    if (secretNames.has(lower)) {
-      throw usageError(`header "${header.name}" is configured via both --header and --header-env`);
-    }
-    names.add(lower);
+  // `find` (not a combined build-and-check loop) preserves which header the
+  // operator sees named in the error: the first --header entry that
+  // collides, in the operator's own list order.
+  const conflict = staticHeaders.find((header) => secretNames.has(header.name.toLowerCase()));
+  if (conflict !== undefined) {
+    throw usageError(`header "${conflict.name}" is configured via both --header and --header-env`);
   }
-  for (const header of secretHeaders) {
-    names.add(header.name.toLowerCase());
-  }
+  const names = new Set<string>([
+    ...SYSTEM_HEADERS,
+    ...staticHeaders.map((header) => header.name.toLowerCase()),
+    ...secretHeaders.map((header) => header.name.toLowerCase()),
+  ]);
   const total = staticHeaders.length + secretHeaders.length;
   if (total > MAX_HEADER_COUNT) {
     throw usageError(`too many API headers configured (${total} > ${MAX_HEADER_COUNT})`);
   }
-  let aggregate = 0;
-  for (const header of [...staticHeaders, ...secretHeaders]) {
-    aggregate += byteLength(header.name) + byteLength(header.value);
-  }
+  const aggregate = [...staticHeaders, ...secretHeaders].reduce(
+    (sum, header) => sum + byteLength(header.name) + byteLength(header.value),
+    0,
+  );
   if (aggregate > MAX_HEADER_AGGREGATE_BYTES) {
     throw usageError(`API headers exceed the ${MAX_HEADER_AGGREGATE_BYTES}-byte aggregate budget`);
   }
@@ -278,11 +276,17 @@ const crossValidateHeaders = (
 // credentials or a secret-bearing query/fragment back to stderr/logs.
 const redactedBaseUrl = (url: URL): string => `${url.origin}${url.pathname}`;
 
-const validateBaseUrl = (raw: string): string => {
-  let url: URL;
+const tryParseUrl = (raw: string): URL | undefined => {
   try {
-    url = new URL(raw);
+    return new URL(raw);
   } catch {
+    return undefined;
+  }
+};
+
+const validateBaseUrl = (raw: string): string => {
+  const url = tryParseUrl(raw);
+  if (url === undefined) {
     // Unparseable and therefore un-redactable — name only the flag/problem.
     throw usageError('invalid --base-url — must be an absolute http(s) URL');
   }
@@ -317,13 +321,13 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
   const secretHeaders = parseSecretHeaders(cmdOpts.headerEnv, ctx.env);
   const staticHeaders = parseStaticHeaders(cmdOpts.header);
   const reservedHeaderNames = crossValidateHeaders(staticHeaders, secretHeaders);
-  // Final-review Fix 5 (finding 3 — marker-collision startup footgun): a
-  // --header-env value is ALWAYS a real credential and is always registered.
-  // A static --header value shorter than MIN_SECRET_REGISTRATION_LENGTH is
-  // excluded — createRedactor computes no encoding variants below that
-  // length anyway (see the ResolvedApiConfig comment above), and registering
-  // one risks createRedactor's own substring-of-the-marker guard throwing at
-  // startup for an entirely legitimate, non-secret value (e.g.
+  // Marker-collision startup footgun: a --header-env value is ALWAYS a real
+  // credential and is always registered. A static --header value shorter
+  // than MIN_SECRET_REGISTRATION_LENGTH is excluded — createRedactor
+  // computes no encoding variants below that length anyway (see the
+  // ResolvedApiConfig comment above), and registering one risks
+  // createRedactor's own substring-of-the-marker guard throwing at startup
+  // for an entirely legitimate, non-secret value (e.g.
   // `--header Accept-Language:da` — "da" is a substring of "[redacted]").
   const secretValues = [
     ...secretHeaders.map((header) => header.value),

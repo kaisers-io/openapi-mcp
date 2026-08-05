@@ -12,10 +12,10 @@ import {
 } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
 
-export interface OutputOptions {
+export type OutputOptions = {
   json: boolean;
   verbose: boolean;
-}
+};
 
 // Warnings are single-line by contract; this bounds one hostile spec-derived value
 const WARNING_DISPLAY_MAX = 1024;
@@ -27,22 +27,22 @@ export const getGlobalOpts = (program: Command): OutputOptions => {
   return { json: opts['json'] === true, verbose: opts['verbose'] === true };
 };
 
-export interface ActionResult {
+export type ActionResult = {
   data: unknown;
   humanLines: readonly string[];
-  // D11: exactOptionalPropertyTypes forces the explicit undefined
+  // The exactOptionalPropertyTypes flag forces the explicit undefined
   warnings?: readonly string[] | undefined;
-}
+};
 
 // Warnings go to stderr: stdout stays reserved for the command's own output so
 // it remains pipeable. Warnings can carry untrusted spec text (omitted paths,
 // dead filter patterns, cache diagnostics), and a warning must occupy exactly
 // one line, so the collapsing sanitizer is the correct one here —
 // sanitizeDisplayText is for rendered errors, where structure must survive.
-// Extracted out of emit() (Task 6 security fix) so serve.ts — which never
-// calls emit() — can render its own dead-pattern/omission warnings through
-// the identical sanitize-and-frame path `tools` gets via emit(), instead of
-// writing raw, unsanitized warning text to the operator's terminal.
+// Extracted out of emit() so serve.ts — which never calls emit() — can
+// render its own dead-pattern/omission warnings through the identical
+// sanitize-and-frame path `tools` gets via emit(), instead of writing raw,
+// unsanitized warning text to the operator's terminal.
 export const emitWarnings = (ctx: CliContext, warnings: readonly string[]): void => {
   const warningGutter = 'openapi-mcp: warning: ';
   for (const warning of warnings) {
@@ -101,7 +101,7 @@ const framedError = (ctx: CliContext, code: string, exitCode: number, bodyText: 
 };
 
 // Cell-aware (not code-unit) width check: a CJK/fullwidth line can be short in
-// code units yet overflow the terminal in display cells (the H1 fix).
+// code units yet overflow the terminal in display cells.
 const fitsCompact = (line: string, width: number | undefined): boolean =>
   width === undefined || displayCells(`openapi-mcp: ${line}`) <= width;
 
@@ -114,7 +114,7 @@ export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): n
         error: {
           code: rendered.code,
           message: rendered.message,
-          ...(rendered.stack !== undefined ? { stack: rendered.stack } : {}),
+          ...(rendered.stack === undefined ? {} : { stack: rendered.stack }),
         },
       }),
     );
@@ -125,9 +125,9 @@ export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): n
   // sanitize line-preservingly so multi-line validation output stays readable.
   const message = sanitizeDisplayText(rendered.message, DISPLAY_TEXT_MAX);
   const stack =
-    rendered.stack !== undefined
-      ? sanitizeDisplayText(rendered.stack, DISPLAY_TEXT_MAX)
-      : undefined;
+    rendered.stack === undefined
+      ? undefined
+      : sanitizeDisplayText(rendered.stack, DISPLAY_TEXT_MAX);
   // Compact only for a single short line with no stack: nothing to spoof.
   if (stack === undefined && !message.includes('\n') && fitsCompact(message, ctx.errWidth())) {
     ctx.errLine(`openapi-mcp: ${message}`);
@@ -147,7 +147,7 @@ export const wrapAction = async (
     const result = await run();
     emit(ctx, opts, result);
     return EXIT.OK;
-  } catch (err) {
-    return emitError(ctx, opts, err);
+  } catch (error) {
+    return emitError(ctx, opts, error);
   }
 };

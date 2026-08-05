@@ -1,6 +1,7 @@
-// Spec text is untrusted input that reaches model context (spec §6.4): strip
+// Spec text is untrusted input that reaches model context: strip
 // C0/C1 controls (except tab/newline, collapsed below) and Unicode bidi controls.
 const CONTROL_AND_BIDI_RE =
+  // oxlint-disable-next-line no-control-regex -- matching control and bidi characters is this regex's purpose (it strips them)
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;
 
 // All ECMAScript line terminators plus tab collapse to a single space
@@ -20,14 +21,12 @@ const truncate = (cleaned: string, maxLength: number): string => {
     return cleaned;
   }
   const hardCut = maxLength <= TRUNCATION_MARKER.length;
-  let end = hardCut ? maxLength : maxLength - TRUNCATION_MARKER.length;
-  // Never slice between a high and low surrogate: codePointAt(end - 1) only
-  // exceeds 0xffff when the unit at `end - 1` and the unit at `end` form a
-  // genuine astral pair, so step back one unit to keep it whole.
-  const codePoint = end > 0 ? cleaned.codePointAt(end - 1) : 0;
-  if (codePoint !== undefined && codePoint > 0xffff) {
-    end -= 1;
-  }
+  const rawEnd = hardCut ? maxLength : maxLength - TRUNCATION_MARKER.length;
+  // Never slice between a high and low surrogate: codePointAt(rawEnd - 1) only
+  // exceeds 0xffff when the unit at `rawEnd - 1` and the unit at `rawEnd` form
+  // a genuine astral pair, so step back one unit to keep it whole.
+  const codePoint = rawEnd > 0 ? cleaned.codePointAt(rawEnd - 1) : 0;
+  const end = codePoint !== undefined && codePoint > 0xff_ff ? rawEnd - 1 : rawEnd;
   const head = cleaned.slice(0, end);
   return hardCut ? head : `${head}${TRUNCATION_MARKER}`;
 };

@@ -6,9 +6,9 @@ import {
   CACHE_DISPLAY_SOURCE_MAX,
   CACHE_META_SCHEMA_VERSION,
   CACHE_TEXT_MAX,
-  type CacheMeta,
   zCacheMeta,
 } from '../schemas/cache.ts';
+import type { CacheMeta } from '../schemas/cache.ts';
 import { hashContent } from '../spec/load.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
@@ -17,28 +17,31 @@ import { withNamespaceLock } from './lock.ts';
 import {
   CACHE_MAX_PERSISTED_BYTES,
   CACHE_META_MAX_BYTES,
-  type CacheLayout,
   cacheLayout,
   objectPath,
 } from './paths.ts';
+import type { CacheLayout } from './paths.ts';
 
 // Only http(s) display sources are re-derivable; a file source is its own path
 const URL_DISPLAY_SOURCE_RE = /^https?:\/\//iu;
 
-// D17's one error boundary for this module: `isCacheAbsence`, `cacheIoError`
-// and `withCacheErrors` are DEFINED in `cache/errors.ts` (Task 2 Step 2b) —
-// never redeclared here. Every public store operation is wrapped in
-// `withCacheErrors` at the bottom of this file (Step 3b), which is the single
-// place a raw filesystem failure is typed as a validation error (exit 3)
-// rather than surfacing as an unexpected exit 1.
+// The one error boundary for this module: `isCacheAbsence`, `cacheIoError`
+// and `withCacheErrors` are DEFINED in `cache/errors.ts` — never redeclared
+// here. Every public store operation is wrapped in `withCacheErrors` at the
+// bottom of this file, which is the single place a raw filesystem failure is
+// typed as a validation error (exit 3) rather than surfacing as an unexpected
+// exit 1.
 //
-// Spec §5.3: credentials, headers, and raw URLs with query strings are never
+// Credentials, headers, and raw URLs with query strings are never
 // cached. A URL display source must be exactly origin + path, which also rules
 // out a fragment and userinfo (URL.origin excludes both).
 const assertRedactedDisplaySource = (displaySource: string): void => {
   if (!URL_DISPLAY_SOURCE_RE.test(displaySource)) {
     return;
   }
+  // Imperative on purpose: `new URL` is synchronous, so there is no `.catch`
+  // to inline into, and this security module forbids the helper extraction
+  // or IIFE a try-as-expression would otherwise need.
   let url: URL;
   try {
     url = new URL(displaySource);
@@ -48,7 +51,7 @@ const assertRedactedDisplaySource = (displaySource: string): void => {
   if (`${url.origin}${url.pathname}` !== displaySource) {
     // Never echo the offending value: it is exactly the case where it may carry a secret
     throw validationError(
-      'refusing to cache a spec source that is not in the redacted origin + path form (spec §5.3)',
+      'refusing to cache a spec source that is not in the redacted origin + path form',
     );
   }
 };
@@ -72,17 +75,16 @@ const serializeMeta = (meta: CacheMeta): string => {
 };
 
 const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
-  // Explicit per-level creation so every level gets the 0700 chmod (D4)
+  // Explicit per-level creation so every level gets the 0700 chmod
   await fs.mkdirSecure(layout.dir);
   await fs.mkdirSecure(layout.objectsDir);
 };
 
-// D14 / round-3 finding 10: the budget is checked BEFORE the aggregate string
-// exists. The round-3 draft called an unbounded JSON.stringify and measured
-// the result — but dereferencing can repeat a large source string through many
-// $ref expansions while staying inside the 500,000-node budget, so the
-// allocation being refused could already have happened, at whatever size the
-// document implied.
+// The budget is checked BEFORE the aggregate string exists. Calling an
+// unbounded JSON.stringify and measuring the result would not work:
+// dereferencing can repeat a large source string through many $ref expansions
+// while staying inside the 500,000-node budget, so the allocation being
+// refused could already have happened, at whatever size the document implied.
 //
 // This walks the document and accumulates the serialized size incrementally,
 // abandoning the walk the moment it exceeds the budget. It computes the same
@@ -90,16 +92,22 @@ const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
 // validated, dereferenced document: objects, arrays, strings, finite numbers,
 // booleans, null), so a document that passes here serializes to exactly what
 // was measured.
-// Round-4 finding 1: every fragment is measured in UTF-8 BYTES. The round-4
-// draft accumulated `JSON.stringify(...).length`, which is UTF-16 code units,
-// while `readFileTextCapped` and the stated policy are byte-based. Probed over
-// a generated corpus: that version was wrong for 5,053 of 20,000 values and
-// ALWAYS in the understating direction — so a multibyte document passed the
-// writer, was persisted above the cap, and was corrupt on its very first read.
-// That is precisely the D14 invariant this preflight exists to establish.
-// The minimal case: JSON.stringify({x:'é' + EMOJI}) is 11 UTF-16 units and
-// 14 UTF-8 bytes.
+//
+// Every fragment is measured in UTF-8 BYTES, not UTF-16 code units:
+// `readFileTextCapped` and the stated policy are byte-based, while measuring
+// via `JSON.stringify(...).length` counts UTF-16 code units and undercounts
+// any multibyte character. Probed over a generated corpus: the code-unit
+// version was wrong for 5,053 of 20,000 values and ALWAYS in the understating
+// direction — a multibyte document would pass the writer, be persisted above
+// the cap, and be corrupt on its very first read. That is precisely the
+// invariant this preflight exists to establish: JSON.stringify({x:'é' +
+// EMOJI}) is 11 UTF-16 units but 14 UTF-8 bytes.
 export const serializeWithinBudget = (value: unknown, budget: number): string | undefined => {
+  // Imperative on purpose, for `used`, `parts`, and `seen` alike: this is the
+  // accumulate-then-abort shape the design note above requires — a
+  // map/filter/reduce pipeline would build the whole string (or the whole
+  // membership set) before any abort could happen, which is exactly the
+  // unbounded-allocation-before-refusal this preflight exists to prevent.
   let used = 0;
   const parts: string[] = [];
   const overflow = Symbol('overflow');
@@ -114,13 +122,14 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
     }
     parts.push(fragment);
   };
-  // Round-5 finding 3: the sizer is EXACT only for a JSON-safe, dense,
-  // plain-object tree, and the exported writers accept Record<string, unknown>,
-  // which admits more than that. Rather than reimplement JSON.stringify's
-  // replacement semantics, the domain is now ENFORCED: anything outside it is
-  // refused before sizing, so the D14 write-then-read invariant cannot be
-  // violated by a caller of the exported store. The parse+dereference pipeline
-  // produces exactly this shape, so the precondition costs it nothing.
+  // The sizer is EXACT only for a JSON-safe, dense, plain-object tree, and the
+  // exported writers accept Record<string, unknown>, which admits more than
+  // that. Rather than reimplement JSON.stringify's replacement semantics, the
+  // domain is ENFORCED: anything outside it is refused before sizing, so the
+  // write-then-read invariant (what this build persists, this build can read
+  // back) cannot be violated by a caller of the exported store. The
+  // parse+dereference pipeline produces exactly this shape, so the
+  // precondition costs it nothing.
   //
   // Specifically rejected: undefined and holes inside arrays (stringify emits
   // null, the walker would skip them), objects carrying a toJSON hook
@@ -129,7 +138,7 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
   //
   // JSON.stringify(undefined) produces NO string at all, so a top-level
   // undefined must be refused rather than reported as zero bytes by the final
-  // no-op branch (round-6 finding 1)
+  // no-op branch
   if (value === undefined) {
     throw validationError('refusing to cache a document that is not a JSON object');
   }
@@ -150,13 +159,13 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       if (seen.has(node)) {
         throw unsupported; // A cycle
       }
-      // Round-7 finding 2: arrays get the SAME enforcement as objects. Round 7
-      // added the prototype/descriptor rules to the object branch only, so an
-      // own accessor at an index recreated the exact D14 bypass it had just
-      // closed — the element was read for the undefined check, again for the
-      // walk, and a third time by JSON.stringify, so a getter could answer
-      // small twice and over-budget once. An array-level toJSON hook had the
-      // same problem as on an object.
+      // Arrays get the SAME enforcement as objects. Applying the
+      // prototype/descriptor rules to the object branch only would leave an
+      // own accessor at an index able to recreate the exact size-vs-bytes
+      // bypass those rules exist to close: the element would be read for the
+      // undefined check, again for the walk, and a third time by
+      // JSON.stringify, so a getter could answer small twice and over-budget
+      // once. An array-level toJSON hook has the same problem as on an object.
       if (Object.getPrototypeOf(node) !== Array.prototype) {
         throw unsupported; // A subclass is outside the domain
       }
@@ -174,8 +183,18 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       ) {
         throw unsupported;
       }
+      // Imperative on purpose: `seen.add`/`seen.delete` (here and in the
+      // object branch below) track cycle-detection membership shared across
+      // the whole recursive walk — a value read afterward by every nested
+      // `walk` call, not a local accumulation a map/filter could replace.
       seen.add(node);
       emit('[');
+      // Imperative on purpose: the index is used to fetch
+      // `Object.getOwnPropertyDescriptor(node, index)` rather than
+      // `node[index]` specifically so an own accessor is never invoked (see
+      // the descriptor comment below). A for-of over the array's values, or
+      // `.entries()`, would read through `[[Get]]` and trigger exactly the
+      // getter this loop exists to avoid calling.
       for (let index = 0; index < node.length; index += 1) {
         // Own DATA descriptor, captured value walked exactly once (a hole or
         // explicit undefined serializes as null, which the domain refuses).
@@ -221,6 +240,11 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       }
       seen.add(node);
       emit('{');
+      // Imperative on purpose: `first` tracks the first member actually
+      // EMITTED, not the first key iterated — a skipped member (the
+      // `continue` below, for an undefined/function/symbol value) must not
+      // still cause the next real member to render a leading comma, so this
+      // cannot be replaced by an index-based iteration.
       let first = true;
       // Object.keys is exactly the set JSON.stringify iterates, in the same
       // order; getOwnPropertyDescriptor captures each value once (an accessor is
@@ -254,16 +278,16 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
   };
   try {
     walk(value);
-  } catch (err) {
-    if (err === overflow) {
+  } catch (error) {
+    if (error === overflow) {
       return undefined;
     }
-    if (err === unsupported) {
+    if (error === unsupported) {
       throw validationError(
         'refusing to cache a document containing values JSON cannot round-trip exactly (undefined or sparse array members, a toJSON hook, a bigint, a function, or a cycle)',
       );
     }
-    throw err;
+    throw error;
   }
   return parts.join('');
 };
@@ -274,7 +298,7 @@ export const serializedSizeWithin = (value: unknown, budget: number): number | u
   return text === undefined ? undefined : Buffer.byteLength(text, 'utf8');
 };
 
-// Round-3 Low, since closed: the `toJSON` member is checked via its own
+// The `toJSON` member is checked via its own
 // `Object.getOwnPropertyDescriptor`, in both the object and array branches of
 // `walk` above, rather than a plain `node.toJSON` property read. A plain read
 // invokes a `toJSON` GETTER — even a non-enumerable one Object.keys never
@@ -302,11 +326,11 @@ const persistableTextOrThrow = (
   return text;
 };
 
-// D12 mechanisms 1 and 2. Spec objects are immutable and content-addressed, so
-// writing a generation only ever CREATES a file and can never disturb the bytes
-// the live meta.json points at — which is precisely what the round-1 draft's
-// fixed accepted/spec.json replacement did, leaving old metadata pointing at new
-// bytes both transiently and, after a crash, permanently. meta.json is replaced
+// Spec objects are immutable and content-addressed, so writing a generation
+// only ever CREATES a file and can never disturb the bytes the live meta.json
+// points at — unlike a fixed accepted/spec.json path that gets REPLACED on
+// every write, which would leave old metadata pointing at new bytes both
+// transiently and, after a crash, permanently. meta.json is replaced
 // atomically second, and unreferenced objects are collected only AFTER that
 // commit succeeds, so meta.json is authoritative at every instant.
 const commitEntry = async (
@@ -319,14 +343,14 @@ const commitEntry = async (
   await prepareDirs(layout, fs);
   for (const object of objects) {
     const path = objectPath(layout, object.hash);
-    // Round-3 finding 5: an existing file at this name is NOT trusted merely
-    // because of its name. The round-3 draft skipped the write whenever the
-    // path existed, so a damaged or attacker-planted file under a hash we were
-    // about to commit became the authoritative object the moment the new
-    // metadata named it. Verify the bytes; only genuinely identical content may
-    // be reused, and anything else is a corrupt entry rather than something to
-    // silently overwrite (overwriting would also be the one mutation this
-    // layout exists to avoid, and a lock-free reader may be holding it).
+    // An existing file at this name is NOT trusted merely because of its
+    // name. Skipping the write whenever the path already exists would let a
+    // damaged or attacker-planted file under a hash we are about to commit
+    // become the authoritative object the moment the new metadata names it.
+    // Verify the bytes; only genuinely identical content may be reused, and
+    // anything else is a corrupt entry rather than something to silently
+    // overwrite (overwriting would also be the one mutation this layout
+    // exists to avoid, and a lock-free reader may be holding it).
     if (await fs.pathExists(path)) {
       const existing = await fs.readFileTextCapped(path, CACHE_MAX_PERSISTED_BYTES);
       if (hashContent(existing) !== object.hash) {
@@ -348,10 +372,11 @@ const commitEntry = async (
 // succeeded, and leaving a stray object is a wasted inode, not a correctness
 // problem — turning it into an error would fail a write that actually worked.
 const collectGarbage = async (layout: CacheLayout, fs: CacheFs, meta: CacheMeta): Promise<void> => {
-  const referenced = new Set<string>([`${meta.acceptedContentHash}.json`]);
-  if (meta.candidate !== undefined) {
-    referenced.add(`${meta.candidate.contentHash}.json`);
-  }
+  const referenced = new Set<string>(
+    meta.candidate === undefined
+      ? [`${meta.acceptedContentHash}.json`]
+      : [`${meta.acceptedContentHash}.json`, `${meta.candidate.contentHash}.json`],
+  );
   try {
     for (const name of await fs.readDirNames(layout.objectsDir)) {
       if (!referenced.has(name)) {
@@ -363,7 +388,7 @@ const collectGarbage = async (layout: CacheLayout, fs: CacheFs, meta: CacheMeta)
   }
 };
 
-// Three-way metadata read, shared by every store entry point (D5). "miss" means
+// Three-way metadata read, shared by every store entry point. "miss" means
 // there is no evidence a baseline ever existed here; everything else that is
 // not a clean parse is "corrupt" and fails closed.
 export type MetaReadResult =
@@ -371,57 +396,58 @@ export type MetaReadResult =
   | { kind: 'ok'; meta: CacheMeta }
   | { kind: 'corrupt'; reason: string };
 
-// Private (round-6 finding): it performs I/O and is not in the wrapped export
-// list. Every consumer lives in this same module — the writers above, and the
-// public reader below. (Round-9 prose: this said Task 4's read half was its
-// only consumer, which was already untrue for writeCandidate and
-// touchRevalidated, and is doubly so now that readCacheEntry is in this task.)
+// Private: it performs I/O and is not in the wrapped export list. Every
+// consumer lives in this same module — the writers above, and the public
+// reader below.
 const readMetaFile = async (layout: CacheLayout, fs: CacheFs): Promise<MetaReadResult> => {
   if (!(await fs.pathExists(layout.dir))) {
     return { kind: 'miss' };
   }
-  // Round-3 finding 3: the round-3 draft listed the objects directory here
-  // inside a bare `catch {}`, which turned an EACCES or EIO on that directory
-  // into "nothing cached" — a miss, the one outcome that may become
-  // trust-on-first-use (D17). The listing is not needed at all now that
-  // orphan-only namespaces are a miss by rule rather than by count, so the
-  // swallowing catch is simply deleted rather than narrowed.
+  // Listing the objects directory here inside a bare `catch {}` would turn an
+  // EACCES or EIO on that directory into "nothing cached" — a miss, the one
+  // outcome that may become trust-on-first-use. The listing is not needed at
+  // all: orphan-only namespaces are a miss by rule rather than by count, so
+  // there is no swallowing catch to narrow.
   const hasMeta = await fs.pathExists(layout.metaPath);
   if (!hasMeta) {
-    // Round-3 finding 2, corrected. The round-3 draft returned `corrupt` here
-    // whenever any object existed, which permanently wedged a namespace whose
-    // FIRST-EVER commit crashed between the object write and the metadata
-    // replace: objects present, no metadata, and D5 forbids healing a corrupt
-    // entry automatically. There was no way out but a manual `cache clear` on a
-    // first run — the exact failure D5's abandoned-scaffold rule already exists
-    // to avoid.
+    // Returning `corrupt` here whenever any object exists would permanently
+    // wedge a namespace whose FIRST-EVER commit crashed between the object
+    // write and the metadata replace: objects present, no metadata, and a
+    // corrupt entry is never healed automatically. There would be no way out
+    // but a manual `cache clear` on a first run.
     //
     // An orphan object is not a baseline. Nothing claims it: with content
-    // addressing the bytes carry no authority unless some meta.json names them,
-    // and no meta.json does. The security argument is D5's own: an attacker who
-    // can delete meta.json can equally delete the whole directory, which yields
-    // `miss` regardless — so treating orphan-only as `miss` grants no
-    // capability that was not already there. What it does buy is that a crashed
-    // first write self-heals on the next run instead of bricking the entry.
+    // addressing the bytes carry no authority unless some meta.json names
+    // them, and no meta.json does. Unlike a damaged entry, this path is
+    // deliberately NOT fail-closed — and that costs nothing: an attacker who
+    // can delete meta.json can equally delete the whole directory, which
+    // yields `miss` regardless, so treating orphan-only as `miss` grants no
+    // capability that was not already there. What it does buy is that a crashed first
+    // write self-heals on the next run instead of bricking the entry.
     //
     // The orphans are reclaimed by the next successful commit's GC.
     return { kind: 'miss' };
   }
+  // Imperative on purpose: unlike the `.catch`-eligible reads below, both
+  // catch branches here `return` a MetaReadResult — a type distinct from the
+  // `string` this variable holds on success — so folding this into
+  // `.catch(...)` would need a sentinel checked afterward, i.e. control-flow
+  // restructuring this security module forbids.
   let raw: string;
   try {
     raw = await fs.readFileTextCapped(layout.metaPath, CACHE_META_MAX_BYTES);
-  } catch (err) {
+  } catch (error) {
     // The pathExists probe above and this read are two separate calls: a
     // concurrent clear can unlink meta.json in between (TOCTOU). That is a
-    // legitimate miss (D17's one outcome that may re-enter trust-on-first-use),
+    // legitimate miss (the one outcome that may re-enter trust-on-first-use),
     // not corruption — the entry was raced away, not damaged.
-    if (isCacheAbsence(err)) {
+    if (isCacheAbsence(error)) {
       return { kind: 'miss' };
     }
     // The read above throws a typed validationError ONLY for over-budget; a
     // raw Node error (EACCES/EIO) means the file could not be read at all.
     // Split the wording so the operator message matches the cause.
-    const overBudget = err instanceof OpenapiMcpError && err.code === 'validation';
+    const overBudget = error instanceof OpenapiMcpError && error.code === 'validation';
     return {
       kind: 'corrupt',
       reason: overBudget
@@ -429,6 +455,9 @@ const readMetaFile = async (layout: CacheLayout, fs: CacheFs): Promise<MetaReadR
         : `cache metadata for entry ${layout.namespace} could not be read`,
     };
   }
+  // Imperative on purpose: JSON.parse is synchronous, so there is no promise
+  // to `.catch`, and a try-as-expression here would need an IIFE or a helper
+  // extraction, neither of which this security module allows.
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -456,12 +485,10 @@ export const corruptEntryError = (reason: string): Error =>
   );
 
 // The single place the 3.0/3.1 discriminator is derived from a document's own
-// "openapi" field. Used by BOTH the read path (round-3 finding 7: verify rather
-// than trust mutable metadata) and promotion, both of which land in Task 4 —
-// but it is defined HERE because writeAccepted below is its first caller.
-// Round-8 finding 2: the round-8 draft defined it in Task 4 while calling it in
-// Task 3, so Task 3 could not have passed the typecheck its own Step 7 claims.
-// Reading one field is not revalidation, so D16(b) still holds.
+// "openapi" field. Used by BOTH the read path (verify rather than trust
+// mutable metadata) and promotion, but it is defined HERE because
+// writeAccepted below is its first caller. Reading one field is not
+// revalidation, so a cache hit still skips revalidation as designed.
 export const declaredOpenapiVersion = (
   document: Record<string, unknown>,
 ): OpenapiVersion | undefined => {
@@ -478,6 +505,9 @@ export const declaredOpenapiVersion = (
 };
 
 const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
+  // Imperative on purpose: same reasoning as readMetaFile's JSON.parse above
+  // — synchronous, so no `.catch` applies, and this security module allows
+  // neither an IIFE nor a helper extraction to make it an expression.
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -493,12 +523,11 @@ const parseJsonObject = (text: string): Record<string, unknown> | undefined => {
 // Shared by the lock-free public reader and every write path below: verifies
 // that an accepted object's bytes actually correspond to what meta.json
 // claims about them — the recorded content hash, JSON-object shape, and
-// openapiVersion agreement (round-3 finding 7: the discriminator is checked
-// against the document's own "openapi" field rather than trusted from
-// metadata, because the hash protects the OBJECT, not meta.json). Pure: it
-// takes bytes already read and never touches the filesystem, so it has no
-// opinion about retries — that is a property of the caller, not of this
-// check.
+// openapiVersion agreement (the discriminator is checked against the
+// document's own "openapi" field rather than trusted from metadata, because
+// the hash protects the OBJECT, not meta.json). Pure: it takes bytes already
+// read and never touches the filesystem, so it has no opinion about retries —
+// that is a property of the caller, not of this check.
 type AcceptedObjectVerification =
   | { kind: 'ok'; document: Record<string, unknown> }
   | { kind: 'corrupt'; reason: string };
@@ -534,20 +563,19 @@ const verifyAcceptedObject = (
   return { kind: 'ok', document };
 };
 
-// Closes the D5 gap a corrupt-boundary review found in this task: without
-// this check, every write path decided whether an entry was corrupt purely
-// from readMetaFile — i.e. from meta.json alone — so a write could build on
-// top of, or silently replace, an accepted object whose BYTES had been
-// damaged or tampered with. That is exactly the laundering §6.3 forbids:
-// "restart is not approval" only holds if a write cannot quietly paper over
-// damage either. Concretely, without this, a damaged accepted object did not
-// merely fail to be rejected: the next writeAccepted installed the changed
-// document as the new accepted baseline, and the entry then read back as a
-// healthy hit.
+// Without this check, every write path would decide whether an entry is
+// corrupt purely from readMetaFile — i.e. from meta.json alone — so a write
+// could build on top of, or silently replace, an accepted object whose BYTES
+// had been damaged or tampered with. That is exactly the laundering the
+// "restart is not approval" rule forbids: it only holds if a write cannot
+// quietly paper over damage either. Concretely, without this, a damaged accepted
+// object would not merely fail to be rejected: the next writeAccepted would
+// install the changed document as the new accepted baseline, and the entry
+// would then read back as a healthy hit.
 //
 // No retry loop here, unlike the lock-free public reader's use of
 // verifyAcceptedObject: every caller of this function already holds the
-// namespace lock (D12), so no concurrent commit can move the generation or
+// namespace lock, so no concurrent commit can move the generation or
 // garbage-collect the object while this check runs, and a single, unretried
 // read is exactly as authoritative as any other read taken under the lock.
 const assertAcceptedObjectIntact = async (
@@ -555,20 +583,20 @@ const assertAcceptedObjectIntact = async (
   fs: CacheFs,
   meta: CacheMeta,
 ): Promise<void> => {
+  // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
   let acceptedText: string;
   try {
     acceptedText = await fs.readFileTextCapped(
       objectPath(layout, meta.acceptedContentHash),
       CACHE_MAX_PERSISTED_BYTES,
     );
-  } catch (err) {
-    // Round-6 finding 2's pattern, applied here too: only genuine absence is
-    // corruption. Anything else (EACCES, EIO) rethrows unchanged, so
-    // withCacheErrors types it at the definition boundary as validation exit
-    // 3 itself, rather than this call mislabelling an I/O failure as a
-    // corrupt entry.
-    if (!isCacheAbsence(err)) {
-      throw err;
+  } catch (error) {
+    // Only genuine absence is corruption. Anything else (EACCES, EIO)
+    // rethrows unchanged, so withCacheErrors types it at the definition
+    // boundary as validation exit 3 itself, rather than this call
+    // mislabelling an I/O failure as a corrupt entry.
+    if (!isCacheAbsence(error)) {
+      throw error;
     }
     throw corruptEntryError(`the accepted spec for cache entry ${layout.namespace} cannot be read`);
   }
@@ -593,30 +621,31 @@ const writeAcceptedImpl = async (
     lastModified?: string | undefined;
   },
 ): Promise<{ acceptedContentHash: string }> => {
-  // Round-4 finding: openapiVersion is DERIVED here, not supplied. Round 2
-  // added it to the input; round 3 then made the reader verify it against the
-  // document — which left a public writer able to persist an entry that its own
-  // next read rejects. Deriving it removes that state entirely: one function
-  // decides the discriminator, on write and on read alike.
+  // The openapiVersion is DERIVED here, not supplied by the caller: accepting
+  // it as an independent input would let a public writer persist an entry
+  // whose recorded version disagrees with the reader's own verification
+  // against the document, so its own next read would reject it. Deriving it
+  // removes that state entirely: one function decides the discriminator, on
+  // write and on read alike.
   const openapiVersion = declaredOpenapiVersion(input.document);
   if (openapiVersion === undefined) {
     throw validationError('refusing to cache a spec that declares no usable OpenAPI version');
   }
-  // D14: bounded before the lock AND before serialization (round-3 finding 10),
-  // so an over-budget document blocks no namespace, never allocates the string
-  // it is being refused for, and — unlike the round-1 draft, which checked only
-  // the candidate — cannot be persisted into an entry the next read classifies
+  // Bounded before the lock AND before serialization, so an over-budget
+  // document blocks no namespace, never allocates the string it is being
+  // refused for, and — checking the accepted document here, not only the
+  // candidate — cannot be persisted into an entry the next read classifies
   // as corrupt
   const acceptedText = persistableTextOrThrow(input.document, 'accepted');
-  // D14: the store hashes the bytes it is about to persist. No caller supplies
+  // The store hashes the bytes it is about to persist. No caller supplies
   // this value, so meta.json cannot disagree with the file it describes.
   const acceptedContentHash = hashContent(acceptedText);
   return withNamespaceLock(layout, fs, input.fetchedAt, async () => {
-    // D5: a fresh fetch must not be able to silently "heal" a damaged
-    // baseline by overwriting it — only an explicit "openapi-mcp cache clear"
-    // may. `miss` (including the abandoned-scaffold case) is the
-    // trust-on-first-use path and has no existing accepted object to verify;
-    // any `ok` result's accepted object is checked before this proceeds.
+    // A fresh fetch must not be able to silently "heal" a damaged baseline by
+    // overwriting it — only an explicit "openapi-mcp cache clear" may. `miss`
+    // (including the abandoned-scaffold case) is the trust-on-first-use path
+    // and has no existing accepted object to verify; any `ok` result's
+    // accepted object is checked before this proceeds.
     const existing = await readMetaFile(layout, fs);
     if (existing.kind === 'corrupt') {
       throw corruptEntryError(existing.reason);
@@ -625,9 +654,9 @@ const writeAcceptedImpl = async (
       await assertAcceptedObjectIntact(layout, fs, existing.meta);
     }
     // This deliberately drops any waiting candidate: a new accepted baseline
-    // written here supersedes it. That is correct HERE — but it is why the 304
-    // path must NOT route through this function (D16a2), which is what
-    // silently destroyed candidates in the round-1 draft.
+    // written here supersedes it. That is correct HERE — but it is why the
+    // 304 path must NOT route through this function: doing so would silently
+    // destroy a candidate awaiting promotion on every revalidation.
     await commitEntry(layout, fs, [{ hash: acceptedContentHash, text: acceptedText }], {
       schemaVersion: CACHE_META_SCHEMA_VERSION,
       displaySource: input.displaySource,
@@ -639,8 +668,8 @@ const writeAcceptedImpl = async (
       sourceContentHash: input.sourceContentHash,
       title: input.title,
       specVersion: input.specVersion,
-      // D16b: persisted so a hit needs no revalidation, and DERIVED above so
-      // the value can never contradict the bytes it describes
+      // Persisted so a hit needs no revalidation, and DERIVED above so the
+      // value can never contradict the bytes it describes
       openapiVersion,
     });
     return { acceptedContentHash };
@@ -666,9 +695,8 @@ const writeCandidateImpl = async (
       'refusing to record a candidate whose title or version exceeds the metadata bounds',
     );
   }
-  // D14: the same persisted-document budget the accepted writer and the reader
-  // use, not the source-download budget the round-1 draft compared against —
-  // and checked before serialization (round-3 finding 10)
+  // The same persisted-document budget the accepted writer and the reader
+  // use, not the source-download budget — and checked before serialization
   const candidateText = persistableTextOrThrow(input.document, 'candidate');
   const candidateContentHash = hashContent(candidateText);
   return withNamespaceLock(layout, fs, input.fetchedAt, async () => {
@@ -679,27 +707,27 @@ const writeCandidateImpl = async (
       );
     }
     if (existing.kind === 'corrupt') {
-      // D5: never paper over a broken baseline by writing next to it
+      // Never paper over a broken baseline by writing next to it
       throw corruptEntryError(existing.reason);
     }
     // Meta.json alone is not enough: verify the accepted OBJECT it names is
-    // still intact before recording a candidate beside it (D5)
+    // still intact before recording a candidate beside it
     await assertAcceptedObjectIntact(layout, fs, existing.meta);
     // The accepted half is copied through untouched: a candidate is stored,
-    // never activated (§6.3), so meta.title/specVersion keep describing what is
-    // actually served. D16(a2): the validators recorded are the ones returned
-    // WITH the candidate — they describe the most recently fetched
-    // representation, which is this one. The round-1 draft carried the accepted
-    // entry's stale validators forward, so the next conditional request asked
-    // about a representation the cache no longer had.
-    // Round-3 finding 6: the OLD validators are stripped first. The round-3
-    // draft spread `existing.meta` and then conditionally added the new ones,
-    // so a 200 response that carried NO ETag left the previous
-    // representation's ETag in place — the next conditional request then asked
-    // the server about a representation this cache no longer held, which is
-    // precisely what D16(a2) exists to prevent. Retaining an omitted validator
-    // is correct only for the 304 transition, which is why that lives in its
-    // own function.
+    // never activated, so meta.title/specVersion keep describing what is
+    // actually served. The validators recorded are the ones returned WITH the
+    // candidate — they describe the most recently fetched representation,
+    // which is this one. Carrying the accepted entry's stale validators
+    // forward instead would leave the next conditional request asking about a
+    // representation the cache no longer had.
+    //
+    // The OLD validators are stripped first, rather than spreading
+    // `existing.meta` and conditionally adding the new ones: the latter would
+    // leave a 200 response that carried NO ETag with the previous
+    // representation's ETag still in place, so the next conditional request
+    // would ask the server about a representation this cache no longer held.
+    // Retaining an omitted validator is correct only for the 304 transition,
+    // which is why that lives in its own function.
     const {
       etag: _staleEtag,
       lastModified: _staleLastModified,
@@ -724,11 +752,11 @@ const writeCandidateImpl = async (
   });
 };
 
-// D16(a2): the 304 transition, which the round-1 draft did not have — it routed
-// a 304 through writeAccepted, which rewrites the accepted entry and CLEARS the
-// candidate, so revalidating silently discarded a candidate awaiting promotion
-// without ever approving it. This updates the timestamp and the validators and
-// touches nothing else: no object is written, and both slots survive verbatim.
+// The 304 transition. Routing a 304 through writeAccepted instead would rewrite
+// the accepted entry and CLEAR the candidate, so revalidating would silently
+// discard a candidate awaiting promotion without ever approving it. This
+// updates the timestamp and the validators and touches nothing else: no
+// object is written, and both slots survive verbatim.
 const touchRevalidatedImpl = (
   layout: CacheLayout,
   fs: CacheFs,
@@ -745,7 +773,7 @@ const touchRevalidatedImpl = (
     }
     // Meta.json alone is not enough: a 304 confirms the SOURCE is unchanged,
     // it says nothing about whether the locally persisted bytes are still
-    // intact, so the object it names is verified before the touch proceeds (D5)
+    // intact, so the object it names is verified before the touch proceeds
     await assertAcceptedObjectIntact(layout, fs, existing.meta);
     // A 304 answered to a request carrying no validator returns none either, in
     // which case the recorded ones stay as they are rather than being erased
@@ -760,21 +788,19 @@ const touchRevalidatedImpl = (
   });
 
 // ---------------------------------------------------------------------------
-// The public reader. Round-9 finding 1 moved it here from Task 4: this task's
-// tests verify the transactional write invariants, and those invariants are
-// stated in terms of what a LOCK-FREE PUBLIC READER observes across a commit —
-// so the reader is part of the store core, not of the promote/clear/list layer.
-// Asserting them against the fake filesystem's raw map instead would be a
-// weaker substitute rather than a clean write/read separation, and the task
-// could not pass its own Step 6 and Step 7 gates without the reader present.
+// The public reader. The transactional write invariants are stated in terms
+// of what a LOCK-FREE PUBLIC READER observes across a commit — so the reader
+// is part of the store core, not of the promote/clear/list layer. Asserting
+// those invariants against the fake filesystem's raw map instead would be a
+// weaker substitute rather than a clean write/read separation.
 // ---------------------------------------------------------------------------
 
-export interface CacheEntry {
+export type CacheEntry = {
   meta: CacheMeta;
   acceptedDocument: Record<string, unknown>;
-}
+};
 
-// D5: absent, usable, and corrupt are three distinct outcomes, and only "miss"
+// Absent, usable, and corrupt are three distinct outcomes, and only "miss"
 // may become an accepted baseline without operator action
 export type CacheReadResult =
   | { kind: 'miss' }
@@ -784,17 +810,17 @@ export type CacheReadResult =
 // Every reason string below is assembled from layout.namespace — a hex digest by
 // construction — and fixed English. Nothing read out of the suspect file is
 // interpolated, so a hostile cache entry cannot steer the operator's terminal.
-// Round-3 finding 1. Immutable objects do NOT by themselves make immediate
-// reclamation safe. A lock-free reader can load meta generation A, a writer can
-// then commit generation B and garbage-collect A's object, and the reader —
-// still holding A's hash — finds nothing and reports corruption on a cache that
-// is perfectly healthy. The round-3 draft introduced exactly this race while
-// removing the previous one.
+//
+// Immutable objects do NOT by themselves make immediate reclamation safe. A
+// lock-free reader can load meta generation A, a writer can then commit
+// generation B and garbage-collect A's object, and the reader — still holding
+// A's hash — finds nothing and reports corruption on a cache that is
+// perfectly healthy.
 //
 // The fix is a bounded re-read: if the object a generation names is missing,
 // re-read meta.json. If it changed, the entry was committed underneath us and
 // we simply retry against the new generation. If it did NOT change, the object
-// is genuinely gone and the entry is corrupt (D5). Retries are bounded because
+// is genuinely gone and the entry is corrupt. Retries are bounded because
 // each one requires a concurrent commit to have completed, so an unbounded
 // sequence would require unbounded concurrent writers.
 //
@@ -804,13 +830,18 @@ export type CacheReadResult =
 // or a bounded number of STATIC-generation confirmations (fetchedAt is not
 // guaranteed unique, so a same-content same-ms clear→reseed can look static
 // while the object reappears). A static generation still missing after the
-// confirmations is genuine deletion (D5, fail closed).
+// confirmations is genuine deletion, and the read fails closed.
 const READ_GENERATION_RETRY_CAP = 64;
 const READ_STATIC_CONFIRM_LIMIT = 2;
 const generationKey = (meta: CacheMeta): string =>
   `${meta.acceptedContentHash}:${String(meta.fetchedAt)}`;
 
 const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<CacheReadResult> => {
+  // Imperative on purpose: these three are a bounded retry state machine
+  // across an unbounded `for (;;)` — each is reassigned from a different
+  // branch on a different iteration, so there is no pure accumulation
+  // (map/reduce) shape to fold them into without changing when the loop
+  // retries versus gives up.
   let advanceRetries = 0;
   let staticConfirms = 0;
   let previousGenKey: string | undefined;
@@ -834,7 +865,7 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
       // generation-retry budget too, or a sustained clear/reseed+advance storm
       // that keeps resetting staticConfirms here (never reaching the advance
       // branch) would loop unboundedly — bypassing both caps. Every advance,
-      // however observed, is bounded (round-6).
+      // however observed, is bounded.
       if (advanceRetries >= READ_GENERATION_RETRY_CAP) {
         return {
           kind: 'corrupt',
@@ -845,15 +876,19 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
       staticConfirms = 0;
     }
     previousGenKey = genKey;
+    // Imperative on purpose: the catch below can `continue` the enclosing
+    // `for (;;)` loop to retry against a new generation — a control-flow
+    // move `.catch` cannot express and this security module forbids
+    // restructuring around.
     let acceptedText: string;
     try {
       acceptedText = await fs.readFileTextCapped(
         objectPath(layout, meta.acceptedContentHash),
         CACHE_MAX_PERSISTED_BYTES,
       );
-    } catch (err) {
+    } catch (error) {
       // An over-budget object is genuine corruption, not a lost race.
-      if (err instanceof OpenapiMcpError && err.code === 'validation') {
+      if (error instanceof OpenapiMcpError && error.code === 'validation') {
         return {
           kind: 'corrupt',
           reason: `the accepted spec for cache entry ${layout.namespace} exceeds its ${CACHE_MAX_PERSISTED_BYTES}-byte budget`,
@@ -864,8 +899,8 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
       // concurrent commit or deletion, and must propagate like every other
       // isCacheAbsence site in this module rather than being retried toward
       // an eventual, misleading "corrupt" report.
-      if (!isCacheAbsence(err)) {
-        throw err;
+      if (!isCacheAbsence(error)) {
+        throw error;
       }
       const recheck = await readMetaFile(layout, fs);
       if (recheck.kind === 'miss') {
@@ -877,8 +912,8 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
       if (generationKey(recheck.meta) !== genKey) {
         // A concurrent commit advanced the generation: retry against it, and
         // RESET the static-confirm budget — the new generation is entitled to
-        // its own confirmations (round-4: leaking staticConfirms across an
-        // advance corrupts a healthy later generation prematurely).
+        // its own confirmations; leaking staticConfirms across an advance
+        // would corrupt a healthy later generation prematurely.
         if (advanceRetries < READ_GENERATION_RETRY_CAP) {
           advanceRetries += 1;
           staticConfirms = 0;
@@ -916,12 +951,11 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
 };
 
 // ---------------------------------------------------------------------------
-// Promotion, clearing and listing (Task 4). Every store operation defined
-// above this point already exists; these three round out the store's public
-// surface, on top of readCacheEntry rather than driving its creation.
+// Promotion, clearing and listing. These three round out the store's public
+// surface, built on top of readCacheEntry and the write paths defined above.
 // ---------------------------------------------------------------------------
 
-export interface CacheEntrySummary {
+export type CacheEntrySummary = {
   id: string;
   displaySource: string;
   cacheKey?: string | undefined;
@@ -930,7 +964,7 @@ export interface CacheEntrySummary {
   fetchedAt: number;
   acceptedContentHash: string;
   candidateContentHash?: string | undefined;
-}
+};
 
 // Namespaces are 16-char sha256 prefixes; anything else in the root is not ours
 const NAMESPACE_RE = /^[0-9a-f]{16}$/u;
@@ -954,7 +988,7 @@ const promotedOpenapiVersion = (
   );
 };
 
-// Promotion moves the trust baseline (§6.3), so it runs inside the namespace
+// Promotion moves the trust baseline, so it runs inside the namespace
 // lock: the expectedHash comparison and the accepted switch happen without a
 // concurrent refresh interleaving between them, which is what makes --hash a
 // real compare-and-swap rather than an advisory check.
@@ -970,16 +1004,16 @@ const promoteCandidateImpl = async (
       throw notFoundError(`no cache entry ${layout.namespace} exists — nothing to promote`);
     }
     if (metaRead.kind === 'corrupt') {
-      // D5: a damaged baseline is never repaired by writing over it
+      // A damaged baseline is never repaired by writing over it
       throw corruptEntryError(metaRead.reason);
     }
     const { meta } = metaRead;
     // Meta.json alone is not enough: verify the CURRENT accepted object is
     // intact before promoting over it. Without this, a damaged accepted
-    // object did not merely go unrejected — the promotion below would
-    // install the candidate as the new baseline over undetected damage (D5)
+    // object would not merely go unrejected — the promotion below would
+    // install the candidate as the new baseline over undetected damage
     await assertAcceptedObjectIntact(layout, fs, meta);
-    // D18: one nested member, so "a candidate is waiting" is all-or-none and
+    // One nested member, so "a candidate is waiting" is all-or-none and
     // this single check cannot be half-true
     const { candidate } = meta;
     if (candidate === undefined) {
@@ -987,20 +1021,22 @@ const promoteCandidateImpl = async (
         `no candidate is waiting for promotion in cache entry ${layout.namespace}`,
       );
     }
+    // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
     let candidateText: string;
     try {
       candidateText = await fs.readFileTextCapped(
         objectPath(layout, candidate.contentHash),
         CACHE_MAX_PERSISTED_BYTES,
       );
-    } catch (err) {
-      // Round-6 finding 2: only genuine absence means "the candidate is gone,
-      // refresh before promoting". The round-6 draft caught EVERY failure and
-      // returned conflict exit 5, so an EACCES on the candidate object silently
-      // contradicted D17's frozen validation exit 3 for persistent-cache I/O —
-      // and, being already typed, it sailed through the definition wrapper.
-      if (!isCacheAbsence(err)) {
-        throw err;
+    } catch (error) {
+      // Only genuine absence means "the candidate is gone, refresh before
+      // promoting". Catching EVERY failure here and returning conflict exit 5
+      // would let an EACCES on the candidate object silently contradict the
+      // frozen validation exit 3 for persistent-cache I/O — and, being
+      // already typed as a conflictError, it would sail through the
+      // definition-level wrapper unchanged.
+      if (!isCacheAbsence(error)) {
+        throw error;
       }
       throw conflictError(
         `the candidate spec for cache entry ${layout.namespace} cannot be read — refresh before promoting`,
@@ -1024,7 +1060,7 @@ const promoteCandidateImpl = async (
     }
     // The candidate bytes are promoted verbatim: re-serializing the parsed
     // document could reorder keys and change the hash the operator pinned.
-    // D18: the provenance and display fields come from meta.candidate, which
+    // The provenance and display fields come from meta.candidate, which
     // recorded them at write time. There is no fallback to the accepted
     // entry's own source hash: the nested member is all-or-none.
     await commitEntry(layout, fs, [{ hash: promotedHash, text: candidateText }], {
@@ -1045,7 +1081,7 @@ const promoteCandidateImpl = async (
     return { promotedHash };
   });
 
-// D16(a), corrected in review round 2: clear runs UNDER the namespace lock.
+// Clear runs UNDER the namespace lock.
 // A lock-free clear only ever protects against concurrent READERS. Against a
 // concurrent WRITER it fails outright: clear removes the metadata, the writer
 // commits new metadata naming its new object, clear then removes that object —
@@ -1071,16 +1107,17 @@ const clearNamespaceImpl = async (
     // the probe above and the acquisition, and "removed something" has to
     // describe what THIS call actually removed
     const hadMeta = await fs.pathExists(layout.metaPath);
+    // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
     let objectNames: readonly string[] = [];
     try {
       objectNames = await fs.readDirNames(layout.objectsDir);
-    } catch (err) {
-      // Round-3 finding 3: only a genuinely absent objects directory means
-      // "nothing to remove". Swallowing every failure here and then deleting
-      // meta.json anyway would manufacture the metadata-without-spec
-      // corruption this function exists to avoid producing.
-      if (!isCacheAbsence(err)) {
-        throw cacheIoError(`list the objects of cache entry ${layout.namespace}`, err);
+    } catch (error) {
+      // Only a genuinely absent objects directory means "nothing to remove".
+      // Swallowing every failure here and then deleting meta.json anyway
+      // would manufacture the metadata-without-spec corruption this function
+      // exists to avoid producing.
+      if (!isCacheAbsence(error)) {
+        throw cacheIoError(`list the objects of cache entry ${layout.namespace}`, error);
       }
     }
     // Meta.json first: it is the commit point, so removing it invalidates the
@@ -1095,7 +1132,7 @@ const clearNamespaceImpl = async (
     // The namespace directory and .lock deliberately survive until release:
     // deleting the lock we are holding would re-admit a second writer, and the
     // next write recreates the directory anyway. What is left — a directory
-    // with neither meta.json nor any object — reads as a miss (D5), which is
+    // with neither meta.json nor any object — reads as a miss, which is
     // exactly the clean absence clear is supposed to produce.
     return hadMeta || objectNames.length > 0;
   });
@@ -1135,28 +1172,29 @@ const summarize = async (
     fetchedAt: meta.fetchedAt,
     acceptedContentHash: meta.acceptedContentHash,
     // The summary keeps a flat hash: the nesting exists to enforce the
-    // all-or-none invariant on disk (D18), not to shape the listing output
+    // all-or-none invariant on disk, not to shape the listing output
     ...(meta.candidate === undefined ? {} : { candidateContentHash: meta.candidate.contentHash }),
   };
 };
 
-// Shared by listNamespaceIdsImpl and listCacheEntriesImpl below, which used to
-// carry two copies of this exact try/catch (down to the same
-// `cacheIoError('list the cache root', err)` message) — the divergence D17's
-// single error boundary exists to prevent, even between two callers in the
-// same module. Round-3 finding 3: only genuine absence is an empty cache.
-// Catching every readDirNames failure here would print "no cache entries" for
-// an unreadable root and make "cache clear --all" silently a no-op on a cache
-// it simply could not see. Callers apply their own filtering/mapping — this
-// is only the raw directory listing plus the absence-vs-I/O decision.
+// Shared by listNamespaceIdsImpl and listCacheEntriesImpl below, so the two
+// callers cannot carry two divergent copies of this exact try/catch (down to
+// the same `cacheIoError('list the cache root', err)` message) — precisely
+// the kind of divergence a single error boundary exists to prevent, even
+// between two callers in the same module. Only genuine absence is an empty
+// cache: catching every readDirNames failure here would print "no cache
+// entries" for an unreadable root and make "cache clear --all" silently a
+// no-op on a cache it simply could not see. Callers apply their own
+// filtering/mapping — this is only the raw directory listing plus the
+// absence-vs-I/O decision.
 const namespaceRootNames = async (root: string, fs: CacheFs): Promise<readonly string[]> => {
   try {
     return await fs.readDirNames(root);
-  } catch (err) {
-    if (isCacheAbsence(err)) {
+  } catch (error) {
+    if (isCacheAbsence(error)) {
       return [];
     }
-    throw cacheIoError('list the cache root', err);
+    throw cacheIoError('list the cache root', error);
   }
 };
 
@@ -1185,7 +1223,7 @@ const listCacheEntriesImpl = async (
 };
 
 // ---------------------------------------------------------------------------
-// D17's one error boundary, applied at the DEFINITION rather than at call
+// The one error boundary, applied at the DEFINITION rather than at call
 // sites, so coverage is structural rather than a checklist no caller can be
 // trusted to complete. `asCacheError` passes a typed OpenapiMcpError through
 // untouched, so a lock conflictError keeps exit 5 and a corrupt-entry

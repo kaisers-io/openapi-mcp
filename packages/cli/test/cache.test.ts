@@ -5,19 +5,23 @@ import {
   cachePathTypeError,
   EXIT,
   validationError,
-  type CacheFs,
 } from '@kaisers-io/openapi-mcp-core';
+import type { CacheFs } from '@kaisers-io/openapi-mcp-core';
 import { clearAllNamespaces } from '../src/commands/cache-target.ts';
-import { testContext, type CliContext } from '../src/context.ts';
+import { testContext } from '../src/context.ts';
+import type { CliContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 
 const HOME = '/home/tester';
 const ROOT = `${HOME}/.kaisers-io/openapi-mcp/cache`;
 
-interface MemoryCacheFs extends CacheFs {
+// MemoryCacheFs adds only `files`/`calls`, neither of which is a CacheFs
+// member name, so this intersection cannot silently collapse an inherited
+// member's type to `never`.
+type MemoryCacheFs = CacheFs & {
   files: Map<string, string>;
   calls: string[];
-}
+};
 
 const memoryCacheFs = (): MemoryCacheFs => {
   const files = new Map<string, string>();
@@ -114,12 +118,12 @@ const changedText = JSON.stringify({
   },
 });
 
-interface Capture {
+type Capture = {
   lines: string[];
   errLines: string[];
   cacheFs: MemoryCacheFs;
   ctx: CliContext;
-}
+};
 
 const cacheCtx = (
   bodies: readonly string[] = [specText],
@@ -199,7 +203,7 @@ describe('cache list', () => {
     expect(entry.cacheKey).toBeUndefined();
   });
 
-  it('surfaces the cache-key label so two namespaces of one URL are tellable apart (D9)', async () => {
+  it('surfaces the cache-key label so two namespaces of one URL are tellable apart', async () => {
     const capture = cacheCtx();
     await run(capture.ctx, [
       'node',
@@ -218,10 +222,11 @@ describe('cache list', () => {
     expect(envelope.data.entries[0]?.cacheKey).toBe('prod');
   });
 
-  it('sanitizes the environment-derived cache root in human output (round-2 item 12)', async () => {
+  it('sanitizes the environment-derived cache root in human output', async () => {
     // HomeDir() is environment-derived, so the root is untrusted display text
-    // on the human path exactly like a spec title is. The round-1 draft
-    // interpolated it raw into both the empty-cache line and the list heading.
+    // on the human path exactly like a spec title is: interpolating it raw
+    // into the empty-cache line or the list heading would let a hostile HOME
+    // value inject escape sequences into terminal output.
     const hostileHome = `/home/tester\u001B]0;PWNED\u0007`;
     const { lines, ctx } = cacheCtx([specText], { homeDir: () => hostileHome });
     const empty = await run(ctx, ['node', 'openapi-mcp', 'cache', 'list']);
@@ -239,7 +244,7 @@ describe('cache list', () => {
     await run(ctx, ['node', 'openapi-mcp', '--json', 'cache', 'list']);
     const envelope = JSON.parse(lines.at(-1)!) as { data: { cacheRoot: string } };
     expect(envelope.data.cacheRoot).toContain('\u001B');
-    // The wire form is the escaped six-character sequence, not a raw byte (D1)
+    // The wire form is the escaped six-character sequence, not a raw byte
     expect(lines.at(-1)).toContain('\\u001b');
   });
 
@@ -360,19 +365,17 @@ describe('cache clear', () => {
     const code = await run(capture.ctx, ['node', 'openapi-mcp', 'cache', 'clear', '--all']);
     expect(code).toBe(EXIT.OK);
     expect(capture.cacheFs.files.size).toBe(0);
-    // The root survives the sweep (D16c): removing it would race a first-ever
+    // The root survives the sweep: removing it would race a first-ever
     // write that legitimately recreates a namespace underneath it
     expect(await capture.cacheFs.pathExists(ROOT)).toBe(true);
-    // Plan defect (round-11 finding 13): clearNamespace (Tasks 3-4, store.ts)
-    // deliberately leaves the per-namespace directory and its now-empty
-    // objects dir removed but the namespace dir itself in place ("the
-    // namespace directory and .lock deliberately survive until release" -
-    // store.ts's own clearNamespaceImpl comment), so an empty namespace
-    // directory persists under the root even after --all. Asserting
-    // readDirNames(ROOT) is empty contradicts that already-shipped,
-    // out-of-scope-for-this-task behavior; the real, security-relevant
-    // property is that no cache CONTENT survives, which files.size === 0
-    // above already proves.
+    // The clearNamespace helper (store.ts) deliberately leaves the per-namespace
+    // directory and its now-empty objects dir removed but the namespace dir
+    // itself in place ("the namespace directory and .lock deliberately
+    // survive until release" - store.ts's own clearNamespaceImpl comment),
+    // so an empty namespace directory persists under the root even after
+    // --all. Asserting readDirNames(ROOT) is empty would contradict that
+    // behavior; the real, security-relevant property is that no cache
+    // CONTENT survives, which files.size === 0 above already proves.
     expect(await run(capture.ctx, ['node', 'openapi-mcp', '--json', 'cache', 'list'])).toBe(
       EXIT.OK,
     );
@@ -396,14 +399,14 @@ describe('cache clear', () => {
           ? Promise.reject(cachePathTypeError(`cache path "${path}" exists and is not a directory`))
           : base.mkdirSecure(path),
     };
-    // Old behaviour: the sweep aborts on the file entry. New: it skips it.
+    // The sweep must skip the file entry rather than abort on it.
     const cleared = await clearAllNamespaces(ROOT, fs, 0);
     // Both real namespaces were processed; the file did not abort the sweep
     expect(cleared).toBe(2);
   });
 
   it('still propagates an unrelated validation error from the sweep', async () => {
-    // The code-match must NOT swallow other validation failures (round-2 Low).
+    // The code-match must NOT swallow other validation failures.
     const base = memoryCacheFs();
     seedNamespace(base, 'a'.repeat(16));
     const fs = {
@@ -415,9 +418,9 @@ describe('cache clear', () => {
     );
   });
 
-  it('propagates an over-budget validation error even when its interpolated path contains "is not a directory" (fix-round collision regression)', async () => {
-    // Round-2 Low, confirmed reachable: readFileTextCapped's over-budget
-    // message embeds the raw path verbatim ('cache file "<path>" is N bytes
+  it('propagates an over-budget validation error even when its interpolated path contains "is not a directory"', async () => {
+    // The readFileTextCapped over-budget message embeds the raw path verbatim
+    // ('cache file "<path>" is N bytes
     // — exceeds...'), and that read runs on layout.lockPath during the same
     // lock acquisition the sweep goes through. A cache root containing a
     // path segment that literally reads "is not a directory" would, under a
@@ -439,7 +442,7 @@ describe('cache clear', () => {
     );
   });
 
-  it('recovers a corrupt entry that the pipeline refuses to serve (D5)', async () => {
+  it('recovers a corrupt entry that the pipeline refuses to serve', async () => {
     const capture = cacheCtx([specText, specText]);
     await seed(capture);
     const metaPath = [...capture.cacheFs.files.keys()].find((key) => key.endsWith('meta.json'))!;
@@ -462,7 +465,7 @@ describe('cache clear', () => {
   });
 });
 
-describe('cache unlock (D12.3)', () => {
+describe('cache unlock', () => {
   const lockPathOf = (capture: Capture): string => `${ROOT}/${idOf(capture)}/.lock`;
 
   it('refuses to clear a namespace another process is writing', async () => {
@@ -480,8 +483,8 @@ describe('cache unlock (D12.3)', () => {
       '--spec',
       SPEC_URL,
     ]);
-    // Round-2 item 3: clear takes the lock, so it waits for the writer rather
-    // than deleting underneath it and leaving metadata without spec bytes
+    // Clear takes the lock, so it waits for the writer rather than deleting
+    // underneath it and leaving metadata without spec bytes
     expect(code).toBe(EXIT.CONFLICT);
     expect(capture.errLines.join('\n')).toContain('cache unlock');
     expect(capture.cacheFs.files.size).toBeGreaterThan(0);
@@ -661,7 +664,7 @@ describe('cache refresh', () => {
     expect(capture.lines[0]).toMatch(/\(accepted-update\)/u);
   });
 
-  it('rejects a refresh that would resolve to a non-persistent bypass (D13)', async () => {
+  it('rejects a refresh that would resolve to a non-persistent bypass', async () => {
     const capture = cacheCtx([specText], { env: { SPEC_TOKEN: 'Bearer x' } });
     const code = await run(capture.ctx, [
       'node',
@@ -801,13 +804,13 @@ describe('cache namespacing and secrets', () => {
   });
 
   it('fails with exit 3 when no home directory is available', async () => {
-    const { ctx } = cacheCtx([specText], { homeDir: () => undefined });
+    const { ctx } = cacheCtx([specText], { homeDir: () => {} });
     const code = await run(ctx, ['node', 'openapi-mcp', 'cache', 'list']);
     expect(code).toBe(EXIT.VALIDATION);
   });
 });
 
-describe('authenticated bypass leaves no trace on disk (D13)', () => {
+describe('authenticated bypass leaves no trace on disk', () => {
   it('runs two different credentials against one URL and writes nothing', async () => {
     const first = cacheCtx([specText], { env: { SPEC_TOKEN: 'Bearer tenant-one' } });
     const firstCode = await run(first.ctx, [

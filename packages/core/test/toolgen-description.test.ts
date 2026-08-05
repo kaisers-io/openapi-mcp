@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { composeDescription, type OperationRecord } from '../src/index.ts';
+import { composeDescription } from '../src/index.ts';
+import type { OperationRecord } from '../src/index.ts';
 
-const RLO = String.fromCodePoint(0x202e); // Right-to-Left Override — never paste raw
+const RLO = String.fromCodePoint(0x20_2e); // Right-to-Left Override — never paste raw
 
 const op = (overrides: Partial<OperationRecord> = {}): OperationRecord => ({
   method: 'get',

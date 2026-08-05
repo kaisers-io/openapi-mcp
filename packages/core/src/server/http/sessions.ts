@@ -1,14 +1,14 @@
-interface Session<T> {
+type Session<T> = {
   value: T;
   lastSeenMs: number;
-}
+};
 
-export interface SessionStoreOptions {
+export type SessionStoreOptions = {
   maxSessions: number;
   idleMs: number;
-}
+};
 
-export interface SessionStore<T> {
+export type SessionStore<T> = {
   create: (id: string, value: T, nowMs: number) => { ok: true } | { ok: false; reason: 'capacity' };
   get: (id: string, nowMs: number) => T | undefined;
   touch: (id: string, nowMs: number) => void;
@@ -23,7 +23,7 @@ export interface SessionStore<T> {
   // transport must be closed regardless of idle state.
   values: () => readonly T[];
   size: () => number;
-}
+};
 
 // Pure, in-memory, injected-clock session bookkeeping — decoupled from the
 // SDK transport entirely so it is unit-testable without any HTTP machinery.
@@ -53,18 +53,13 @@ export const createSessionStore = <T>(opts: SessionStoreOptions): SessionStore<T
       sessions.delete(id);
     },
     sweepExpired: (nowMs) => {
-      const expiredIds: string[] = [];
-      const expiredValues: T[] = [];
-      for (const [id, session] of sessions) {
-        if (isExpired(session, nowMs)) {
-          expiredIds.push(id);
-          expiredValues.push(session.value);
-        }
-      }
-      for (const id of expiredIds) {
+      const expired = [...sessions].filter(([, session]) => isExpired(session, nowMs));
+      // Deletion stays a for-of, side-effecting Map mutation — the store's
+      // whole point is the Map itself, which nothing pure can stand in for.
+      for (const [id] of expired) {
         sessions.delete(id);
       }
-      return expiredValues;
+      return expired.map(([, session]) => session.value);
     },
     values: () => [...sessions.values()].map((session) => session.value),
     size: () => sessions.size,

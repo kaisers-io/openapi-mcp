@@ -5,21 +5,21 @@ import type { FieldMapping, RequestMapper } from '../../toolgen/layout.ts';
 // Outbound resource budgets the caller enforces on the request THIS module
 // builds — path+query length, aggregate tool-arg header bytes, and body
 // bytes. The final URL (base URL + this pathname/query) and the full header
-// set (incl. auth) are re-budgeted by the executor (Task 10); this module
-// only bounds the components it itself produces.
-export interface OutboundBudgets {
+// set (incl. auth) are re-budgeted by the executor; this module only bounds
+// the components it itself produces.
+export type OutboundBudgets = {
   maxUrlLength: number;
   maxHeaderBytes: number;
   maxBodyBytes: number;
-}
+};
 
-export interface BuiltRequest {
+export type BuiltRequest = {
   pathname: string;
   query: string;
   headers: Record<string, string>;
   body?: Uint8Array;
   contentType?: string;
-}
+};
 
 export type BuildRequestResult = { ok: BuiltRequest } | { error: string };
 
@@ -35,10 +35,9 @@ type Shape =
 
 // The mapper only ever emits path/simple, query/form, header/simple — and
 // those styles are DEFINED only for a primitive, an array-of-primitives, or a
-// flat object-of-primitives (research m5-request-building.md Q1.3 #3). Our
-// Zod schemas do not prevent a nested object or array-of-objects from
-// reaching here, so this guard fails closed rather than ever emitting
-// `[object Object]` onto the wire.
+// flat object-of-primitives. Our Zod schemas do not prevent a nested object
+// or array-of-objects from reaching here, so this guard fails closed rather
+// than ever emitting `[object Object]` onto the wire.
 const classifyShape = (value: unknown): Shape | undefined => {
   if (isPrimitive(value)) {
     return { kind: 'primitive', value };
@@ -57,10 +56,9 @@ const classifyShape = (value: unknown): Shape | undefined => {
 
 // RFC 3986 §2.1-2.4 element-wise percent-encoding: encode each leaf BEFORE
 // joining with a style's literal delimiter, never the whole serialized
-// string (research m5-request-building.md §2.1/§3.3 — never `URLSearchParams`
-// for the query, it emits `+` for space and over-encodes `~`).
-// `encodeURIComponent` throws on a lone UTF-16 surrogate; treat that as an
-// encode failure rather than letting it crash the caller.
+// string — never `URLSearchParams` for the query, it emits `+` for space and
+// over-encodes `~`. `encodeURIComponent` throws on a lone UTF-16 surrogate;
+// treat that as an encode failure rather than letting it crash the caller.
 const encodeLeaf = (raw: string): string | undefined => {
   try {
     return encodeURIComponent(raw);
@@ -75,9 +73,9 @@ const encodeLeaf = (raw: string): string | undefined => {
 // `encodeURIComponent` always encodes '/', '\\', and the '%' character
 // itself, so a literal separator or an already-percent-encoded
 // separator/dot-dot typed by the caller is caught here BEFORE we ever encode
-// it (round-1 amendment, task-7 brief). The static half of the path
-// template is already vetted at build time (toolgen/layout.ts's
-// `isDangerousStaticSegment`) — this only guards the dynamic VALUE.
+// it. The static half of the path template is already vetted at build time
+// (toolgen/layout.ts's `isDangerousStaticSegment`) — this only guards the
+// dynamic VALUE.
 const isDangerousPathLeaf = (raw: string): boolean => {
   if (raw === '.' || raw === '..' || raw.includes('/') || raw.includes('\\')) {
     return true;
@@ -109,6 +107,14 @@ const serializePathValue = (
       ? { error: `path parameter "${mapping.wireName}" could not be encoded` }
       : { ok: encoded };
   };
+  // Imperative on purpose: each per-leaf `leaf()` call below can fail (a
+  // dangerous segment, an unencodable value), and the array/object branches
+  // must stop at the FIRST failing leaf rather than encoding every remaining
+  // one — `shape.values`/`shape.entries` come from a caller-supplied tool
+  // argument, so an eager map/reduce that encodes every leaf before checking
+  // for an error would do unbounded extra work on a large hostile array
+  // before ever reporting the failure. `segment` still needs a `let` because
+  // exactly one of the three branches below produces it.
   let segment: string;
   if (shape.kind === 'primitive') {
     const result = leaf(String(shape.value));
@@ -146,18 +152,18 @@ const serializePathValue = (
     segment = parts.join(',');
   }
   // A required path value (path params are ALWAYS required) that serializes
-  // to '' would produce `//`, silently changing the request's path semantics
-  // (task-7 brief; research m5-request-building.md §2.2).
+  // to '' would produce `//`, silently changing the request's path
+  // semantics.
   if (segment === '') {
     return { error: `path parameter "${mapping.wireName}" must not be empty` };
   }
   return { ok: segment };
 };
 
-interface QueryPair {
+type QueryPair = {
   key: string;
   value: string;
-}
+};
 
 type QueryMapping = Extract<FieldMapping, { destination: 'query' }>;
 
@@ -181,6 +187,11 @@ const serializeQueryValue = (
   if ('error' in wireKey) {
     return wireKey;
   }
+  // Imperative on purpose (applies to every per-leaf loop below): `enc()`
+  // can fail per leaf, and the array/object branches must stop at the FIRST
+  // failing leaf — `shape.values`/`shape.entries` come from a caller-supplied
+  // tool argument, so eagerly encoding every remaining leaf via map/reduce
+  // before surfacing an error would do unbounded extra work on hostile input.
   if (shape.kind === 'primitive') {
     const result = enc(String(shape.value));
     if ('error' in result) {
@@ -198,7 +209,7 @@ const serializeQueryValue = (
       encoded.push(result.ok);
     }
     // Form + explode=true -> a repeated key; form + explode=false -> a single
-    // comma-joined key (research m5-request-building.md §1.1/§3.1).
+    // comma-joined key.
     return mapping.explode
       ? { ok: encoded.map((item) => ({ key: wireKey.ok, value: item })) }
       : { ok: [{ key: wireKey.ok, value: encoded.join(',') }] };
@@ -241,12 +252,12 @@ type HeaderMapping = Extract<FieldMapping, { destination: 'header' }>;
 // Mirrors http/headers.ts's CONTROL_CHAR_RE (not exported there): any C0
 // control or DEL in a header value is a request-smuggling vector. A header
 // value has no percent-encoding layer, so a control character must be
-// rejected outright — never stripped, never encoded (research
-// m5-request-building.md §4.2).
+// rejected outright — never stripped, never encoded.
+// oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it rejects them outright)
 const HEADER_CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
 
 // `mapping.wireName` is spec-derived, untrusted text (the header parameter's
-// NAME, not its value). Task 10's undici transport THROWS at fetch time on a
+// NAME, not its value). The undici transport THROWS at fetch time on a
 // header key outside the RFC 9110 token grammar — e.g. one carrying an
 // embedded CR/LF — which would turn this module's fail-closed `{error}`
 // contract into an uncaught throw past its boundary. Reject it here instead.
@@ -277,6 +288,10 @@ const serializeHeaderValue = (
     }
     return { ok: raw };
   };
+  // Imperative on purpose: same rationale as serializePathValue/
+  // serializeQueryValue above — `clean()` can fail per leaf, and the
+  // array/object branches must stop at the FIRST failing leaf rather than
+  // validating every remaining one in a caller-supplied array/object.
   if (shape.kind === 'primitive') {
     return clean(String(shape.value), []);
   }
@@ -293,8 +308,7 @@ const serializeHeaderValue = (
   }
   // Shape.kind === 'object'. `simple` always joins pairs with ','; an
   // exploded object additionally joins each key/value with '=', so both
-  // characters are ambiguous delimiters in that case (research
-  // m5-request-building.md §4.1, Q1.3 #2).
+  // characters are ambiguous delimiters in that case.
   const delimiters = mapping.explode ? [',', '='] : [','];
   const parts: string[] = [];
   for (const [key, val] of shape.entries) {
@@ -321,16 +335,23 @@ const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // Reassembles the flattened body fields into one object by walking each
-// field's `bodyPath` (today always length 1, but walked in full — research
-// m5-request-building.md §5.1 — so it survives any future nesting).
-// `isDangerousKey` (toolgen/schema.ts) guards every segment against prototype
-// pollution BEFORE the assignment, mirroring layout.ts's own field-name gate.
+// field's `bodyPath` (today always length 1, but walked in full so it
+// survives any future nesting). `isDangerousKey` (toolgen/schema.ts) guards
+// every segment against prototype pollution BEFORE the assignment, mirroring
+// layout.ts's own field-name gate.
 const buildBodyObject = (
   bodyFieldEntries: readonly (readonly [string, BodyMapping])[],
   data: Record<string, unknown>,
 ): { object: Record<string, unknown>; anyPresent: boolean } | { error: string } => {
   const root: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
   let anyPresent = false;
+  // Imperative on purpose: this walks and MUTATES a nested chain of freshly
+  // created (never caller-visible) objects to reassemble the flattened body
+  // fields, checking `isDangerousKey` on every segment BEFORE writing it — a
+  // fail-fast prototype-pollution guard that must run per segment, in path
+  // order, before any write. A pure rebuild would still need to reconstruct
+  // the same mutable-pointer walk internally; doing it directly here keeps
+  // the check-then-write order visible.
   for (const [name, mapping] of bodyFieldEntries) {
     const value = data[name];
     if (value === undefined) {
@@ -364,15 +385,13 @@ const buildBodyObject = (
 
 // `JSON.stringify` throws on a bigint, a circular reference, or a throwing
 // `toJSON` — any of which would otherwise escape this module's never-throw
-// `{ok}|{error}` contract (task-7 review). Fail closed instead.
+// `{ok}|{error}` contract. Fail closed instead.
 const jsonBody = (value: unknown): { ok: Uint8Array } | { error: string } => {
-  let serialized: string;
   try {
-    serialized = JSON.stringify(value);
+    return { ok: new TextEncoder().encode(JSON.stringify(value)) };
   } catch {
     return { error: 'the request body could not be serialized to JSON' };
   }
-  return { ok: new TextEncoder().encode(serialized) };
 };
 
 const formBody = (value: Record<string, unknown>): { ok: Uint8Array } | { error: string } => {
@@ -389,18 +408,18 @@ const formBody = (value: Record<string, unknown>): { ok: Uint8Array } | { error:
   return { ok: new TextEncoder().encode(params.toString()) };
 };
 
-interface SerializedBody {
+type SerializedBody = {
   body?: Uint8Array;
   contentType?: string;
-}
+};
 
 const serializeBody = (
   mapper: RequestMapper,
   method: string,
   data: Record<string, unknown>,
 ): { ok: SerializedBody } | { error: string } => {
-  // GET/HEAD never carry a body, even when the mapper has body fields
-  // (task-7 brief — non-negotiable regardless of bodyMode).
+  // GET/HEAD never carry a body, even when the mapper has body fields —
+  // non-negotiable regardless of bodyMode.
   const upperMethod = method.toUpperCase();
   if (upperMethod === 'GET' || upperMethod === 'HEAD') {
     return { ok: {} };
@@ -436,8 +455,7 @@ const serializeBody = (
     }
     // An entirely-absent optional body group sends no body at all — the
     // all-or-nothing refine in buildLayout already guarantees the group is
-    // either fully present or fully absent by the time we get here (research
-    // m5-request-building.md §5.3).
+    // either fully present or fully absent by the time we get here.
     if (!assembled.anyPresent) {
       return { ok: {} };
     }
@@ -471,6 +489,19 @@ export const buildRequest = (
   data: Record<string, unknown>,
   budgets: OutboundBudgets,
 ): BuildRequestResult => {
+  // Imperative on purpose: this single pass builds THREE interdependent
+  // accumulators (the progressively-substituted `pathname` string, the
+  // ordered `queryPairs` list, and the `headers` record) and enforces
+  // fail-fast validation per field in ITERATION order — never a pure
+  // map/reduce here, because: (1) each path substitution is applied to the
+  // CURRENT `pathname` via `.split(placeholder).join(...)`, so a later
+  // field's placeholder match depends on every earlier substitution having
+  // already run (a substituted value that happens to contain literal
+  // placeholder syntax for a later field must not be re-substituted, which
+  // only holds if substitutions apply strictly in field order); and (2) a
+  // missing-required/null-required/duplicate-query-key error must abort
+  // before any later field is processed, matching a for-of loop's early
+  // `return` far more directly than an eagerly-evaluated array transform.
   let pathname = pathTemplate;
   const queryPairs: QueryPair[] = [];
   const usedQueryKeys = new Set<string>();
@@ -491,8 +522,8 @@ export const buildRequest = (
       if (mapping.required) {
         return { error: `"${mapping.wireName}" is required and must not be null` };
       }
-      // Q1 (research m5-request-building.md §3.2 / task-7 brief): an
-      // explicit null on an OPTIONAL param is omitted, exactly like absent.
+      // An explicit null on an OPTIONAL param is omitted, exactly like
+      // absent.
       continue;
     }
     if (mapping.destination === 'path') {
@@ -542,10 +573,12 @@ export const buildRequest = (
   if (urlLength > budgets.maxUrlLength) {
     return { error: 'the built request URL exceeds the outbound URL length budget' };
   }
-  let headerBytes = 0;
-  for (const [key, headerValue] of Object.entries(headers)) {
-    headerBytes += byteLength(key) + byteLength(headerValue);
-  }
+  // Loop body is a pure sum expression over the already-built, bounded
+  // headers record — a single-expression `reduce` rewrite.
+  const headerBytes = Object.entries(headers).reduce(
+    (sum, [key, headerValue]) => sum + byteLength(key) + byteLength(headerValue),
+    0,
+  );
   if (headerBytes > budgets.maxHeaderBytes) {
     return { error: 'the built request headers exceed the outbound header byte budget' };
   }

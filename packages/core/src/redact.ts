@@ -3,33 +3,37 @@ import { validationError } from './errors.ts';
 
 const MAX_SECRETS = 64; // Bound construction cost
 const MAX_SECRET_LENGTH = 8192; // Bound per-needle scan cost
-const MIN_VARIANT_LENGTH = 8; // Design §7.5: encoding variants only for 8+ char secrets
+const MIN_VARIANT_LENGTH = 8; // Encoding variants only for 8+ char secrets
 const REDACTED = '[redacted]';
 
 // The literal needles for one secret: the raw value, plus (for 8+ chars) the
 // bounded standard-Base64, Base64URL, and percent-encoded forms. All literal
 // strings — matched via split/join, never a built RegExp (no ReDoS surface).
 const variantsOf = (secret: string): string[] => {
-  const out = [secret];
-  if (secret.length >= MIN_VARIANT_LENGTH) {
-    const std = Buffer.from(secret, 'utf8').toString('base64');
-    const url = std.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
-    out.push(std, url, encodeURIComponent(secret));
+  if (secret.length < MIN_VARIANT_LENGTH) {
+    return [secret];
   }
-  return out;
+  const std = Buffer.from(secret, 'utf8').toString('base64');
+  const url = std.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+  return [secret, std, url, encodeURIComponent(secret)];
 };
 
-export interface Redactor {
+export type Redactor = {
   redactString: (value: string) => string;
   redactJson: (value: unknown) => unknown;
   scanForSecret: (value: unknown) => boolean;
-}
+};
 
 export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
   if (rawSecrets.length > MAX_SECRETS) {
     throw validationError(`too many secrets to redact (${rawSecrets.length} > ${MAX_SECRETS})`);
   }
   const needles = new Set<string>();
+  // Imperative on purpose (like headers.ts's mapping loop): each secret is
+  // validated — and, on failure, THROWS — in encounter order, while
+  // `needles` accumulates variant strings across iterations. A `flatMap`
+  // whose callback threw would be technically equivalent but would hide
+  // that side effect inside a mapping; the explicit loop keeps it visible.
   for (const secret of rawSecrets) {
     if (secret === '') {
       throw validationError('cannot register an empty secret with the redactor');
@@ -54,6 +58,10 @@ export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
       );
     }
   }
+  // Imperative on purpose: `value` is unbounded untrusted text (a response
+  // body, a request, etc.) — the streaming replace-in-place shape here
+  // avoids building intermediate closures/arrays over that text beyond what
+  // split/join already require per matched needle.
   const redactString = (value: string): string => {
     let out = value;
     for (const needle of ordered) {
@@ -96,6 +104,10 @@ export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
       // Null-prototype record: bracket assignment must always create an own
       // key, even for a hostile own-enumerable `__proto__` key from
       // JSON.parse — a plain `{}` would invoke the prototype setter instead.
+      // Imperative on purpose: `value` is an unbounded, arbitrarily nested
+      // untrusted JSON structure — the explicit loop mirrors scanForSecret's
+      // recursive-streaming shape rather than building an intermediate
+      // entries array via `.map`/Object.fromEntries.
       const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
       for (const [key, val] of Object.entries(value)) {
         out[redactString(key)] = redactJson(val);

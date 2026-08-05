@@ -2,11 +2,12 @@ import { Command } from '@commander-js/extra-typings';
 import { describe, expect, it } from 'vitest';
 import { OpenapiMcpError, SYSTEM_HEADERS } from '@kaisers-io/openapi-mcp-core';
 import { testContext } from '../src/context.ts';
-import { registerApiOptions, resolveApiConfig, type ApiCmdOpts } from '../src/api-options.ts';
+import { registerApiOptions, resolveApiConfig } from '../src/api-options.ts';
+import type { ApiCmdOpts } from '../src/api-options.ts';
 
-// RegisterApiOptions isn't wired into any command yet (Task 11 does that), so
-// this builds a bare standalone Command to exercise the flag registration
-// exactly as a real command would use it.
+// RegisterApiOptions isn't wired into any CLI command yet, so this builds a
+// bare standalone Command to exercise the flag registration exactly as a
+// real command would use it.
 const parseApiCmdOpts = (args: readonly string[]): ApiCmdOpts => {
   const command = registerApiOptions(new Command()).exitOverride();
   command.parse([...args], { from: 'user' });
@@ -20,11 +21,11 @@ const expectUsageError = (fn: () => unknown, messagePart: string): void => {
   try {
     fn();
     expect.unreachable('expected a usage error');
-  } catch (err) {
-    expect(err).toBeInstanceOf(OpenapiMcpError);
-    expect((err as OpenapiMcpError).code).toBe('usage');
+  } catch (error) {
+    expect(error).toBeInstanceOf(OpenapiMcpError);
+    expect((error as OpenapiMcpError).code).toBe('usage');
     if (messagePart !== '') {
-      expect((err as OpenapiMcpError).message).toContain(messagePart);
+      expect((error as OpenapiMcpError).message).toContain(messagePart);
     }
   }
 };
@@ -87,8 +88,8 @@ describe('resolveApiConfig — --header-env (secret)', () => {
     let caught: unknown;
     try {
       resolve(['--header-env', 'Authorization=API_KEY'], { API_KEY: hostile });
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');
@@ -123,8 +124,8 @@ describe('resolveApiConfig — --header (static)', () => {
     let caught: unknown;
     try {
       resolve(['--header', 'NoColon']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');
@@ -224,7 +225,7 @@ describe('resolveApiConfig — reservedHeaderNames', () => {
   });
 });
 
-describe('resolveApiConfig — secretValues (round-1 amendment)', () => {
+describe('resolveApiConfig — secretValues', () => {
   it('includes every --header-env value AND every --header value', () => {
     const config = resolve(['--header', 'X-Custom:static-value', '--header-env', 'X-Sec=ENV'], {
       ENV: 'secret-value',
@@ -237,13 +238,13 @@ describe('resolveApiConfig — secretValues (round-1 amendment)', () => {
     expect(resolve([]).secretValues).toEqual([]);
   });
 
-  // Final-review Fix 5 (finding 3 — marker-collision startup footgun): a short
-  // static --header value used to be registered unconditionally, which could
-  // make createRedactor throw at startup for an entirely legitimate,
-  // non-secret value that happens to be a substring of the '[redacted]'
-  // marker (e.g. "da"). resolveApiConfig itself must not throw here, and the
-  // short value must not be registered at all (it buys no redaction
-  // coverage below the 8-char variant floor anyway).
+  // A short static --header value (below the redaction variant floor) must
+  // not be registered as a secret value: createRedactor throws at startup if
+  // a registered secret is a substring of the '[redacted]' marker itself
+  // (e.g. "da"), which would turn an entirely legitimate, non-secret value
+  // into a startup crash. Skipping short values avoids that footgun and
+  // costs no redaction coverage, since values below the 8-char floor get no
+  // encoding variants anyway.
   it('does not register a short static --header value (no startup throw, e.g. a value that is a substring of the marker)', () => {
     const config = resolve(['--header', 'Accept-Language:da']);
     expect(config.staticHeaders).toEqual([{ name: 'Accept-Language', value: 'da' }]);
@@ -272,8 +273,8 @@ describe('resolveApiConfig — --base-url', () => {
     let caught: unknown;
     try {
       resolve(['--base-url', 'not a url']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).message).not.toContain('not a url');
@@ -291,8 +292,8 @@ describe('resolveApiConfig — --base-url', () => {
     let caught: unknown;
     try {
       resolve(['--base-url', 'https://user:pw@host/']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');
@@ -306,8 +307,8 @@ describe('resolveApiConfig — --base-url', () => {
     let caught: unknown;
     try {
       resolve(['--base-url', 'https://h/?token=SECRET']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');
@@ -320,8 +321,8 @@ describe('resolveApiConfig — --base-url', () => {
     let caught: unknown;
     try {
       resolve(['--base-url', 'https://api.example.com#zzz999']);
-    } catch (err) {
-      caught = err;
+    } catch (error) {
+      caught = error;
     }
     expect(caught).toBeInstanceOf(OpenapiMcpError);
     expect((caught as OpenapiMcpError).code).toBe('usage');

@@ -2,16 +2,17 @@ import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { EXIT } from '@kaisers-io/openapi-mcp-core';
-import { testContext, type CliContext } from '../src/context.ts';
+import { testContext } from '../src/context.ts';
+import type { CliContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 
-interface Capture {
+type Capture = {
   lines: string[];
   errLines: string[];
   ctx: CliContext;
-}
+};
 
 const fileCtx = (overrides: Parameters<typeof testContext>[0] = {}): Capture => {
   const lines: string[] = [];
@@ -36,7 +37,7 @@ describe('tools command — file specs', () => {
     const code = await run(ctx, ['node', 'openapi-mcp', 'tools', '--spec', 'petstore.json']);
     expect(code).toBe(EXIT.OK);
     const text = lines.join('\n');
-    // The read-only default (spec §3.2 rule 3) hides the POST
+    // The read-only default hides the POST
     expect(text).toContain('Petstore 1.0.0 (OpenAPI 3.1) — 1 tool');
     expect(text).toContain('listPets');
     expect(text).not.toContain('createPet');
@@ -246,7 +247,7 @@ describe('tools command — filters', () => {
     ]);
     expect(code).toBe(EXIT.OK);
     expect(lines.join('\n')).toContain('createPet');
-    // An explicit allow replaces the read-only default entirely (spec §3.2 rule 2)
+    // An explicit allow replaces the read-only default entirely
     expect(lines.join('\n')).not.toContain('listPets');
   });
 
@@ -286,7 +287,7 @@ describe('tools command — filters', () => {
     expect(lines.join('\n')).toContain('createPet');
   });
 
-  it('warns about a dead pattern with the spec §8 wording', async () => {
+  it('warns about a dead pattern with the closest-match suggestion', async () => {
     const { errLines, ctx } = fileCtx();
     const code = await run(ctx, [
       'node',
@@ -352,7 +353,7 @@ describe('tools command — filters', () => {
     expect(errLines.join('\n')).not.toContain('should not be read');
   });
 
-  it('rejects an over-long pattern with exit 2 (D15)', async () => {
+  it('rejects an over-long pattern with exit 2', async () => {
     const { ctx } = fileCtx();
     const code = await run(ctx, [
       'node',
@@ -366,7 +367,7 @@ describe('tools command — filters', () => {
     expect(code).toBe(EXIT.USAGE);
   });
 
-  it('rejects a pattern with too many wildcards with exit 2 (D15)', async () => {
+  it('rejects a pattern with too many wildcards with exit 2', async () => {
     const { errLines, ctx } = fileCtx();
     const code = await run(ctx, [
       'node',
@@ -381,7 +382,7 @@ describe('tools command — filters', () => {
     expect(errLines.join('\n')).toContain('wildcard');
   });
 
-  it('rejects more patterns than the count bound allows with exit 2 (D15)', async () => {
+  it('rejects more patterns than the count bound allows with exit 2', async () => {
     const { ctx } = fileCtx();
     const many = Array.from({ length: 129 }, (_unused, index) => [
       '--allow',
@@ -463,7 +464,7 @@ describe('tools command — cache and ttl', () => {
     expect(errLines.join('\n')).not.toContain('../../etc');
   });
 
-  it('rejects an authenticated spec with no cache decision with exit 2 (D13)', async () => {
+  it('rejects an authenticated spec with no cache decision with exit 2', async () => {
     const fetcher = (() => Promise.resolve(new Response('{}'))) as unknown as CliContext['fetcher'];
     const { errLines, ctx } = fileCtx({ fetcher, env: { SPEC_TOKEN: 'Bearer x' } });
     const code = await run(ctx, [
@@ -480,7 +481,7 @@ describe('tools command — cache and ttl', () => {
     expect(errLines.join('\n')).toContain('--trust-spec-updates');
   });
 
-  it('accepts an authenticated spec under --trust-spec-updates as a bypass (D13)', async () => {
+  it('accepts an authenticated spec under --trust-spec-updates as a bypass', async () => {
     const specText = JSON.stringify({
       openapi: '3.1.0',
       info: { title: 'Remote', version: '1.0.0' },
@@ -507,11 +508,11 @@ describe('tools command — cache and ttl', () => {
     expect(lines.join('\n')).toContain('cache: bypassed');
   });
 
-  // Falsification (c) coverage gap: --allow-private-network threads through
-  // parseSpecPipelineArgs into the pipeline options exactly like the other
-  // nine flags, but nothing in this file exercised it before the tools.ts ->
-  // spec-options.ts extraction (Task 6) — a dropped flag in that extraction
-  // would have gone undetected by the rest of this suite. A redirect to a
+  // --allow-private-network threads through parseSpecPipelineArgs into the
+  // pipeline options exactly like the other nine flags, but nothing in this
+  // file exercised it before the tools.ts -> spec-options.ts extraction — a
+  // dropped flag in that extraction would have gone undetected by the rest
+  // of this suite. A redirect to a
   // private-address host is the only place this flag has any effect (the
   // initial --spec URL itself is never address-checked).
   it('threads --allow-private-network through to the redirect egress check', async () => {
@@ -628,9 +629,9 @@ describe('tools command — toolgen omissions', () => {
     expect(badOmission?.reason).toContain('not');
   });
 
-  it('sanitizes a hostile parameter name before it reaches the omission warning (round-2 HIGH 3)', async () => {
+  it('sanitizes a hostile parameter name before it reaches the omission warning', async () => {
     // Built at runtime, never typed literally: BEL (0x07) and RTL override (0x202e)
-    const bad = `p${String.fromCodePoint(0x07)}${String.fromCodePoint(0x202e)}`;
+    const bad = `p${String.fromCodePoint(0x07)}${String.fromCodePoint(0x20_2e)}`;
     const specText = JSON.stringify({
       openapi: '3.1.0',
       info: { title: 'Hostile', version: '1.0.0' },
@@ -667,7 +668,7 @@ describe('tools command — toolgen omissions', () => {
     // But the hostile bytes it carried in the raw parameter name must not.
     expect(allOutput).not.toContain(bad);
     expect(allOutput).not.toContain(String.fromCodePoint(0x07));
-    expect(allOutput).not.toContain(String.fromCodePoint(0x202e));
+    expect(allOutput).not.toContain(String.fromCodePoint(0x20_2e));
 
     // Bind the tools.ts reason-sanitize wrap directly. In human mode emit()
     // re-sanitizes every warning line, so the assertions above hold even if the
@@ -692,6 +693,6 @@ describe('tools command — toolgen omissions', () => {
     const warningsText = envelope.warnings.join('\n');
     expect(warningsText).toContain('omitted GET /h');
     expect(warningsText).not.toContain(String.fromCodePoint(0x07));
-    expect(warningsText).not.toContain(String.fromCodePoint(0x202e));
+    expect(warningsText).not.toContain(String.fromCodePoint(0x20_2e));
   });
 });

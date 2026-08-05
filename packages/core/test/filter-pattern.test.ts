@@ -7,20 +7,19 @@ import {
   GLOBSTAR,
   OpenapiMcpError,
   STAR,
-  type CompiledGlob,
-  type FilterPattern,
   compileGlob,
   createMatchBudget,
   globMatches,
   parseFilterPattern,
   parseFilterPatterns,
 } from '../src/index.ts';
+import type { CompiledGlob, FilterPattern } from '../src/index.ts';
 
-// Round-3 finding: every pattern now also carries its `compiled` programme
-// (D15), so exact-object assertions must account for it or they fail to
-// typecheck and to match. `shape` asserts the identifying fields and checks the
-// compiled member separately — the token programme has its own dedicated tests,
-// and restating it inline here would be noise.
+// Every pattern now also carries its `compiled` programme, so exact-object
+// assertions must account for it or they fail to typecheck and to match.
+// `shape` asserts the identifying fields and checks the compiled member
+// separately — the token programme has its own dedicated tests, and restating
+// it inline here would be noise.
 const shape = (raw: string): Omit<FilterPattern, 'compiled'> => {
   const parsed = parseFilterPattern(raw);
   expect(parsed.compiled.tokens.length).toBeGreaterThan(0);
@@ -62,7 +61,7 @@ describe('parseFilterPattern — form detection', () => {
     });
   });
 
-  it('compiles each pattern once, carrying the programme on the pattern (D15)', () => {
+  it('compiles each pattern once, carrying the programme on the pattern', () => {
     // The compiled programme travels WITH the pattern so matching never
     // recompiles per candidate string
     const parsed = parseFilterPattern('GET /users/**');
@@ -86,54 +85,54 @@ describe('parseFilterPattern — form detection', () => {
 
 describe('parseFilterPattern — rejections', () => {
   it('rejects an empty pattern', () => {
-    expect(() => parseFilterPattern('')).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('')).toThrow(OpenapiMcpError);
   });
 
   it('rejects a bare "tag:" with no glob', () => {
-    expect(() => parseFilterPattern('tag:')).toThrowError(/needs a tag glob/u);
+    expect(() => parseFilterPattern('tag:')).toThrow(/needs a tag glob/u);
   });
 
   it('rejects an unknown method in the methodPath form', () => {
     try {
       parseFilterPattern('FETCH /users');
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      const typed = err as OpenapiMcpError;
+    } catch (error) {
+      const typed = error as OpenapiMcpError;
       expect(typed.code).toBe('usage');
       expect(typed.message).toContain('GET');
     }
   });
 
-  it('rejects a lowercase method — the language is case-sensitive (§3.2)', () => {
-    expect(() => parseFilterPattern('get /users')).toThrowError(OpenapiMcpError);
+  it('rejects a lowercase method — the language is case-sensitive', () => {
+    expect(() => parseFilterPattern('get /users')).toThrow(OpenapiMcpError);
   });
 
   it('rejects OPTIONS and TRACE, which are never exposed in v1', () => {
-    expect(() => parseFilterPattern('OPTIONS /users')).toThrowError(OpenapiMcpError);
-    expect(() => parseFilterPattern('TRACE /users')).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('OPTIONS /users')).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPattern('TRACE /users')).toThrow(OpenapiMcpError);
   });
 
   it('rejects a methodPath whose path does not start with a slash', () => {
-    expect(() => parseFilterPattern('GET users')).toThrowError(/must start with "\/"/u);
+    expect(() => parseFilterPattern('GET users')).toThrow(/must start with "\/"/u);
   });
 
   it('rejects two spaces — exactly one separates method from path (grammar rule 7)', () => {
-    expect(() => parseFilterPattern('GET  /users')).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('GET  /users')).toThrow(OpenapiMcpError);
   });
 
   it('rejects a trailing space', () => {
-    expect(() => parseFilterPattern('GET ')).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('GET ')).toThrow(OpenapiMcpError);
   });
 
   it('never degrades a spaced pattern into an operationId glob (grammar rule 7)', () => {
     // An operationId containing a space is unreachable by design: silently
     // parsing "list pets!" as an operationId would surface later as a dead
     // pattern instead of as the usage error it is
-    expect(() => parseFilterPattern('list pets!')).toThrowError(/must start with one of/u);
+    expect(() => parseFilterPattern('list pets!')).toThrow(/must start with one of/u);
   });
 
   it('rejects an over-long pattern', () => {
-    expect(() => parseFilterPattern('x'.repeat(FILTER_PATTERN_MAX_LENGTH + 1))).toThrowError(
+    expect(() => parseFilterPattern('x'.repeat(FILTER_PATTERN_MAX_LENGTH + 1))).toThrow(
       /at most 256 characters/u,
     );
   });
@@ -147,8 +146,8 @@ describe('parseFilterPattern — rejections', () => {
     try {
       parseFilterPattern('SNIFF /x');
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).message).not.toContain('SNIFF');
+    } catch (error) {
+      expect((error as OpenapiMcpError).message).not.toContain('SNIFF');
     }
   });
 
@@ -172,16 +171,14 @@ describe('parseFilterPatterns — the list bound', () => {
   });
 
   it('rejects one pattern over the count cap', () => {
-    expect(() => parseFilterPatterns(many(FILTER_PATTERN_MAX_COUNT + 1))).toThrowError(
-      /at most 128/u,
-    );
+    expect(() => parseFilterPatterns(many(FILTER_PATTERN_MAX_COUNT + 1))).toThrow(/at most 128/u);
   });
 
   it('enforces the count before parsing, so an over-long list fails on the count', () => {
     // The bound is a cheap gate in front of 129 compilations, not a summary of them
     expect(() =>
       parseFilterPatterns(Array.from({ length: FILTER_PATTERN_MAX_COUNT + 1 }, () => '')),
-    ).toThrowError(/at most 128/u);
+    ).toThrow(/at most 128/u);
   });
 
   it('still parses and validates every element', () => {
@@ -193,14 +190,14 @@ describe('parseFilterPatterns — the list bound', () => {
       glob: '/users/**',
       raw: 'GET /users/**',
     });
-    expect(() => parseFilterPatterns(['listPets', 'FETCH /users'])).toThrowError(OpenapiMcpError);
-    expect(() => parseFilterPatterns(['**a'.repeat(11)])).toThrowError(/at most 10 wildcards/u);
+    expect(() => parseFilterPatterns(['listPets', 'FETCH /users'])).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPatterns(['**a'.repeat(11)])).toThrow(/at most 10 wildcards/u);
   });
 });
 
 // The grammar assertions are expressed as BEHAVIOUR rather than as properties
 // of a compiled RegExp source, because there is no RegExp on the production
-// path any more (D15). `match` is the one-line adapter every case below uses.
+// path any more. `match` is the one-line adapter every case below uses.
 const match = (glob: string, value: string): boolean =>
   globMatches(compileGlob(glob), value, createMatchBudget());
 
@@ -223,7 +220,7 @@ describe('compileGlob — literal handling (grammar rule 5)', () => {
   });
 
   it('escapes nothing, because nothing reaches a RegExp constructor', () => {
-    // The round-1 compiler escaped metacharacters before building a RegExp.
+    // The RegExp-based compiler escaped metacharacters before building a RegExp.
     // The token programme has no such step: every non-star character is stored
     // as itself, which is why regex syntax cannot be injected and an
     // unbalanced metacharacter cannot raise SyntaxError.
@@ -272,7 +269,7 @@ describe('compileGlob — wildcards (grammar rules 1, 2, 4)', () => {
     expect(match('readPets', 'readPet')).toBe(false);
   });
 
-  it('is case-sensitive (§3.2)', () => {
+  it('is case-sensitive', () => {
     expect(match('readPets', 'readpets')).toBe(false);
     expect(match('read*', 'READ_ALL')).toBe(false);
   });
@@ -346,10 +343,10 @@ describe('compileGlob — wildcards (grammar rules 1, 2, 4)', () => {
   });
 });
 
-describe('compileGlob — sanity bounds (D15)', () => {
+describe('compileGlob — sanity bounds', () => {
   it('rejects a pattern with more than the allowed number of wildcard groups', () => {
     const glob = '**a'.repeat(FILTER_PATTERN_MAX_WILDCARDS + 1);
-    expect(() => compileGlob(glob)).toThrowError(/at most 10 wildcards/u);
+    expect(() => compileGlob(glob)).toThrow(/at most 10 wildcards/u);
   });
 
   it('accepts a pattern exactly at the wildcard cap', () => {
@@ -362,13 +359,13 @@ describe('compileGlob — sanity bounds (D15)', () => {
   });
 
   it('surfaces the cap through parseFilterPattern for every form', () => {
-    expect(() => parseFilterPattern('**a'.repeat(11))).toThrowError(OpenapiMcpError);
-    expect(() => parseFilterPattern(`tag:${'**a'.repeat(11)}`)).toThrowError(OpenapiMcpError);
-    expect(() => parseFilterPattern(`GET /${'**a'.repeat(11)}`)).toThrowError(OpenapiMcpError);
+    expect(() => parseFilterPattern('**a'.repeat(11))).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPattern(`tag:${'**a'.repeat(11)}`)).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPattern(`GET /${'**a'.repeat(11)}`)).toThrow(OpenapiMcpError);
   });
 
   it('is a sanity bound only — it is no longer what provides the safety property', () => {
-    // Stated as an executable reminder: the round-1 plan claimed this cap made
+    // Stated as an executable reminder: an earlier design claimed this cap made
     // a backtracking RegExp safe, and the benchmark that "proved" it used a
     // value shape that never reaches the combinatorial case. The matcher below
     // does not backtrack at all, and the budget bounds the aggregate.
@@ -376,13 +373,13 @@ describe('compileGlob — sanity bounds (D15)', () => {
   });
 });
 
-describe('globMatches — no backtracking (D15 mechanism 1)', () => {
+describe('globMatches — no backtracking', () => {
   // Reuses the module-level `match` adapter defined above rather than
   // redeclaring an identical one in this block's scope.
   it('answers the shape that costs 134 ms as a RegExp in microseconds', () => {
-    // Measured with the round-1 compiled RegExp at 10 wildcards — a pattern the
+    // Measured with the RegExp-based compiler at 10 wildcards — a pattern the
     // cap ADMITS — against "a" x n + "b": 3.9 ms at 20, 26 ms at 24, 134 ms at
-    // 28, 277 ms at 30. Doubling per added character. The plan's own benchmark
+    // 28, 277 ms at 30. Doubling per added character. The original benchmark
     // used only nine "a"s and cost 1.2 ms, which is why the suite stayed green.
     const glob = '**a'.repeat(FILTER_PATTERN_MAX_WILDCARDS);
     for (const aCount of [28, 40, 800]) {
@@ -409,12 +406,11 @@ describe('globMatches — no backtracking (D15 mechanism 1)', () => {
   });
 
   it('settles a prefilter rejection far more cheaply than a simulation', () => {
-    // Round-4 finding 4: the round-3 version of this case asserted the
-    // rejection spent ZERO steps while the implementation unconditionally
-    // charged one — the suite could not have passed. It also asserted the
-    // wrong property: a prefilter is not free, it is CHEAP, and the counter is
-    // only honest if it says so. What matters is that it costs O(value +
-    // affix) rather than O(tokens x value).
+    // An earlier version of this case asserted the rejection spent ZERO steps
+    // while the implementation unconditionally charged one — the suite could
+    // not have passed. It also asserted the wrong property: a prefilter is not
+    // free, it is CHEAP, and the counter is only honest if it says so. What
+    // matters is that it costs O(value + affix) rather than O(tokens x value).
     const compiled = compileGlob('/users/**');
     const value = `/orders/${'x'.repeat(500)}`;
     const budget = createMatchBudget();
@@ -439,12 +435,13 @@ describe('globMatches — no backtracking (D15 mechanism 1)', () => {
   it('refuses with a validation error once the budget is exhausted', () => {
     const compiled = compileGlob('**a'.repeat(FILTER_PATTERN_MAX_WILDCARDS));
     const budget = createMatchBudget(100);
-    expect(() => globMatches(compiled, 'a'.repeat(10_000), budget)).toThrowError(/work budget/u);
+    expect(() => globMatches(compiled, 'a'.repeat(10_000), budget)).toThrow(/work budget/u);
   });
 
   it('freezes the measured budget', () => {
-    // Recalibrated twice. Round 3 charged only live-state transitions; round 4
-    // added code-point materialization, affix comparisons and state-array
+    // Recalibrated twice: an earlier version charged only live-state
+    // transitions; a later revision added code-point materialization, affix
+    // comparisons and state-array
     // initialization, which raised a realistic maximal configuration (256
     // patterns, 512 operations, four candidate fields each) from a REPORTED
     // 13,049,627 steps to a MEASURED 33,099,767 — 1.5x headroom under the old
@@ -454,10 +451,11 @@ describe('globMatches — no backtracking (D15 mechanism 1)', () => {
     expect(FILTER_MAX_MATCH_STEPS).toBe(200_000_000);
   });
 
-  it('charges the work that state clearing used to hide (round-3 finding 9)', () => {
-    // A leading globstar keeps every state live, so the old implementation paid
-    // O(tokens) per character in next.fill(0) while charging O(1) per live
-    // state. The step count must now scale with tokens x length, not length.
+  it('charges the per-character cost that clearing live states would otherwise hide', () => {
+    // A leading globstar keeps every state live, so clearing them via
+    // next.fill(0) costs O(tokens) per character even though charging only
+    // O(1) per live state would miss that. The step count must scale with
+    // tokens x length, not length, to price the clearing work.
     const wide = compileGlob(`**${'a'.repeat(120)}`);
     const narrow = compileGlob('**a');
     const spend = (compiled: CompiledGlob, value: string): number => {
@@ -467,14 +465,15 @@ describe('globMatches — no backtracking (D15 mechanism 1)', () => {
     };
     const value = 'a'.repeat(512);
     // The wide pattern has ~40x the tokens, so it must cost substantially more
-    // — under the round-3 accounting the two were far closer together
+    // — charging only O(1) per live state instead of O(tokens) per character
+    // would leave the two far closer together
     expect(spend(wide, value)).toBeGreaterThan(spend(narrow, value) * 5);
   });
 });
 
-describe('globMatches — differential equivalence with the frozen grammar (D15)', () => {
+describe('globMatches — differential equivalence with the frozen grammar', () => {
   // The grammar is UNCHANGED by the matcher swap, and this is how that is
-  // proved rather than asserted. The round-1 compiled RegExp is kept here, in
+  // proved rather than asserted. The original RegExp-based compiler is kept here, in
   // the test file only, as an oracle. It is deliberately not exported from the
   // package: it is the implementation that was found unsafe.
   const oracle = (glob: string): RegExp => {
@@ -547,8 +546,8 @@ describe('globMatches — differential equivalence with the frozen grammar (D15)
     }
   });
 
-  it('agrees on astral characters (round-3 finding 8)', () => {
-    // The round-3 matcher failed SIX of these eight, including the trivial
+  it('agrees on astral characters', () => {
+    // An earlier matcher failed SIX of these eight, including the trivial
     // pattern-equals-value case, because it tokenized UTF-16 code units and
     // matched code points
     const emoji = '\u{1F600}';
@@ -566,8 +565,8 @@ describe('globMatches — differential equivalence with the frozen grammar (D15)
     }
   });
 
-  // Round-3 self-inflicted finding: the fuzz sweep this replaces was HOLLOW.
-  // It used a seeded LCG whose low bits are degenerate — probed: rand(4)
+  // The fuzz sweep this replaces was HOLLOW. It used a seeded LCG whose low
+  // bits are degenerate — probed: rand(4)
   // returned 0 for every draw after the first, so `rand(4) === 0` was almost
   // always true, the generator emitted almost nothing but "*", and NOT ONE of
   // 20,000 generated globs contained a character from the second half of the
@@ -575,12 +574,15 @@ describe('globMatches — differential equivalence with the frozen grammar (D15)
   // `compileGlob(EMOJI)`. A fuzz test that cannot show what it explored is
   // false assurance, so this version asserts its own corpus coverage.
   const mulberry32 = (seed: number): (() => number) => {
+    // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
     let a = seed >>> 0;
     return () => {
-      a = (a + 0x6d2b79f5) >>> 0;
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
+      a = (a + 0x6d_2b_79_f5) >>> 0;
       let t = a;
       t = Math.imul(t ^ (t >>> 15), t | 1);
       t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
       return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
     };
   };
@@ -651,12 +653,12 @@ describe('globMatches — differential equivalence with the frozen grammar (D15)
     // The load-bearing part: the corpus must demonstrably contain every
     // construct this test claims to cover. Without these, a degenerate
     // generator silently turns the sweep into 20,000 copies of one trivial case
-    // — which is exactly what happened in round 3.
+    // — which is exactly what happened with the fuzz sweep this replaces.
     expect(coverage.pairs).toBeGreaterThan(15_000);
-    expect(coverage.astral).toBeGreaterThan(1_000);
-    expect(coverage.slash).toBeGreaterThan(1_000);
+    expect(coverage.astral).toBeGreaterThan(1000);
+    expect(coverage.slash).toBeGreaterThan(1000);
     expect(coverage.deep).toBeGreaterThan(500);
-    expect(coverage.matches).toBeGreaterThan(1_000);
-    expect(coverage.nonMatches).toBeGreaterThan(1_000);
+    expect(coverage.matches).toBeGreaterThan(1000);
+    expect(coverage.nonMatches).toBeGreaterThan(1000);
   });
 });

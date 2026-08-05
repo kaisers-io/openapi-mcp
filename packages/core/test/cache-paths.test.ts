@@ -4,7 +4,6 @@ import {
   CACHE_KEY_MAX_LENGTH,
   CACHE_META_MAX_BYTES,
   OpenapiMcpError,
-  type SpecSource,
   cacheLayout,
   cacheNamespace,
   canonicalSourceOf,
@@ -15,6 +14,7 @@ import {
   parseContentHash,
   resolveCachePolicy,
 } from '../src/index.ts';
+import type { SpecSource } from '../src/index.ts';
 
 const URL_SOURCE: SpecSource = {
   kind: 'url',
@@ -35,11 +35,11 @@ describe('parseCacheKey', () => {
   it.each(['', 'a/b', 'a b', 'a\\b', 'x\u0000y', 'tab\there', 'sl/ash'])(
     'rejects the unusable key %j',
     (raw) => {
-      expect(() => parseCacheKey(raw)).toThrowError(OpenapiMcpError);
+      expect(() => parseCacheKey(raw)).toThrow(OpenapiMcpError);
     },
   );
 
-  it('accepts ".." because the key is hashed, never used as a path segment (D9)', () => {
+  it('accepts ".." because the key is hashed, never used as a path segment', () => {
     // The charset admits dots on purpose: parseCacheKey guards a label, and
     // cacheNamespace below proves the label only ever reaches a sha256 digest
     expect(parseCacheKey('..')).toBe('..');
@@ -47,7 +47,7 @@ describe('parseCacheKey', () => {
   });
 
   it('rejects a key longer than the cap', () => {
-    expect(() => parseCacheKey('x'.repeat(CACHE_KEY_MAX_LENGTH + 1))).toThrowError(
+    expect(() => parseCacheKey('x'.repeat(CACHE_KEY_MAX_LENGTH + 1))).toThrow(
       /at most 64 characters/u,
     );
   });
@@ -61,8 +61,8 @@ describe('parseCacheKey', () => {
     try {
       parseCacheKey('../../etc/passwd');
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).message).not.toContain('passwd');
+    } catch (error) {
+      expect((error as OpenapiMcpError).message).not.toContain('passwd');
     }
   });
 });
@@ -82,17 +82,17 @@ describe('parseCacheId', () => {
     ['a non-hex character', 'abcdef012345678g'],
     ['a trailing newline', 'abcdef0123456789\n'],
   ])('rejects %s so --id can never reach a path join', (_label, raw) => {
-    expect(() => parseCacheId(raw)).toThrowError(OpenapiMcpError);
-    expect(() => parseCacheId(raw)).toThrowError(/16-character lowercase hexadecimal/u);
+    expect(() => parseCacheId(raw)).toThrow(OpenapiMcpError);
+    expect(() => parseCacheId(raw)).toThrow(/16-character lowercase hexadecimal/u);
   });
 
   it('reports a usage error, not a validation error', () => {
     try {
       parseCacheId('nope');
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      expect((err as OpenapiMcpError).code).toBe('usage');
-      expect((err as OpenapiMcpError).exitCode).toBe(2);
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('usage');
+      expect((error as OpenapiMcpError).exitCode).toBe(2);
     }
   });
 });
@@ -109,7 +109,7 @@ describe('parseContentHash', () => {
     ['empty', ''],
     ['non-hex', `${'a'.repeat(63)}z`],
   ])('rejects %s', (_label, raw) => {
-    expect(() => parseContentHash(raw)).toThrowError(/64-character lowercase hexadecimal/u);
+    expect(() => parseContentHash(raw)).toThrow(/64-character lowercase hexadecimal/u);
   });
 });
 
@@ -150,7 +150,7 @@ describe('cacheNamespace', () => {
     );
   });
 
-  it('binds the namespace to both source and key (spec §5.3)', () => {
+  it('binds the namespace to both source and key', () => {
     // Reusing --cache-key prod across two different APIs must never collide
     expect(cacheNamespace('https://a.example/s.json', 'prod')).not.toBe(
       cacheNamespace('https://b.example/s.json', 'prod'),
@@ -170,17 +170,18 @@ describe('cacheNamespace', () => {
   });
 
   it('is not confused by a source containing the literal separator text', () => {
+    // oxlint-disable-next-line no-useless-concat -- the two concatenated literals mirror the two-part namespace construction under test
     expect(cacheNamespace('source:https://a.example/s.json' + 'key:prod')).not.toBe(
       cacheNamespace('https://a.example/s.json', 'prod'),
     );
   });
 
-  it('separates source from key with a real NUL, not the six characters "\\u0000" (D9)', () => {
-    // The round-1 draft wrote "\\u0000" in the template literal, which is a
-    // backslash plus "u0000" — six printable characters. That silently voided
-    // the separator argument, because nothing stops a canonical source from
-    // containing them. This asserts the byte without spelling it: the file must
-    // never carry a raw control character.
+  it('separates source from key with a real NUL, not the six characters "\\u0000"', () => {
+    // Writing "\\u0000" in the template literal is a backslash plus "u0000" —
+    // six printable characters — which would silently void the separator
+    // argument, because nothing stops a canonical source from containing
+    // them. This asserts the byte without spelling it: the file must never
+    // carry a raw control character.
     const NUL = String.fromCodePoint(0);
     const digest = createHash('sha256')
       .update(`source:https://a.example/s.json${NUL}key:prod`, 'utf8')
@@ -195,7 +196,7 @@ describe('cacheNamespace', () => {
     expect(cacheNamespace('https://a.example/s.json', 'prod')).not.toBe(defective);
   });
 
-  it('cannot be collided by a source spelling the defective separator (D9)', () => {
+  it('cannot be collided by a source spelling the defective separator', () => {
     // The concrete attack the six-character separator would have permitted
     expect(cacheNamespace('https://a.example/s.json\\u0000key:prod')).not.toBe(
       cacheNamespace('https://a.example/s.json', 'prod'),
@@ -215,7 +216,7 @@ describe('cacheLayout', () => {
     });
   });
 
-  it('exposes no fixed accepted or candidate path (D12.1)', () => {
+  it('exposes no fixed accepted or candidate path', () => {
     // A fixed path has to be REPLACED to store a new generation, and that
     // replacement is what destroyed the bytes the live meta.json pointed at
     const layout = cacheLayout('/c', 'abcdef0123456789');
@@ -224,7 +225,7 @@ describe('cacheLayout', () => {
   });
 });
 
-describe('objectPath (D12.1)', () => {
+describe('objectPath', () => {
   const layout = cacheLayout('/c', 'abcdef0123456789');
 
   it('names the object after the hash of its own contents', () => {
@@ -246,7 +247,7 @@ describe('objectPath (D12.1)', () => {
   });
 });
 
-describe('resolveCachePolicy (D13)', () => {
+describe('resolveCachePolicy', () => {
   const base = {
     source: URL_SOURCE,
     authenticated: false,
@@ -278,7 +279,7 @@ describe('resolveCachePolicy (D13)', () => {
   });
 
   it('resolves authenticated + --trust-spec-updates + no key to a NON-PERSISTENT bypass', () => {
-    // Design §12 records this combination as "non-persistent": a source-only
+    // This combination is "non-persistent": a source-only
     // namespace would be shared by two hosts using different credentials
     const policy = resolveCachePolicy({
       ...base,
@@ -304,12 +305,12 @@ describe('resolveCachePolicy (D13)', () => {
     ).toBe('persistent');
   });
 
-  it('rejects an authenticated source with neither option, naming both (spec §5.3)', () => {
+  it('rejects an authenticated source with neither option, naming both', () => {
     try {
       resolveCachePolicy({ ...base, authenticated: true });
       expect.unreachable('expected a usage error');
-    } catch (err) {
-      const typed = err as OpenapiMcpError;
+    } catch (error) {
+      const typed = error as OpenapiMcpError;
       expect(typed.code).toBe('usage');
       expect(typed.message).toContain('--cache-key');
       expect(typed.message).toContain('--trust-spec-updates');
@@ -321,16 +322,16 @@ describe('resolveCachePolicy (D13)', () => {
     expect(policy).toMatchObject({ kind: 'bypass' });
   });
 
-  it('applies the authenticated decision BEFORE the no-root bypass (D13 ordering)', () => {
-    // The round-1 implementation checked cacheRoot first, so this returned a
-    // generic bypass instead of the required usage error — while Task 10's own
-    // regression builds exactly this context (homeDir() is undefined) and
-    // asserts exit 2. The suite and the implementation disagreed.
+  it('applies the authenticated decision BEFORE the no-root bypass', () => {
+    // Checking cacheRoot before the authenticated decision would return a
+    // generic bypass instead of the required usage error here, since this
+    // context has no cache root at all (e.g. an undefined homeDir()) and must
+    // still produce a usage error with exit code 2.
     try {
       resolveCachePolicy({ ...base, authenticated: true, cacheRoot: undefined });
       expect.unreachable('expected a usage error, not a bypass');
-    } catch (err) {
-      const typed = err as OpenapiMcpError;
+    } catch (error) {
+      const typed = error as OpenapiMcpError;
       expect(typed.code).toBe('usage');
       expect(typed.exitCode).toBe(2);
       expect(typed.message).toContain('--cache-key');
@@ -339,7 +340,7 @@ describe('resolveCachePolicy (D13)', () => {
 
   it('keeps the deliberate non-persistent bypass ahead of the no-root bypass', () => {
     // Same ordering, opposite outcome: the operator DID decide, so this is the
-    // D13 credential-separation bypass and its reason must say so rather than
+    // credential-separation bypass and its reason must say so rather than
     // blaming a missing home directory
     const policy = resolveCachePolicy({
       ...base,

@@ -1,19 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import {
-  buildSnapshot,
-  buildTools,
-  META_TOOL_NAME,
-  SYSTEM_HEADERS,
-  type BuildToolsResult,
-  type DeadPattern,
-  type NamedOperation,
-  type SnapshotTool,
-} from '../src/index.ts';
+import { buildSnapshot, buildTools, META_TOOL_NAME, SYSTEM_HEADERS } from '../src/index.ts';
+import type { BuildToolsResult, DeadPattern, NamedOperation, SnapshotTool } from '../src/index.ts';
 
-const RLO = String.fromCodePoint(0x202e); // Right-to-Left Override — never paste raw
+const RLO = String.fromCodePoint(0x20_2e); // Right-to-Left Override — never paste raw
 
-// Task 6's build-time path-template consistency guard omits an operation
+// The build-time path-template consistency guard omits an operation
 // whose `{...}` placeholders don't exactly match its path parameters — derive
 // a matching required path parameter per placeholder so this fixture keeps
 // building a REPRESENTABLE operation regardless of which path it is given.
@@ -38,7 +30,7 @@ const namedOp = (toolName: string, path: string): NamedOperation => ({
   },
 });
 
-interface PipelineOverrides {
+type PipelineOverrides = {
   spec?: {
     title?: string;
     specVersion?: string;
@@ -48,7 +40,7 @@ interface PipelineOverrides {
   candidateContentHash?: string;
   displaySource?: string;
   deadPatterns?: readonly DeadPattern[];
-}
+};
 
 // Spec.omitted defaults to [] — the normalization-level omission source
 // (cookie parameters, OPTIONS/TRACE, webhooks, ...) merged alongside

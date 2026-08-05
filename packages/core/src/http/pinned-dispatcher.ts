@@ -1,49 +1,48 @@
-import { isIP, type LookupFunction } from 'node:net';
-import { Agent, type fetch as undiciFetchType } from 'undici';
+import { isIP } from 'node:net';
+import type { LookupFunction } from 'node:net';
+import { Agent } from 'undici';
+import type { fetch as undiciFetchType } from 'undici';
 import { classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
 
-// M5 Task 3 (design §2.1-2.3, D1): the SSRF connection-pinning core. undici's
-// custom connect.lookup resolves the hostname exactly once via the injected
-// `resolve`, validates EVERY answer with the hardened classifyAddress (Task
-// 1) BEFORE any socket is opened, and connects only to the validated IPs —
-// so there is a single DNS resolution per connection and no separate
-// "validate, then resolve again" TOCTOU window. undici preserves the
-// original Host header and TLS SNI/cert against the hostname regardless of
-// which IP the lookup callback selects (probe-confirmed:
-// _local/research/m5-egress-probe-node2412.md). A plain Agent with a custom
-// `connect` never consults HTTP(S)_PROXY — there is no proxy-dispatch code
-// path for it to reach.
+// The SSRF connection-pinning core. undici's custom connect.lookup resolves
+// the hostname exactly once via the injected `resolve`, validates EVERY
+// answer with the hardened classifyAddress BEFORE any socket is opened, and
+// connects only to the validated IPs — so there is a single DNS resolution
+// per connection and no separate "validate, then resolve again" TOCTOU
+// window. undici preserves the original Host header and TLS SNI/cert against
+// the hostname regardless of which IP the lookup callback selects. A plain
+// Agent with a custom `connect` never consults HTTP(S)_PROXY — there is no
+// proxy-dispatch code path for it to reach.
 //
-// Task 4's amendment note: Node skips `lookup` entirely for an IP-literal
-// hostname, so this Agent alone does not protect a hop whose URL is already
-// an IP literal (e.g. a redirect to 127.0.0.1 or 169.254.169.254) — that
-// synchronous per-hop check is pinnedRequest's job (Task 4).
+// Node skips `lookup` entirely for an IP-literal hostname, so this Agent
+// alone does not protect a hop whose URL is already an IP literal (e.g. a
+// redirect to 127.0.0.1 or 169.254.169.254) — that synchronous per-hop check
+// is validateHopUrlSync's job, called from pinnedRequest before every hop.
 
-export interface PinnedPolicy {
+export type PinnedPolicy = {
   allowPrivateNetwork: boolean;
   // Hop 0 from --base-url: skip the private-address deny (metadata is still
-  // always denied). A redirect hop (Task 4) is never trusted.
+  // always denied). A redirect hop is never trusted.
   trusted: boolean;
-}
+};
 
-// Bound to the call's abort signal by the caller (Task 4's pinnedRequest).
+// Bound to the call's abort signal by the caller (pinnedRequest).
 export type Resolve = (hostname: string) => Promise<readonly string[]>;
 
 // Bounds the cost of validating a hostile/misconfigured resolver's answer
 // set, and the size of the address array handed to undici's connector.
 export const MAX_DNS_ANSWERS = 32;
 
-// M5 Task 4 amendment (MED egress-error classification): undici's fetch
-// surfaces a connect-time lookup failure as a generic
+// Undici's fetch surfaces a connect-time lookup failure as a generic
 // `TypeError("fetch failed")` whose `.cause` carries the ORIGINAL lookup
-// error (probe-confirmed) — `.message` alone cannot discriminate an egress
-// policy denial from a genuine network failure. Every policy-driven
-// rejection below (zero/too-many/non-IP answers, metadata, private) is
-// thrown as this branded class so pinnedRequest (Task 4) can walk
-// `err.cause`/`err.cause.errors` and classify reliably via `instanceof`
-// rather than matching a message string. A resolver's OWN thrown/rejected
-// error (a genuine DNS/network failure, not a policy decision) stays a
-// plain Error via `asError` below and is classified 'network'.
+// error — `.message` alone cannot discriminate an egress policy denial from a
+// genuine network failure. Every policy-driven rejection below
+// (zero/too-many/non-IP answers, metadata, private) is thrown as this
+// branded class so pinnedRequest can walk `err.cause`/`err.cause.errors` and
+// classify reliably via `instanceof` rather than matching a message string. A
+// resolver's OWN thrown/rejected error (a genuine DNS/network failure, not a
+// policy decision) stays a plain Error via `asError` below and is classified
+// 'network'.
 export class EgressError extends Error {
   public constructor(message: string) {
     super(message);
@@ -58,18 +57,15 @@ const asError = (err: unknown): Error => (err instanceof Error ? err : new Error
 // connector always calls back with options.all === true, so the fallback
 // branch below is otherwise unreachable through a real fetch.
 //
-// M5 Task 4 amendment (round-2 review, restoring a wrongly-removed guard): a
-// callback-once latch was previously removed here on the theory that V8's
-// Promise/thenable dedup already made a second settle call unreachable. That
-// reasoning missed a real path: if the SUCCESS-path settle call itself (the
-// `.then` handler's own `settle(...)`) throws synchronously — e.g. a
-// misbehaving downstream lookup callback — that throw rejects the `.then`'s
-// promise, which is then caught by the trailing `.catch` below, which calls
-// settle a SECOND time with the thrown error. V8's dedup guarantees a
-// thenable settles only once; it says nothing about a handler that settles
-// once successfully and then throws. Reproduced empirically (2 invocations
-// without this latch); the latch below and the accompanying test make the
-// "exactly once" contract real again.
+// A callback-once latch is required here: V8's Promise/thenable dedup alone
+// does not make a second settle call unreachable. If the SUCCESS-path settle
+// call itself (the `.then` handler's own `settle(...)`) throws synchronously
+// — e.g. a misbehaving downstream lookup callback — that throw rejects the
+// `.then`'s promise, which is then caught by the trailing `.catch` below,
+// which calls settle a SECOND time with the thrown error. V8's dedup
+// guarantees a thenable settles only once; it says nothing about a handler
+// that settles once successfully and then throws. The latch below keeps the
+// "exactly once" contract true in that case too.
 export const pinnedLookup =
   (policy: PinnedPolicy, resolve: Resolve): LookupFunction =>
   (hostname, options, callback) => {
@@ -81,7 +77,7 @@ export const pinnedLookup =
     // contract itself is a Node-style callback), not the callback-inside-
     // promise anti-pattern the rule targets. Latched so the underlying
     // `callback` fires at most once even if the success path itself throws
-    // and re-enters via `.catch` (see the amendment above).
+    // and re-enters via `.catch`.
     const settle: typeof callback = (err, address, family) => {
       if (settled) {
         return;
@@ -89,11 +85,13 @@ export const pinnedLookup =
       settled = true;
       callback(err, address, family);
     };
-    // Wrapped in Promise.resolve().then(...) (round-1 amendment) so a
-    // SYNCHRONOUS throw inside `resolve` still reaches the .catch below
-    // instead of leaving the callback — and the request — hanging.
+    // Wrapped in Promise.resolve().then(...) so a SYNCHRONOUS throw inside
+    // `resolve` still reaches the .catch below instead of leaving the
+    // callback — and the request — hanging.
     Promise.resolve()
+      // oxlint-disable-next-line promise/prefer-await-to-then -- bridges into LookupFunction's Node-style (hostname, options, callback) contract; the callback has no async form to await into
       .then(() => resolve(hostname))
+      // oxlint-disable-next-line promise/prefer-await-to-then -- continues the same callback-contract bridge chain as the .then above
       .then((addresses) => {
         if (addresses.length === 0) {
           return settle(
@@ -122,10 +120,10 @@ export const pinnedLookup =
             );
           }
         }
-        // The array-callback form is valid only when options.all === true
-        // (round-1 amendment: do not ignore `options`). Node/undici's
-        // connector always requests it that way (probe-confirmed), but a
-        // defensive single-address fallback keeps the contract honest.
+        // The array-callback form is valid only when options.all === true, so
+        // that flag is checked rather than ignored. Node/undici's connector
+        // always requests it that way, but a defensive single-address
+        // fallback keeps the contract honest.
         if (options.all === true) {
           return settle(
             null,
@@ -137,19 +135,19 @@ export const pinnedLookup =
         // kept total per the lookup contract's non-`all` form.
         return settle(null, first ?? '', first === undefined ? undefined : isIP(first));
       })
-      .catch((err: unknown) => settle(asError(err), []));
+      // oxlint-disable-next-line promise/prefer-await-to-then -- terminal handler of the same callback-contract bridge chain; settles the LookupFunction callback on any rejection
+      .catch((error: unknown) => settle(asError(error), []));
   };
 
 export const createPinnedAgent = (policy: PinnedPolicy, resolve: Resolve): Agent =>
   new Agent({ connect: { lookup: pinnedLookup(policy, resolve) } });
 
-// M5 Task 4 (design §2.1-2.2, §5, D4/D5/D6): the shared, SSRF-safe redirect
-// transport built on top of createPinnedAgent above. Manual redirects capped
-// at MAX_REDIRECTS, a fresh per-hop pinned Agent (never trusted past hop 0),
-// monotonic cross-origin header stripping, a write-method redirect abort, a
-// merged client+timeout deadline, and a decompressed-byte cap. Never
-// produces a ToolCallOutcome (SDK-neutral) — bytes+status+contentType or a
-// typed error the caller maps.
+// The shared, SSRF-safe redirect transport built on top of createPinnedAgent
+// above. Manual redirects capped at MAX_REDIRECTS, a fresh per-hop pinned
+// Agent (never trusted past hop 0), monotonic cross-origin header stripping,
+// a write-method redirect abort, a merged client+timeout deadline, and a
+// decompressed-byte cap. Never produces a ToolCallOutcome (SDK-neutral) —
+// bytes+status+contentType or a typed error the caller maps.
 
 export type PinnedErrorReason =
   | 'timeout'
@@ -161,27 +159,27 @@ export type PinnedErrorReason =
   | 'redirect-invalid'
   | 'network';
 
-export interface PinnedResponse {
+export type PinnedResponse = {
   kind: 'response';
   status: number;
   // Raw response Content-Type header, undefined if absent.
   contentType?: string;
   // Decompressed, capped.
   bodyBytes: Uint8Array;
-}
+};
 
 export type PinnedOutcome =
   | PinnedResponse
   | { kind: 'error'; reason: PinnedErrorReason; detail?: string };
 
-export interface HopHeaders {
+export type HopHeaders = {
   // Sent only while still on the original origin (auth + tool + content).
   sameOriginHeaders: Record<string, string>;
   // The minimal safe set for a foreign origin (content only).
   crossOriginHeaders: Record<string, string>;
-}
+};
 
-export interface PinnedRequestOptions {
+export type PinnedRequestOptions = {
   method: string;
   headers: HopHeaders;
   // Already-serialized; never sent on GET/HEAD or after hop 0.
@@ -193,21 +191,21 @@ export interface PinnedRequestOptions {
   maxResponseBytes: number;
   // The MCP client-cancel signal (extra.signal).
   signal: AbortSignal;
-}
+};
 
 // Typed via undici's own fetch, never Node's global fetch (dual-package
-// hazard, probe-confirmed: the global fetch rejects an installed-undici
-// Agent) — a type-only import, so it does not pull in a fetch VALUE and
-// keeps this module free of a module-level singleton.
+// hazard: the global fetch rejects an installed-undici Agent) — a type-only
+// import, so it does not pull in a fetch VALUE and keeps this module free of
+// a module-level singleton.
 type UndiciFetch = typeof undiciFetchType;
 type UndiciResponse = Awaited<ReturnType<UndiciFetch>>;
 
-export interface PinnedDeps {
+export type PinnedDeps = {
   fetch: UndiciFetch;
   resolve: (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
   // Default () => AbortSignal.timeout(ms); injectable for tests.
   timeoutSignal: (ms: number) => AbortSignal;
-}
+};
 
 export const MAX_REDIRECTS = 5;
 
@@ -228,18 +226,30 @@ const hostnameOf = (url: URL): string => {
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+// Sync try/catch confined entirely to this helper — `new URL` throws
+// synchronously on an invalid Location header. A `.catch()` chain has no
+// meaning for a non-Promise call, and this stays purely local: no lock,
+// abort, or cleanup boundary is crossed by extracting it.
+const parseRedirectLocation = (location: string, base: URL): URL | undefined => {
+  try {
+    return new URL(location, base);
+  } catch {
+    return undefined;
+  }
+};
+
 type AbortWinner = 'cancelled' | 'timeout';
 
-// M5 Task 4 amendment (round-2 review, MED fix): discriminates the abort
-// WINNER by which component signal actually fired FIRST, captured at fire
-// time via a `{ once: true }` listener on EACH of the client signal and the
-// timeout signal — never by re-checking `.aborted` at error-handling time.
-// Re-checking `.aborted` later misclassifies a timeout-then-client race: the
-// timeout signal fires and wins first, but by the time the error path reads
-// `opts.signal.aborted` the client signal has ALSO since aborted (e.g. an
-// MCP client cancelling right after a server-side timeout already
-// committed) — the old check would then wrongly report 'cancelled'. A signal
-// already aborted before this function runs never re-fires its 'abort'
+// Discriminates the abort WINNER by which component signal actually fired
+// FIRST, captured at fire time via a `{ once: true }` listener on EACH of the
+// client signal and the timeout signal — never by re-checking `.aborted` at
+// error-handling time. Re-checking `.aborted` later misclassifies a
+// timeout-then-client race: the timeout signal fires and wins first, but by
+// the time the error path reads `opts.signal.aborted` the client signal has
+// ALSO since aborted (e.g. an MCP client cancelling right after a
+// server-side timeout already committed) — a check based on `.aborted` alone
+// would then wrongly report 'cancelled'. A signal already aborted before
+// this function runs never re-fires its 'abort'
 // event, so an already-aborted signal is recorded immediately instead of via
 // a listener. Whichever is recorded FIRST (by call order below, or by
 // firing order once both are live) wins; later recordings are no-ops.
@@ -276,9 +286,8 @@ const trackAbortWinner = (
 const isCancel = (winner: AbortWinner | undefined, clientSignal: AbortSignal): PinnedErrorReason =>
   winner ?? (clientSignal.aborted ? 'cancelled' : 'timeout');
 
-// M5 Task 4 amendment (HIGH egress-bypass #1): Node/undici skip
-// connect.lookup ENTIRELY for an IP-literal hostname, so createPinnedAgent's
-// lookup never runs for a hop whose URL is already an IP literal (a
+// Node/undici skip connect.lookup ENTIRELY for an IP-literal hostname, so
+// createPinnedAgent's lookup never runs for a hop whose URL is already an IP literal (a
 // redirect target, or even hop 0). This synchronous check closes that gap
 // for EVERY hop, classifying under the SAME trust policy the Agent for that
 // hop would apply, BEFORE any Agent is built or request issued. Returns an
@@ -320,10 +329,10 @@ const isEgressError = (value: unknown): value is EgressError => value instanceof
 
 // Bounds a hostile/cyclical cause chain so classification cannot loop
 // forever. undici wraps a connect-time lookup failure as a generic
-// TypeError("fetch failed") whose `.cause` carries the ORIGINAL EgressError
-// (probe-confirmed); an AggregateError-shaped cause (an `.errors` array) is
-// also walked, since some Node error aggregation paths use that shape
-// without literally being an AggregateError instance.
+// TypeError("fetch failed") whose `.cause` carries the ORIGINAL EgressError;
+// an AggregateError-shaped cause (an `.errors` array) is also walked, since
+// some Node error aggregation paths use that shape without literally being
+// an AggregateError instance.
 const MAX_CAUSE_DEPTH = 8;
 const containsEgressError = (err: unknown, depth = 0): boolean => {
   if (depth > MAX_CAUSE_DEPTH || err === null || typeof err !== 'object') {
@@ -340,27 +349,26 @@ const containsEgressError = (err: unknown, depth = 0): boolean => {
   return cause === undefined ? false : containsEgressError(cause, depth + 1);
 };
 
-// (MED) egress-error classification (round-1 amendment): never read
-// err.message (undici's generic "fetch failed" TypeError tells us nothing);
-// walk the cause chain for the branded EgressError instead. Anything else is
-// a genuine network failure.
+// Never read err.message (undici's generic "fetch failed" TypeError tells us
+// nothing); walk the cause chain for the branded EgressError instead.
+// Anything else is a genuine network failure.
 const classifyFetchError = (err: unknown): PinnedErrorReason =>
   containsEgressError(err) ? 'egress' : 'network';
 
-// (LOW) content-length fast-reject applies when content-encoding is ABSENT
-// or normalizes to 'identity' — not only absent (round-1 amendment):
-// an encoded response's declared length describes the WIRE size, not the
-// decompressed size the cap is measured against.
+// Content-length fast-reject applies when content-encoding is ABSENT or
+// normalizes to 'identity' — not only absent: an encoded response's declared
+// length describes the WIRE size, not the decompressed size the cap is
+// measured against.
 const isIdentityEncoding = (value: string | null): boolean =>
   value === null || value.trim().toLowerCase() === 'identity';
 
 // Reads response.body via getReader(), counting DECOMPRESSED bytes. Mirrors
 // spec/fetch.ts's readBodyCapped, adapted to a content-encoding-aware
-// pre-check (D6) and a local TooLargeError sentinel (not a message
-// match). Cancels the reader/body for any incompletely-consumed body — the
-// fast-reject, the over-cap stream, and an unexpected reader error alike
-// (round-1 Agent-lifecycle amendment) — before this function returns
-// or throws, so the caller's Agent teardown never races a live response.
+// pre-check and a local TooLargeError sentinel (not a message match).
+// Cancels the reader/body for any incompletely-consumed body — the
+// fast-reject, the over-cap stream, and an unexpected reader error alike —
+// before this function returns or throws, so the caller's Agent teardown
+// never races a live response.
 const readCapped = async (
   response: UndiciResponse,
   maxBytes: number,
@@ -370,7 +378,7 @@ const readCapped = async (
   if (isIdentityEncoding(response.headers.get('content-encoding')) && contentLength !== null) {
     const declared = Number(contentLength);
     if (Number.isFinite(declared) && declared > maxBytes) {
-      await response.body?.cancel().catch(() => undefined);
+      await response.body?.cancel().catch(() => {});
       throw new TooLargeError(
         `declared content-length ${declared} exceeds the ${maxBytes}-byte budget`,
       );
@@ -389,7 +397,8 @@ const readCapped = async (
   let aborted = false;
   const onAbort = (): void => {
     aborted = true;
-    reader.cancel().catch(() => undefined);
+    // oxlint-disable-next-line promise/prefer-await-to-then -- detached from a synchronous 'abort' event listener, which cannot be awaited; a rejection here has nowhere to go but this catch
+    reader.cancel().catch(() => {});
   };
   if (signal.aborted) {
     onAbort();
@@ -407,16 +416,16 @@ const readCapped = async (
       }
       received += value.byteLength;
       if (received > maxBytes) {
-        await reader.cancel().catch(() => undefined);
+        await reader.cancel().catch(() => {});
         throw new TooLargeError(`decompressed body exceeds the ${maxBytes}-byte budget`);
       }
       chunks.push(value);
     }
-  } catch (err) {
-    if (!(err instanceof TooLargeError)) {
-      await reader.cancel().catch(() => undefined);
+  } catch (error) {
+    if (!(error instanceof TooLargeError)) {
+      await reader.cancel().catch(() => {});
     }
-    throw err;
+    throw error;
   } finally {
     signal.removeEventListener('abort', onAbort);
   }
@@ -437,6 +446,10 @@ export const pinnedRequest = async (
   // live listener for the whole call (see trackAbortWinner's design note).
   const getAbortWinner = trackAbortWinner(opts.signal, timeoutSig);
   const originalOrigin = initialUrl.origin;
+  // Imperative on purpose: `url`/`crossed` carry state across redirect hops
+  // and `hop` bounds a loop whose body performs a real network fetch per
+  // iteration — map/filter cannot express a sequential, early-returning,
+  // side-effecting hop chain capped at MAX_REDIRECTS.
   let url = initialUrl;
   let crossed = false;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
@@ -444,6 +457,7 @@ export const pinnedRequest = async (
     // caller's trust.
     const trusted = hop === 0 ? opts.baseTrusted : false;
     const policy: PinnedPolicy = { allowPrivateNetwork: opts.allowPrivateNetwork, trusted };
+    // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
     const sync = validateHopUrlSync(url, policy);
     if (sync !== undefined) {
       return { kind: 'error', reason: 'egress', detail: sync };
@@ -458,6 +472,12 @@ export const pinnedRequest = async (
     const { method } = opts;
     const sendBody =
       hop === 0 && opts.body !== undefined && !GET_HEAD_METHODS.has(method.toUpperCase());
+    // Declared then assigned inside try/catch (not `.catch()`): a fetch
+    // rejection must first destroy() the agent and classify the error
+    // (cancelled vs timeout vs egress vs network) before this function can
+    // decide what to return — that sequence cannot be expressed as a value
+    // produced by a `.catch()` handler without duplicating the
+    // classification logic.
     let response: UndiciResponse;
     try {
       response = await deps.fetch(url, {
@@ -468,20 +488,24 @@ export const pinnedRequest = async (
         redirect: 'manual',
         signal,
       });
-    } catch (err) {
-      // Exceptional path (round-1 Agent-lifecycle amendment):
-      // destroy(), never the graceful close() that may await a live
-      // response.
-      await agent.destroy().catch(() => undefined);
+    } catch (error) {
+      // Exceptional path: destroy(), never the graceful close() that may
+      // await a live response.
+      await agent.destroy().catch(() => {});
       if (signal.aborted) {
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
-      return { kind: 'error', reason: classifyFetchError(err), detail: describeCause(err) };
+      return { kind: 'error', reason: classifyFetchError(error), detail: describeCause(error) };
     }
+    // Threaded through the try/catch/finally below on purpose: the finally
+    // block chooses destroy() vs close() based on whether the try body
+    // threw, and that choice must be made in the SAME finally regardless of
+    // which return path fired above — extracting it would move cleanup
+    // across the try/finally boundary.
     let exceptional = false;
     try {
       if (REDIRECT_STATUSES.has(response.status)) {
-        await response.body?.cancel().catch(() => undefined);
+        await response.body?.cancel().catch(() => {});
         if (WRITE_METHODS.has(method.toUpperCase())) {
           return { kind: 'error', reason: 'redirect-write-method' };
         }
@@ -489,10 +513,8 @@ export const pinnedRequest = async (
         if (location === null) {
           return { kind: 'error', reason: 'redirect-invalid', detail: 'no Location header' };
         }
-        let next: URL;
-        try {
-          next = new URL(location, url);
-        } catch {
+        const next = parseRedirectLocation(location, url);
+        if (next === undefined) {
           return { kind: 'error', reason: 'redirect-invalid', detail: 'invalid Location header' };
         }
         if (next.origin !== originalOrigin) {
@@ -509,20 +531,20 @@ export const pinnedRequest = async (
         ...(contentType === null ? {} : { contentType }),
         bodyBytes,
       };
-    } catch (capErr) {
+    } catch (error) {
       exceptional = true;
       if (signal.aborted) {
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
-      if (capErr instanceof TooLargeError) {
+      if (error instanceof TooLargeError) {
         return { kind: 'error', reason: 'too-large' };
       }
-      return { kind: 'error', reason: 'network', detail: describeCause(capErr) };
+      return { kind: 'error', reason: 'network', detail: describeCause(error) };
     } finally {
       // Every non-exceptional path (a plain 200, or a redirect hop whose
       // body was already cancelled above) closes gracefully; every
       // exceptional path above already destroyed. Runs even on `continue`.
-      await (exceptional ? agent.destroy() : agent.close()).catch(() => undefined);
+      await (exceptional ? agent.destroy() : agent.close()).catch(() => {});
     }
   }
   return { kind: 'error', reason: 'redirect-loop' };

@@ -1,5 +1,6 @@
 import { parseDocument } from 'yaml';
-import { validationError, type OpenapiMcpError } from '../errors.ts';
+import { validationError } from '../errors.ts';
+import type { OpenapiMcpError } from '../errors.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 
 const stripBom = (text: string): string => (text.startsWith('\uFEFF') ? text.slice(1) : text);
@@ -44,7 +45,7 @@ const combinedError = (jsonError: unknown, yamlProblem: unknown): OpenapiMcpErro
 
 const parseAsYaml = (text: string, jsonError: unknown): unknown => {
   // Fail-closed YAML: parseDocument surfaces unresolved tags as warnings and
-  // duplicate keys / multi-doc streams as errors; parse() would only warn (D2)
+  // duplicate keys / multi-doc streams as errors; parse() would only warn
   const doc = parseDocument(text, { schema: 'core', version: '1.2', uniqueKeys: true });
   const firstProblem = doc.errors[0] ?? doc.warnings[0];
   if (firstProblem !== undefined) {
@@ -52,14 +53,14 @@ const parseAsYaml = (text: string, jsonError: unknown): unknown => {
   }
   try {
     return doc.toJS({ maxAliasCount: SPEC_BUDGETS.maxYamlAliases });
-  } catch (err) {
-    if (err instanceof RangeError) {
-      throw err;
+  } catch (error) {
+    if (error instanceof RangeError) {
+      throw error;
     }
-    if (err instanceof ReferenceError) {
+    if (error instanceof ReferenceError) {
       throw validationError(`spec exceeds the YAML alias budget of ${SPEC_BUDGETS.maxYamlAliases}`);
     }
-    throw combinedError(jsonError, err);
+    throw combinedError(jsonError, error);
   }
 };
 
@@ -75,25 +76,28 @@ const parseJsonFirst = (text: string): unknown => {
   }
 };
 
+const parseTextOrThrow = (text: string, sniffed: string): unknown => {
+  try {
+    return sniffed.startsWith('{') || sniffed.startsWith('[')
+      ? parseJsonFirst(text)
+      : // oxlint-disable-next-line unicorn/no-useless-undefined -- parseAsYaml's jsonError is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
+        parseAsYaml(text, undefined);
+  } catch (error) {
+    if (error instanceof RangeError) {
+      // V8 recursion limit hit before the depth budget below could run
+      throw validationError('spec nesting is too deep to parse');
+    }
+    throw error;
+  }
+};
+
 export const parseSpecText = (raw: string): Record<string, unknown> => {
   const text = stripBom(raw);
   const sniffed = text.trimStart();
   if (sniffed === '') {
     throw validationError('spec document is empty');
   }
-  let parsed: unknown;
-  try {
-    parsed =
-      sniffed.startsWith('{') || sniffed.startsWith('[')
-        ? parseJsonFirst(text)
-        : parseAsYaml(text, undefined);
-  } catch (err) {
-    if (err instanceof RangeError) {
-      // V8 recursion limit hit before the depth budget below could run
-      throw validationError('spec nesting is too deep to parse');
-    }
-    throw err;
-  }
+  const parsed = parseTextOrThrow(text, sniffed);
   checkDepth(parsed, SPEC_BUDGETS.maxParseDepth);
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw validationError('spec root must be a JSON/YAML object');

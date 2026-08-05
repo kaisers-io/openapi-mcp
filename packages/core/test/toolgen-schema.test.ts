@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { convertSchema, MAX_CONVERT_DEPTH, type SchemaResult } from '../src/index.ts';
+import { convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
+import type { SchemaResult } from '../src/index.ts';
 
 const ok = (r: SchemaResult): z.ZodType => {
-  if (!('ok' in r)) throw new Error(`expected ok, got unrepresentable: ${r.unrepresentable}`);
+  if (!('ok' in r)) {
+    throw new Error(`expected ok, got unrepresentable: ${r.unrepresentable}`);
+  }
   return r.ok;
 };
 
@@ -63,7 +66,7 @@ describe('convertSchema — scalars', () => {
   it('handles 3.1 numeric and 3.0 boolean exclusive bounds', () => {
     // The numeric form is the 3.1 dialect (default version); the boolean modifier
     // form is 3.0-only, so it MUST pass '3.0' — under 3.1 a boolean exclusive bound
-    // is malformed for the dialect and omits (round-12 fail-closed decision).
+    // is malformed for the dialect and omits (fail-closed decision).
     const numeric = ok(convertSchema({ type: 'number', exclusiveMinimum: 0 }, '3.1'));
     expect(numeric.safeParse(0).success).toBe(false);
     expect(numeric.safeParse(0.1).success).toBe(true);
@@ -130,8 +133,8 @@ describe('convertSchema — enum, const, null', () => {
   });
 
   it('omits an enum with duplicate values', () => {
-    // Non-unique enum is malformed (meta-schema uniqueItems); omit (fail-closed,
-    // round-13), consistent with the type/required uniqueness gates.
+    // Non-unique enum is malformed (meta-schema uniqueItems); omit (fail-closed),
+    // consistent with the type/required uniqueness gates.
     expect('unrepresentable' in convertSchema({ enum: ['a', 'a'] })).toBe(true);
     expect('unrepresentable' in convertSchema({ enum: [1, 1] })).toBe(true);
     expect('ok' in convertSchema({ enum: ['a', 'b'] })).toBe(true);
@@ -140,7 +143,7 @@ describe('convertSchema — enum, const, null', () => {
   it('omits a non-finite enum or const number (NaN/Infinity are not valid JSON)', () => {
     // YAML 1.2 parses `.nan`/`.inf` to NaN/Infinity; z.literal(NaN) would validate NaN
     // while z.toJSONSchema emits const:null — a wire/validator divergence. Omit
-    // (fail-closed, round-14). Build the values numerically (no raw literals).
+    // (fail-closed). Build the values numerically (no raw literals).
     expect('unrepresentable' in convertSchema({ enum: [Number.NaN] })).toBe(true);
     expect('unrepresentable' in convertSchema({ enum: [1, Number.POSITIVE_INFINITY] })).toBe(true);
     expect('unrepresentable' in convertSchema({ const: Number.POSITIVE_INFINITY })).toBe(true);
@@ -180,9 +183,16 @@ describe('convertSchema — enum, const, null', () => {
     expect(ok(convertSchema({ type: ['null'] })).safeParse(null).success).toBe(true);
   });
 
+  it('omits an empty type array even with a sibling 3.0 nullable flag', () => {
+    // `type: []` matches no type regardless of `nullable: true` — the 3.0 flag
+    // widens an existing type, it cannot conjure one. Only an explicit 'null'
+    // member may collapse the array to z.null(); the empty array stays omitted.
+    expect('unrepresentable' in convertSchema({ type: [], nullable: true }, '3.0')).toBe(true);
+  });
+
   it('omits a type array with duplicate entries', () => {
     // JSON Schema requires unique `type` elements; a duplicate omits even though it
-    // would collapse to a valid shape (fail-closed, round-13). The accepted unique
+    // would collapse to a valid shape (fail-closed). The accepted unique
     // [T,'null'] normalization is unaffected.
     expect('unrepresentable' in convertSchema({ type: ['null', 'null'] })).toBe(true);
     expect('unrepresentable' in convertSchema({ type: ['string', 'null', 'null'] })).toBe(true);
@@ -193,7 +203,7 @@ describe('convertSchema — enum, const, null', () => {
     // numberSchema must read the NORMALIZED type, not node.type: for
     // type:['integer','null'] node.type is the array, so a naive `node.type ===
     // 'integer'` widens to a plain number that accepts 1.5. The nullable integer must
-    // still reject 1.5 (round-14).
+    // still reject 1.5.
     const s = ok(convertSchema({ type: ['integer', 'null'] }, '3.1'));
     expect(s.safeParse(1).success).toBe(true);
     expect(s.safeParse(null).success).toBe(true);
@@ -202,11 +212,21 @@ describe('convertSchema — enum, const, null', () => {
     expect(ok(convertSchema({ type: ['integer'] })).safeParse(1.5).success).toBe(false);
   });
 
-  // The `required` element/uniqueness gate (also in malformedKeyword) can only be
-  // FALSIFIED against the object path, which is a placeholder at Task 1 — so the
-  // test + falsification live in Task 2 (`omits a required array …`), like the
-  // nullable-composition guard. malformedKeyword still runs at Task 1; it just
-  // cannot be distinguished from the placeholder here.
+  it('keeps the 3.0 nullable flag when type is an array without a null member', () => {
+    // type:['string'] (a single-element array, no 'null' member) plus a sibling
+    // 3.0 nullable:true must still admit null. The array branch's nullable
+    // must OR in the 3.0 nodeNullable flag, not derive solely from whether
+    // 'null' appears among the array's own elements.
+    const s = ok(convertSchema({ type: ['string'], nullable: true }, '3.0'));
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse('x').success).toBe(true);
+  });
+
+  // The `required` element/uniqueness gate lives inside malformedKeyword, which
+  // also handles the scalar keyword misuse checked above; its object-path
+  // falsification (a non-string or duplicate `required` element) is tested
+  // separately below (`omits a required array …`), alongside the
+  // nullable-composition guard's own dedicated test.
 
   it('omits a wrong-version exclusive bound (form is version-gated)', () => {
     // 3.1 requires the NUMERIC form; a boolean exclusiveMinimum is malformed there.
@@ -228,7 +248,7 @@ describe('convertSchema — enum, const, null', () => {
   it('omits a 3.0 boolean exclusive bound without its paired minimum/maximum', () => {
     // In the 3.0/draft-4 dialect the boolean exclusiveMinimum/Maximum is a modifier
     // that REQUIRES its paired minimum/maximum; without the pair it is malformed and
-    // would leave the number unconstrained (a widening) — omit instead (round-13).
+    // would leave the number unconstrained (a widening) — omit instead.
     expect(
       'unrepresentable' in convertSchema({ type: 'number', exclusiveMinimum: true }, '3.0'),
     ).toBe(true);
@@ -284,10 +304,9 @@ describe('convertSchema — enum, const, null', () => {
     // a 3.1 `[T,'null']`-union combined with oneOf is caught earlier by the
     // conflict gate. Pass '3.0' explicitly so nullable is true and the guard fires;
     // with the default '3.1', nullable is ignored and the node is a plain
-    // (representable) oneOf, so this test would wrongly expect unrepresentable. Do
-    // NOT assert the 3.1-representable case here: at Task 1 the convertComposite
-    // placeholder returns unrepresentable for ANY composite regardless of version,
-    // so only the 3.0 guard path is stable across Task 1 and Task 2.
+    // (representable) oneOf, so this test would wrongly expect unrepresentable. The
+    // 3.1-representable case is asserted separately, in the companion test below
+    // ('represents a 3.1 nullable-composition node...').
     expect(
       'unrepresentable' in convertSchema({ nullable: true, oneOf: [{ type: 'string' }] }, '3.0'),
     ).toBe(true);
@@ -299,6 +318,7 @@ describe('convertSchema — keyword allowlist (fail-closed)', () => {
     ['uniqueItems', { type: 'array', items: { type: 'string' }, uniqueItems: true }],
     ['not', { not: { type: 'string' } }],
     ['patternProperties', { type: 'object', patternProperties: {} }],
+    // oxlint-disable-next-line unicorn/no-thenable -- `then:` here is a literal JSON-Schema if/then keyword fixture, not a thenable
     ['if', { if: { type: 'string' }, then: {} }],
     ['prefixItems', { prefixItems: [{ type: 'string' }] }],
     ['minProperties', { type: 'object', minProperties: 2 }],
@@ -312,9 +332,10 @@ describe('convertSchema — keyword allowlist (fail-closed)', () => {
     expect('ok' in convertSchema({ type: 'string', 'x-internal': true })).toBe(true);
   });
 
-  it('exports the depth budget (structural depth is falsified in Task 2)', () => {
-    // A real recursive-depth test needs the array branch (Task 2); at Task 1 only
-    // assert the budget is exported. Do not build a Task-1 node that cannot bind.
+  it('exports the depth budget (the recursive-depth test lives with the array branch below)', () => {
+    // A real recursive-depth test needs the array branch (see 'guards against
+    // pathological structural depth' below); this test only asserts the budget
+    // constant itself is exported.
     expect(typeof MAX_CONVERT_DEPTH).toBe('number');
   });
 });
@@ -446,8 +467,8 @@ describe('convertSchema — composites', () => {
   });
 
   it('omits an allOf whose outer type contradicts an object merge', () => {
-    // {type:'object', allOf:[{type:'string'}]} must omit — the single-member fast
-    // path used to drop the outer type and return a string.
+    // {type:'object', allOf:[{type:'string'}]} must omit — special-casing a
+    // single-member allOf would drop the outer type and return a string instead.
     expect(
       'unrepresentable' in convertSchema({ type: 'object', allOf: [{ type: 'string' }] }),
     ).toBe(true);
@@ -510,8 +531,8 @@ describe('convertSchema — composites', () => {
     // The frozen validator does not check Schema Object VALUES, so required:[123]
     // or required:['a','a'] reaches the converter; merely filtering non-strings (as
     // objectSchema would) silently accepts an invalid Schema Object. malformedKeyword
-    // omits it (fail-closed, round-12). Falsifiable only here — the object path is a
-    // placeholder at Task 1.
+    // omits it (fail-closed). This is the only place that falsifies the object path
+    // of the required element/uniqueness gate referenced above.
     expect(
       'unrepresentable' in
         convertSchema({ type: 'object', properties: { x: { type: 'string' } }, required: [123] }),
@@ -588,7 +609,7 @@ describe('convertSchema — composites', () => {
   it('omits an allOf member with a malformed required array', () => {
     // mergeAllOf processes members without convertSchema, so it must re-check a
     // member's `required` as an array of unique strings; a non-string or duplicate
-    // element would otherwise be silently filtered/deduped (fail-closed, round-14).
+    // element would otherwise be silently filtered/deduped (fail-closed).
     expect(
       'unrepresentable' in
         convertSchema({
@@ -605,7 +626,7 @@ describe('convertSchema — composites', () => {
 
   it('omits an allOf member with non-record properties', () => {
     // A non-record `properties` on a member would be silently skipped, producing a
-    // strictObject({}) instead of omitting (fail-closed, round-14).
+    // strictObject({}) instead of omitting (fail-closed).
     expect(
       'unrepresentable' in convertSchema({ allOf: [{ type: 'object', properties: 'wrong' }] }),
     ).toBe(true);
@@ -688,12 +709,11 @@ describe('convertSchema — composites', () => {
   });
 
   it('represents a 3.1 nullable-composition node as a plain union (nullable ignored, not widened)', () => {
-    // Companion to Task 1's `omits a nullable composition` (which uses '3.0'): under
-    // 3.1 the boolean `nullable` is not a keyword, so {nullable:true, oneOf:[...]} is
-    // a plain oneOf and IS representable. This can only be asserted at Task 2, where
-    // convertComposite really builds the union (the Task-1 placeholder returns
-    // unrepresentable for any composite regardless of version). Crucially, the result
-    // still REJECTS null — nullable is ignored, never widened to admit null.
+    // Companion to 'omits a nullable composition' (which uses '3.0'): under 3.1 the
+    // boolean `nullable` is not a keyword, so {nullable:true, oneOf:[...]} is a plain
+    // oneOf and IS representable — convertComposite really builds the union.
+    // Crucially, the result still REJECTS null — nullable is ignored, never widened
+    // to admit null.
     const s = ok(convertSchema({ nullable: true, oneOf: [{ type: 'string' }] }, '3.1'));
     expect(s.safeParse('x').success).toBe(true);
     expect(s.safeParse(null).success).toBe(false);
@@ -751,7 +771,9 @@ describe('convertSchema — composites', () => {
 
   it('guards against pathological structural depth', () => {
     let node: Record<string, unknown> = { type: 'string' };
-    for (let i = 0; i <= MAX_CONVERT_DEPTH + 1; i += 1) node = { type: 'array', items: node };
+    for (let i = 0; i <= MAX_CONVERT_DEPTH + 1; i += 1) {
+      node = { type: 'array', items: node };
+    }
     expect('unrepresentable' in convertSchema(node)).toBe(true);
   });
 });

@@ -1,24 +1,27 @@
 import { spawn } from 'node:child_process';
 import { Buffer } from 'node:buffer';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { connect } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 // A real 43-char unpadded Base64URL token decoding to exactly 32 bytes (256
-// bits) — the grammar `isValidBearerToken` (Task 7, corrected) actually
-// requires; a bare ">=32 chars" string like the old `'A'.repeat(32)` fixture
-// would now be REJECTED at CLI startup.
+// bits) — the shape `isValidBearerToken` requires; a bare ">=32 chars"
+// string such as 'A'.repeat(32) does not decode to 32 bytes and is REJECTED
+// at CLI startup.
 const TOKEN = 'A'.repeat(43);
-// Candidate ports tried in order (LOW fix): rather than a single fixed port
-// that can flake under a concurrent CI run/leftover process, retry against a
-// small pool and skip a candidate whose bind fails — the CLI's own
-// 'error'-listener fix (Step 3) makes an EADDRINUSE failure exit promptly
-// with a nonzero code instead of hanging, which is what makes retrying here
+// Candidate ports tried in order rather than a single fixed port that can
+// flake under a concurrent CI run/leftover process: retry against a small
+// pool and skip a candidate whose bind fails — the CLI's own
+// 'error'-listener handling makes an EADDRINUSE failure exit promptly with a
+// nonzero code instead of hanging, which is what makes retrying here
 // safe/bounded.
 const CANDIDATE_PORTS = [3999, 4083, 4177, 4271];
-const ACCEPT_HEADER = 'application/json, text/event-stream'; // POST requires BOTH (v1.29 transport requirement — see Verified Facts)
+const ACCEPT_HEADER = 'application/json, text/event-stream'; // The v1.29 Streamable HTTP transport requires POST to send both media types in one Accept header
 
 const url = (port: number): string => `http://127.0.0.1:${String(port)}/`;
 
@@ -61,7 +64,7 @@ const waitForPortOrExit = (
         await fetch(url(port), { method: 'POST', headers: authHeaders(), body: '{}' });
         return true;
       } catch {
-        // eslint-disable-next-line no-await-in-loop -- a bounded liveness poll must sleep between attempts, sequentially, by design
+        // Sequential on purpose: a bounded liveness poll must sleep between attempts by design.
         await new Promise<void>((resolve) => {
           setTimeout(resolve, 50);
         });
@@ -72,12 +75,24 @@ const waitForPortOrExit = (
   return Promise.race([exited, poll()]);
 };
 
+// Every child spawned via spawnServeHttp (or ad hoc further below) gets an
+// ISOLATED temp HOME — never the real ~/.kaisers-io/openapi-mcp/cache —
+// matching cache-concurrency.test.ts's fixture.home pattern, so this suite
+// never races another vitest worker's children over the real user cache's
+// namespace refresh lock. Tracked at module scope (spawnServeHttp lives
+// outside the describe block below) and drained by the describe's own
+// afterEach.
+const activeTempHomes: string[] = [];
+
 // Spawns `serve --http`, retrying across CANDIDATE_PORTS if a bind fails
 // (EADDRINUSE) — returns the process AND the port it actually landed on.
 const spawnServeHttp = async (
   extraArgs: readonly string[] = [],
 ): Promise<{ proc: ReturnType<typeof spawn>; port: number }> => {
   for (const port of CANDIDATE_PORTS) {
+    // Sequential on purpose: a fresh temp home per candidate is intentional — reusing one across candidates risks a stale lock from a killed prior candidate.
+    const home = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-http-'));
+    activeTempHomes.push(home);
     const proc = spawn(
       process.execPath,
       [
@@ -85,9 +100,9 @@ const spawnServeHttp = async (
         'serve',
         '--spec',
         'petstore.json',
-        // Petstore.json has no `servers` entry (M5 Task 5/11: a file spec
-        // with no absolute server needs an explicit --base-url) — this
-        // fixture never actually calls an upstream tool, so any
+        // Petstore.json has no `servers` entry (a file spec with no absolute
+        // server needs an explicit --base-url) — this fixture never
+        // actually calls an upstream tool, so any
         // syntactically valid, non-listening address is fine unless a test
         // overrides it via extraArgs.
         '--base-url',
@@ -99,25 +114,41 @@ const spawnServeHttp = async (
         'MCP_TOKEN',
         ...extraArgs,
       ],
-      { cwd: fixturesDir, env: { ...process.env, MCP_TOKEN: TOKEN } },
+      {
+        cwd: fixturesDir,
+        env: { ...process.env, HOME: home, USERPROFILE: home, MCP_TOKEN: TOKEN },
+      },
     );
-    // eslint-disable-next-line no-await-in-loop -- sequential candidate probing is intentional here
+    // Sequential on purpose: candidate probing is intentional here, one at a time.
     const up = await waitForPortOrExit(proc, port);
     if (up) {
       return { proc, port };
     }
-    proc.kill('SIGKILL');
+    // A candidate that lost the bind (EADDRINUSE) usually ALREADY exited —
+    // waitForPortOrExit consumed its one 'exit' event, so a listener attached
+    // now would never fire and hang the retry loop. Await only a still-live
+    // child, with the listener registered BEFORE the kill.
+    if (proc.exitCode === null && proc.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        proc.once('exit', () => {
+          resolve();
+        });
+      });
+      proc.kill('SIGKILL');
+      // Sequential on purpose: the failed candidate must be fully gone before the next iteration reuses the port pool.
+      await exited;
+    }
   }
   throw new Error('serve --http never came up on any candidate port');
 };
 
 // Decodes an HTTP/1.1 chunked-transfer body (size-in-hex\r\n<bytes>\r\n,
 // repeated, terminated by a 0-size chunk) back to plain text. Needed
-// because the two competing code paths the T1 test below distinguishes
-// respond with DIFFERENT framing for the exact same raw request — this
-// module's own jsonRpcError() ends up chunked, while the MCP SDK
-// transport's own rejection path sets a plain Content-Length — so the raw
-// response text must be decoded uniformly to compare their JSON bodies.
+// because two competing code paths respond with DIFFERENT framing for the
+// exact same raw request — this module's own jsonRpcError() ends up
+// chunked, while the MCP SDK transport's own rejection path sets a plain
+// Content-Length — so the raw response text must be decoded uniformly to
+// compare their JSON bodies.
 const decodeChunkedBody = (raw: string): string => {
   let decoded = '';
   let rest = raw;
@@ -144,7 +175,7 @@ const decodeChunkedBody = (raw: string): string => {
 // tier). `method` defaults to 'POST' to preserve every existing call site.
 // Returns the decoded response BODY alongside the status: the duplicate
 // session-id test needs to inspect the JSON-RPC error message, not just the
-// HTTP status, to actually discriminate the T1 regression (see that test's
+// HTTP status, to actually discriminate this regression (see that test's
 // own comment for why the status code alone is not enough).
 const rawRequest = (
   port: number,
@@ -210,9 +241,28 @@ describe('serve --http — Streamable HTTP E2E', () => {
     return sessionId;
   };
 
-  afterEach(() => {
-    child?.kill('SIGKILL');
-    child = undefined;
+  afterEach(async () => {
+    if (child !== undefined) {
+      const proc = child;
+      child = undefined;
+      // A process that already exited on its own (e.g. a usage-error test
+      // whose child exits before this hook ever runs) has already fired its
+      // ONE 'exit' event — attaching a fresh listener now would wait
+      // forever, so only await exit for a proc that is still alive.
+      if (proc.exitCode === null && proc.signalCode === null) {
+        const exited = new Promise<void>((resolve) => {
+          proc.once('exit', () => {
+            resolve();
+          });
+        });
+        proc.kill('SIGKILL');
+        await exited;
+      } else {
+        proc.kill('SIGKILL');
+      }
+    }
+    const homes = activeTempHomes.splice(0);
+    await Promise.all(homes.map((home) => rm(home, { recursive: true, force: true })));
   });
 
   it('initializes, returns a session header, rejects a stale session with 404, requires the bearer on every method, and 403s a bad Origin', async () => {
@@ -247,7 +297,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     expect(badOrigin.status).toBe(403);
 
     child.kill('SIGTERM');
-  }, 15000);
+  }, 15_000);
 
   it('rejects --http without --http-token-env at startup (usage error)', async () => {
     child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json', '--http'], {
@@ -260,10 +310,15 @@ describe('serve --http — Streamable HTTP E2E', () => {
   });
 
   it('rejects --http-token-env without --http at startup (usage error)', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-http-'));
+    activeTempHomes.push(home);
     child = spawn(
       process.execPath,
       [bin, 'serve', '--spec', 'petstore.json', '--http-token-env', 'MCP_TOKEN'],
-      { cwd: fixturesDir, env: { ...process.env, MCP_TOKEN: TOKEN } },
+      {
+        cwd: fixturesDir,
+        env: { ...process.env, HOME: home, USERPROFILE: home, MCP_TOKEN: TOKEN },
+      },
     );
     const stderrChunks: Buffer[] = [];
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
@@ -296,6 +351,8 @@ describe('serve --http — Streamable HTTP E2E', () => {
   });
 
   it('validates HTTP-specific options (a bad --port) BEFORE any spec/cache/network processing — the error is about the port, never about the (nonexistent) spec file', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-http-'));
+    activeTempHomes.push(home);
     child = spawn(
       process.execPath,
       [
@@ -309,7 +366,10 @@ describe('serve --http — Streamable HTTP E2E', () => {
         '--http-token-env',
         'MCP_TOKEN',
       ],
-      { cwd: fixturesDir, env: { ...process.env, MCP_TOKEN: TOKEN } },
+      {
+        cwd: fixturesDir,
+        env: { ...process.env, HOME: home, USERPROFILE: home, MCP_TOKEN: TOKEN },
+      },
     );
     const stderrChunks: Buffer[] = [];
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
@@ -348,7 +408,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
       method: 'tools/list',
     });
     expect(reuseAfterDelete.status).toBe(404); // The SAME id no longer resolves to a session
-  }, 15000);
+  }, 15_000);
 
   it('supports a SECOND, independent concurrent session — each gets its own id and both work', async () => {
     const spawned = await spawnServeHttp();
@@ -370,7 +430,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     });
     expect(callA.status).toBe(200);
     expect(callB.status).toBe(200);
-  }, 15000);
+  }, 15_000);
 
   it('SESSION ISOLATION: terminating session A does not disturb session B', async () => {
     const spawned = await spawnServeHttp();
@@ -393,7 +453,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
       method: 'tools/list',
     });
     expect(stillB.status).toBe(200); // B is entirely unaffected
-  }, 15000);
+  }, 15_000);
 
   it('rejects an UNAUTHENTICATED GET and DELETE (401) — auth is required on every HTTP method, not just POST', async () => {
     const spawned = await spawnServeHttp();
@@ -412,7 +472,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
       headers: { 'mcp-session-id': sessionId },
     });
     expect(deleteNoAuth.status).toBe(401);
-  }, 15000);
+  }, 15_000);
 
   it('enforces the max-8-concurrent-session cap — the 9th initialize is rejected cleanly and no dangling session id 404s later', async () => {
     const spawned = await spawnServeHttp();
@@ -420,7 +480,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     const { port } = spawned;
     const sessionIds: string[] = [];
     for (let index = 0; index < 8; index += 1) {
-      // eslint-disable-next-line no-await-in-loop -- sessions must be created sequentially to land within the same 8-slot capacity
+      // Sequential on purpose: sessions must be created one at a time to land within the same 8-slot capacity.
       sessionIds.push(await initSession(port));
     }
     const ninth = await postJsonRpc(port, undefined, initializeBody());
@@ -435,14 +495,14 @@ describe('serve --http — Streamable HTTP E2E', () => {
       method: 'tools/list',
     });
     expect(stillWorks.status).toBe(200);
-  }, 20000);
+  }, 20_000);
 
   it('a BURST of 9 concurrent initialize requests still admits at most 8 sessions with 8 DISTINCT ids and no dangling session — a genuine concurrency race, not a sequential approximation of one', async () => {
     const spawned = await spawnServeHttp();
     child = spawned.proc;
     const { port } = spawned;
     // All 9 fired together via Promise.all (not awaited one-by-one) — this
-    // is what actually exercises the synchronous-reservation fix (Step 3):
+    // is what actually exercises the synchronous-reservation approach:
     // a callback-based ("check capacity, then await, then register")
     // design could let more than 8 of these all pass their own capacity
     // check before any of them finishes registering.
@@ -455,9 +515,9 @@ describe('serve --http — Streamable HTTP E2E', () => {
     expect(rejected).toHaveLength(1);
     const sessionIds = succeeded.map((res) => res.headers.get('mcp-session-id'));
     expect(new Set(sessionIds).size).toBe(8); // Every admitted session got a DISTINCT id — none collided or was double-counted
-  }, 20000);
+  }, 20_000);
 
-  it('a malformed initialize (missing Accept header) never consumes a session-capacity slot — 8 of them in a row still leave room for a 9th REAL initialize (C4-rollback regression guard)', async () => {
+  it('a malformed initialize (missing Accept header) never consumes a session-capacity slot — 8 of them in a row still leave room for a 9th REAL initialize', async () => {
     const spawned = await spawnServeHttp();
     child = spawned.proc;
     const { port } = spawned;
@@ -466,13 +526,12 @@ describe('serve --http — Streamable HTTP E2E', () => {
       // header entirely — the SDK's handlePostRequest validates Accept
       // BEFORE ever reaching the isInitializeRequest branch that assigns a
       // sessionId and fires onsessioninitialized (verified against the
-      // v1.29.0 source, webStandardStreamableHttp.js — see Verified Facts
-      // above), so this must 406 WITHOUT ever touching session capacity.
-      // Without the C4-rollback fix (Step 3's `handleFreshInitialize`), the
-      // slot reserved synchronously BEFORE the transport is even
-      // constructed would never be released, and 8 of these would
-      // permanently exhaust the 8-session cap.
-      // eslint-disable-next-line no-await-in-loop -- sequential so each malformed attempt's (non-)effect on capacity is observed before the next
+      // v1.29.0 source, webStandardStreamableHttp.js), so this must 406
+      // WITHOUT ever touching session capacity.
+      // Without `handleFreshInitialize`, the slot reserved synchronously
+      // BEFORE the transport is even constructed would never be released,
+      // and 8 of these would permanently exhaust the 8-session cap.
+      // Sequential on purpose: each malformed attempt's (non-)effect on capacity is observed before the next.
       const malformed = await fetch(url(port), {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` }, // No Accept header
@@ -483,7 +542,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     }
     const ninth = await initSession(port); // A real, well-formed initialize — asserts status 200 and a session id internally
     expect(typeof ninth).toBe('string');
-  }, 20000);
+  }, 20_000);
 
   it('a duplicate Host header (one allowed value + one evil value) is rejected — proves the guard reads req.headersDistinct, not the collapsing req.headers', async () => {
     const spawned = await spawnServeHttp();
@@ -500,9 +559,9 @@ describe('serve --http — Streamable HTTP E2E', () => {
     // wrongly passing the Host guard and letting the request through;
     // req.headersDistinct.host sees BOTH values and fails closed (403).
     expect(result.status).toBe(403);
-  }, 15000);
+  }, 15_000);
 
-  it('a duplicated mcp-session-id header (the SAME valid session id sent twice) is rejected by THIS module own 404 gate, not merely by the SDK transport downstream (T1 regression guard)', async () => {
+  it('a duplicated mcp-session-id header (the SAME valid session id sent twice) is rejected by THIS module own 404 gate, not merely by the SDK transport downstream', async () => {
     const spawned = await spawnServeHttp();
     child = spawned.proc;
     const { port } = spawned;
@@ -526,7 +585,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
       `Mcp-Session-Id: ${sessionId}\r\n`;
     const result = await rawRequest(port, duplicateSessionHeaders, '', 'DELETE');
     expect(result.status).toBe(404);
-    // The status code ALONE does not discriminate the T1 regression: the
+    // The status code ALONE does not discriminate this regression: the
     // MCP SDK transport's OWN session check (webStandardStreamableHttp.js's
     // validateSession) ALSO independently 404s on ANY duplicated
     // mcp-session-id — its header read goes through the Web-standard
@@ -542,12 +601,12 @@ describe('serve --http — Streamable HTTP E2E', () => {
     // duplicate to its real, matching session id, sail past this gate, and
     // rely ENTIRELY on the SDK's own downstream rejection (message
     // 'Session not found', not this one) to save it. Asserting the exact
-    // message text is what makes this test bind to the actual T1 change.
+    // message text is what makes this test bind to the actual fix.
     const parsedBody = JSON.parse(result.body) as { error?: { code: number; message: string } };
     expect(parsedBody.error?.message).toBe('unknown or expired session');
-  }, 15000);
+  }, 15_000);
 
-  it('a POST carrying a DUPLICATED mcp-session-id header plus a valid initialize body is 404d, never fresh-initialized (T1 regression: fresh-init must key on the RAW header being ABSENT, not on the strict helper resolving to undefined)', async () => {
+  it('a POST carrying a DUPLICATED mcp-session-id header plus a valid initialize body is 404d, never fresh-initialized (fresh-init must key on the RAW header being ABSENT, not on the strict helper resolving to undefined)', async () => {
     const spawned = await spawnServeHttp();
     child = spawned.proc;
     const { port } = spawned;
@@ -576,19 +635,18 @@ describe('serve --http — Streamable HTTP E2E', () => {
       duplicateSessionInitHeaders,
       JSON.stringify(initializeBody()),
     );
-    // Falsification: on the PRE-FIX `sessionId === undefined` gate, this
-    // exact request fresh-initializes — status 200, a new `mcp-session-id`
-    // header, and no JSON-RPC error. Confirmed by re-running this test
-    // against the pre-fix code, where it failed with `expected 200 to be
-    // 404`. On the POST-FIX `rawSessionIdHeader === undefined` gate, it
-    // 404s with this module's own "unknown or expired session" gate — the
-    // same message the DELETE-based test above asserts — proving the fix
-    // routes the duplicate to the 404 gate rather than the SDK's own
-    // downstream rejection.
+    // Falsification: on a `sessionId === undefined` gate keyed off the
+    // strict helper, this exact request fresh-initializes — status 200, a
+    // new `mcp-session-id` header, and no JSON-RPC error — instead of
+    // 404ing. On a `rawSessionIdHeader === undefined` gate keyed off the raw
+    // header, it 404s with this module's own "unknown or expired session"
+    // message — the same message the DELETE-based test above asserts —
+    // proving the fix routes the duplicate to the 404 gate rather than the
+    // SDK's own downstream rejection.
     expect(result.status).toBe(404);
     const parsedBody = JSON.parse(result.body) as { error?: { code: number; message: string } };
     expect(parsedBody.error?.message).toBe('unknown or expired session');
-  }, 15000);
+  }, 15_000);
 
   it('enforces the 4 MB inbound body cap with a DELIBERATE 400 (not a socket reset/500) — and rejects invalid JSON with a 400 JSON-RPC parse error, not a 500', async () => {
     const spawned = await spawnServeHttp();
@@ -604,7 +662,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     });
     expect(tooBig.status).toBe(400);
     const tooBigJson = (await tooBig.json()) as { error?: { code: number } };
-    expect(tooBigJson.error?.code).toBe(-32600);
+    expect(tooBigJson.error?.code).toBe(-32_600);
 
     const badJson = await fetch(url(port), {
       method: 'POST',
@@ -613,8 +671,8 @@ describe('serve --http — Streamable HTTP E2E', () => {
     });
     expect(badJson.status).toBe(400);
     const badJsonBody = (await badJson.json()) as { error?: { code: number } };
-    expect(badJsonBody.error?.code).toBe(-32700);
-  }, 15000);
+    expect(badJsonBody.error?.code).toBe(-32_700);
+  }, 15_000);
 
   it('GLOBAL rate exhaustion is SHARED across sessions (proves the limiter is process-shared, not per-session)', async () => {
     const spawned = await spawnServeHttp();
@@ -624,8 +682,8 @@ describe('serve --http — Streamable HTTP E2E', () => {
     const sessionB = await initSession(port);
     // DEFAULT_RATE_LIMIT is 120 tools/call invocations / 60s, process-wide.
     // `tools/list` itself is a protocol-level method the low-level Server
-    // answers directly (Task 5) and NEVER reaches the Task 3/4 rate
-    // limiter — only `tools/call` does — so every call here targets
+    // answers directly and NEVER reaches the rate limiter — only
+    // `tools/call` does — so every call here targets
     // `tools/call` on the read-only `openapi_mcp_status` meta tool.
     // Alternate between the two sessions so no single session's own
     // traffic could explain an eventual rejection — only a SHARED budget
@@ -641,16 +699,16 @@ describe('serve --http — Streamable HTTP E2E', () => {
     let lastBody: { result?: { isError?: boolean; content?: { text: string }[] } } | undefined;
     for (let index = 0; index < 121; index += 1) {
       const session = index % 2 === 0 ? sessionA : sessionB;
-      // eslint-disable-next-line no-await-in-loop -- exhausting a shared rate limit requires strictly sequential calls
+      // Sequential on purpose: exhausting a shared rate limit requires strictly ordered calls.
       const res = await postJsonRpc(port, session, toolsCallBody());
-      // eslint-disable-next-line no-await-in-loop -- reading each response body sequentially, matching the request above
+      // Sequential on purpose: reading each response body in order, matching the request above.
       lastBody = (await res.json()) as typeof lastBody;
     }
     expect(lastBody?.result?.isError).toBe(true);
     expect(lastBody?.result?.content?.[0]?.text).toBe(
       'rate limit exceeded — too many tool calls; retry later',
     );
-  }, 30000);
+  }, 30_000);
 
   it('graceful SIGINT/SIGTERM exits 0 and completes within the shutdown bound, EVEN WITH an active, long-lived SSE (GET) connection deliberately left open', async () => {
     const spawned = await spawnServeHttp();
@@ -660,25 +718,23 @@ describe('serve --http — Streamable HTTP E2E', () => {
 
     // Open a GET (SSE) stream and deliberately never consume/close its body
     // from our side — this is the concrete scenario that would keep
-    // http.Server#close() pending indefinitely without the
-    // transport/session-draining fix (Step 3's `close()`): an ordinary POST
-    // connection closes itself once its response is sent, so it would NOT
-    // actually exercise this bug.
+    // http.Server#close() pending indefinitely without transport/
+    // session-draining on close: an ordinary POST connection closes itself
+    // once its response is sent, so it would NOT actually exercise this bug.
     //
     // AWAIT the fetch itself — per the Fetch spec, the returned promise
     // resolves as soon as the RESPONSE HEADERS arrive (the body stays an
     // unconsumed ReadableStream, which is exactly what we want: open, but
     // never read). This makes the SSE connection DETERMINISTICALLY open
-    // before SIGTERM fires below. An earlier version of this test fired
-    // `child.kill('SIGTERM')` immediately after issuing the GET, without
-    // awaiting anything first — racing the connection's actual
-    // establishment (a TCP connect + the server accepting it + routing to
-    // the SSE handler, none of which is instantaneous) against the signal.
-    // Under that race, SIGTERM could arrive before the connection existed
-    // at all, silently degrading this test to the same "ordinary POST that
-    // closes itself" case the comment above says is NOT what this test is
-    // for — passing for the wrong reason on a slow CI box, or flaking on a
-    // fast one.
+    // before SIGTERM fires below. Firing `child.kill('SIGTERM')` immediately
+    // after issuing the GET, without awaiting anything first, would race the
+    // connection's actual establishment (a TCP connect + the server
+    // accepting it + routing to the SSE handler, none of which is
+    // instantaneous) against the signal. Under that race, SIGTERM could
+    // arrive before the connection existed at all, silently degrading this
+    // test to the same "ordinary POST that closes itself" case the comment
+    // above says is NOT what this test is for — passing for the wrong
+    // reason on a slow CI box, or flaking on a fast one.
     const sseController = new AbortController();
     const sseResponse = await fetch(url(port), {
       method: 'GET',
@@ -698,8 +754,8 @@ describe('serve --http — Streamable HTTP E2E', () => {
       child?.once('exit', (exitCode) => resolve(exitCode));
     });
     expect(code).toBe(0);
-    // H3 (round-3 fix): the bound MUST be BELOW SHUTDOWN_FORCE_MS (5000ms), not
-    // above it. A graceful session drain closes the open SSE transport
+    // The bound MUST be BELOW SHUTDOWN_FORCE_MS (5000ms), not above it. A
+    // graceful session drain closes the open SSE transport
     // immediately, so `httpServer.close()`'s callback fires and the child exits
     // in well under a second (the sub-4s figure is almost all fixed
     // process-teardown overhead, not shutdown work). If the drain is BROKEN, the
@@ -711,5 +767,5 @@ describe('serve --http — Streamable HTTP E2E', () => {
     // fallback path.
     expect(Date.now() - start).toBeLessThan(4000);
     sseController.abort();
-  }, 15000);
+  }, 15_000);
 });

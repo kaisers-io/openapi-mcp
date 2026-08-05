@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import {
   chmod,
-  type FileHandle,
   mkdir,
   mkdtemp,
   readFile,
@@ -11,6 +10,7 @@ import {
   symlink,
   writeFile,
 } from 'node:fs/promises';
+import type { FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -91,6 +91,7 @@ describe('errWidth', () => {
     expect(resolveErrWidth(false, 120)).toBeUndefined(); // Not a TTY -> no wrap
     expect(resolveErrWidth(true, 120)).toBe(120); // A real column count is used
     expect(resolveErrWidth(true, 0)).toBe(80); // TTY, no columns -> fallback
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- resolveErrWidth's columns is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
     expect(resolveErrWidth(true, undefined)).toBe(80); // TTY, columns unknown -> fallback
   });
 });
@@ -118,7 +119,7 @@ describe('realContext cacheFs', () => {
     expect(await modeOf(join(dir, 'ns'))).toBe('700');
   });
 
-  it('propagates a non-absence stat failure from pathExists instead of reporting false (D17)', async () => {
+  it('propagates a non-absence stat failure from pathExists instead of reporting false', async () => {
     // An unreadable parent must never be reported as "nothing cached here":
     // a miss is the one outcome that may become trust-on-first-use
     const locked = join(dir, 'locked');
@@ -142,7 +143,7 @@ describe('realContext cacheFs', () => {
     expect(await cacheFs.pathExists(join(dir, 'afile', 'under'))).toBe(false);
   });
 
-  it('leaves no temp file behind when the write fails midway (D3)', async () => {
+  it('leaves no temp file behind when the write fails midway', async () => {
     // A read-only directory fails the rename; the temp must not survive it
     const target = join(dir, 'ro');
     await mkdir(target, { mode: 0o700 });
@@ -151,7 +152,7 @@ describe('realContext cacheFs', () => {
     try {
       await expect(
         realContext().cacheFs.writeFileAtomic(join(target, 'meta.json'), 'new'),
-      ).rejects.toThrowError();
+      ).rejects.toThrow();
     } finally {
       await chmod(target, 0o700);
     }
@@ -159,7 +160,7 @@ describe('realContext cacheFs', () => {
     expect(entries.filter((name) => name.includes('.tmp'))).toEqual([]);
   });
 
-  it('repairs the mode of a directory that already exists (D4)', async () => {
+  it('repairs the mode of a directory that already exists', async () => {
     // An entry created under a permissive umask by an earlier version must be
     // repaired, not inherited — mkdir's mode option does not apply to it
     const target = join(dir, 'ns');
@@ -169,44 +170,45 @@ describe('realContext cacheFs', () => {
     expect(await modeOf(target)).toBe('700');
   });
 
-  it('refuses to chmod a non-directory sitting at the namespace path (round-9 finding)', async () => {
+  it('refuses to chmod a non-directory sitting at the namespace path', async () => {
     // `stat` succeeding does not mean it is a directory — a regular file at
     // the target path must be refused rather than silently made 0700
     // (executable), which would only defer the real failure to the first
     // write inside it.
     const target = join(dir, 'not-a-dir');
     await writeFile(target, 'x', { mode: 0o644 });
-    // Task 11 fix round: this is now the dedicated cache_path_type code
-    // (still exit 3, via EXIT.VALIDATION) rather than plain 'validation', so
-    // the --all sweep can discriminate the signal by code, not by matching
-    // substrings in an attacker-influenceable path.
+    // This is the dedicated cache_path_type code (still exit 3, via
+    // EXIT.VALIDATION) rather than plain 'validation', so the --all sweep
+    // can discriminate the signal by code, not by matching substrings in an
+    // attacker-influenceable path.
     await expect(realContext().cacheFs.mkdirSecure(target)).rejects.toMatchObject({
       code: 'cache_path_type',
     });
     expect(await modeOf(target)).toBe('644');
   });
 
-  // Final review, high-severity finding 2. `stat`/`chmod` FOLLOW
-  // symlinks, so a same-user attacker who can write into the 0700 cache root
-  // could plant a 16-hex namespace symlink pointing at an arbitrary directory:
-  // the round-9 `!info.isDirectory()` guard never caught it (a symlink to a
-  // directory reports isDirectory() === true through `stat`), so `chmod`
-  // followed the symlink and 0700'd the attacker-chosen target, and subsequent
-  // writeFileAtomic/clearNamespace calls read, wrote, and deleted inside it.
+  // `stat`/`chmod` FOLLOW symlinks, so a same-user attacker who can write
+  // into the 0700 cache root could plant a 16-hex namespace symlink pointing
+  // at an arbitrary directory: an `!info.isDirectory()` guard built on
+  // `stat` would never catch it (a symlink to a directory reports
+  // isDirectory() === true through `stat`), so `chmod` would follow the
+  // symlink and 0700 the attacker-chosen target, and subsequent
+  // writeFileAtomic/clearNamespace calls would read, write, and delete
+  // inside it.
   //
   // Load-bearing / falsifiable: this must fail if the lstat guard in
   // mkdirSecure's `missing.length === 0` branch is reverted to `stat` — with
   // `stat`, the symlink resolves to the (real, existing) victim directory,
   // `isDirectory()` is true, the guard never fires, and the victim's mode
   // would be silently forced to 0700 instead of the call being rejected.
-  it('rejects a symlink planted at the namespace path instead of following it (round-10 finding)', async () => {
+  it('rejects a symlink planted at the namespace path instead of following it', async () => {
     const victim = await mkdtemp(join(tmpdir(), 'openapi-mcp-victim-'));
     await chmod(victim, 0o750);
     const namespace = join(dir, 'a1b2c3d4e5f60718'); // A plausible 16-hex namespace name
     await symlink(victim, namespace, 'dir');
     try {
-      // Task 11 fix round: cache_path_type, not 'validation' — see the
-      // non-directory case above for why the code changed.
+      // This is cache_path_type, not 'validation' — see the non-directory
+      // case above for why this code is used.
       await expect(realContext().cacheFs.mkdirSecure(namespace)).rejects.toMatchObject({
         code: 'cache_path_type',
       });
@@ -226,7 +228,7 @@ describe('realContext cacheFs', () => {
     expect(await modeOf(file)).toBe('600');
   });
 
-  it('enforces 0600 when replacing a file that was created world-readable (D3)', async () => {
+  it('enforces 0600 when replacing a file that was created world-readable', async () => {
     // A plain writeFile with { mode } would leave this at 0644: the mode option
     // only applies at creation. The temp-file + rename path is what fixes it.
     const file = join(dir, 'meta.json');
@@ -255,7 +257,7 @@ describe('realContext cacheFs', () => {
   it('rejects a missing file rather than returning empty text', async () => {
     await expect(
       realContext().cacheFs.readFileTextCapped(join(dir, 'nope'), 100),
-    ).rejects.toThrowError();
+    ).rejects.toThrow();
   });
 
   it('creates a lock file exclusively at 0600 and reports an existing one', async () => {
@@ -302,11 +304,12 @@ describe('realContext cacheFs', () => {
   });
 });
 
-describe('realContext cacheFs under a restrictive umask (D4)', () => {
+describe('realContext cacheFs under a restrictive umask', () => {
   // The umask is PROCESS-WIDE state, so this cannot run inside the shared
   // vitest worker: setting it there would leak into every other test in the
-  // file. It also cannot be skipped — this is the exact configuration in which
-  // the round-1 implementation failed, and an in-process test cannot reach it.
+  // file. It also cannot be skipped — this is the exact configuration where
+  // the naive recursive-mkdir approach fails, and an in-process test cannot
+  // reach it.
   it('creates a usable 0700 tree where mkdir({recursive, mode}) fails with EACCES', async () => {
     const base = await mkdtemp(join(tmpdir(), 'openapi-mcp-umask-'));
     // Mkdtemp is subject to the umask too (probed: 0600 under 0177), so the
@@ -380,10 +383,10 @@ describe('testContext cacheFs', () => {
   });
 });
 
-// Round-8 finding 4. This is deliberately NOT a test against the real
-// filesystem: a local regular file fills the buffer in one read (probed), so
-// such a test passes whether or not the loop exists. Driving a fake handle is
-// the only way to make the short read actually happen.
+// This is deliberately NOT a test against the real filesystem: a local
+// regular file fills the buffer in one read (probed), so such a test passes
+// whether or not the loop exists. Driving a fake handle is the only way to
+// make the short read actually happen.
 describe('readExactly', () => {
   const handleYielding = (chunks: readonly string[]): FileHandle => {
     let call = 0;

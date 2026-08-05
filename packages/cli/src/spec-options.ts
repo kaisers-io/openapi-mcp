@@ -7,12 +7,14 @@ import {
   parseHeaderEnvMapping,
   resolveHeaderEnvMappings,
   sanitizeSpecText,
-  type DeadPattern,
-  type FilterPattern,
-  type OmittedOperation,
-  type ResolvedHeader,
-  type SpecPipelineDeps,
-  type SpecPipelineOptions,
+} from '@kaisers-io/openapi-mcp-core';
+import type {
+  DeadPattern,
+  FilterPattern,
+  OmittedOperation,
+  ResolvedHeader,
+  SpecPipelineDeps,
+  SpecPipelineOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
 
@@ -28,10 +30,10 @@ export const PATH_DISPLAY_MAX = 512;
 // suggestions, so the whole warning line is bounded
 export const PATTERN_DISPLAY_MAX = 256;
 
-// Spec §8 wording: --allow "readPets" matches no operation; closest: readPetById
+// Example wording: --allow "readPets" matches no operation; closest: readPetById
 // The flag comes from the engine, which knows which list the pattern came from.
-// Shared by `tools` and `serve` (Task 6 security fix) so a dead-pattern warning
-// is sanitized and worded identically regardless of which command produced it.
+// Shared by `tools` and `serve` so a dead-pattern warning is sanitized and
+// worded identically regardless of which command produced it.
 export const deadPatternMessage = (dead: DeadPattern): string => {
   const raw = sanitizeSpecText(dead.raw, PATTERN_DISPLAY_MAX);
   const base = `--${dead.flag} "${raw}" matches no operation`;
@@ -49,10 +51,10 @@ export const omissionWarningLines = (allOmitted: readonly OmittedOperation[]): r
       `omitted ${omission.method} ${sanitizeSpecText(omission.path, PATH_DISPLAY_MAX)} — ${sanitizeSpecText(omission.reason, PATH_DISPLAY_MAX)}`,
   );
 
-export interface ParsedFilters {
+export type ParsedFilters = {
   allow: readonly FilterPattern[];
   deny: readonly FilterPattern[];
-}
+};
 
 // Patterns parse in the command layer so a syntax error, an over-long
 // pattern, a wildcard bomb, or too many patterns is a usage error (exit 2)
@@ -70,7 +72,7 @@ const cacheRootOf = (ctx: CliContext): string | undefined => {
   return home === undefined || home === '' ? undefined : defaultCacheRoot(home);
 };
 
-export interface SpecCmdOpts {
+export type SpecCmdOpts = {
   // Commander's own `Command<Args, Opts, GlobalOpts>` generic constrains
   // `Opts` to `OptionValues` (`Record<string, any>`), which TS's generic
   // constraint check only accepts from a type carrying an explicit index
@@ -88,7 +90,7 @@ export interface SpecCmdOpts {
   cacheKey?: string;
   trustSpecUpdates?: boolean;
   allowPrivateNetwork?: boolean;
-}
+};
 
 // The --spec/--allow/--deny/... flags shared by every command that runs the
 // spec pipeline (`tools`, `serve`). Registering them in one place keeps their
@@ -129,12 +131,12 @@ export const registerSpecOptions = (command: Command): Command<[], SpecCmdOpts> 
       'permit private/loopback redirect targets during the spec fetch (never cloud-metadata)',
     );
 
-export interface SpecPipelineArgs {
+export type SpecPipelineArgs = {
   source: string;
   options: SpecPipelineOptions;
   deps: SpecPipelineDeps;
   filters: ParsedFilters;
-}
+};
 
 // Builds the exact runSpecPipeline call shape both `tools` and `serve` need,
 // so their spec/cache/filter behaviour can never silently diverge.

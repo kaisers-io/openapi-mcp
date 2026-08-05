@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  MAX_REDIRECTS,
-  fetchSpec,
-  fetchSpecConditional,
-  hashContent,
-  type FetchSpecDeps,
-} from '../src/index.ts';
+import { MAX_REDIRECTS, fetchSpec, fetchSpecConditional, hashContent } from '../src/index.ts';
+import type { FetchSpecDeps } from '../src/index.ts';
 // Module-internal helpers, not part of the public barrel: imported directly
 // (same pattern as http-pinned-dispatcher.test.ts) so their own trivial
 // bodies are unit-tested rather than relying on a live pinned Agent
@@ -13,18 +8,18 @@ import {
 // their definitions in fetch.ts).
 import { chainResolve, ignoreError } from '../src/spec/fetch.ts';
 
-interface RecordedCall {
+type RecordedCall = {
   url: string;
   headers: Headers;
-}
+};
 
-// M6 Task 6 (DNS-pin stretch): `FetchSpecDeps.fetcher` is now typed via
-// undici's own fetch (never a real network call in these tests either way).
-// The fake never touches `dispatcher` — it records the call and returns a
-// canned, native `Response`, which satisfies the real interface at runtime
-// (both are Fetch-API-compliant); the cast bridges the two fetch type
-// declarations (Node's global lib.dom types vs undici's own .d.ts) rather
-// than proving anything about live pinning.
+// `FetchSpecDeps.fetcher` is typed via undici's own fetch (never a real
+// network call in these tests either way). The fake never touches
+// `dispatcher` — it records the call and returns a canned, native
+// `Response`, which satisfies the real interface at runtime (both are
+// Fetch-API-compliant); the cast bridges the two fetch type declarations
+// (Node's global lib.dom types vs undici's own .d.ts) rather than proving
+// anything about live pinning.
 type SpecFetcher = FetchSpecDeps['fetcher'];
 
 // Builds a fetcher that pops queued responses and records every request
@@ -69,7 +64,7 @@ describe('fetchSpec', () => {
     expect(calls[0]?.headers.get('accept')).toContain('application/json');
   });
 
-  it('does not egress-check the operator-supplied initial URL (D4)', async () => {
+  it('does not egress-check the operator-supplied initial URL', async () => {
     const { fetcher } = fakeFetcher([new Response('{}')]);
     const loaded = await fetchSpec(
       new URL('http://localhost:3000/openapi.json'),
@@ -151,7 +146,7 @@ describe('fetchSpec', () => {
     ).rejects.toMatchObject({ code: 'validation' });
   });
 
-  it('rejects a redirect target carrying credential-bearing query parameters (D8)', async () => {
+  it('rejects a redirect target carrying credential-bearing query parameters', async () => {
     const { fetcher, calls } = fakeFetcher([
       redirectTo('https://cdn.example.net/spec.json?api_key=redirect-secret'),
     ]);
@@ -183,8 +178,8 @@ describe('fetchSpec', () => {
           { fetcher, lookup: publicLookup },
         );
         expect.unreachable('expected a validation error');
-      } catch (err) {
-        const { message } = err as Error;
+      } catch (error) {
+        const { message } = error as Error;
         // The decoded name contained a line break; the display copy is single-line
         expect(message).toContain('token forged');
         expect(message).not.toMatch(/[\n\u2028\u2029]/u);
@@ -237,7 +232,7 @@ describe('fetchSpec', () => {
     ).rejects.toMatchObject({ message: expect.stringContaining('metadata') as string });
   });
 
-  it('rejects a redirect to a cloud-metadata IP LITERAL via the synchronous pre-fetch guard, before any request to it (Step 7 falsification)', async () => {
+  it('rejects a redirect to a cloud-metadata IP LITERAL via the synchronous pre-fetch guard, before any request to it', async () => {
     // Undici SKIPS connect.lookup entirely for an IP-literal hostname, so a
     // live pinned Agent's lookup would never even run for this target — the
     // only thing that can reject it is the synchronous, pre-fetch
@@ -468,7 +463,7 @@ const withRawHeader = (response: Response, name: string, rawValue: string): Resp
 };
 
 describe('fetchSpecConditional', () => {
-  it('reports not-modified for a 304 (D6)', async () => {
+  it('reports not-modified for a 304', async () => {
     // Probed: fetch surfaces a 304 with ok === false and body === null, so the
     // status must be checked before the generic !ok branch would reject it
     const { fetcher, calls } = fakeFetcher([notModified({ etag: '"v1"' })]);
@@ -477,14 +472,14 @@ describe('fetchSpecConditional', () => {
       { headers: [], etag: '"v1"' },
       { fetcher, lookup: rejectingLookup },
     );
-    // D16(a2): the validators the 304 returned come back with it, so the entry
-    // can refresh what it replays next time
+    // The validators the 304 returned come back with it, so the entry can
+    // refresh what it replays next time
     expect(result).toEqual({ kind: 'not-modified', etag: '"v1"' });
     expect(calls[0]?.headers.get('if-none-match')).toBe('"v1"');
     expect(calls[0]?.headers.get('if-modified-since')).toBeNull();
   });
 
-  it('carries a refreshed validator back from a 304 (D16a2)', async () => {
+  it('carries a refreshed validator back from a 304', async () => {
     // A server may answer 304 while rotating the ETag it wants next time
     const { fetcher } = fakeFetcher([
       notModified({ etag: '"v2"', 'last-modified': 'Thu, 22 Oct 2026 07:28:00 GMT' }),
@@ -545,7 +540,7 @@ describe('fetchSpecConditional', () => {
     expect(result).toMatchObject({ kind: 'fetched' });
   });
 
-  it('treats a 304 answered to a validator-free request as unchanged (D6, fail-safe)', async () => {
+  it('treats a 304 answered to a validator-free request as unchanged (fail-safe)', async () => {
     // The caller keeps serving its accepted baseline, which is the safe
     // direction: a server answering a question nobody asked cannot force a swap
     const { fetcher } = fakeFetcher([notModified()]);
@@ -696,10 +691,10 @@ describe('fetchSpec and 304', () => {
   });
 });
 
-// M6 Task 6: `fetchChain`'s per-hop Agent lifecycle uses two small, named
-// closures (`ignoreError`, `chainResolve`) instead of bare inline ones,
-// specifically so they are unit-testable directly — a fake fetcher never
-// touches `dispatcher`, so a live pinned Agent never actually rejects
+// `fetchChain`'s per-hop Agent lifecycle uses two small, named closures
+// (`ignoreError`, `chainResolve`) instead of bare inline ones, specifically
+// so they are unit-testable directly — a fake fetcher never touches
+// `dispatcher`, so a live pinned Agent never actually rejects
 // destroy()/close() in these tests, and createPinnedAgent's connect-time
 // lookup never runs. Both are exercised end-to-end elsewhere in this file
 // through the fake transport; these prove their own bodies directly.

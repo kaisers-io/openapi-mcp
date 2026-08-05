@@ -59,7 +59,7 @@ describe('sanitizeDisplayText', () => {
     expect(sanitizeDisplayText('a\r\nb\rc\u2028d\u2029e', 100)).toBe('a\nb\nc\nd\ne');
   });
 
-  it('strips the OSC window-title escape from the M2a review repro', () => {
+  it('strips the OSC window-title escape sequence', () => {
     expect(sanitizeDisplayText('/paths/~1a\u001B]0;PWNED\u001B\\x/get', 100)).toBe(
       '/paths/~1a]0;PWNED\\x/get',
     );
@@ -112,8 +112,8 @@ describe('sanitizeDisplayText', () => {
     const out = sanitizeDisplayText(`${'a'.repeat(10)}\u{1F600}`, 11);
     // 11 - marker (12) <= marker, so hard-cut at 11 units would land mid-emoji
     // at unit 10/11; the surrogate-safe truncate stops before it.
-    expect([...out].every((ch) => ch.codePointAt(0)! < 0xd800 || ch.codePointAt(0)! > 0xdfff)).toBe(
-      true,
-    );
+    expect(
+      [...out].every((ch) => ch.codePointAt(0)! < 0xd8_00 || ch.codePointAt(0)! > 0xdf_ff),
+    ).toBe(true);
   });
 });

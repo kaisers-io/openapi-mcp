@@ -1,16 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { buildRequest, type OutboundBudgets, type RequestMapper } from '../src/index.ts';
+import { buildRequest } from '../src/index.ts';
+import type { OutboundBudgets, RequestMapper } from '../src/index.ts';
 
 const budgets: OutboundBudgets = {
   maxUrlLength: 8192,
-  maxHeaderBytes: 16384,
-  maxBodyBytes: 65536,
+  maxHeaderBytes: 16_384,
+  maxBodyBytes: 65_536,
 };
 
 // An unpaired UTF-16 surrogate: valid as a JS string but `encodeURIComponent`
 // throws a URIError on it. Used to exercise the encode-failure branch of
 // `encodeLeaf`, distinct from the value-shape guard.
-const LONE_SURROGATE = String.fromCodePoint(0xd800);
+const LONE_SURROGATE = String.fromCodePoint(0xd8_00);
 
 const ok = (result: ReturnType<typeof buildRequest>) => {
   if (!('ok' in result)) {
@@ -344,9 +345,8 @@ describe('buildRequest — header/simple', () => {
 
 describe('buildRequest — header wireName validation (spec-derived, untrusted)', () => {
   // A hostile spec could declare a header parameter whose NAME itself carries
-  // an embedded CRLF; undici throws at fetch time on such a key (Task 10),
-  // which would otherwise escape this module's fail-closed `{error}`
-  // contract (task-7 review, FIX 1).
+  // an embedded CRLF; undici throws at fetch time on such a key, which would
+  // otherwise escape this module's fail-closed `{error}` contract.
   const wireNameMapper = (wireName: string): RequestMapper => ({
     bodyMode: 'none',
     fields: {
@@ -518,8 +518,7 @@ describe('buildRequest — body', () => {
 
   // `JSON.stringify` throws on a bigint, a circular reference, or a throwing
   // `toJSON` — this module must catch that and fail closed with `{error}`
-  // rather than let the throw escape its never-throw contract (task-7
-  // review, FIX 2).
+  // rather than let the throw escape its never-throw contract.
   it('rejects a JSON body containing a bigint (JSON.stringify throws)', () => {
     const mapper: RequestMapper = {
       bodyMode: 'single',
@@ -566,8 +565,8 @@ describe('buildRequest — outbound budgets', () => {
     };
     const tinyBudgets: OutboundBudgets = {
       maxUrlLength: 10,
-      maxHeaderBytes: 16384,
-      maxBodyBytes: 65536,
+      maxHeaderBytes: 16_384,
+      maxBodyBytes: 65_536,
     };
     const message = err(
       buildRequest(
@@ -597,7 +596,7 @@ describe('buildRequest — outbound budgets', () => {
     const tinyBudgets: OutboundBudgets = {
       maxUrlLength: 8192,
       maxHeaderBytes: 8,
-      maxBodyBytes: 65536,
+      maxBodyBytes: 65_536,
     };
     const message = err(
       buildRequest(
@@ -621,7 +620,7 @@ describe('buildRequest — outbound budgets', () => {
     };
     const tinyBudgets: OutboundBudgets = {
       maxUrlLength: 8192,
-      maxHeaderBytes: 16384,
+      maxHeaderBytes: 16_384,
       maxBodyBytes: 8,
     };
     const message = err(

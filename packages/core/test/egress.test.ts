@@ -66,9 +66,9 @@ describe('classifyAddress', () => {
     ['64:ff9b::a9fe:a9fe', 'metadata'], // Well-known NAT64 embeds AWS IMDS (169.254.169.254) — must decode
     ['64:ff9b::a00:1', 'private'], // Well-known NAT64 embeds a private address (10.0.0.1) — must decode
     // Local-use NAT64 /48 (RFC 8215) — NOT decoded, whole prefix denied as
-    // metadata (final-review fix, HIGH): a /96 translator inside this
-    // prefix could map onto the metadata address, so a merely-private
-    // classification (still allowed under --allow-private-network) is unsafe.
+    // metadata: a /96 translator inside this prefix could map onto the
+    // metadata address, so a merely-private classification (still allowed
+    // under --allow-private-network) is unsafe.
     ['64:ff9b:1::a9fe:a9fe', 'metadata'],
     ['64:ff9b:2::1', 'metadata'], // Any other unallocated 64:ff9b:x:: prefix — same fail-closed rule
     ['2001::1', 'private'], // Teredo 2001::/32 — undecodable tunnel prefix, fail closed
@@ -149,7 +149,7 @@ describe('assertAllowedRedirectTarget', () => {
     },
   );
 
-  it('rejects the local-use NAT64 /48 even with --allow-private-network (final-review fix)', async () => {
+  it('rejects the local-use NAT64 /48 even with --allow-private-network', async () => {
     await expect(
       assertAllowedRedirectTarget(
         new URL('http://[64:ff9b:1::a9fe:a9fe]/'),

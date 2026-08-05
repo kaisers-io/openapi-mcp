@@ -1,6 +1,6 @@
 import { OpenapiMcpError, validationError } from '../errors.ts';
 
-// D17: the ONLY errors that may be read as "nothing here". A miss is the one
+// The only errors read as "nothing here" (ENOENT/ENOTDIR). A miss is the one
 // outcome that may become trust-on-first-use, so anything else is a real
 // failure rather than an absence.
 export const isCacheAbsence = (err: unknown): boolean =>
@@ -28,14 +28,14 @@ export const asCacheError = (operation: string, err: unknown): unknown =>
 // so coverage is structural. Generic over the whole signature so it preserves
 // withNamespaceLock's own type parameter.
 export const withCacheErrors =
-  <A extends unknown[], R>(
+  <TArgs extends unknown[], TResult>(
     operation: string,
-    fn: (...args: A) => Promise<R>,
-  ): ((...args: A) => Promise<R>) =>
-  async (...args: A): Promise<R> => {
+    fn: (...args: TArgs) => Promise<TResult>,
+  ): ((...args: TArgs) => Promise<TResult>) =>
+  async (...args: TArgs): Promise<TResult> => {
     try {
       return await fn(...args);
-    } catch (err) {
-      throw asCacheError(operation, err);
+    } catch (error) {
+      throw asCacheError(operation, error);
     }
   };

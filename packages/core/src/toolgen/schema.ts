@@ -3,9 +3,9 @@ import { SPEC_BUDGETS } from '../spec/budgets.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 
-// Structural nesting guard, tied to the existing parse-depth budget (spec §4.1)
-// — not a new budget. The document is already dereferenced (cycle-safe) upstream,
-// so this only backstops pathological depth.
+// Structural nesting guard, tied to the existing parse-depth budget — not a new
+// budget. The document is already dereferenced (cycle-safe) upstream, so this
+// only backstops pathological depth.
 export const MAX_CONVERT_DEPTH = SPEC_BUDGETS.maxParseDepth;
 
 export type SchemaResult = { ok: z.ZodType } | { unrepresentable: string };
@@ -31,41 +31,43 @@ export const isDangerousKey = (name: string): boolean => DANGEROUS_KEYS.has(name
 // (the 3.1 meta-schema accepts `minLength:"wrong"`, `enum:"wrong"`, …). The
 // converter would then silently ignore the malformed value and emit an
 // unconstrained schema — a widening. Gate every keyword we enforce to its value
-// domain; a malformed value omits the operation (fail-closed, owner decision
-// 2026-07-23). `version` gates the exclusive-bound FORM: OAS 3.0 uses the boolean
-// modifier, 3.1/JSON-Schema-2020-12 the numeric form; a wrong-version form is
-// malformed and omits (owner decision 2026-07-23, round 12). Returns the
-// offending keyword, or undefined.
-const nonNegInt = (v: unknown): boolean => typeof v === 'number' && Number.isInteger(v) && v >= 0;
-const finite = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v);
+// domain; a malformed value omits the operation (fail-closed). `version` gates
+// the exclusive-bound FORM: OAS 3.0 uses the boolean modifier, 3.1/
+// JSON-Schema-2020-12 the numeric form; a wrong-version form is malformed and
+// omits (fail-closed). Returns the offending keyword, or undefined.
+const nonNegInt = (value: unknown): boolean =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0;
+const finite = (value: unknown): boolean => typeof value === 'number' && Number.isFinite(value);
 
 const malformedKeyword = (
   node: Record<string, unknown>,
   version: OpenapiVersion,
 ): string | undefined => {
-  for (const k of ['minLength', 'maxLength', 'minItems', 'maxItems']) {
-    if (k in node && !nonNegInt(node[k])) {
-      return k;
+  for (const keyword of ['minLength', 'maxLength', 'minItems', 'maxItems']) {
+    if (keyword in node && !nonNegInt(node[keyword])) {
+      return keyword;
     }
   }
-  for (const k of ['minimum', 'maximum']) {
-    if (k in node && !finite(node[k])) {
-      return k;
+  for (const keyword of ['minimum', 'maximum']) {
+    if (keyword in node && !finite(node[keyword])) {
+      return keyword;
     }
   }
-  for (const k of ['exclusiveMinimum', 'exclusiveMaximum']) {
+  for (const keyword of ['exclusiveMinimum', 'exclusiveMaximum']) {
     // Version-gated: 3.1 uses the numeric form; 3.0/draft-4 uses the boolean
     // modifier form, which per draft-4 REQUIRES its paired `minimum`/`maximum`.
     // A wrong-version form (numeric under 3.0, boolean under 3.1) OR a 3.0 boolean
     // bound with no pair is malformed and omits (fail-closed) rather than being
     // silently reinterpreted or ignored. A pairless boolean would leave the number
-    // unconstrained — a silent widening (round-13 review).
-    if (k in node) {
-      const pair = k === 'exclusiveMinimum' ? 'minimum' : 'maximum';
+    // unconstrained — a silent widening.
+    if (keyword in node) {
+      const pair = keyword === 'exclusiveMinimum' ? 'minimum' : 'maximum';
       const wellFormed =
-        version === '3.0' ? typeof node[k] === 'boolean' && pair in node : finite(node[k]);
+        version === '3.0'
+          ? typeof node[keyword] === 'boolean' && pair in node
+          : finite(node[keyword]);
       if (!wellFormed) {
-        return k;
+        return keyword;
       }
     }
   }
@@ -81,19 +83,19 @@ const malformedKeyword = (
   if ('format' in node && typeof node['format'] !== 'string') {
     return 'format';
   }
-  for (const k of ['enum', 'allOf', 'oneOf', 'anyOf', 'required']) {
-    if (k in node && !Array.isArray(node[k])) {
-      return k;
+  for (const keyword of ['enum', 'allOf', 'oneOf', 'anyOf', 'required']) {
+    if (keyword in node && !Array.isArray(node[keyword])) {
+      return keyword;
     }
   }
   // `required` must be an array of UNIQUE strings (JSON Schema meta-schema
   // `items:{type:string}` + `uniqueItems:true`). A non-string element or a
   // duplicate is a malformed value → omit (fail-closed). Merely FILTERING the
   // non-strings, as objectSchema/bodyFields would, silently accepts an invalid
-  // Schema Object — the fail-open the round-12 review caught.
+  // Schema Object — a fail-open this gate exists to prevent.
   if (Array.isArray(node['required'])) {
     const req = node['required'];
-    if (!req.every((k) => typeof k === 'string') || new Set(req).size !== req.length) {
+    if (!req.every((name) => typeof name === 'string') || new Set(req).size !== req.length) {
       return 'required';
     }
   }
@@ -165,9 +167,9 @@ const unknownKeyword = (node: Record<string, unknown>): string | undefined => {
 const SHAPE_DETERMINERS = ['const', 'enum', 'allOf', 'oneOf', 'anyOf'] as const;
 
 // Enforced assertion keywords a shape-determiner branch would silently drop.
-// `pattern` AND `format` are excluded — both are advertised, not enforced
-// (decision A / the 2026-07-23 format decision), so they never narrow and
-// combining them with a determiner introduces no widening.
+// `pattern` AND `format` are excluded — both are advertised, not enforced, so
+// they never narrow and combining them with a determiner introduces no
+// widening.
 const ASSERTION_KEYWORDS: ReadonlySet<string> = new Set([
   'minLength',
   'maxLength',
@@ -214,7 +216,7 @@ const valueMatchesType = (value: unknown, type: string): boolean => {
 };
 
 const conflictingCombination = (node: Record<string, unknown>): string | undefined => {
-  const determiners = SHAPE_DETERMINERS.filter((k) => node[k] !== undefined);
+  const determiners = SHAPE_DETERMINERS.filter((keyword) => node[keyword] !== undefined);
   if (determiners.length > 1) {
     return `multiple shape-determining keywords (${determiners.join(', ')})`;
   }
@@ -222,7 +224,7 @@ const conflictingCombination = (node: Record<string, unknown>): string | undefin
     return undefined;
   }
   const determiner = determiners[0] as (typeof SHAPE_DETERMINERS)[number];
-  const extra = Object.keys(node).find((k) => ASSERTION_KEYWORDS.has(k));
+  const extra = Object.keys(node).find((keyword) => ASSERTION_KEYWORDS.has(keyword));
   if (extra !== undefined) {
     return `"${determiner}" combined with the sibling constraint "${extra}"`;
   }
@@ -237,7 +239,7 @@ const conflictingCombination = (node: Record<string, unknown>): string | undefin
   }
   if (determiner === 'enum') {
     const values = Array.isArray(node['enum']) ? node['enum'] : [];
-    return values.every((v) => valueMatchesType(v, type))
+    return values.every((value) => valueMatchesType(value, type))
       ? undefined
       : `"enum" values incompatible with the sibling type "${type}"`;
   }
@@ -254,18 +256,15 @@ const conflictingCombination = (node: Record<string, unknown>): string | undefin
 };
 
 // Property descriptions in the dereferenced document are raw; sanitized here
-// before entering model context via .describe() (spec §6.4). `format` and
+// before entering model context via .describe(). `format` and
 // `pattern` are surfaced through the wire schema (via .meta in convertSchema),
 // not here; enum values surface through z.enum. So the human hint is the
 // description plus example only.
 const describeText = (node: Record<string, unknown>): string | undefined => {
-  const parts: string[] = [];
-  if (typeof node['description'] === 'string') {
-    parts.push(node['description']);
-  }
-  if (node['example'] !== undefined) {
-    parts.push(`example: ${JSON.stringify(node['example'])}`);
-  }
+  const parts = [
+    typeof node['description'] === 'string' ? node['description'] : undefined,
+    node['example'] === undefined ? undefined : `example: ${JSON.stringify(node['example'])}`,
+  ].filter((part): part is string => part !== undefined);
   if (parts.length === 0) {
     return undefined;
   }
@@ -285,57 +284,65 @@ const stringSchema = (node: Record<string, unknown>): SchemaResult => {
   // Schema counts one character, so `.min` would silently ACCEPT an invalid value
   // (widening). A code-point refinement counts correctly; `minLength`/`maxLength`
   // are advertised into the wire via .meta in convertSchema.
-  let s: z.ZodType = z.string();
+  const base: z.ZodType = z.string();
   const min = node['minLength'];
   const max = node['maxLength'];
-  if (typeof min === 'number') {
-    s = s.refine((v) => [...(v as string)].length >= min, {
-      message: `must be at least ${min} character(s)`,
-    });
-  }
-  if (typeof max === 'number') {
-    s = s.refine((v) => [...(v as string)].length <= max, {
-      message: `must be at most ${max} character(s)`,
-    });
-  }
-  return { ok: s };
+  const withMin =
+    typeof min === 'number'
+      ? base.refine((value) => [...(value as string)].length >= min, {
+          message: `must be at least ${min} character(s)`,
+        })
+      : base;
+  const withMax =
+    typeof max === 'number'
+      ? withMin.refine((value) => [...(value as string)].length <= max, {
+          message: `must be at most ${max} character(s)`,
+        })
+      : withMin;
+  return { ok: withMax };
 };
+
+// 3.0's boolean exclusiveMinimum/exclusiveMaximum modifies the paired
+// minimum/maximum bound rather than standing alone (see malformedKeyword's
+// version-gated pairing check) — these two helpers apply that modifier.
+const applyLowerBound = (base: z.ZodNumber, bound: number, exclusive: boolean): z.ZodNumber =>
+  exclusive ? base.gt(bound) : base.min(bound);
+
+const applyUpperBound = (base: z.ZodNumber, bound: number, exclusive: boolean): z.ZodNumber =>
+  exclusive ? base.lt(bound) : base.max(bound);
 
 const numberSchema = (node: Record<string, unknown>, isInteger: boolean): z.ZodType => {
   // Use the NORMALIZED integer-ness, not node['type']: for a `[type,'null']` union
   // (or any array form) node['type'] is the array, so `node['type'] === 'integer'`
   // is false and `type:['integer','null']` would WIDEN to a plain number that
-  // accepts 1.5 (round-14 review). buildTyped passes the resolved typeValue.
-  let base = isInteger ? z.number().int() : z.number();
+  // accepts 1.5. buildTyped passes the resolved typeValue.
+  const base = isInteger ? z.number().int() : z.number();
   const exclMin = node['exclusiveMinimum'];
   const exclMax = node['exclusiveMaximum'];
-  if (typeof node['minimum'] === 'number') {
-    base = exclMin === true ? base.gt(node['minimum']) : base.min(node['minimum']);
-  }
-  if (typeof exclMin === 'number') {
-    base = base.gt(exclMin);
-  }
-  if (typeof node['maximum'] === 'number') {
-    base = exclMax === true ? base.lt(node['maximum']) : base.max(node['maximum']);
-  }
-  if (typeof exclMax === 'number') {
-    base = base.lt(exclMax);
-  }
+  const { minimum, maximum } = node;
+  const withMin =
+    typeof minimum === 'number' ? applyLowerBound(base, minimum, exclMin === true) : base;
+  const withExclMin = typeof exclMin === 'number' ? withMin.gt(exclMin) : withMin;
+  const withMax =
+    typeof maximum === 'number'
+      ? applyUpperBound(withExclMin, maximum, exclMax === true)
+      : withExclMin;
+  const withExclMax = typeof exclMax === 'number' ? withMax.lt(exclMax) : withMax;
   const { multipleOf } = node;
   if (typeof multipleOf === 'number' && multipleOf !== 0) {
     // Zod's `.multipleOf` uses an epsilon float comparison that WIDENS. Enforce with
     // the REMAINDER, not `Number.isInteger(v / m)`: for a large `v` (e.g. 1e20,
     // multipleOf 3) `v / m` exceeds 2^53, so every quotient is an integer-valued
-    // double and `Number.isInteger` wrongly ACCEPTS — a widening (round-15 review,
-    // verified on Node: `Number.isInteger(1e20/3)` is true but `1e20 % 3` is 1).
+    // double and `Number.isInteger` wrongly ACCEPTS — a widening (e.g.
+    // `Number.isInteger(1e20/3)` is true but `1e20 % 3` is 1).
     // `v % m === 0` uses IEEE fmod, which is EXACT for integer `m` at any magnitude
     // and a narrowing (fail-safe) for float `m` where the remainder is imprecise.
     // multipleOf is advertised via .meta in convertSchema.
-    return base.refine((v) => v % multipleOf === 0, {
+    return withExclMax.refine((value) => value % multipleOf === 0, {
       message: `must be a multiple of ${multipleOf}`,
     });
   }
-  return base;
+  return withExclMax;
 };
 
 const constSchema = (value: unknown): SchemaResult => {
@@ -345,7 +352,7 @@ const constSchema = (value: unknown): SchemaResult => {
   // A non-finite number (NaN/Infinity — YAML 1.2 parses `.nan`/`.inf`, and the
   // frozen validator accepts them) is not a valid JSON value: z.literal(NaN) would
   // validate NaN while z.toJSONSchema emits `const: null`, a wire/validator
-  // divergence. Omit (fail-closed, round-14).
+  // divergence. Omit (fail-closed).
   if (typeof value === 'number' && !Number.isFinite(value)) {
     return { unrepresentable: 'a non-finite const number' };
   }
@@ -362,7 +369,7 @@ const enumSchema = (values: readonly unknown[]): SchemaResult => {
     }
     // A non-finite number (NaN/Infinity via YAML 1.2 `.nan`/`.inf`) is not valid
     // JSON: z.literal(NaN) validates NaN while z.toJSONSchema emits `const: null`.
-    // Omit (fail-closed, round-14), matching constSchema.
+    // Omit (fail-closed), matching constSchema.
     if (typeof value === 'number' && !Number.isFinite(value)) {
       return { unrepresentable: 'an enum with a non-finite number' };
     }
@@ -372,16 +379,16 @@ const enumSchema = (values: readonly unknown[]): SchemaResult => {
   }
   // JSON Schema requires unique enum values (meta-schema `uniqueItems:true`). All
   // members are primitives (checked above), so SameValueZero identity via Set is
-  // exact; a duplicate is malformed and omits (fail-closed, round-13), consistent
+  // exact; a duplicate is malformed and omits (fail-closed), consistent
   // with the `type`/`required` uniqueness gates.
   if (new Set(values).size !== values.length) {
     return { unrepresentable: 'an enum with duplicate values' };
   }
-  if (values.every((v) => typeof v === 'string')) {
+  if (values.every((value) => typeof value === 'string')) {
     return { ok: z.enum(values as [string, ...string[]]) };
   }
-  const members = values.map((v) =>
-    v === null ? z.null() : z.literal(v as string | number | boolean),
+  const members = values.map((value) =>
+    value === null ? z.null() : z.literal(value as string | number | boolean),
   );
   if (members.length === 1) {
     return { ok: members[0] as z.ZodType };
@@ -424,6 +431,14 @@ const mergeAllOf = (
   const properties: Record<string, unknown> = {};
   const required = new Set<string>();
   const seen = new Set<string>();
+  // Imperative on purpose: any single non-conforming allOf member (wrong
+  // keyword, non-object, malformed `required`, overlapping property name)
+  // aborts the WHOLE merge (fail-closed) before later members are even
+  // inspected — `parts` is spec-controlled (a hostile document can declare
+  // arbitrarily many allOf members). `seen`/`properties`/`required`
+  // accumulate across members in encounter order, so a member's overlap
+  // check depends on every prior member having already run; a map/filter
+  // restatement would need the same shared, order-dependent state.
   for (const part of parts) {
     if (!isRecord(part)) {
       return { unrepresentable: 'an allOf member that is not an object schema' };
@@ -439,7 +454,7 @@ const mergeAllOf = (
     // mergeAllOf processes members structurally WITHOUT running convertSchema on
     // them, so it must re-apply the value-domain gates a member would otherwise get:
     // a non-record `properties`, or a `required` that is not an array of UNIQUE
-    // strings, omits (fail-closed, round-14) — otherwise a malformed member (e.g.
+    // strings, omits (fail-closed) — otherwise a malformed member (e.g.
     // `properties:'wrong'` or `required:[123]`) would be silently skipped/filtered.
     if (part['properties'] !== undefined && !isRecord(part['properties'])) {
       return { unrepresentable: 'an allOf member with a non-record "properties"' };
@@ -447,7 +462,7 @@ const mergeAllOf = (
     if (
       part['required'] !== undefined &&
       (!Array.isArray(part['required']) ||
-        !part['required'].every((k) => typeof k === 'string') ||
+        !part['required'].every((name) => typeof name === 'string') ||
         new Set(part['required']).size !== part['required'].length)
     ) {
       return { unrepresentable: 'an allOf member with a malformed "required" array' };
@@ -501,10 +516,17 @@ const objectSchema = (
   const properties = isRecord(node['properties']) ? node['properties'] : {};
   const required = new Set(
     Array.isArray(node['required'])
-      ? node['required'].filter((k): k is string => typeof k === 'string')
+      ? node['required'].filter((name): name is string => typeof name === 'string')
       : [],
   );
   const shape: Record<string, z.ZodType> = {};
+  // Imperative on purpose: any single dangerous-key or unrepresentable
+  // property aborts the WHOLE object (fail-closed) before later properties
+  // are even converted. `properties` is spec-controlled (a hostile document
+  // can declare many properties, each with a deeply nested schema) —
+  // converting every property first and checking afterward would turn this
+  // short-circuit into forced recursive conversion work for every property
+  // on hostile input, even past the first failure.
   for (const [key, child] of Object.entries(properties)) {
     if (isDangerousKey(key)) {
       return { unrepresentable: `a property named "${key}"` };
@@ -546,14 +568,10 @@ const arraySchema = (
   if (!('ok' in item)) {
     return { unrepresentable: `array items: ${item.unrepresentable}` };
   }
-  let s = z.array(item.ok);
-  if (typeof node['minItems'] === 'number') {
-    s = s.min(node['minItems']);
-  }
-  if (typeof node['maxItems'] === 'number') {
-    s = s.max(node['maxItems']);
-  }
-  return { ok: s };
+  const base = z.array(item.ok);
+  const withMin = typeof node['minItems'] === 'number' ? base.min(node['minItems']) : base;
+  const withMax = typeof node['maxItems'] === 'number' ? withMin.max(node['maxItems']) : withMin;
+  return { ok: withMax };
 };
 
 const unionSchema = (
@@ -562,6 +580,12 @@ const unionSchema = (
   version: OpenapiVersion,
 ): SchemaResult => {
   const members: z.ZodType[] = [];
+  // Imperative on purpose: any single unrepresentable variant aborts the
+  // WHOLE union (fail-closed) before later variants are even converted.
+  // `variants` (oneOf/anyOf) is spec-controlled and can be arbitrarily long
+  // with deeply nested members — converting every variant first and
+  // checking afterward would turn this short-circuit into forced recursive
+  // conversion work for every variant on hostile input.
   for (const variant of variants) {
     const conv = convertSchema(variant, version, depth + 1);
     if (!('ok' in conv)) {
@@ -657,7 +681,7 @@ const buildTyped = (
     // A typeless node carrying an assertion we cannot attach to a type must not
     // widen to `unknown` — omit. (Object roots via `properties` already routed
     // above; a bare `{}` or a description-only node stays `unknown`.)
-    const orphan = Object.keys(node).find((k) => ASSERTION_KEYWORDS.has(k));
+    const orphan = Object.keys(node).find((keyword) => ASSERTION_KEYWORDS.has(keyword));
     return orphan === undefined
       ? { ok: z.unknown() }
       : { unrepresentable: `the constraint "${orphan}" on a typeless schema` };
@@ -665,42 +689,59 @@ const buildTyped = (
   return { unrepresentable: `the unsupported type "${String(typeValue)}"` };
 };
 
+type TypeNormalization = { typeValue: unknown; nullable: boolean };
+
+// Pulls `type` (scalar or `[T, 'null']` union) and 3.0's `nullable` keyword
+// into one normalized shape, or a terminal SchemaResult for the malformed/
+// degenerate array cases. Order of checks matches the original inline
+// control flow exactly (duplicate check, then empty-array check, then
+// multi-type check). The array branch preserves BOTH nullability sources:
+// an explicit 'null' member and (on 3.0) the node's nullable flag.
+const normalizeType = (
+  rawType: unknown,
+  version: OpenapiVersion,
+  nodeNullable: boolean,
+): TypeNormalization | SchemaResult => {
+  if (!Array.isArray(rawType)) {
+    // `nullable` is a 3.0-only keyword. In 3.1 it is not a JSON Schema keyword —
+    // honouring it there would ADMIT null the standard 3.1 dialect excludes
+    // (widening). 3.1 nullability comes only from a `[type, 'null']` union below.
+    return { typeValue: rawType, nullable: version === '3.0' && nodeNullable };
+  }
+  // JSON Schema requires `type` array elements to be UNIQUE. A duplicate (e.g.
+  // ['null','null'] or ['string','null','null']) is malformed and omits, even
+  // though it would collapse to a valid single-or-null shape (fail-closed).
+  // The accepted unique `[T,'null']` normalization is unaffected.
+  if (new Set(rawType).size !== rawType.length) {
+    return { unrepresentable: 'a "type" array with duplicate entries' };
+  }
+  const nonNull = rawType.filter((typeName) => typeName !== 'null');
+  const nullable = rawType.includes('null') || (version === '3.0' && nodeNullable);
+  if (nonNull.length === 0) {
+    // `['null']` is the pure-null type. An EMPTY `type: []` array is degenerate
+    // (unsatisfiable — it matches no type) and must omit, not silently become
+    // `z.null()` (fail-closed) — even when a sibling 3.0 `nullable: true` is
+    // present, since that flag widens an existing type rather than conjuring one.
+    return rawType.includes('null')
+      ? { ok: z.null() }
+      : { unrepresentable: 'an empty "type" array' };
+  }
+  if (nonNull.length !== 1) {
+    return { unrepresentable: 'a multi-type schema beyond [type, null]' };
+  }
+  return { typeValue: nonNull[0], nullable };
+};
+
 const build = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
 ): SchemaResult => {
-  const rawType = node['type'];
-  // `nullable` is a 3.0-only keyword. In 3.1 it is not a JSON Schema keyword —
-  // honouring it there would ADMIT null the standard 3.1 dialect excludes
-  // (widening). 3.1 nullability comes only from a `[type, 'null']` union below.
-  let nullable = version === '3.0' && node['nullable'] === true;
-  let typeValue: unknown = rawType;
-  if (Array.isArray(rawType)) {
-    // JSON Schema requires `type` array elements to be UNIQUE. A duplicate (e.g.
-    // ['null','null'] or ['string','null','null']) is malformed and omits, even
-    // though it would collapse to a valid single-or-null shape (fail-closed,
-    // round-13). The accepted unique `[T,'null']` normalization is unaffected.
-    if (new Set(rawType).size !== rawType.length) {
-      return { unrepresentable: 'a "type" array with duplicate entries' };
-    }
-    const nonNull = rawType.filter((t) => t !== 'null');
-    if (rawType.includes('null')) {
-      nullable = true;
-    }
-    if (nonNull.length === 0) {
-      // `['null']` (or repeated 'null') is the pure-null type. An EMPTY `type: []`
-      // array is degenerate (unsatisfiable — it matches no type) and must omit,
-      // not silently become `z.null()` (fail-closed, round-12 review).
-      return rawType.includes('null')
-        ? { ok: z.null() }
-        : { unrepresentable: 'an empty "type" array' };
-    }
-    if (nonNull.length !== 1) {
-      return { unrepresentable: 'a multi-type schema beyond [type, null]' };
-    }
-    [typeValue] = nonNull;
+  const normalized = normalizeType(node['type'], version, node['nullable'] === true);
+  if ('ok' in normalized || 'unrepresentable' in normalized) {
+    return normalized;
   }
+  const { typeValue, nullable } = normalized;
   // Determiners carry their own nullability through the enumerated values or
   // members — a `.nullable()` wrapper would admit null they exclude (OAS 3.0:
   // other constraints may disallow null). const/enum therefore IGNORE a sibling
@@ -756,11 +797,11 @@ export const convertSchema = (
   if (!('ok' in built)) {
     return built;
   }
-  // Advertise `pattern` and `format` uniformly (decision A / 2026-07-23 format
-  // decision): attach them as wire metadata on whatever the branch produced —
-  // string, enum, const, composite, or a typeless z.unknown() — so z.toJSONSchema
-  // emits the keywords WITHOUT enforcing them (no live RegExp; no divergent format
-  // validator). The model sees them; validation never runs them.
+  // Advertise `pattern` and `format` uniformly: attach them as wire metadata on
+  // whatever the branch produced — string, enum, const, composite, or a
+  // typeless z.unknown() — so z.toJSONSchema emits the keywords WITHOUT
+  // enforcing them (no live RegExp; no divergent format validator). The model
+  // sees them; validation never runs them.
   const meta: Record<string, unknown> = {};
   if (typeof node['pattern'] === 'string') {
     meta['pattern'] = node['pattern'];

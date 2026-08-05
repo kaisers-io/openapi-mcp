@@ -5,12 +5,12 @@ import type { OpenapiVersion } from './validate.ts';
 export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head'] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
-// Spec §3.2: OPTIONS and TRACE operations are never exposed in v1
+// OPTIONS and TRACE operations are never exposed in v1
 const NEVER_EXPOSED_METHODS = ['options', 'trace'] as const;
 
 const TITLE_MAX_LENGTH = 256;
 
-export interface OperationRecord {
+export type OperationRecord = {
   method: HttpMethod;
   path: string;
   operationId?: string;
@@ -21,15 +21,15 @@ export interface OperationRecord {
   parameters: readonly Record<string, unknown>[];
   requestBody?: Record<string, unknown>;
   responses: Record<string, unknown>;
-}
+};
 
-export interface OmittedOperation {
+export type OmittedOperation = {
   method: string;
   path: string;
   reason: string;
-}
+};
 
-export interface NormalizedSpec {
+export type NormalizedSpec = {
   title: string;
   specVersion: string;
   openapiVersion: OpenapiVersion;
@@ -42,7 +42,7 @@ export interface NormalizedSpec {
   // True when `serverUrl` is a relative reference (no scheme) that still
   // needs a document base to resolve into an absolute URL.
   serverUrlIsRelative?: boolean;
-}
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -141,6 +141,10 @@ const expandServerUrlTemplate = (
   template: string,
   variables: Record<string, unknown>,
 ): string | undefined => {
+  // Imperative on purpose: the failure signal must be set from INSIDE the
+  // single replaceAll callback (see the single-pass rationale above) — a
+  // second pass (e.g. matchAll + reduce) to compute it separately would
+  // duplicate the exact re-scan this function exists to avoid.
   let failed = false;
   const expanded = template.replaceAll(/\{(?<name>[^{}]+)\}/gu, (whole: string, name: string) => {
     const variable = variables[name];
@@ -182,6 +186,56 @@ const extractServerUrl = (
     : { serverUrl, serverUrlIsRelative: true };
 };
 
+// Per-path slice of what normalizeSpec's old nested loop did in one iteration
+// of its outer `for (const [path, item] of ...)`: everything this returns for
+// a single path, in the SAME internal order (never-exposed omissions first,
+// then one entry per HTTP_METHODS method, in HTTP_METHODS order) as the
+// original push sequence for that path.
+const buildPathEntries = (
+  path: string,
+  item: unknown,
+): { operations: OperationRecord[]; omitted: OmittedOperation[] } => {
+  if (!path.startsWith('/') || !isRecord(item)) {
+    // Path-object extension keys (x-*) are not paths
+    return { operations: [], omitted: [] };
+  }
+  const pathParameters = Array.isArray(item['parameters']) ? item['parameters'] : [];
+  const pathHasServers = item['servers'] !== undefined;
+  const neverExposed: OmittedOperation[] = NEVER_EXPOSED_METHODS.filter(
+    (method) => item[method] !== undefined,
+  ).map((method) => ({
+    method: method.toUpperCase(),
+    path,
+    reason: `${method.toUpperCase()} operations are never exposed in v1`,
+  }));
+  const perMethod = HTTP_METHODS.flatMap((method): (OperationRecord | OmittedOperation)[] => {
+    const op = item[method];
+    if (op === undefined) {
+      return [];
+    }
+    if (!isRecord(op)) {
+      return [{ method: method.toUpperCase(), path, reason: 'operation is not an object' }];
+    }
+    if (pathHasServers) {
+      return [
+        {
+          method: method.toUpperCase(),
+          path,
+          reason: 'path-level servers overrides are not supported',
+        },
+      ];
+    }
+    return [buildOperation(method, path, op, pathParameters)];
+  });
+  return {
+    operations: perMethod.filter((entry): entry is OperationRecord => !('reason' in entry)),
+    omitted: [
+      ...neverExposed,
+      ...perMethod.filter((entry): entry is OmittedOperation => 'reason' in entry),
+    ],
+  };
+};
+
 export const normalizeSpec = (
   document: Record<string, unknown>,
   version: OpenapiVersion,
@@ -195,54 +249,24 @@ export const normalizeSpec = (
     typeof info['version'] === 'string'
       ? sanitizeSpecText(info['version'], TITLE_MAX_LENGTH)
       : '0.0.0';
-  const operations: OperationRecord[] = [];
-  const omitted: OmittedOperation[] = [];
   const paths = isRecord(document['paths']) ? document['paths'] : {};
-  for (const [path, item] of Object.entries(paths)) {
-    if (!path.startsWith('/') || !isRecord(item)) {
-      // Path-object extension keys (x-*) are not paths
-      continue;
-    }
-    const pathParameters = Array.isArray(item['parameters']) ? item['parameters'] : [];
-    const pathHasServers = item['servers'] !== undefined;
-    for (const method of NEVER_EXPOSED_METHODS) {
-      if (item[method] !== undefined) {
-        omitted.push({
-          method: method.toUpperCase(),
-          path,
-          reason: `${method.toUpperCase()} operations are never exposed in v1`,
-        });
-      }
-    }
-    for (const method of HTTP_METHODS) {
-      const op = item[method];
-      if (op === undefined) {
-        continue;
-      }
-      if (!isRecord(op)) {
-        omitted.push({ method: method.toUpperCase(), path, reason: 'operation is not an object' });
-        continue;
-      }
-      if (pathHasServers) {
-        omitted.push({
-          method: method.toUpperCase(),
-          path,
-          reason: 'path-level servers overrides are not supported',
-        });
-        continue;
-      }
-      const built = buildOperation(method, path, op, pathParameters);
-      if ('reason' in built) {
-        omitted.push(built);
-      } else {
-        operations.push(built);
-      }
-    }
-  }
+  // One buildPathEntries call per path, in Object.entries order — matches the
+  // original outer for-of's iteration order exactly.
+  const perPath = Object.entries(paths).map(([path, item]) => buildPathEntries(path, item));
+  const operations = perPath.flatMap((entry) => entry.operations);
   const webhooks = isRecord(document['webhooks']) ? document['webhooks'] : {};
-  for (const name of Object.keys(webhooks)) {
-    omitted.push({ method: '*', path: `webhook:${name}`, reason: 'webhooks are not supported' });
-  }
+  const omitted = [
+    ...perPath.flatMap((entry) => entry.omitted),
+    // Webhook omissions are appended last, exactly as the original trailing
+    // for-of loop did after the path loop completed.
+    ...Object.keys(webhooks).map(
+      (name): OmittedOperation => ({
+        method: '*',
+        path: `webhook:${name}`,
+        reason: 'webhooks are not supported',
+      }),
+    ),
+  ];
   return {
     title,
     specVersion,

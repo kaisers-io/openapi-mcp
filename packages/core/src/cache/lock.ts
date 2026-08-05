@@ -1,59 +1,65 @@
 import { randomUUID } from 'node:crypto';
 import { conflictError, notFoundError } from '../errors.ts';
-// Round-8 finding 1: `isCacheAbsence` is called by readLockHolder below and
-// `withCacheErrors` wraps the two exports at the bottom of this file, so both
-// are imported HERE, in the task that writes the module. The round-8 draft
-// introduced the import only in Task 4's retroactive patch, which left Task 2 —
-// whose own lock tests and full `pnpm check` run at Steps 11 and 16 — failing
-// typecheck on an unresolved identifier. Both come from the dependency-neutral
-// `cache/errors.ts` created at Step 2b: `store.ts` already imports `lock.ts`,
-// so taking them from the store would be an import cycle (round-6 finding 3).
+// `isCacheAbsence` is called by readLockHolder below and `withCacheErrors`
+// wraps the two exports at the bottom of this file, so both are imported
+// HERE. Both come from the dependency-neutral `cache/errors.ts`: `store.ts`
+// already imports `lock.ts`, so taking them from the store instead would be
+// an import cycle.
 import { isCacheAbsence, withCacheErrors } from './errors.ts';
 import type { CacheFs } from './fs.ts';
 import type { CacheLayout } from './paths.ts';
 
-// D12.3: this does NOT authorize a takeover. A held lock is always a conflict;
+// This does NOT authorize a takeover. A held lock is always a conflict;
 // this threshold only enriches the contention message and decides whether
 // "cache unlock" needs --force.
 export const LOCK_STALE_MS = 60_000;
 
-// The record is a single small JSON object. Round-7 note: an over-cap lock
-// file is NOT treated as "malformed, therefore stale" — readFileTextCapped
-// raises a typed validationError on the cap and the narrowed catch propagates
-// it. That is deliberate: a truncated record is a plausible crash artefact, but
-// a lock file larger than a kilobyte is evidence of tampering, and D5's
-// reasoning applies — fail closed and let an operator decide.
-const LOCK_FILE_MAX_BYTES = 1_024;
+// The record is a single small JSON object. An over-cap lock file is NOT
+// treated as "malformed, therefore stale" — readFileTextCapped raises a typed
+// validationError on the cap and the narrowed catch propagates it. That is
+// deliberate: a truncated record is a plausible crash artefact, but a lock
+// file larger than a kilobyte is evidence of tampering, and the same
+// fail-closed reasoning that governs a corrupt cache entry applies here too —
+// fail closed and let an operator decide.
+const LOCK_FILE_MAX_BYTES = 1024;
 
-interface LockHolder {
+type LockHolder = {
   owner: string;
   acquiredAt: number;
-}
+};
 
 // Returns undefined for a lock file that is genuinely ABSENT or MALFORMED —
 // two states that carry no expiry information.
 //
-// Round-6 finding 2: it must NOT return undefined for an EACCES or EIO. The
-// round-6 draft caught every read failure here, so an unreadable lock during
-// contention became a typed `conflictError` (exit 5) and an unreadable lock
-// during release was treated as "not ours, leave it alone" — and because both
-// outcomes are either non-errors or already-typed errors, the definition-level
-// wrapper could not correct either. A wrapper cannot recover information that
-// an inner catch has already discarded. The non-absence error is therefore
-// propagated from here, and the boundary types it as validation exit 3 per D17.
+// It must NOT return undefined for an EACCES or EIO. Catching every read
+// failure here would turn an unreadable lock during contention into a typed
+// `conflictError` (exit 5) and an unreadable lock during release into "not
+// ours, leave it alone" — and because both outcomes are either non-errors or
+// already-typed errors, the definition-level wrapper could not correct either
+// afterward: a wrapper cannot recover information an inner catch has already
+// discarded. The non-absence error is therefore propagated from here, and the
+// boundary types it as validation exit 3.
 const readLockHolder = async (
   layout: CacheLayout,
   fs: CacheFs,
 ): Promise<LockHolder | undefined> => {
+  // Imperative on purpose: the catch below `return`s `undefined` — a type
+  // distinct from the `string` this variable holds on success — so folding
+  // it into `.catch(...)` would need a sentinel checked afterward, i.e. a
+  // control-flow restructuring, and this lock primitive's imperative shape
+  // is deliberately left alone.
   let raw: string;
   try {
     raw = await fs.readFileTextCapped(layout.lockPath, LOCK_FILE_MAX_BYTES);
-  } catch (err) {
-    if (!isCacheAbsence(err)) {
-      throw err;
+  } catch (error) {
+    if (!isCacheAbsence(error)) {
+      throw error;
     }
     return undefined;
   }
+  // Imperative on purpose: JSON.parse is synchronous, so there is no promise
+  // to `.catch`, and a try-as-expression here would need an IIFE this repo's
+  // style forbids for its own sake.
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -73,14 +79,14 @@ const readLockHolder = async (
   return { owner, acquiredAt };
 };
 
-// D12 mechanism 2: refresh, promote, and any accepted/candidate write run under
-// a per-namespace writer lock, which is what makes promoteCandidate's hash
+// Refresh, promote, and any accepted/candidate write run under a
+// per-namespace writer lock, which is what makes promoteCandidate's hash
 // check a real compare-and-swap. Readers take no lock — they rely on meta.json
 // being the sole commit point and on verifying the hashes it records.
 //
-// The holder record carries a random owner token rather than the pid D12's prose
-// mentions: core takes no process globals, and the token additionally lets the
-// release step confirm it still owns the lock before removing it.
+// The holder record carries a random owner token rather than a process id:
+// core takes no process globals, and the token additionally lets the release
+// step confirm it still owns the lock before removing it.
 const withNamespaceLockImpl = async <T>(
   layout: CacheLayout,
   fs: CacheFs,
@@ -92,12 +98,12 @@ const withNamespaceLockImpl = async <T>(
   const record = `${JSON.stringify({ owner, acquiredAt: nowMs })}\n`;
   const acquired = await fs.createExclusive(layout.lockPath, record);
   if (!acquired) {
-    // D12.3, corrected in review round 2: a held lock is ALWAYS a conflict.
-    // There is no automatic stale takeover, because it cannot be made safe at a
-    // path: B reads a stale record belonging to A, C removes it and acquires a
-    // fresh lock, and B then unlinks C's LIVE lock. The owner token protects
-    // release, not takeover, and re-reading before the unlink only shrinks the
-    // window. Recovery is the explicit "openapi-mcp cache unlock" instead.
+    // A held lock is ALWAYS a conflict. There is no automatic stale takeover,
+    // because it cannot be made safe at a distance: B reads a stale record
+    // belonging to A, C removes it and acquires a fresh lock, and B then
+    // unlinks C's LIVE lock. The owner token protects release, not takeover,
+    // and re-reading before the unlink only shrinks the window. Recovery is
+    // the explicit "openapi-mcp cache unlock" instead.
     const holder = await readLockHolder(layout, fs);
     const heldForMs = holder === undefined ? undefined : nowMs - holder.acquiredAt;
     throw conflictError(
@@ -111,18 +117,18 @@ const withNamespaceLockImpl = async <T>(
   try {
     return await run();
   } finally {
-    // Round-3 finding 4: release unlinks ONLY on an affirmative owner-token
-    // match. The round-3 draft also released when readLockHolder returned
-    // `undefined` — but that value means ABSENT or MALFORMED, and a malformed
-    // record covers a third party's partially-written lock just as much as it
-    // covers a corrupt one. Deleting on absence of evidence is how a release
-    // ends up removing someone else's live lock. (A genuinely unreadable lock —
-    // EACCES, EIO — no longer reaches here at all: readLockHolder propagates it
-    // per round-6 finding 2, and the boundary types it as validation exit 3.)
+    // Release unlinks ONLY on an affirmative owner-token match. Releasing
+    // whenever readLockHolder returns `undefined` would be wrong: that value
+    // means ABSENT or MALFORMED, and a malformed record covers a third party's
+    // partially-written lock just as much as it covers a corrupt one. Deleting
+    // on absence of evidence is how a release ends up removing someone else's
+    // live lock. (A genuinely unreadable lock — EACCES, EIO — no longer reaches
+    // here at all: readLockHolder propagates it, and the boundary types it as
+    // validation exit 3.)
     //
     // Leaving a malformed lock behind is the safe direction: it is exactly
     // the state "openapi-mcp cache unlock" exists to resolve, and an operator
-    // resolving it knowingly is the whole point of D12.3.
+    // resolving it knowingly is the whole point of requiring that explicit step.
     const holder = await readLockHolder(layout, fs);
     if (holder !== undefined && holder.owner === owner) {
       await fs.removeFile(layout.lockPath);
@@ -130,8 +136,8 @@ const withNamespaceLockImpl = async <T>(
   }
 };
 
-// The explicit operator recovery path that replaces automatic stale breaking
-// (D12.3). It is deliberately a separate, named action rather than something a
+// The explicit operator recovery path that replaces automatic stale breaking.
+// It is deliberately a separate, named action rather than something a
 // write silently performs: removing a lock that a live process still holds
 // re-admits a second writer to the namespace, so the operator has to say so.
 const unlockNamespaceImpl = async (
@@ -157,17 +163,14 @@ const unlockNamespaceImpl = async (
   return { heldForMs };
 };
 
-// D17's one error boundary, applied at the DEFINITION so coverage is structural
-// rather than a checklist of call sites (Task 4 Step 3b applies the identical
-// treatment to store.ts). It lives in this task rather than being patched in
-// later because lock.ts is complete here: Step 11 runs the lock tests and Step
-// 16 runs a full `pnpm check`, so an unwrapped export would ship an
-// intermediate commit whose lock operations surface a raw createExclusive or
-// removeFile failure as an unexpected exit 1 instead of the declared validation
-// exit 3. `asCacheError` passes a typed OpenapiMcpError through untouched, so
-// the contention conflictError above keeps exit 5 and its message.
+// The one error boundary, applied at the DEFINITION so coverage is structural
+// rather than a checklist of call sites (store.ts applies the identical
+// treatment). An unwrapped export would let a raw createExclusive or
+// removeFile failure surface as an unexpected exit 1 instead of the declared
+// validation exit 3. `asCacheError` passes a typed OpenapiMcpError through
+// untouched, so the contention conflictError above keeps exit 5 and its message.
 //
-// The generic matters: withCacheErrors is declared <A extends unknown[], R>
+// The generic matters: withCacheErrors is declared <TArgs extends unknown[], TResult>
 // over the whole signature precisely so withNamespaceLock keeps its own type
 // parameter T here.
 export const withNamespaceLock = withCacheErrors(

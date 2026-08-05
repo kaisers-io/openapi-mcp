@@ -29,7 +29,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 //   - a 2xx response's JSON schema is unrepresentable via convertSchema.
 // A partial envelope that silently drops one of these cases would let
 // `structuredContent` violate the tool's own advertised outputSchema at
-// runtime (M5) — omitting entirely is the only sound fallback the plan makes.
+// runtime — omitting entirely is the only sound fallback.
 const isJsonContentType = (contentType: string): boolean =>
   /^application\/(?:[\w.+-]+\+)?json$/u.test(contentType);
 
@@ -41,6 +41,18 @@ const hasUnboundedSuccess = (responses: Record<string, unknown>): boolean =>
   Object.keys(responses).some(
     (key) => key === 'default' || WILDCARD_OR_DEFAULT_SUCCESS_RE.test(key),
   );
+
+// Isolates the one throwing step (z.toJSONSchema) behind an Option-shaped
+// result so the caller never needs a `let` to survive the try/catch.
+const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
+  try {
+    return z.toJSONSchema(schema) as JsonSchemaRecord;
+  } catch {
+    // Defensive: our schemas are representable (proven upstream); fail
+    // closed rather than emit a nonconforming outputSchema.
+    return undefined;
+  }
+};
 
 export const deriveOutputSchema = (
   operation: OperationRecord,
@@ -54,6 +66,13 @@ export const deriveOutputSchema = (
     return undefined;
   }
   const branches: JsonSchemaRecord[] = [];
+  // Imperative on purpose: ANY single malformed/unbounded response branch
+  // aborts the WHOLE envelope (fail-closed, see the comment above) before
+  // later keys are even converted. `successKeys` is attacker-influenced (a
+  // hostile spec can declare arbitrarily many 2xx statuses, each with a deep
+  // schema) — mapping every key through convertSchema/z.toJSONSchema first
+  // and checking afterward would turn this short-circuit into forced O(n)
+  // conversion work on hostile input for no behavioural gain.
   for (const key of successKeys) {
     const response = operation.responses[key];
     if (!isRecord(response)) {
@@ -91,12 +110,8 @@ export const deriveOutputSchema = (
     if (!('ok' in converted)) {
       return undefined;
     }
-    let dataSchema: JsonSchemaRecord;
-    try {
-      dataSchema = z.toJSONSchema(converted.ok) as JsonSchemaRecord;
-    } catch {
-      // Defensive: our schemas are representable (proven upstream); fail
-      // closed rather than emit a nonconforming outputSchema.
+    const dataSchema = toDataSchema(converted.ok);
+    if (dataSchema === undefined) {
       return undefined;
     }
     branches.push({

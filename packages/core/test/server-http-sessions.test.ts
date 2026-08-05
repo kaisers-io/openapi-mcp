@@ -10,20 +10,19 @@ import {
   createStreamableHttpServer,
   SYSTEM_HEADERS,
   textOutcome,
-  type NamedOperation,
-  type RequestGuardOptions,
 } from '../src/index.ts';
+import type { NamedOperation, RequestGuardOptions } from '../src/index.ts';
 
-// A local fake standing in for the M5 upstream executor (this suite tests
-// HTTP session lifecycle, not execution) + a neutral redactor.
+// A local fake standing in for the upstream executor (this suite tests HTTP
+// session lifecycle, not execution) + a neutral redactor.
 const noopExecutor = () =>
   Promise.resolve(textOutcome('no upstream executor configured in this test', true));
 const NOOP_REDACTOR = createRedactor([]);
 
-// H4 coverage (near the bottom of this file) needs to inspect the ACTUAL
+// The timeout-hardening coverage (near the bottom of this file) needs to inspect the ACTUAL
 // http.Server instance createStreamableHttpServer builds internally — a
 // value its public StreamableHttpServerHandle deliberately does not expose
-// (there is no reason for a caller to ever reach the raw http.Server; H4
+// (there is no reason for a caller to ever reach the raw http.Server; the timeout hardening
 // only tightens two Node-internal timeout properties on it). Rather than
 // widen that public API for a single property assertion, this WRAPS (never
 // replaces) node:http's own createServer to capture the instance it
@@ -100,7 +99,7 @@ describe('createSessionStore', () => {
 
 // A minimal fixture — this suite only ever sends `initialize`, never
 // `tools/call`, so one trivial, argument-free operation is sufficient
-// (mirrors the Task 5 InMemory test's own fixture shape).
+// (mirrors the InMemory test's own fixture shape).
 const namedOp: NamedOperation = {
   toolName: 'createThing',
   operation: {
@@ -139,7 +138,7 @@ const WIRING_TEST_PORT = 4610;
 const WIRING_TEST_TOKEN = 'wiring-test-bearer-token';
 const ACCEPT_HEADER = 'application/json, text/event-stream';
 
-describe('createStreamableHttpServer wiring — idle-expiry sweep bound to the HTTP request path (C3 regression guard)', () => {
+describe('createStreamableHttpServer wiring — idle-expiry sweep bound to the HTTP request path (regression guard)', () => {
   it('after all 8 slots go idle-expired, a NEW initialize actually succeeds — proves capacity was truly freed, not merely masked at read time', async () => {
     let currentNow = 0;
     const now = (): number => currentNow;
@@ -187,7 +186,7 @@ describe('createStreamableHttpServer wiring — idle-expiry sweep bound to the H
 
       // Fill all 8 slots at t=0.
       for (let index = 0; index < 8; index += 1) {
-        // eslint-disable-next-line no-await-in-loop -- must land sequentially within the same 8-slot capacity
+        // Sequential on purpose: must land within the same 8-slot capacity.
         const res = await initAt(index);
         expect(res.status).toBe(200);
       }
@@ -207,26 +206,26 @@ describe('createStreamableHttpServer wiring — idle-expiry sweep bound to the H
       // wired into the HTTP request path, it sweeps all 8 expired entries
       // out of the SessionStore's Map before THIS request's own capacity
       // check runs — freeing every slot, so this succeeds. If that wiring
-      // call were removed (the original C3 bug), the Map would still hold
-      // all 8 entries — `sessions.get()`'s own per-read expiry check makes
-      // an individual session LOOK gone on read, but never deletes it from
-      // the Map or shrinks its size — so `sessions.create()` would still
-      // see `size() >= maxSessions` and this would still 503.
+      // call were removed (the original bug), the Map would still hold all
+      // 8 entries — `sessions.get()`'s own per-read expiry check makes an
+      // individual session LOOK gone on read, but never deletes it from the
+      // Map or shrinks its size — so `sessions.create()` would still see
+      // `size() >= maxSessions` and this would still 503.
       const reclaimed = await initAt(9);
       expect(reclaimed.status).toBe(200);
       expect(reclaimed.headers.get('mcp-session-id')).not.toBeNull();
     } finally {
       await server.close();
     }
-  }, 20000);
+  }, 20_000);
 });
 
 // A block of distinct ports, one PER TEST, disjoint from both
 // WIRING_TEST_PORT (4610) and the CLI E2E suite's CANDIDATE_PORTS — this
 // describe block exercises every remaining request-routing branch of
 // streamable-http.ts directly, in-process (guard denial, malformed/oversized
-// bodies, an unknown session, GET/DELETE, the C4-rollback path, and an
-// EADDRINUSE listen() failure). The CLI subprocess E2E suite
+// bodies, an unknown session, GET/DELETE, the malformed-initialize rollback
+// path, and an EADDRINUSE listen() failure). The CLI subprocess E2E suite
 // (serve-http.test.ts) already proves these behaviors end-to-end through the
 // real bin, but a spawned subprocess's own code never counts toward this
 // package's v8 coverage — these in-process calls close that gap. A
@@ -299,7 +298,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('rejects a fresh-initialize POST with an oversized body (400/-32600) and invalid JSON (400/-32700), and a non-initialize POST with no session id (400/-32000)', async () => {
     const port = 4612;
@@ -313,7 +312,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       });
       expect(oversized.status).toBe(400);
       const oversizedBody = (await oversized.json()) as { error?: { code: number } };
-      expect(oversizedBody.error?.code).toBe(-32600);
+      expect(oversizedBody.error?.code).toBe(-32_600);
 
       const badJson = await fetch(urlFor(port), {
         method: 'POST',
@@ -322,7 +321,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       });
       expect(badJson.status).toBe(400);
       const badJsonBody = (await badJson.json()) as { error?: { code: number } };
-      expect(badJsonBody.error?.code).toBe(-32700);
+      expect(badJsonBody.error?.code).toBe(-32_700);
 
       // An invalid UTF-8 byte (0xFF, built at runtime, never pasted — never
       // valid anywhere in a UTF-8 byte sequence) EMBEDDED inside an
@@ -345,7 +344,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       });
       expect(badUtf8.status).toBe(400);
       const badUtf8Body = (await badUtf8.json()) as { error?: { code: number } };
-      expect(badUtf8Body.error?.code).toBe(-32700);
+      expect(badUtf8Body.error?.code).toBe(-32_700);
 
       const notInit = await fetch(urlFor(port), {
         method: 'POST',
@@ -354,13 +353,13 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       });
       expect(notInit.status).toBe(400);
       const notInitBody = (await notInit.json()) as { error?: { code: number } };
-      expect(notInitBody.error?.code).toBe(-32000);
+      expect(notInitBody.error?.code).toBe(-32_000);
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
-  it('a malformed initialize (missing Accept header) 406s WITHOUT ever registering a session (C4-rollback, direct)', async () => {
+  it('a malformed initialize (missing Accept header) 406s WITHOUT ever registering a session (session-slot rollback, direct)', async () => {
     const port = 4613;
     const server = makeServer(port);
     await server.listen();
@@ -387,7 +386,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('an unknown session id 404s on POST, GET, and DELETE alike', async () => {
     const port = 4614;
@@ -419,7 +418,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   // `fetch()` cannot send a DUPLICATED header (its Headers object dedupes on
   // write), so this drives a raw `node:net` socket instead — the same
@@ -475,7 +474,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       socket.destroy();
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('a live session handles tools/list (POST), an SSE stream (GET), body-cap/parse-error POSTs, and DELETE termination', async () => {
     const port = 4615;
@@ -540,7 +539,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('a second listen() on an already-bound port rejects instead of hanging (EADDRINUSE surfaces via the error listener)', async () => {
     const port = 4616;
@@ -552,7 +551,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await first.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('a client that aborts mid-body (destroys the socket before sending Content-Length bytes) is handled cleanly — no crash, and the server keeps serving later requests', async () => {
     const port = 4617;
@@ -593,7 +592,7 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 
   it('a request stuck mid-body (no session yet, so the session-drain phase never touches it) forces close() to fall back to closeAllConnections() at ~SHUTDOWN_FORCE_MS, rather than hang forever', async () => {
     const port = 4618;
@@ -640,9 +639,9 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
     } finally {
       socket.destroy();
     }
-  }, 12000);
+  }, 12_000);
 
-  it('a fresh initialize whose body only finishes arriving AFTER shutdown has begun is rejected with 503, never admitted (H3 shutdown admission fence)', async () => {
+  it('a fresh initialize whose body only finishes arriving AFTER shutdown has begun is rejected with 503, never admitted (shutdown admission fence)', async () => {
     const port = 4619;
     const server = makeServer(port);
     await server.listen();
@@ -704,10 +703,10 @@ describe('createStreamableHttpServer — direct in-process coverage of every req
       socket.destroy();
       await (closePromise ?? server.close());
     }
-  }, 15000);
+  }, 15_000);
 });
 
-describe('createStreamableHttpServer — HTTP request/header timeout hardening (H4)', () => {
+describe('createStreamableHttpServer — HTTP request/header timeout hardening', () => {
   const now = (): number => Date.now();
 
   it("sets requestTimeout=30000 and headersTimeout=10000 on the underlying http.Server — both tightened below Node's own 300000/60000 defaults", async () => {
@@ -756,5 +755,5 @@ describe('createStreamableHttpServer — HTTP request/header timeout hardening (
     } finally {
       await server.close();
     }
-  }, 15000);
+  }, 15_000);
 });

@@ -1,15 +1,10 @@
 import { validationError } from '../errors.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
-import {
-  FILTER_WORK_BUDGET_EXCEEDED_MESSAGE,
-  type FilterPattern,
-  type MatchBudget,
-  createMatchBudget,
-  globMatches,
-} from './pattern.ts';
+import { FILTER_WORK_BUDGET_EXCEEDED_MESSAGE, createMatchBudget, globMatches } from './pattern.ts';
+import type { FilterPattern, MatchBudget } from './pattern.ts';
 
-// Spec §3.2 rule 3: with no --allow, only these methods are exposed
+// With no --allow, only these methods are exposed
 const READ_ONLY_METHODS = new Set(['get', 'head']);
 
 // Suggestions are advisory: a pattern or candidate longer than this is skipped
@@ -19,29 +14,29 @@ const SUGGESTION_MAX_LENGTH = 256;
 // A floor so that short patterns ("gt" for "get") still get a suggestion
 const MIN_SUGGESTION_DISTANCE = 2;
 
-export interface DeadPattern {
+export type DeadPattern = {
   raw: string;
   // Which flag supplied the pattern, so the CLI never has to rebuild a
   // raw-string-to-flag map — a pattern given to both flags appears twice
   flag: 'allow' | 'deny';
   suggestion?: string | undefined;
-}
+};
 
-export interface FilterDecision {
+export type FilterDecision = {
   exposed: readonly NamedOperation[];
   deadPatterns: readonly DeadPattern[];
-}
+};
 
-// D15: the budget is threaded through rather than created per call, because the
+// The budget is threaded through rather than created per call, because the
 // bound that matters is the aggregate over patterns x operations x candidate
-// lengths. It defaults so that a direct caller (and every existing test) gets a
-// full budget without having to construct one.
+// lengths. It defaults so that a direct caller gets a full budget without
+// having to construct one.
 export const matchesOperation = (
   pattern: FilterPattern,
   op: OperationRecord,
   budget: MatchBudget = createMatchBudget(),
 ): boolean => {
-  // D8: every comparison uses the raw normalized spec value. Sanitizing first
+  // Every comparison uses the raw normalized spec value. Sanitizing first
   // would collapse two distinct operations onto one decision and would let a
   // deny pattern silently miss its target; diagnostics sanitize at the print site.
   // The pattern carries its compiled programme, so nothing is compiled here.
@@ -62,13 +57,13 @@ export const matchesOperation = (
 // Levenshtein distance, abandoned as soon as it is known to exceed maxDistance.
 // Returns maxDistance + 1 to signal "further than you asked about".
 //
-// Final review, high-severity finding 1: this used to take no
-// budget at all, so the suggestion phase escaped the D15 aggregate that
-// matchesOperation/globMatches enforce — measured at 35,917 ms of CPU at
-// admitted dimensions (128 dead patterns x 512 candidates x 256-char
-// identifiers). Charged per row, before that row's cells are computed, so an
-// exhausted budget stops the work rather than completing it — mirroring
-// globMatches's spend discipline in pattern.ts exactly, sharing its message.
+// Charged against the same aggregate budget that matchesOperation/globMatches
+// enforce: at the admitted dimensions (128 dead patterns x 512 candidates x
+// 256-char identifiers), running this phase unbudgeted costs 35,917 ms of
+// CPU, so it needs the same guard. Charged per row, before that row's cells
+// are computed, so an exhausted budget stops the work rather than completing
+// it — mirroring globMatches's spend discipline in pattern.ts exactly,
+// sharing its message.
 const boundedDistance = (
   left: string,
   right: string,
@@ -85,10 +80,14 @@ const boundedDistance = (
       throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
     }
   };
-  let previous: number[] = [];
-  for (let column = 0; column <= right.length; column += 1) {
-    previous.push(column);
-  }
+  // The first row is 0..right.length by definition (deleting the whole
+  // prefix of `right`); built directly since it never reads a prior row.
+  let previous: number[] = Array.from({ length: right.length + 1 }, (_unused, column) => column);
+  // Imperative on purpose: each cell reads BOTH the previous row and the
+  // cell just computed to its own left in the same row, so a row cannot be
+  // produced by mapping over its own output. The per-row budget spend and
+  // early abort below must also run before the next row starts, mirroring
+  // globMatches's spend discipline in pattern.ts exactly.
   for (let row = 1; row <= left.length; row += 1) {
     // One unit per cell in the row about to be computed, charged before it
     spend(right.length);
@@ -109,9 +108,9 @@ const boundedDistance = (
   return previous[right.length] ?? tooFar;
 };
 
-// D15: the budget defaults exactly as matchesOperation's does, so the 14
-// existing two-argument callers (and any other direct caller) keep working
-// unchanged and get a full budget when no shared one is threaded in.
+// The budget defaults exactly as matchesOperation's does, so existing
+// two-argument callers (and any other direct caller) keep working unchanged
+// and get a full budget when no shared one is threaded in.
 export const closestMatch = (
   raw: string,
   candidates: readonly string[],
@@ -120,14 +119,17 @@ export const closestMatch = (
   if (raw === '' || raw.length > SUGGESTION_MAX_LENGTH) {
     return undefined;
   }
-  // Admission bound: half the typed pattern, floored at 2. Spec §8's own worked
-  // example needs it this loose — "readPets" -> "readPetById" is distance 4 over
-  // 8 characters, so a tighter proportion yields no suggestion in the
-  // documented case. The floor keeps short patterns ("gt" -> "get") suggestible.
+  // Admission bound: half the typed pattern, floored at 2. This ratio needs to
+  // be this loose to admit "readPets" -> "readPetById", which is distance 4
+  // over 8 characters — a tighter proportion would yield no suggestion for
+  // that pair. The floor keeps short patterns ("gt" -> "get") suggestible.
   const threshold = Math.max(MIN_SUGGESTION_DISTANCE, Math.ceil(raw.length / 2));
   let best: string | undefined;
   let bestDistance = Number.POSITIVE_INFINITY;
   let bestRatio = Number.POSITIVE_INFINITY;
+  // Kept as a loop (not reduce): reduce skips array holes, silently changing
+  // behaviour for a sparse candidates array on this exported function; the
+  // loop visits every index.
   for (const candidate of candidates) {
     if (candidate.length > SUGGESTION_MAX_LENGTH) {
       continue;
@@ -136,22 +138,17 @@ export const closestMatch = (
     if (distance > threshold) {
       continue;
     }
-    // Round-8 finding 5: ranking is LEXICOGRAPHIC — edit distance is primary,
-    // and the length-relative ratio breaks ties only among candidates at equal
-    // distance. The round-8 draft ranked on ratio alone and claimed "a strictly
-    // nearer candidate still wins", justifying it with the single example
-    // 1/8 < 4/11. That claim is false in general, and the plan's own contract
-    // (see the Ranking note above) asserted the opposite of what the code did.
-    // Counterexample, verified by execution: against "abcdefgh", the candidate
-    // "abcdeXYZ" is 3 edits (3/8 = 0.375) while "abcdefghWXYZ" is 4 edits
-    // (4/12 = 0.333) — both admitted, and ratio-alone returns the FARTHER one.
+    // Ranking is LEXICOGRAPHIC: edit distance is primary, and the
+    // length-relative ratio breaks ties only among candidates at equal
+    // distance. Ranking on ratio alone does not work: against "abcdefgh", the
+    // candidate "abcdeXYZ" is 3 edits (3/8 = 0.375) while "abcdefghWXYZ" is 4
+    // edits (4/12 = 0.333) — both admitted, and a ratio-alone rule would
+    // return the FARTHER one.
     //
-    // Distance-first still produces every documented outcome, because §8's
-    // example is an equal-distance tie that the ratio resolves: "readPets" is 4
-    // edits from both "listPets" (4/8) and "readPetById" (4/11), so the ratio
-    // picks "readPetById" exactly as the spec documents. Re-measured against
-    // the whole closestMatch suite: distance-first passes all 14 existing cases
-    // plus the counterexample; ratio-alone passes 14 and fails the 15th.
+    // Distance-first still produces the correct outcome here too, because this
+    // is an equal-distance tie that the ratio resolves: "readPets" is 4 edits
+    // from both "listPets" (4/8) and "readPetById" (4/11), so the ratio picks
+    // "readPetById".
     const ratio = distance / Math.max(raw.length, candidate.length);
     if (distance < bestDistance || (distance === bestDistance && ratio < bestRatio)) {
       best = candidate;
@@ -168,19 +165,27 @@ const candidateSpace = (
   pattern: FilterPattern,
   operations: readonly OperationRecord[],
 ): readonly string[] => {
-  const candidates = new Set<string>();
-  for (const op of operations) {
-    if (pattern.kind === 'tag') {
+  // Pattern.kind is invariant across the walk, so it is branched on once
+  // rather than re-tested per operation; the Set still dedups in the same
+  // first-occurrence order the accumulating loop produced.
+  if (pattern.kind === 'tag') {
+    // Streams into the Set on purpose: tag occurrences are unbounded in a
+    // hostile spec; flatMap would materialize every occurrence before
+    // deduplication.
+    const tags = new Set<string>();
+    for (const op of operations) {
       for (const tag of op.tags) {
-        candidates.add(tag);
+        tags.add(tag);
       }
-    } else if (pattern.kind === 'methodPath') {
-      candidates.add(`${op.method.toUpperCase()} ${op.path}`);
-    } else if (op.operationId !== undefined) {
-      candidates.add(op.operationId);
     }
+    return [...tags];
   }
-  return [...candidates];
+  if (pattern.kind === 'methodPath') {
+    return [...new Set(operations.map((op) => `${op.method.toUpperCase()} ${op.path}`))];
+  }
+  return [
+    ...new Set(operations.flatMap((op) => (op.operationId === undefined ? [] : [op.operationId]))),
+  ];
 };
 
 // A tag pattern's raw form carries the "tag:" prefix, which the candidates do
@@ -209,7 +214,7 @@ const deadPatternsFor = (
         : { raw: pattern.raw, flag, suggestion };
     });
 
-// D15: ONE budget for the whole run — exposure and dead-pattern detection alike.
+// ONE budget for the whole run — exposure and dead-pattern detection alike.
 // Scoping it per match would bound nothing: the reachable cost is the aggregate
 // over patterns x operations x candidate lengths, which is what measured 22.5 s
 // at the maximum admitted dimensions even with a non-backtracking matcher.
@@ -233,7 +238,7 @@ export const applyFilters = (
     // Rule 3: read-only default
     return READ_ONLY_METHODS.has(operation.method);
   });
-  // Spec §8: a pattern is dead when it matches zero operations in the ENTIRE
+  // A pattern is dead when it matches zero operations in the ENTIRE
   // normalized inventory, evaluated before exposure. Deliberately not "zero
   // exposed operations" — a deny pattern that removes everything an allow
   // pattern selected is doing its job, not misspelled, and a pattern naming a
