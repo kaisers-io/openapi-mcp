@@ -344,6 +344,7 @@ const buildBodyObject = (
   data: Record<string, unknown>,
 ): { object: Record<string, unknown>; anyPresent: boolean } | { error: string } => {
   const root: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  let anyPresent = false;
   // Imperative on purpose: this walks and MUTATES a nested chain of freshly
   // created (never caller-visible) objects to reassemble the flattened body
   // fields, checking `isDangerousKey` on every segment BEFORE writing it — a
@@ -356,6 +357,7 @@ const buildBodyObject = (
     if (value === undefined) {
       continue;
     }
+    anyPresent = true;
     if (mapping.bodyPath.length === 0) {
       return { error: `body field "${name}" has no destination path` };
     }
@@ -378,11 +380,6 @@ const buildBodyObject = (
     }
     target[last] = value;
   }
-  // Pure and independent of the mutation walk above: a field "is present"
-  // iff its value in `data` is not undefined — the same predicate the loop
-  // above used to test before mutating, just computed standalone since
-  // nothing else in the loop depends on this flag until the return below.
-  const anyPresent = bodyFieldEntries.some(([name]) => data[name] !== undefined);
   return { object: root, anyPresent };
 };
 
