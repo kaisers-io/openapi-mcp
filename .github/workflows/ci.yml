@@ -8,13 +8,14 @@ permissions:
 jobs:
   check:
     strategy:
-      matrix: { os: [ubuntu-latest, macos-latest] }
+      # An empty `node` falls back to .node-version (the dev pin); 24.0.0 is the published engines floor.
+      matrix: { os: [ubuntu-latest, macos-latest], node: ['', '24.0.0'] }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
-        with: { node-version-file: .node-version, cache: pnpm }
+        with: { node-version: '${{ matrix.node }}', node-version-file: .node-version, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
   bundle-determinism:
