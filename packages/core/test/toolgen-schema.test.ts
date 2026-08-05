@@ -183,6 +183,13 @@ describe('convertSchema — enum, const, null', () => {
     expect(ok(convertSchema({ type: ['null'] })).safeParse(null).success).toBe(true);
   });
 
+  it('omits an empty type array even with a sibling 3.0 nullable flag', () => {
+    // `type: []` matches no type regardless of `nullable: true` — the 3.0 flag
+    // widens an existing type, it cannot conjure one. Only an explicit 'null'
+    // member may collapse the array to z.null(); the empty array stays omitted.
+    expect('unrepresentable' in convertSchema({ type: [], nullable: true }, '3.0')).toBe(true);
+  });
+
   it('omits a type array with duplicate entries', () => {
     // JSON Schema requires unique `type` elements; a duplicate omits even though it
     // would collapse to a valid shape (fail-closed). The accepted unique

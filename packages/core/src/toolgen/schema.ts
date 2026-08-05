@@ -718,10 +718,13 @@ const normalizeType = (
   const nonNull = rawType.filter((typeName) => typeName !== 'null');
   const nullable = rawType.includes('null') || (version === '3.0' && nodeNullable);
   if (nonNull.length === 0) {
-    // `['null']` (or repeated 'null') is the pure-null type. An EMPTY `type: []`
-    // array is degenerate (unsatisfiable — it matches no type) and must omit,
-    // not silently become `z.null()` (fail-closed).
-    return nullable ? { ok: z.null() } : { unrepresentable: 'an empty "type" array' };
+    // `['null']` is the pure-null type. An EMPTY `type: []` array is degenerate
+    // (unsatisfiable — it matches no type) and must omit, not silently become
+    // `z.null()` (fail-closed) — even when a sibling 3.0 `nullable: true` is
+    // present, since that flag widens an existing type rather than conjuring one.
+    return rawType.includes('null')
+      ? { ok: z.null() }
+      : { unrepresentable: 'an empty "type" array' };
   }
   if (nonNull.length !== 1) {
     return { unrepresentable: 'a multi-type schema beyond [type, null]' };
