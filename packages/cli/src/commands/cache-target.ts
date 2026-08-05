@@ -17,11 +17,11 @@ import type { CacheEntrySummary, CacheLayout } from '@kaisers-io/openapi-mcp-cor
 import type { CliContext } from '../context.ts';
 import { getGlobalOpts } from '../output.ts';
 
-// Split out of cache.ts: import/max-dependencies is scoped off for
-// pipeline.ts only, not disabled for the whole repository, so it is enforced
-// for cache.ts too. These are the shared target-resolution helpers every
-// cache subcommand needs, so they live in their own module rather than
-// widening the override.
+// Split out of cache.ts: import/max-dependencies is scoped off only for
+// spec/pipeline.ts and cache/store.ts, not disabled for the whole repository,
+// so it is enforced for cache.ts too. These are the shared target-resolution
+// helpers every cache subcommand needs, so they live in their own module
+// rather than widening the override.
 
 export const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,

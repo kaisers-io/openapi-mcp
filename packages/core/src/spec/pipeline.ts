@@ -215,8 +215,8 @@ export const runSpecPipeline = async (
   // `notModifiedValidators` below are assigned deep inside the try's
   // conditional branches and read after it — the staged
   // fail-closed-read/conditional-refresh/last-known-good-fallback sequence is
-  // sequential by contract (see the shared brief), not a candidate for
-  // restructuring into a value expression.
+  // sequential by contract, not a candidate for restructuring into a value
+  // expression.
   let refreshed:
     | { loaded: LoadedSpecText; etag?: string | undefined; lastModified?: string | undefined }
     | 'not-modified';

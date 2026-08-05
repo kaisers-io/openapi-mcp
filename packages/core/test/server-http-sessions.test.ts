@@ -186,7 +186,7 @@ describe('createStreamableHttpServer wiring — idle-expiry sweep bound to the H
 
       // Fill all 8 slots at t=0.
       for (let index = 0; index < 8; index += 1) {
-        // eslint-disable-next-line no-await-in-loop -- must land sequentially within the same 8-slot capacity
+        // Sequential on purpose: must land within the same 8-slot capacity.
         const res = await initAt(index);
         expect(res.status).toBe(200);
       }

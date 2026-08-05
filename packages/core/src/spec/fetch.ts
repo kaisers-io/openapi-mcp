@@ -69,10 +69,9 @@ export const ignoreError = (): undefined => undefined;
 
 // Binds the chain's `lookup` into the shape createPinnedAgent's `Resolve`
 // expects — `(hostname) => deps.lookup(hostname, signal)` — closing over the
-// whole-chain deadline (hardening item 2). Named and exported for the same
-// reason as `ignoreError` above: a fake fetcher ignores `dispatcher`
-// entirely, so this closure is otherwise unreachable through this file's
-// fake-transport tests.
+// whole-chain deadline. Named and exported for the same reason as
+// `ignoreError` above: a fake fetcher ignores `dispatcher` entirely, so this
+// closure is otherwise unreachable through this file's fake-transport tests.
 export const chainResolve =
   (lookup: DnsLookup, signal: AbortSignal) =>
   (hostname: string): Promise<readonly string[]> =>
@@ -110,7 +109,8 @@ const fetchChain = async (
   // throw budget below is enforced at every iteration, not computed upfront.
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     // Hop 0 (--spec) carries the operator's trust; every redirect hop is
-    // untrusted, same split as pinnedRequest's baseTrusted/hop===0 rule.
+    // untrusted — the same hop-0/hop-n split as pinnedRequest, with hop 0
+    // unconditionally trusted here (pinnedRequest gates it on baseTrusted).
     const policy: PinnedPolicy = { allowPrivateNetwork, trusted: hop === 0 };
     // Hardening: undici SKIPS connect.lookup entirely for an IP-literal
     // hostname, so createPinnedAgent's lookup below never runs for a hop

@@ -103,10 +103,7 @@ export const gutterFrame = (
   opts: GutterFrameOptions,
 ): GutteredBody => {
   const shown = logicalLines.slice(0, opts.maxLines);
-  const cellBudget =
-    opts.terminalWidth === undefined
-      ? undefined
-      : computeCellBudget(opts.terminalWidth, opts.gutter.length);
+  const cellBudget = computeCellBudget(opts.terminalWidth, opts.gutter.length);
   // One map, in the same order as the original for-of: each logical line still
   // calls truncateCells and (conditionally) chunkByCells exactly once, so the
   // side-effect-free per-line work is neither skipped nor duplicated.

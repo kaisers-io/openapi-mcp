@@ -143,12 +143,11 @@ export const createPinnedAgent = (policy: PinnedPolicy, resolve: Resolve): Agent
   new Agent({ connect: { lookup: pinnedLookup(policy, resolve) } });
 
 // The shared, SSRF-safe redirect transport built on top of createPinnedAgent
-// above. Manual redirects capped
-// at MAX_REDIRECTS, a fresh per-hop pinned Agent (never trusted past hop 0),
-// monotonic cross-origin header stripping, a write-method redirect abort, a
-// merged client+timeout deadline, and a decompressed-byte cap. Never
-// produces a ToolCallOutcome (SDK-neutral) — bytes+status+contentType or a
-// typed error the caller maps.
+// above. Manual redirects capped at MAX_REDIRECTS, a fresh per-hop pinned
+// Agent (never trusted past hop 0), monotonic cross-origin header stripping,
+// a write-method redirect abort, a merged client+timeout deadline, and a
+// decompressed-byte cap. Never produces a ToolCallOutcome (SDK-neutral) —
+// bytes+status+contentType or a typed error the caller maps.
 
 export type PinnedErrorReason =
   | 'timeout'

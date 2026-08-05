@@ -64,7 +64,7 @@ const waitForPortOrExit = (
         await fetch(url(port), { method: 'POST', headers: authHeaders(), body: '{}' });
         return true;
       } catch {
-        // eslint-disable-next-line no-await-in-loop -- a bounded liveness poll must sleep between attempts, sequentially, by design
+        // Sequential on purpose: a bounded liveness poll must sleep between attempts by design.
         await new Promise<void>((resolve) => {
           setTimeout(resolve, 50);
         });
@@ -90,7 +90,7 @@ const spawnServeHttp = async (
   extraArgs: readonly string[] = [],
 ): Promise<{ proc: ReturnType<typeof spawn>; port: number }> => {
   for (const port of CANDIDATE_PORTS) {
-    // eslint-disable-next-line no-await-in-loop -- a fresh temp home per candidate is intentional: reusing one across candidates risks a stale lock from a killed prior candidate
+    // Sequential on purpose: a fresh temp home per candidate is intentional — reusing one across candidates risks a stale lock from a killed prior candidate.
     const home = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-http-'));
     activeTempHomes.push(home);
     const proc = spawn(
@@ -119,7 +119,7 @@ const spawnServeHttp = async (
         env: { ...process.env, HOME: home, USERPROFILE: home, MCP_TOKEN: TOKEN },
       },
     );
-    // eslint-disable-next-line no-await-in-loop -- sequential candidate probing is intentional here
+    // Sequential on purpose: candidate probing is intentional here, one at a time.
     const up = await waitForPortOrExit(proc, port);
     if (up) {
       return { proc, port };
@@ -135,7 +135,7 @@ const spawnServeHttp = async (
         });
       });
       proc.kill('SIGKILL');
-      // eslint-disable-next-line no-await-in-loop -- the failed candidate must be fully gone before the next iteration reuses the port pool
+      // Sequential on purpose: the failed candidate must be fully gone before the next iteration reuses the port pool.
       await exited;
     }
   }
@@ -480,7 +480,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
     const { port } = spawned;
     const sessionIds: string[] = [];
     for (let index = 0; index < 8; index += 1) {
-      // eslint-disable-next-line no-await-in-loop -- sessions must be created sequentially to land within the same 8-slot capacity
+      // Sequential on purpose: sessions must be created one at a time to land within the same 8-slot capacity.
       sessionIds.push(await initSession(port));
     }
     const ninth = await postJsonRpc(port, undefined, initializeBody());
@@ -531,7 +531,7 @@ describe('serve --http — Streamable HTTP E2E', () => {
       // Without `handleFreshInitialize`, the slot reserved synchronously
       // BEFORE the transport is even constructed would never be released,
       // and 8 of these would permanently exhaust the 8-session cap.
-      // eslint-disable-next-line no-await-in-loop -- sequential so each malformed attempt's (non-)effect on capacity is observed before the next
+      // Sequential on purpose: each malformed attempt's (non-)effect on capacity is observed before the next.
       const malformed = await fetch(url(port), {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` }, // No Accept header
@@ -699,9 +699,9 @@ describe('serve --http — Streamable HTTP E2E', () => {
     let lastBody: { result?: { isError?: boolean; content?: { text: string }[] } } | undefined;
     for (let index = 0; index < 121; index += 1) {
       const session = index % 2 === 0 ? sessionA : sessionB;
-      // eslint-disable-next-line no-await-in-loop -- exhausting a shared rate limit requires strictly sequential calls
+      // Sequential on purpose: exhausting a shared rate limit requires strictly ordered calls.
       const res = await postJsonRpc(port, session, toolsCallBody());
-      // eslint-disable-next-line no-await-in-loop -- reading each response body sequentially, matching the request above
+      // Sequential on purpose: reading each response body in order, matching the request above.
       lastBody = (await res.json()) as typeof lastBody;
     }
     expect(lastBody?.result?.isError).toBe(true);

@@ -51,7 +51,7 @@ const assertRedactedDisplaySource = (displaySource: string): void => {
   if (`${url.origin}${url.pathname}` !== displaySource) {
     // Never echo the offending value: it is exactly the case where it may carry a secret
     throw validationError(
-      'refusing to cache a spec source that is not in the redacted origin + path form (spec §5.3)',
+      'refusing to cache a spec source that is not in the redacted origin + path form',
     );
   }
 };
