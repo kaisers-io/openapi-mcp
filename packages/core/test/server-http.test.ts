@@ -100,6 +100,7 @@ const MODERN_ENVELOPE = {
 type ServerOverrides = {
   executor?: ToolExecutor;
   metaExecutor?: MetaExecutor;
+  onError?: (error: Error) => void;
 };
 
 const makeServer = (port: number, overrides: ServerOverrides = {}) =>
@@ -120,6 +121,11 @@ const makeServer = (port: number, overrides: ServerOverrides = {}) =>
       bearer: { configuredToken: TEST_TOKEN },
     } satisfies RequestGuardOptions,
     port,
+    // Spread, not a plain assignment: `onError` is an OPTIONAL property under
+    // exactOptionalPropertyTypes, so an explicit `undefined` is not the same
+    // as an absent key — the default-server tests must exercise the genuinely
+    // unset option, which is what proves the sink is optional.
+    ...(overrides.onError === undefined ? {} : { onError: overrides.onError }),
   });
 
 const urlFor = (port: number): string => `http://127.0.0.1:${String(port)}/`;
@@ -445,6 +451,150 @@ describe('createStreamableHttpServer — body cap and parse errors', () => {
       expect(empty.status).toBe(400);
       const emptyBody = (await empty.json()) as JsonRpcEnvelope;
       expect(emptyBody.error?.message).not.toBe('Parse error: request body is not valid JSON');
+    } finally {
+      await server.close();
+    }
+  }, 15_000);
+});
+
+describe('createStreamableHttpServer — Content-Type before parse', () => {
+  it("answers a non-JSON Content-Type with the handler's 415 — even when the body is ALSO malformed, where this module's own parse error would otherwise pre-empt it", async () => {
+    const port = 4647;
+    const server = makeServer(port);
+    await server.listen();
+    try {
+      // The discriminating case: text/plain AND unparseable. Parsing before
+      // checking the media type answers 400/-32700 (this module's own
+      // message) — the wrong status, from the wrong layer. The handler
+      // settles the media type before it looks at any body, so 415 is the
+      // contract-correct answer and -32700 the falsifier.
+      const wrongTypeBadBody = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: modernHeaders('tools/list', { 'content-type': 'text/plain' }),
+        body: '{not json',
+      });
+      expect(wrongTypeBadBody.status).toBe(415);
+      const rejected = (await wrongTypeBadBody.json()) as JsonRpcEnvelope;
+      expect(rejected.error?.code).toBe(-32_000);
+      expect(rejected.error?.message).toMatch(/Unsupported Media Type/u);
+
+      // A well-formed body with the same wrong type: 415 too. Together with
+      // the case above this pins that the media type — not the body — is what
+      // decides, and that handing the handler the consumed-stream sentinel
+      // does not derail its classification either way.
+      const wrongTypeGoodBody = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: modernHeaders('tools/list', { 'content-type': 'text/plain' }),
+        body: JSON.stringify(modernBody(1, 'tools/list')),
+      });
+      expect(wrongTypeGoodBody.status).toBe(415);
+      expect(((await wrongTypeGoodBody.json()) as JsonRpcEnvelope).error?.code).toBe(-32_000);
+
+      // NO Content-Type at all is not JSON-typed either — same 415.
+      const { 'content-type': _dropped, ...headersWithoutType } = modernHeaders('tools/list');
+      const noType = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: headersWithoutType,
+        body: JSON.stringify(modernBody(2, 'tools/list')),
+      });
+      expect(noType.status).toBe(415);
+    } finally {
+      await server.close();
+    }
+  }, 15_000);
+
+  it('serves application/json with a charset parameter normally — the media type is parsed, never substring-matched, so a parameterized spelling is not mis-bucketed into the 415 path', async () => {
+    const port = 4648;
+    const server = makeServer(port);
+    await server.listen();
+    try {
+      const res = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: modernHeaders('tools/list', { 'content-type': 'application/json; charset=utf-8' }),
+        body: JSON.stringify(modernBody(1, 'tools/list')),
+      });
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as JsonRpcEnvelope).result?.resultType).toBe('complete');
+
+      // And the parse error still belongs to this module when the type IS
+      // json: the gate above must not have swallowed the -32700 path.
+      const badJson = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: modernHeaders('tools/list', { 'content-type': 'application/json; charset=utf-8' }),
+        body: '{not json',
+      });
+      expect(badJson.status).toBe(400);
+      const parseError = (await badJson.json()) as JsonRpcEnvelope;
+      expect(parseError.error?.code).toBe(-32_700);
+      expect(parseError.error?.message).toBe('Parse error: request body is not valid JSON');
+    } finally {
+      await server.close();
+    }
+  }, 15_000);
+});
+
+describe('createStreamableHttpServer — out-of-band error sink', () => {
+  it("reports what has no JSON-RPC reply to ride on: the handler's own rejection reason, and a body read that dies with its client", async () => {
+    const port = 4649;
+    const errors: Error[] = [];
+    const server = makeServer(port, { onError: (error) => errors.push(error) });
+    await server.listen();
+    try {
+      // Source 1 — the handler leg. The wire answer carries only the code and
+      // a fixed message; the SPECIFIC reason exists nowhere else, which is
+      // what the sink is for.
+      const { 'mcp-method': _dropped, ...headersWithoutMethod } = modernHeaders('tools/list');
+      const rejected = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: headersWithoutMethod,
+        body: JSON.stringify(modernBody(1, 'tools/list')),
+      });
+      expect(rejected.status).toBe(400);
+      expect(errors.map((error) => error.message)).toContainEqual(
+        expect.stringContaining('Rejected inbound request'),
+      );
+
+      // Source 2 — the pre-hand-off leg (this module's own request-level
+      // catch), reached by a client that vanishes mid-body: the only wire
+      // answer there is a BODYLESS 500, so without the sink the reason is
+      // gone entirely.
+      const beforeAbort = errors.length;
+      await new Promise<void>((resolve, reject) => {
+        const socket = connect(port, '127.0.0.1', () => {
+          socket.write(
+            `POST / HTTP/1.1\r\nHost: 127.0.0.1:${String(port)}\r\nAccept: ${ACCEPT_HEADER}\r\n` +
+              `Content-Type: application/json\r\nAuthorization: Bearer ${TEST_TOKEN}\r\n` +
+              `Mcp-Method: tools/list\r\nContent-Length: 1000\r\nConnection: close\r\n\r\nshort`,
+          );
+          setTimeout(() => {
+            socket.destroy();
+            resolve();
+          }, 100);
+        });
+        socket.on('error', reject);
+      });
+      expect(await waitUntil(() => errors.length > beforeAbort)).toBe(true);
+      // Every entry is a genuine Error — the sink's signature promises one,
+      // and the request-level catch is handed an `unknown` rejection value.
+      expect(errors.every((error) => error instanceof Error)).toBe(true);
+    } finally {
+      await server.close();
+    }
+  }, 20_000);
+
+  it('stays silent when no sink is configured — an unservable request is still answered, and nothing throws for the missing callback', async () => {
+    const port = 4650;
+    const server = makeServer(port);
+    await server.listen();
+    try {
+      const { 'mcp-method': _dropped, ...headersWithoutMethod } = modernHeaders('tools/list');
+      const res = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: headersWithoutMethod,
+        body: JSON.stringify(modernBody(1, 'tools/list')),
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as JsonRpcEnvelope).error?.code).toBe(-32_020);
     } finally {
       await server.close();
     }

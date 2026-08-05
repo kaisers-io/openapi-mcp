@@ -376,6 +376,12 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           dispatcherDeps,
           guard,
           port: httpConfig.port,
+          // Same reasoning as the stdio branch's onError above: an
+          // out-of-band transport error has no JSON-RPC reply to ride on, and
+          // its text can echo client-supplied input, so it goes through the
+          // SAME sanitizing stderr path as the startup diagnostics — never
+          // raw, and never stdout.
+          onError: (error) => emitWarnings(ctx, [`http transport: ${error.message}`]),
         });
         await httpServer.listen();
         // Block until a graceful shutdown signal — there is no client

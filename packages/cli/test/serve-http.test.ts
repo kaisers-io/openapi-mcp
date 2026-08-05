@@ -410,10 +410,17 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     expect(duplicated).toBe(200);
   }, 15_000);
 
-  it('surfaces the header/body agreement ladder unswallowed: a missing Mcp-Method header 400s with -32020', async () => {
+  it('surfaces the header/body agreement ladder unswallowed: a missing Mcp-Method header 400s with -32020, and its REASON reaches sanitized stderr while stdout stays empty', async () => {
     const spawned = await spawnServeHttp();
     child = spawned.proc;
     const { port } = spawned;
+    // Attached after spawn on purpose: a piped child's output is buffered
+    // until it is read, so nothing emitted during startup is lost by
+    // subscribing here.
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
     const { 'mcp-method': _dropped, ...headersWithoutMethod } = modernHeaders('tools/list');
     const listBody = JSON.stringify(modernBody(nextId(), 'tools/list'));
@@ -426,6 +433,22 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     // that it neither answers this itself nor loses the handler's own answer.
     expect(res.status).toBe(400);
     expect(((await res.json()) as JsonRpcEnvelope).error?.code).toBe(-32_020);
+
+    // The wire answer carries the code and a fixed message; the REASON only
+    // exists in the transport's error sink. Sequential on purpose: the child
+    // writes its warning after answering, so give the pipe a turn to deliver.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 300);
+    });
+    // Framed and sanitized through the same warning path the startup
+    // diagnostics use — never raw, since the text can echo client input.
+    expect(Buffer.concat(stderrChunks).toString('utf8')).toMatch(
+      /openapi-mcp: warning: http transport:/u,
+    );
+    // Nothing on stdout, ever: in HTTP mode the process writes no MCP JSON
+    // there, and an error sink that logged to stdout would be the classic way
+    // to corrupt a stdio client's stream.
+    expect(Buffer.concat(stdoutChunks).toString('utf8')).toBe('');
   }, 15_000);
 
   it('a duplicate Host header (one allowed value + one evil value) is rejected — proves the guard reads req.headersDistinct, not the collapsing req.headers', async () => {

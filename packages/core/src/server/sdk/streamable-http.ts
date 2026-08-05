@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createMcpHandler } from '@modelcontextprotocol/server';
+import { createMcpHandler, isJsonContentType } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import type { DispatcherDeps } from '../dispatch.ts';
 import { evaluateRequest } from '../http/request-guard.ts';
@@ -14,6 +14,21 @@ const BODY_CAP_BYTES = 4 * 1024 * 1024;
 // bound, force-destroy remaining connections rather than hang the process.
 const SHUTDOWN_FORCE_MS = 5000;
 
+// The pre-parsed body handed to the SDK when this module deliberately does
+// NOT parse (see the Content-Type gate below). The adapter reads the request
+// stream itself ONLY when `parsedBody === undefined`, so any non-undefined
+// value keeps it away from a stream this module has already consumed —
+// re-entering that read yields an EMPTY body (the stream has ended), i.e. a
+// body that is not the one the client sent, for anything downstream that
+// looks at it. The handler's media-type rejection lands BEFORE it looks, so
+// this is what keeps that ordering from being load-bearing rather than a
+// coincidence this module depends on. `null` rather than a JSON-RPC-shaped
+// object on purpose: it cannot be mistaken for a real message anywhere
+// downstream. A FUNCTION would not work at all — the adapter maps a function
+// third argument back to `undefined`, since that is Express's `next`.
+// oxlint-disable-next-line no-null -- `undefined` is precisely the value that means "nothing pre-parsed, read the stream yourself", which is the behavior being suppressed here
+const CONSUMED_BODY_SENTINEL = null;
+
 export type StreamableHttpOptions = {
   name: string;
   version: string;
@@ -21,6 +36,13 @@ export type StreamableHttpOptions = {
   dispatcherDeps: Omit<DispatcherDeps, 'snapshot'>;
   guard: RequestGuardOptions;
   port: number;
+  // Out-of-band errors: everything that fails with no JSON-RPC reply to
+  // attach it to — a rejected/unservable request, an adapter-level
+  // conversion failure, or a body read that died with the client. Optional
+  // and reporting-only: it never alters a response. Symmetric with the stdio
+  // binding's own `onError`, so a caller does not have to discover that one
+  // transport reports and the other silently swallows.
+  onError?: (error: Error) => void;
 };
 
 export type StreamableHttpServerHandle = {
@@ -124,6 +146,14 @@ const parseJsonBody = (buffer: Buffer): ParsedBodyResult => {
 export const createStreamableHttpServer = (
   opts: StreamableHttpOptions,
 ): StreamableHttpServerHandle => {
+  // ONE sink, handed to every hook that can produce an out-of-band error, so
+  // a caller wires the transport's error reporting once instead of per layer.
+  // Normalizing to Error here (rather than at each call site) keeps the
+  // public option's signature honest: a caller is promised an Error, and the
+  // outer request-level catch below can be handed an unknown rejection value.
+  const reportError = (error: unknown): void => {
+    opts.onError?.(error instanceof Error ? error : new Error(String(error)));
+  };
   // `createMcpHandler` — NOT a hand-wired transport — is what puts 2026-07-28
   // on the wire: it classifies each request's era from its `_meta` envelope
   // claim and builds ONE instance from this factory per request. Serving is
@@ -145,11 +175,20 @@ export const createStreamableHttpServer = (
         snapshot: opts.snapshot,
         dispatcherDeps: opts.dispatcherDeps,
       }),
-    // Stated explicitly rather than left to the option's default: a
-    // claim-less 2025-era POST keeps being served, per request, by this same
-    // factory, so a client that never learned the modern revision keeps
-    // working against this exact endpoint at no cost to the modern path.
-    { legacy: 'stateless' },
+    {
+      // Stated explicitly rather than left to the option's default: a
+      // claim-less 2025-era POST keeps being served, per request, by this
+      // same factory, so a client that never learned the modern revision
+      // keeps working against this exact endpoint at no cost to the modern
+      // path.
+      legacy: 'stateless',
+      // Every rejection the handler answers in band (a media-type or
+      // header/body-ladder refusal, a legacy-leg failure) also reports here;
+      // without this hook those reasons — the only place the SPECIFIC cause
+      // is spelled out — are lost, since the wire answer carries only the
+      // code and a fixed message.
+      onerror: reportError,
+    },
   );
   // The adapter that gives the web-standard handler a Node
   // `(req, res, parsedBody?)` face. It answers a 500 itself if the handler
@@ -161,7 +200,11 @@ export const createStreamableHttpServer = (
   // equivalent to omitting the argument: the adapter then reads the request
   // stream itself, already drained here, and classifies the empty body
   // itself.
-  const nodeHandler = toNodeHandler(handler);
+  // The adapter's own `onerror` observes the ONE failure mode the handler
+  // cannot report itself: a request-conversion failure, or the handler face
+  // throwing outright (it throws once closed), before the adapter writes its
+  // fallback 500.
+  const nodeHandler = toNodeHandler(handler, { onerror: reportError });
   const dispatchToHandler = (
     req: IncomingMessage,
     res: ServerResponse,
@@ -221,6 +264,24 @@ export const createStreamableHttpServer = (
       jsonRpcError(res, 400, -32_600, `request body exceeds the ${BODY_CAP_BYTES}-byte cap`);
       return;
     }
+    // CONTENT-TYPE BEFORE PARSE. The handler settles the media type before it
+    // looks at a body at all — its entry answers 415 (`Unsupported Media
+    // Type: Content-Type must be application/json`) for any POST that is not
+    // JSON-typed, ahead of its own classification step. Parsing here first
+    // would let THIS module's -32700 pre-empt that 415 whenever a request is
+    // both wrong-typed AND malformed: the wrong answer, from the wrong layer.
+    // So the parse is skipped and the request handed over for the canonical
+    // rejection. Only the PARSE moves — the capped read above still runs
+    // first, because it is the only thing bounding the body at all, and that
+    // is exactly why the sentinel is needed: the stream is already consumed.
+    // The predicate is the handler's OWN exported one, imported rather than
+    // restated, so parameterized and odd-cased spellings
+    // (`application/json; charset=utf-8`) bucket here exactly as they bucket
+    // there — a hand-rolled `startsWith`/equality check would drift from it.
+    if (!isJsonContentType(req.headers['content-type'])) {
+      await dispatchToHandler(req, res, CONSUMED_BODY_SENTINEL);
+      return;
+    }
     const parsed = parseJsonBody(bodyRead.buffer);
     if (!parsed.ok) {
       jsonRpcError(res, 400, -32_700, 'Parse error: request body is not valid JSON');
@@ -234,8 +295,13 @@ export const createStreamableHttpServer = (
   };
 
   const httpServer = createServer((req, res) => {
-    // oxlint-disable-next-line promise/prefer-await-to-then -- node:http's request-event callback is synchronous void by contract; it cannot be awaited, so a rejection must be caught explicitly here instead
-    handleRequest(req, res).catch(() => {
+    // oxlint-disable-next-line promise/prefer-await-to-then, promise/prefer-await-to-callbacks -- node:http's request-event callback is synchronous void by contract; it cannot be awaited, so a rejection must be caught explicitly here instead, and the caught value has to be bound to a parameter to be reported at all
+    handleRequest(req, res).catch((error: unknown) => {
+      // Reported, not discarded: this catch covers the PRE-hand-off paths
+      // (in practice a body read that died with its client), whose only
+      // wire answer is a bodyless 500 — the exception text is the sole
+      // description of what actually happened.
+      reportError(error);
       if (!res.headersSent) {
         res.writeHead(500).end();
       }
