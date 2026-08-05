@@ -1,7 +1,7 @@
 import type { HttpMethod } from '../spec/normalize.ts';
 
 // SDK-neutral tool annotations (mirrors MCP's ToolAnnotations hint fields).
-// This module never imports the SDK; server/sdk-v1/protocol.ts casts these
+// This module never imports the SDK; server/sdk/protocol.ts casts these
 // to the SDK's own type at the one boundary that needs it. All fields are
 // advisory HINTS, not an enforcement mechanism — filtering is the enforcement
 // layer (README); a client MUST NOT make authorization decisions from them.

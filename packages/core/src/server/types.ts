@@ -3,7 +3,7 @@ import type { GeneratedTool } from '../toolgen/build.ts';
 import type { OmittedOperation } from '../spec/normalize.ts';
 
 // The MCP wire-format tool object: a plain JSON-serializable shape, NOT an
-// SDK type. server/sdk-v1/protocol.ts casts this to the SDK's `Tool` type at
+// SDK type. server/sdk/protocol.ts casts this to the SDK's `Tool` type at
 // the one boundary that needs it — every other module stays SDK-neutral.
 // Every field is `readonly` (a STATIC guard — see snapshot.ts's `deepFreeze`
 // for the RUNTIME guard that actually enforces it: TS `readonly` alone is

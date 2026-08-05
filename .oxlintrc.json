@@ -87,14 +87,15 @@
     // multiple call frames for no gain in clarity. Too broad for
     // file-scoped overrides to stay honest, so the exception stays global.
     "max-statements": "off",
-    // Off: 52 sites remain across 22 files (packages/core/src/cache/store.ts,
+    // Off: 50 sites remain across 22 files (packages/core/src/cache/store.ts,
     // packages/core/src/spec/pipeline.ts, packages/core/src/spec/fetch.ts,
     // packages/core/src/http/pinned-dispatcher.ts, packages/core/src/http/egress.ts,
     // packages/core/src/cache/lock.ts, packages/core/src/filter/engine.ts,
     // packages/core/src/server/execute/request.ts,
     // packages/core/src/server/execute/executor.ts,
-    // packages/core/src/server/sdk-v1/streamable-http.ts,
-    // packages/cli/src/context.ts, and ten *.test.ts files), each falling
+    // packages/core/src/server/sdk/streamable-http.ts,
+    // packages/cli/src/context.ts, packages/cli/src/commands/serve.ts,
+    // and ten *.test.ts files), each falling
     // into one of two inherent shapes reviewed and kept in the functional-
     // style pass: (1) a fallible value declared before a try so it is still
     // visible to code after the try/finally once the try assigns it (TDZ-safe
@@ -462,21 +463,6 @@
         // of mkdirSecure's branches) all depend on being reasoned about
         // together as one filesystem-safety invariant; splitting any one of
         // them out would separate it from the seam it protects.
-        "max-lines": "off"
-      }
-    },
-    {
-      "files": ["packages/core/src/server/sdk-v1/streamable-http.ts"],
-      "rules": {
-        // Off: streamable-http.ts is the single home of the Streamable HTTP
-        // listener wiring -- the synchronous session-capacity reservation
-        // and its rollback, the request-guard-before-transport ordering,
-        // the 4 MB body-cap/parse-error handling, and the two-phase bounded
-        // graceful shutdown each depend on the exact SDK request/response
-        // lifecycle documented alongside them (see the file's own comments
-        // for the exact SDK-source behavior each one cites). Splitting any
-        // of these across files would separate that lifecycle documentation
-        // from the code it verifies, which is itself the load-bearing part.
         "max-lines": "off"
       }
     },
