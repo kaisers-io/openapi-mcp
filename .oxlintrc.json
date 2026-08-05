@@ -61,22 +61,31 @@
     // describe) rather than switching to `export default` for just that
     // one file.
     "import/prefer-default-export": "off",
-    // Off: errors.ts's error-normalization helpers use single-line
-    // ternaries (e.g. `err instanceof Error ? err.message : String(err)`)
-    // to extract a value from an unknown error type; if/else would triple
-    // the line count for the same type-narrowing expression.
+    // Off: 303 sites remain across 62 files (heaviest: toolgen/schema.ts,
+    // spec/pipeline.ts, spec/normalize.ts, cache/store.ts), nearly all
+    // single-line value selections — e.g. errors.ts's error-normalization
+    // `err instanceof Error ? err.message : String(err)` — where if/else
+    // would triple the line count for the same type-narrowing expression.
+    // Too broad for file-scoped overrides to stay honest, so the exception
+    // stays global.
     "no-ternary": "off",
-    // Off: cache/store.ts's promoteCandidateImpl and cache/lock.ts's
-    // withNamespaceLockImpl take four parameters (layout, fs, nowMs, plus
-    // opts/run) that don't decompose into a smaller natural grouping
-    // without inventing an options object whose only caller is this one
-    // call site.
+    // Off: 26 sites across 17 files (heaviest: server/execute/response.ts,
+    // filter/engine.ts, cache/store.ts, spec/pipeline.ts) take more
+    // parameters than the cap without decomposing into a smaller natural
+    // grouping — e.g. cache/store.ts's promoteCandidateImpl and
+    // cache/lock.ts's withNamespaceLockImpl (layout, fs, nowMs, plus
+    // opts/run) — short of inventing an options object whose only caller
+    // is the one call site. Too broad for file-scoped overrides to stay
+    // honest, so the exception stays global.
     "max-params": "off",
-    // Off: headers.ts's resolveHeaderEnvMappings has 14 statements because
-    // it walks every declared header once, validating and normalizing each
-    // before adding it to the mapping; splitting the loop body into helper
-    // functions would scatter one validation pass across multiple call
-    // frames for no gain in clarity.
+    // Off: 203 sites across 74 files (heaviest: cache-store.test.ts,
+    // toolgen/schema.ts, server-http-sessions.test.ts) exceed the
+    // statement cap, typically one linear validation or fixture-setup pass
+    // — e.g. headers.ts's resolveHeaderEnvMappings, which walks every
+    // declared header once, validating and normalizing each; splitting
+    // such a body into helper functions would scatter one pass across
+    // multiple call frames for no gain in clarity. Too broad for
+    // file-scoped overrides to stay honest, so the exception stays global.
     "max-statements": "off",
     // Off: 52 sites remain across 22 files (packages/core/src/cache/store.ts,
     // packages/core/src/spec/pipeline.ts, packages/core/src/spec/fetch.ts,
@@ -97,32 +106,49 @@
     // is too broad for file-scoped overrides to stay honest, so the
     // exception stays global.
     "init-declarations": "off",
-    // Off: egress.ts's classifyIpv4/classifyAddress put each branch's IANA
-    // range/RFC citation as an inline comment directly on the condition it
-    // documents; moving those above the line would separate a citation from
-    // the exact check it justifies.
+    // Off: 149 sites across 25 files (heaviest: egress.test.ts,
+    // cli/test/serve.test.ts, http/egress.ts, server-dispatch.test.ts) put
+    // a short justification directly on the line it documents — e.g.
+    // egress.ts's classifyIpv4/classifyAddress branches, where each IANA
+    // range/RFC citation sits on the exact condition it justifies; moving
+    // those above the line would separate a citation from the check it
+    // covers. Too broad for file-scoped overrides to stay honest, so the
+    // exception stays global.
     "no-inline-comments": "off",
     // Off because it is unsatisfiable alongside the formatter: oxfmt rewrites
     // hexadecimal digits to lowercase while this rule demands uppercase, and
     // the rule accepts no configuration — enabling it would make `lint` and
     // `fmt:check` contradict each other on every hex literal.
     "unicorn/number-literal-case": "off",
-    // Off: egress.ts's assertAllowedRedirectTarget and fetch.ts's fetchSpec
-    // exceed 50 lines because each performs one linear sequence of
-    // security-relevant checks (DNS-pinned lookup, redirect-target
-    // classification, response-size accounting) that must run in a fixed
-    // order; extracting steps into helpers would hide that ordering
-    // dependency behind function boundaries.
+    // Off: 191 sites across 69 files, test bodies included (heaviest:
+    // cache-store.test.ts, cache/store.ts, server-http-sessions.test.ts),
+    // exceed the line cap — fixed-order sequences of security-relevant
+    // checks like egress.ts's assertAllowedRedirectTarget and fetch.ts's
+    // fetchSpec (DNS-pinned lookup, redirect-target classification,
+    // response-size accounting), plus describe/it bodies that walk one
+    // scenario end to end; extracting steps into helpers would hide that
+    // ordering dependency (or scatter one scenario) behind function
+    // boundaries. Too broad for file-scoped overrides to stay honest, so
+    // the exception stays global and covers **/*.test.ts too.
     "max-lines-per-function": "off",
-    // Off: fetch.ts's manual redirect loop and its streamed body read are
-    // inherently serial -- each redirect hop depends on the previous
-    // response's Location header, and each stream chunk depends on the
-    // previous one being consumed, so there is nothing to parallelize.
+    // Off: 45 sites across 10 files (heaviest: cli/test/serve-http.test.ts,
+    // spec/fetch.ts, cache/store.ts, http/pinned-dispatcher.ts,
+    // cli/src/context.ts), each an inherently serial loop — e.g. fetch.ts's
+    // manual redirect loop and its streamed body read, where each hop
+    // depends on the previous response's Location header and each chunk on
+    // the previous one being consumed — plus test loops that must observe
+    // one effect before causing the next. Nothing to parallelize, and too
+    // broad for file-scoped overrides to stay honest, so the exception
+    // stays global.
     "no-await-in-loop": "off",
-    // Off: fetch.ts's redirect loop uses `continue` to skip straight to the
-    // next hop once a redirect response has been classified and the next
-    // URL resolved; rewriting it as nested if/else would deepen the
-    // indentation of the whole loop body for the same control flow.
+    // Off: 19 sites across 8 files (server/execute/request.ts 5,
+    // cache/store.ts 4, filter/pattern.ts 3, the rest spread thinner),
+    // each using `continue` to skip to the next iteration once an item is
+    // classified — e.g. fetch.ts's redirect loop advancing to the next hop
+    // once the next URL is resolved; rewriting them as nested if/else
+    // would deepen the indentation of each loop body for the same control
+    // flow. Too broad for file-scoped overrides to stay honest, so the
+    // exception stays global.
     "no-continue": "off"
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
@@ -166,9 +192,12 @@
         // assertion into several single-purpose tests that each need the
         // same setup repeated.
         "vitest/max-expects": "off",
-        // Off: spec-display.test.ts's "EXIT map" fixture omits an explicit
-        // assertion-count check because its assertions are structural
-        // (toEqual on a whole array), not counted one by one.
+        // Off: 1322 sites across all 51 test files — effectively every
+        // test in the suite — would need an expect.assertions(n) preamble;
+        // the assertions are structural throughout (e.g.
+        // spec-display.test.ts's "EXIT map" fixture asserting toEqual on a
+        // whole array), not counted one by one, so the rule is off
+        // suite-wide.
         "vitest/prefer-expect-assertions": "off",
         // Off: vitest globals (describe/it/expect) are deliberately
         // disabled project-wide, so spec-display.test.ts imports them
@@ -183,10 +212,13 @@
         // factory function under test rather than restating it as a
         // sentence describing behavior.
         "vitest/prefer-describe-function-title": "off",
-        // Off: spec-display.test.ts uses toEqual (structural equality),
-        // not toStrictEqual (which also checks prototype and undefined
-        // keys); switching would change what the assertion actually
-        // verifies, which is a behavior change to the test, not a style fix.
+        // Off: 319 sites across 41 test files (heaviest:
+        // cache-store.test.ts, filter-engine.test.ts, pipeline.test.ts,
+        // http-pinned-dispatcher.test.ts) use toEqual (structural
+        // equality) on purpose, not toStrictEqual (which also checks
+        // prototype and undefined keys); switching any of them would
+        // change what the assertion actually verifies, which is a behavior
+        // change to the test, not a style fix.
         "vitest/prefer-strict-equal": "off",
         // Off: primitives.test.ts asserts safeParse(...).success with
         // toBe(false), which is stricter than the falsy-check this rule
@@ -208,15 +240,12 @@
         // the key's name; renaming it to satisfy id-length would suggest a
         // meaning the fixture doesn't have.
         "id-length": "off",
-        // Off: main.test.ts's `describe('run', ...)` callback is 60 lines
-        // because it walks every CLI exit-code branch in one grouped test
-        // suite; splitting the describe block would scatter one command's
-        // behavior across multiple files.
-        "max-lines-per-function": "off",
-        // Off: doctor.test.ts asserts envelope.ok/cacheRootExists with
-        // toBe(true), which is stricter than the truthy-check this rule
-        // would substitute (both fields are typed boolean, so toBe(true)
-        // is the exact check).
+        // Off: 288 sites across 29 test files (heaviest:
+        // toolgen-schema.test.ts, toolgen-layout.test.ts,
+        // filter-pattern.test.ts) assert typed booleans with toBe(true) —
+        // e.g. doctor.test.ts's envelope.ok/cacheRootExists, or
+        // safeParse(...).success — which is stricter than the truthy-check
+        // this rule would substitute (toBeTruthy() also passes for 1 or 'x').
         "vitest/prefer-to-be-truthy": "off",
         // Off: main.test.ts defines inline CommandRegistrar closures
         // (boom/helpToStderr) inside the test body because they capture
@@ -239,16 +268,18 @@
         // before its file-only or url-only field can be read; the
         // narrowing is the thing under test, not incidental control flow.
         "vitest/no-conditional-in-test": "off",
-        // Off: fetch.test.ts's fixtures use the Fetch API's own `null`
-        // convention for an absent response body or header value (that is
-        // what `Response.body`/`Headers.get` return when absent, not
-        // `undefined`), so the fixtures mirror the real API contract.
+        // Off: 36 sites across 9 test files (heaviest:
+        // toolgen-schema.test.ts) use literal `null` because the fixture
+        // mirrors an API contract that itself uses null — e.g.
+        // fetch.test.ts's absent `Response.body`/`Headers.get` returns, or
+        // JSON Schema's null type and enum-member null — so `undefined`
+        // would change what the fixture actually exercises.
         "unicorn/no-null": "off",
-        // Off for tests: fetch.test.ts's redirect-chain suite covers many
-        // chained-hop fixtures, each needing its own mock response and
-        // assertions, as one coherent scenario; splitting it across files
-        // would separate a redirect chain from the single test verifying
-        // it end to end.
+        // Off for tests: 23 test files exceed the line cap because a
+        // coherent scenario suite lives in one file — e.g. fetch.test.ts's
+        // redirect-chain suite, where each chained-hop fixture needs its
+        // own mock response and assertions; splitting such a file would
+        // separate a scenario from the single test verifying it end to end.
         "max-lines": "off",
         // Off: sanitize.test.ts and output.test.ts embed escaped
         // backslashes ('\\x', '\\u001b') as literal two-character string
