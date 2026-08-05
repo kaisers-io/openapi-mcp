@@ -215,6 +215,24 @@ const rawRequest = (
     socket.on('error', reject);
   });
 
+// Polls a condition that becomes true on another turn of the event loop (a
+// child's stderr pipe delivering a line it wrote after answering a request),
+// rather than sleeping a fixed amount and hoping. Returns the condition's
+// final value so the caller asserts on CONTENT and fails on the deadline.
+const waitUntil = async (predicate: () => boolean, timeoutMs = 5000): Promise<boolean> => {
+  const start = Date.now();
+  while (Date.now() - start <= timeoutMs) {
+    if (predicate()) {
+      return true;
+    }
+    // Sequential on purpose: a bounded poll must sleep between attempts.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 25);
+    });
+  }
+  return predicate();
+};
+
 // A monotonically increasing JSON-RPC id generator, returned as a `const`
 // closure rather than a bare `let` counter directly inside the describe
 // block below: the mutable state lives inside this factory's own closure,
@@ -435,16 +453,15 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     expect(((await res.json()) as JsonRpcEnvelope).error?.code).toBe(-32_020);
 
     // The wire answer carries the code and a fixed message; the REASON only
-    // exists in the transport's error sink. Sequential on purpose: the child
-    // writes its warning after answering, so give the pipe a turn to deliver.
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 300);
-    });
-    // Framed and sanitized through the same warning path the startup
-    // diagnostics use — never raw, since the text can echo client input.
-    expect(Buffer.concat(stderrChunks).toString('utf8')).toMatch(
-      /openapi-mcp: warning: http transport:/u,
+    // exists in the transport's error sink. Polled rather than slept on: the
+    // child writes its warning after answering, and a fixed sleep would be
+    // both a flake (a slow machine) and a delay (a fast one).
+    const sawWarning = await waitUntil(() =>
+      // Framed and sanitized through the same warning path the startup
+      // diagnostics use — never raw, since the text can echo client input.
+      /openapi-mcp: warning: http transport:/u.test(Buffer.concat(stderrChunks).toString('utf8')),
     );
+    expect(sawWarning).toBe(true);
     // Nothing on stdout, ever: in HTTP mode the process writes no MCP JSON
     // there, and an error sink that logged to stdout would be the classic way
     // to corrupt a stdio client's stream.

@@ -169,6 +169,37 @@ describe('serveStdioSession', () => {
     await expect(session.close()).resolves.toBeUndefined();
   });
 
+  it('survives an onError sink that THROWS — the SDK isolates the callback, so the binding needs no guard of its own', async () => {
+    // The HTTP transport has to isolate its own sink (its request-level catch
+    // has no other observer, and an escaping exception there becomes an
+    // unhandled rejection). This pins the reason the stdio binding does NOT:
+    // `serveStdio` invokes `options.onerror` only through its own
+    // try/catch-wrapped reporter, so a throwing sink cannot escape the same
+    // way. If a future SDK version drops that isolation, this fails here
+    // instead of surfacing as a crash in the field.
+    const unhandled: unknown[] = [];
+    const trapRejection = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', trapRejection);
+    try {
+      const { session, stdin } = openSession(() => {
+        throw new Error('sink exploded: EPIPE');
+      });
+      // The same overflow the test above drives, with a sink that throws on
+      // the way out.
+      stdin.write(`${'x'.repeat(11 * 1024 * 1024)}\n`);
+      expect(await lifetimeWithin(session.closed, 500)).toBe('ended');
+      await expect(session.close()).resolves.toBeUndefined();
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 50);
+      });
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.removeListener('unhandledRejection', trapRejection);
+    }
+  });
+
   it('ends the session lifetime when the transport never starts', async () => {
     const onError = vi.fn<(error: Error) => void>();
     const { session } = openSession(onError, unstartableStdin());

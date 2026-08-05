@@ -27,6 +27,7 @@ import type {
 import pkg from '../../package.json' with { type: 'json' };
 import { registerApiOptions, resolveApiConfig } from '../api-options.ts';
 import type { ApiCmdOpts } from '../api-options.ts';
+import type { CliContext } from '../context.ts';
 import { emitError, emitWarnings } from '../output.ts';
 import {
   deadPatternMessage,
@@ -49,6 +50,49 @@ const MAX_HEADER_BYTES = 16_384;
 const MAX_CONCURRENT_UPSTREAM_CALLS = 16;
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+// At most one transport warning per this window, per route.
+const TRANSPORT_WARNING_WINDOW_MS = 1000;
+
+// The BOUNDED stderr route both transports' out-of-band error sinks report
+// through. A sink that fires once per unservable request is an amplifier: a
+// client holding a valid bearer (or, on stdio, the one client there is) can
+// drive one synchronous stderr write per malformed request for as long as it
+// likes — enough to swamp a terminal or fill a log with text it chose. This
+// caps that at one framed line per window and drops the rest, and — the part
+// that keeps a drop from being a silent lie — reports HOW MANY were dropped
+// on the next line that does get through.
+//
+// Check-on-emit, never a timer: nothing is scheduled, so this holds no
+// pending work that could keep the event loop alive past a shutdown signal.
+// The accepted cost is that a burst suppressed at the very END of a run is
+// never reported, since no later warning arrives to carry the count.
+//
+// The clock is `ctx.now` — the same injected clock the rest of the command
+// uses, never Date.now directly — so the window is exercised with a fake
+// clock instead of by sleeping. Text still goes through emitWarnings, so
+// every line (the suppression notice included) stays sanitized and framed.
+export const createTransportWarningRoute = (
+  ctx: CliContext,
+  label: string,
+): ((error: Error) => void) => {
+  let lastEmittedMs: number | undefined;
+  let suppressed = 0;
+  return (error: Error): void => {
+    const nowMs = ctx.now();
+    if (lastEmittedMs !== undefined && nowMs - lastEmittedMs < TRANSPORT_WARNING_WINDOW_MS) {
+      suppressed += 1;
+      return;
+    }
+    lastEmittedMs = nowMs;
+    const dropped = suppressed;
+    suppressed = 0;
+    emitWarnings(ctx, [
+      ...(dropped === 0 ? [] : [`${label}: ${String(dropped)} more warnings suppressed`]),
+      `${label}: ${error.message}`,
+    ]);
+  };
+};
 
 const tryParseUrl = (raw: string): URL | undefined => {
   try {
@@ -340,7 +384,9 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
             // them through the SAME sanitizing stderr path the startup
             // diagnostics use rather than dropping them, since stdout is
             // MCP-JSON-only and their text can echo client-supplied input.
-            onError: (error) => emitWarnings(ctx, [`stdio transport: ${error.message}`]),
+            // Rate-bounded, because one line per unservable message is an
+            // amplifier the client controls (see createTransportWarningRoute).
+            onError: createTransportWarningRoute(ctx, 'stdio transport'),
           },
         );
         const shutdown = Promise.withResolvers<void>();
@@ -376,12 +422,12 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           dispatcherDeps,
           guard,
           port: httpConfig.port,
-          // Same reasoning as the stdio branch's onError above: an
-          // out-of-band transport error has no JSON-RPC reply to ride on, and
-          // its text can echo client-supplied input, so it goes through the
-          // SAME sanitizing stderr path as the startup diagnostics — never
-          // raw, and never stdout.
-          onError: (error) => emitWarnings(ctx, [`http transport: ${error.message}`]),
+          // Same reasoning — and the same bounded route — as the stdio
+          // branch's onError above: an out-of-band transport error has no
+          // JSON-RPC reply to ride on, and its text can echo client-supplied
+          // input, so it goes through the SAME sanitizing stderr path as the
+          // startup diagnostics (never raw, never stdout), at a bounded rate.
+          onError: createTransportWarningRoute(ctx, 'http transport'),
         });
         await httpServer.listen();
         // Block until a graceful shutdown signal — there is no client

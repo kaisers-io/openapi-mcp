@@ -582,6 +582,75 @@ describe('createStreamableHttpServer — out-of-band error sink', () => {
     }
   }, 20_000);
 
+  it('survives a sink that THROWS: the request is still answered and no rejection escapes to the process', async () => {
+    const port = 4651;
+    const sinkCalls: Error[] = [];
+    // A trap for the exact failure mode this guards: an exception thrown out
+    // of the sink inside the request-level `.catch` rejects that catch's own
+    // promise with nothing left to observe it, and Node's default
+    // unhandled-rejection mode ends the PROCESS — a client-triggerable crash
+    // in place of a 500. Registered before anything can fire it.
+    const unhandled: unknown[] = [];
+    const trapRejection = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', trapRejection);
+    const server = makeServer(port, {
+      onError: (error) => {
+        sinkCalls.push(error);
+        // The realistic thrower is the sink's own output dying — a stderr
+        // write failing with EPIPE once the parent process is gone.
+        throw new Error('sink exploded: EPIPE');
+      },
+    });
+    await server.listen();
+    try {
+      // The pre-hand-off leg first: a client that vanishes mid-body is what
+      // reaches the request-level catch, the one path with no other observer.
+      await new Promise<void>((resolve, reject) => {
+        const socket = connect(port, '127.0.0.1', () => {
+          socket.write(
+            `POST / HTTP/1.1\r\nHost: 127.0.0.1:${String(port)}\r\nAccept: ${ACCEPT_HEADER}\r\n` +
+              `Content-Type: application/json\r\nAuthorization: Bearer ${TEST_TOKEN}\r\n` +
+              `Mcp-Method: tools/list\r\nContent-Length: 1000\r\nConnection: close\r\n\r\nshort`,
+          );
+          setTimeout(() => {
+            socket.destroy();
+            resolve();
+          }, 100);
+        });
+        socket.on('error', reject);
+      });
+      expect(await waitUntil(() => sinkCalls.length > 0)).toBe(true);
+
+      // The handler leg, whose sink also throws: still answered normally.
+      const { 'mcp-method': _dropped, ...headersWithoutMethod } = modernHeaders('tools/list');
+      const rejected = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: headersWithoutMethod,
+        body: JSON.stringify(modernBody(1, 'tools/list')),
+      });
+      expect(rejected.status).toBe(400);
+
+      // And the listener keeps serving — the throwing sink took nothing with
+      // it on either leg.
+      const stillAlive = await fetch(urlFor(port), {
+        method: 'POST',
+        headers: modernHeaders('tools/list'),
+        body: JSON.stringify(modernBody(2, 'tools/list')),
+      });
+      expect(stillAlive.status).toBe(200);
+
+      // Node flags an unhandled rejection at the end of a turn, so give it
+      // several before concluding it never happened.
+      await waitUntil(() => unhandled.length > 0, 500);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.removeListener('unhandledRejection', trapRejection);
+      await server.close();
+    }
+  }, 20_000);
+
   it('stays silent when no sink is configured — an unservable request is still answered, and nothing throws for the missing callback', async () => {
     const port = 4650;
     const server = makeServer(port);

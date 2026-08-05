@@ -152,7 +152,20 @@ export const createStreamableHttpServer = (
   // public option's signature honest: a caller is promised an Error, and the
   // outer request-level catch below can be handed an unknown rejection value.
   const reportError = (error: unknown): void => {
-    opts.onError?.(error instanceof Error ? error : new Error(String(error)));
+    try {
+      opts.onError?.(error instanceof Error ? error : new Error(String(error)));
+    } catch {
+      // A sink that THROWS must never become the failure: reporting is
+      // best-effort by contract, and the realistic thrower is the sink's own
+      // output path dying (a stderr write failing with EPIPE once a parent
+      // process is gone). Swallowed deliberately, because the alternative is
+      // worse than a lost report: from the request-level `.catch` below, an
+      // exception here rejects that catch's promise with NOTHING left to
+      // observe it, and Node's default unhandled-rejection mode ends the
+      // process — a client-triggerable crash in place of a 500. Both SDK
+      // hooks isolate their own callback the same way (each wraps the call
+      // in try/catch), so this closes the one remaining path.
+    }
   };
   // `createMcpHandler` — NOT a hand-wired transport — is what puts 2026-07-28
   // on the wire: it classifies each request's era from its `_meta` envelope
