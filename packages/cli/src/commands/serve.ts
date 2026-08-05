@@ -4,10 +4,8 @@ import {
   buildSnapshot,
   buildTools,
   compileEnvelopeValidator,
-  connectStdio,
   createExecutor,
   createMetaExecutor,
-  createProtocolSession,
   createRateLimiter,
   createRedactor,
   createStreamableHttpServer,
@@ -15,6 +13,7 @@ import {
   isValidBearerToken,
   parseSpecSource,
   runSpecPipeline,
+  serveStdioSession,
   SYSTEM_HEADERS,
   usageError,
   validationError,
@@ -334,39 +333,32 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
       ]);
       if (httpConfig === undefined) {
-        const server = createProtocolSession({
-          name: 'openapi-mcp',
-          version: pkg.version,
-          snapshot,
-          dispatcherDeps,
-        });
-        await connectStdio(server);
-        // Connect() resolves once the transport is attached; block here until
-        // a graceful shutdown signal (SIGINT/SIGTERM) OR the MCP client
-        // disconnecting (stdin EOF) so the CLI process stays alive for
-        // exactly the transport's lifetime and no longer.
-        //
-        // VERIFIED empirically against the pinned @modelcontextprotocol/sdk
-        // (dist/esm/server/stdio.js, StdioServerTransport): it attaches only
-        // 'data'/'error' listeners to stdin, never 'end' — it does NOT
-        // self-close on EOF, so `Server`'s (Protocol's) `onclose` callback
-        // never fires from a client disconnect; it only fires when close()
-        // is called. A probe of both variants (an `onclose`-driven resolve
-        // vs. this stdin-'end'-driven resolve) against the real SDK, with a
-        // child process's stdin closed the way a disconnecting client
-        // closes it, showed the `onclose` variant still exits 13 (unsettled
-        // top-level await) while this variant exits 0. So the promise must
-        // listen to stdin's OWN 'end' event directly, not delegate to
-        // `server.onclose`, and `server.close()` is unconditional afterward
-        // (the transport is never already self-closed, so no double-close
-        // guard is needed here).
-        // oxlint-disable-next-line promise/avoid-new -- races three independent event sources (SIGINT/SIGTERM/stdin 'end') with no single promise-returning API that covers all three
-        await new Promise<void>((resolve) => {
-          process.once('SIGINT', () => resolve());
-          process.once('SIGTERM', () => resolve());
-          process.stdin.once('end', () => resolve());
-        });
-        await server.close();
+        const session = serveStdioSession(
+          { name: 'openapi-mcp', version: pkg.version, snapshot, dispatcherDeps },
+          {
+            // Out-of-band transport errors carry no JSON-RPC reply — route
+            // them through the SAME sanitizing stderr path the startup
+            // diagnostics use rather than dropping them, since stdout is
+            // MCP-JSON-only and their text can echo client-supplied input.
+            onError: (error) => emitWarnings(ctx, [`stdio transport: ${error.message}`]),
+          },
+        );
+        const shutdown = Promise.withResolvers<void>();
+        const onShutdownSignal = (): void => shutdown.resolve();
+        process.once('SIGINT', onShutdownSignal);
+        process.once('SIGTERM', onShutdownSignal);
+        // The session owns the connection's lifetime (it ends when the client
+        // closes stdin or the transport goes away); a shutdown signal ends it
+        // early. close() afterwards is unconditional and is what releases
+        // stdin — without it a signalled process would idle on an open pipe
+        // instead of exiting.
+        await Promise.race([session.closed, shutdown.promise]);
+        // `once` only removes the handler that fired: whichever signal lost
+        // the race (both of them, when the connection ended on its own) would
+        // otherwise keep this listener on the process for the rest of the run.
+        process.removeListener('SIGINT', onShutdownSignal);
+        process.removeListener('SIGTERM', onShutdownSignal);
+        await session.close();
       } else {
         const guard: RequestGuardOptions = {
           // No CLI flag for browser Origins (documented scope: a single
@@ -389,7 +381,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         await httpServer.listen();
         // Block until a graceful shutdown signal — there is no client
         // stdin stream to watch for EOF in HTTP mode (unlike the stdio
-        // branch below), so SIGINT/SIGTERM are the only shutdown triggers.
+        // branch above), so SIGINT/SIGTERM are the only shutdown triggers.
         // oxlint-disable-next-line promise/avoid-new -- races two independent process signal events (SIGINT/SIGTERM) with no single promise-returning API that covers both
         await new Promise<void>((resolve) => {
           process.once('SIGINT', () => resolve());

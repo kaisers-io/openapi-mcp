@@ -208,6 +208,8 @@ export type {
   ToolExecutor,
   WireTool,
 } from './server/index.ts';
+export { serveStdioSession } from './server/sdk/stdio.ts';
+export type { StdioSessionDeps, StdioSessionHandle } from './server/sdk/stdio.ts';
 export { createProtocolSession } from './server/sdk-v1/protocol.ts';
 export type { ProtocolSessionOptions } from './server/sdk-v1/protocol.ts';
 export { connectStdio } from './server/sdk-v1/stdio.ts';
