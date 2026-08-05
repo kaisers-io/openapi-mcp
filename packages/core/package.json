@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/core": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@modelcontextprotocol/server": "2.0.0",
     "@seriousme/openapi-schema-validator": "2.9.1",

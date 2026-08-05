@@ -376,7 +376,6 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           dispatcherDeps,
           guard,
           port: httpConfig.port,
-          now: ctx.now,
         });
         await httpServer.listen();
         // Block until a graceful shutdown signal — there is no client

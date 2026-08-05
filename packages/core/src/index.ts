@@ -213,8 +213,8 @@ export type { StdioSessionDeps, StdioSessionHandle } from './server/sdk/stdio.ts
 export { createProtocolSession } from './server/sdk-v1/protocol.ts';
 export type { ProtocolSessionOptions } from './server/sdk-v1/protocol.ts';
 export { connectStdio } from './server/sdk-v1/stdio.ts';
-export { createStreamableHttpServer } from './server/sdk-v1/streamable-http.ts';
+export { createStreamableHttpServer } from './server/sdk/streamable-http.ts';
 export type {
   StreamableHttpOptions,
   StreamableHttpServerHandle,
-} from './server/sdk-v1/streamable-http.ts';
+} from './server/sdk/streamable-http.ts';

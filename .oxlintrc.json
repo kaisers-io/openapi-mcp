@@ -481,6 +481,23 @@
       }
     },
     {
+      "files": ["packages/core/src/server/sdk/streamable-http.ts"],
+      "rules": {
+        // Off: streamable-http.ts is the whole HTTP front door -- the
+        // request-guard-before-anything-else ordering, the POST-only method
+        // gate, the 4 MB body cap and fatal-UTF-8 parse that both have to run
+        // BEFORE the SDK adapter converts the request, and the two-phase
+        // bounded graceful shutdown are one irreducible sequence, and each
+        // step's rationale cites the exact adapter/handler behavior it
+        // compensates for (the adapter's eager body buffering, its own 500
+        // fallback, what handler.close() does to an in-flight exchange).
+        // Splitting the sequence across files would separate those citations
+        // from the code whose ordering they justify, which is itself the
+        // load-bearing part.
+        "max-lines": "off"
+      }
+    },
+    {
       "files": ["packages/core/src/http/egress.ts"],
       "rules": {
         // Off: classifyAddress's IPv6 arm fails closed on the full set of

@@ -7,11 +7,15 @@ import {
   createMetaExecutor,
   createRedactor,
   createSessionStore,
-  createStreamableHttpServer,
   SYSTEM_HEADERS,
   textOutcome,
 } from '../src/index.ts';
 import type { NamedOperation, RequestGuardOptions } from '../src/index.ts';
+// Imported by module path, not from the package index: the index's
+// `createStreamableHttpServer` now resolves to the stateless transport, whose
+// options no longer carry a session clock. This suite covers the session-based
+// implementation until it is removed.
+import { createStreamableHttpServer } from '../src/server/sdk-v1/streamable-http.ts';
 
 // A local fake standing in for the upstream executor (this suite tests HTTP
 // session lifecycle, not execution) + a neutral redactor.
