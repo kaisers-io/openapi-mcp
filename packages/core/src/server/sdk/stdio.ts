@@ -49,7 +49,12 @@ export const serveStdioSession = (
   // The SDK's stdio transport attaches only 'data'/'error' handlers to
   // stdin — it never watches for EOF, so a client that closes its end of the
   // pipe would otherwise leave this connection open forever. On stdio, that
-  // EOF IS the client disconnecting.
+  // EOF IS the client disconnecting: the spec reads stdin close as the
+  // shutdown signal and wants a prompt exit, so a request still in flight
+  // when EOF arrives is DELIBERATELY abandoned with the connection rather
+  // than drained — draining would mean waiting, unbounded, on an upstream
+  // call for a client that already hung up. A client that wants its
+  // response must keep its end of the pipe open until it has read it.
   const onEnd = (): void => markClosed();
   stdin.once('end', onEnd);
   // `serveStdio` starts the transport itself, and a start that fails is
