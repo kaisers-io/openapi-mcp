@@ -101,7 +101,7 @@ export const objectNamesOf = (fs: MemoryCacheFs, layout = LAYOUT): readonly stri
   [...fs.files.keys()]
     .filter((key) => key.startsWith(`${layout.objectsDir}/`))
     .map((key) => key.slice(layout.objectsDir.length + 1))
-    .sort();
+    .toSorted();
 
 // A hand-rolled mock must be faithful to Node the same way memoryCacheFs's own
 // absenceError is: the store now branches on `err.code` (isCacheAbsence) to

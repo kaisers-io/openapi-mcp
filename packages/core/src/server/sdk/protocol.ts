@@ -110,12 +110,9 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
   );
   const dispatcher = createDispatcher({ snapshot: opts.snapshot, ...opts.dispatcherDeps });
 
-  server.setRequestHandler(
-    'tools/list',
-    (): ListToolsResult => ({
-      tools: opts.snapshot.tools.map((tool) => tool.wireTool as unknown as Tool),
-    }),
-  );
+  server.setRequestHandler('tools/list', (): ListToolsResult => ({
+    tools: opts.snapshot.tools.map((tool) => tool.wireTool as unknown as Tool),
+  }));
 
   server.setRequestHandler('tools/call', async (request, ctx): Promise<CallToolResult> => {
     // Tasks are 2025-era wire vocabulary that the 2026-07-28 line dropped:

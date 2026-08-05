@@ -259,13 +259,11 @@ export const normalizeSpec = (
     ...perPath.flatMap((entry) => entry.omitted),
     // Webhook omissions are appended last, exactly as the original trailing
     // for-of loop did after the path loop completed.
-    ...Object.keys(webhooks).map(
-      (name): OmittedOperation => ({
-        method: '*',
-        path: `webhook:${name}`,
-        reason: 'webhooks are not supported',
-      }),
-    ),
+    ...Object.keys(webhooks).map((name): OmittedOperation => ({
+      method: '*',
+      path: `webhook:${name}`,
+      reason: 'webhooks are not supported',
+    })),
   ];
   return {
     title,
