@@ -119,7 +119,15 @@ describe('serve — stdio subprocess E2E', () => {
   let tempHome: string | undefined;
 
   afterEach(async () => {
-    child?.kill('SIGKILL');
+    // `kill()` only SIGNALS — the child may still have in-flight cache I/O
+    // under tempHome, so await its actual exit before removing the directory.
+    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        child?.once('exit', () => resolve());
+      });
+      child.kill('SIGKILL');
+      await exited;
+    }
     child = undefined;
     if (tempHome !== undefined) {
       await rm(tempHome, { recursive: true, force: true });
