@@ -62,7 +62,10 @@ jobs:
         run: |
           set -euo pipefail
           PACK_DIR="$(mktemp -d)"
-          PACK_JSON="$(npm pack ./packages/cli --json --pack-destination "$PACK_DIR")"
+          # --ignore-scripts: the prepack hook (tsdown) writes its progress to stdout, which
+          # corrupts the --json output this guard parses. dist/ is already built and
+          # determinism-checked by the preceding steps, so skipping prepack loses nothing.
+          PACK_JSON="$(npm pack ./packages/cli --json --ignore-scripts --pack-destination "$PACK_DIR")"
           # Regression net for "no source code in the tarball": the tarball must contain EXACTLY this
           # file set — extras (leaked source) and missing files (dropped LICENSE/README) both fail.
           # Shipping a new file requires deliberately updating this set.
