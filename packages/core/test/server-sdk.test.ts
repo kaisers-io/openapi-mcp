@@ -90,10 +90,17 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+// A spec title that could not plausibly occur in the static,
+// package-authored instructions text. The instructions test below asserts
+// the served instructions do NOT contain it; a generic title like 'Test'
+// would make that assertion unfalsifiable, since a leak of a real spec title
+// could still pass whenever the substring happened not to appear.
+const FIXTURE_SPEC_TITLE = 'FIXTURE-TITLE-7f3a9';
+
 const buildTestSnapshot = () => {
   const built = buildTools([namedOp], { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
   return buildSnapshot(built, {
-    spec: { title: 'Test', specVersion: '1.0.0', omitted: [] },
+    spec: { title: FIXTURE_SPEC_TITLE, specVersion: '1.0.0', omitted: [] },
     contentHash: 'h',
     displaySource: 's',
     deadPatterns: [],
@@ -109,7 +116,7 @@ const buildTestSnapshotWithOutputTool = () => {
     openapiVersion: '3.1',
   });
   return buildSnapshot(built, {
-    spec: { title: 'Test', specVersion: '1.0.0', omitted: [] },
+    spec: { title: FIXTURE_SPEC_TITLE, specVersion: '1.0.0', omitted: [] },
     contentHash: 'h',
     displaySource: 's',
     deadPatterns: [],
@@ -305,6 +312,14 @@ describe('createProtocolSession — InMemory integration', () => {
       snapshot: buildTestSnapshotWithOutputTool(),
     });
     const list = await client.listTools();
+    // Deterministic ORDER, not just membership: the served list must be the
+    // snapshot's own tool order (the meta tool first, then the upstream
+    // tools in build order). The stdio and E2E suites pin this same order
+    // over a real transport; binding it here catches a reordering in the
+    // adapter's tools/list mapping at this tier too.
+    expect(list.tools.map((tool) => tool.name)).toEqual(
+      snapshot.tools.map((tool) => tool.wireTool.name),
+    );
     const wireTool = list.tools.find((tool) => tool.name === 'createThingWithOutput');
     const expected = snapshot.toolsByName['createThingWithOutput']?.wireTool;
     expect(expected?.outputSchema).toBeDefined(); // Guard: the fixture must actually carry one
@@ -353,7 +368,12 @@ describe('createProtocolSession — InMemory integration', () => {
   it('configures the tools/list cache hint the 2026-07-28 revision emits', async () => {
     // The values themselves are pinned here; whether a connection actually
     // reaches the 2026-07-28 encode seam that emits them is a property of
-    // the serving entry, not of this adapter.
+    // the serving entry, not of this adapter. The binding assertions — that
+    // a real tools/list RESPONSE carries ttlMs 3600000 and cacheScope
+    // 'private' — therefore live in the wire and E2E suites, which read the
+    // encoded response off a transport: server-wire-conformance.test.ts,
+    // server-http.test.ts, server-sdk-stdio.test.ts, and the CLI's
+    // serve.test.ts / serve-http.test.ts.
     expect(TOOLS_LIST_CACHE_HINT).toEqual({ ttlMs: 3_600_000, cacheScope: 'private' });
     // Invalid hint values throw a RangeError at Server construction, so a
     // successful session proves the SDK accepted the configured shape.
