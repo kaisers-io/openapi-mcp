@@ -122,7 +122,7 @@ describe('runSpecPipeline — file sources', () => {
       `list_pets_${suffix('GET', '/pets/all')}`,
     ]);
     expect(result.spec.omitted).toEqual([
-      { method: 'TRACE', path: '/admin', reason: 'TRACE operations are never exposed in v1' },
+      { method: 'TRACE', path: '/admin', reason: 'TRACE operations are never exposed' },
       {
         method: 'GET',
         path: '/admin',

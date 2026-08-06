@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Zero-dependency stub: guard the Node floor before any import, then load dist or source.
-const REQUIRED = [24, 12];
+const REQUIRED = [24, 0];
 const found = process.versions.node.split('.').map(Number);
 if (found[0] < REQUIRED[0] || (found[0] === REQUIRED[0] && found[1] < REQUIRED[1])) {
   console.error(

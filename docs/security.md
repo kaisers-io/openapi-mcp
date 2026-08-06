@@ -130,14 +130,23 @@ credentials — so:
   avoid timing side channels.
 - The server binds `127.0.0.1` only; `Origin`/`Host` are validated to guard against
   DNS-rebinding.
-- Bounded by design: per-session transport instances, 30-minute session idle expiry, a max of
-  8 concurrent sessions, and tool-call concurrency limits per session and globally. Requests
-  rejected before any MCP processing occurs: unauthenticated requests, request bodies over
-  4 MB, and session creation beyond the session limit.
-- No CORS allowance — there is no browser use case in v1, so cross-origin browser access is
-  not enabled.
-- Graceful shutdown on `SIGINT`/`SIGTERM` closes sessions and aborts in-flight requests; a
-  stale session id returns `404` per the MCP HTTP transport spec.
+- The transport speaks MCP revision `2026-07-28` and is **stateless**: every request is served
+  end to end on its own, with no `initialize` handshake and no session state — the modern era
+  carries its context in a per-request `_meta` envelope instead. The SDK's built-in era support
+  answers older (2025-era) clients the same stateless way. There is no `Mcp-Session-Id`
+  concept: the server never issues one, never expects one, and ignores it if a client sends one
+  anyway.
+- The endpoint is **POST-only**: `GET` and `DELETE` — meaningful only under the old
+  session-based transport — return `405` with an `Allow: POST` header. Cancellation is the
+  client closing the request stream; there is no separate cancel call.
+- Requests are rejected before any MCP processing occurs: unauthenticated requests and request
+  bodies over 4 MB. A process-global rate limiter and a process-global upstream-call
+  concurrency cap bound tool-call throughput; neither is scoped per session, since there is no
+  session.
+- No CORS allowance — there is no browser use case, so cross-origin browser access is not
+  enabled.
+- Graceful shutdown on `SIGINT`/`SIGTERM` stops accepting new requests and aborts in-flight
+  ones; there is no session state to close.
 
 ## What `openapi-mcp` defends, and what you still must do
 

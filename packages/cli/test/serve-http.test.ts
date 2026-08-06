@@ -21,26 +21,67 @@ const TOKEN = 'A'.repeat(43);
 // nonzero code instead of hanging, which is what makes retrying here
 // safe/bounded.
 const CANDIDATE_PORTS = [3999, 4083, 4177, 4271];
-const ACCEPT_HEADER = 'application/json, text/event-stream'; // The v1.29 Streamable HTTP transport requires POST to send both media types in one Accept header
+const ACCEPT_HEADER = 'application/json, text/event-stream';
+// The name of the read-only meta tool every snapshot carries. Used for every
+// tools/call below: the fixture spec's own operations would dial the
+// deliberately-dead --base-url, whereas this one answers from the snapshot.
+const META_TOOL = 'openapi_mcp_status';
+// The reserved per-request `_meta` envelope claiming the 2026-07-28 revision.
+// Its presence is what routes a request to the modern path — there is no
+// initialize handshake and no session id anywhere in this flow.
+const MODERN_ENVELOPE = {
+  'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+  'io.modelcontextprotocol/clientInfo': { name: 'e2e', version: '1' },
+  'io.modelcontextprotocol/clientCapabilities': {},
+};
 
 const url = (port: number): string => `http://127.0.0.1:${String(port)}/`;
 
-const authHeaders = (sessionId?: string): Record<string, string> => ({
+// The SEP-2243 standard headers the 2026-07-28 revision requires alongside the
+// enveloped body: `Mcp-Method` on every request, plus `Mcp-Name` whenever the
+// body carries a `params.name`. The handler rejects a header/body disagreement
+// with -32020 (asserted below).
+const modernHeaders = (
+  mcpMethod: string,
+  extra: Record<string, string> = {},
+): Record<string, string> => ({
   'content-type': 'application/json',
   accept: ACCEPT_HEADER,
+  'mcp-protocol-version': '2026-07-28',
+  'mcp-method': mcpMethod,
   authorization: `Bearer ${TOKEN}`,
-  ...(sessionId === undefined ? {} : { 'mcp-session-id': sessionId }),
+  ...extra,
 });
 
-const postJsonRpc = (
+const modernBody = (id: number, method: string, params: Record<string, unknown> = {}) => ({
+  jsonrpc: '2.0',
+  id,
+  method,
+  params: { ...params, _meta: MODERN_ENVELOPE },
+});
+
+type JsonRpcEnvelope = {
+  error?: { code: number; message: string };
+  result?: {
+    resultType?: string;
+    ttlMs?: number;
+    cacheScope?: string;
+    supportedVersions?: string[];
+    tools?: { name: string }[];
+    isError?: boolean;
+    content?: { text: string }[];
+  };
+};
+
+const postModern = (
   port: number,
-  sessionId: string | undefined,
+  mcpMethod: string,
   body: unknown,
   headerOverrides: Record<string, string> = {},
 ): Promise<Response> =>
   fetch(url(port), {
     method: 'POST',
-    headers: { ...authHeaders(sessionId), ...headerOverrides },
+    headers: { ...modernHeaders(mcpMethod), ...headerOverrides },
     body: JSON.stringify(body),
   });
 
@@ -61,7 +102,9 @@ const waitForPortOrExit = (
     const start = Date.now();
     while (Date.now() - start <= timeoutMs) {
       try {
-        await fetch(url(port), { method: 'POST', headers: authHeaders(), body: '{}' });
+        // Any answered request proves the listener is up; this one is a
+        // well-formed modern tools/list.
+        await postModern(port, 'tools/list', modernBody(0, 'tools/list'));
         return true;
       } catch {
         // Sequential on purpose: a bounded liveness poll must sleep between attempts by design.
@@ -142,47 +185,17 @@ const spawnServeHttp = async (
   throw new Error('serve --http never came up on any candidate port');
 };
 
-// Decodes an HTTP/1.1 chunked-transfer body (size-in-hex\r\n<bytes>\r\n,
-// repeated, terminated by a 0-size chunk) back to plain text. Needed
-// because two competing code paths respond with DIFFERENT framing for the
-// exact same raw request — this module's own jsonRpcError() ends up
-// chunked, while the MCP SDK transport's own rejection path sets a plain
-// Content-Length — so the raw response text must be decoded uniformly to
-// compare their JSON bodies.
-const decodeChunkedBody = (raw: string): string => {
-  let decoded = '';
-  let rest = raw;
-  for (;;) {
-    const lineEnd = rest.indexOf('\r\n');
-    if (lineEnd === -1) {
-      break;
-    }
-    const size = Number.parseInt(rest.slice(0, lineEnd), 16);
-    if (!Number.isFinite(size) || size <= 0) {
-      break;
-    }
-    const chunkStart = lineEnd + 2;
-    decoded += rest.slice(chunkStart, chunkStart + size);
-    rest = rest.slice(chunkStart + size + 2); // Skip the chunk's own trailing CRLF
-  }
-  return decoded;
-};
-
 // Sends a raw HTTP/1.1 request over a plain TCP socket — used for the
-// duplicate-Host test and the duplicate-session-id test below, since
-// fetch() cannot send two headers with the same name in one request (the
-// very thing that would otherwise make either case untestable at the E2E
-// tier). `method` defaults to 'POST' to preserve every existing call site.
-// Returns the decoded response BODY alongside the status: the duplicate
-// session-id test needs to inspect the JSON-RPC error message, not just the
-// HTTP status, to actually discriminate this regression (see that test's
-// own comment for why the status code alone is not enough).
+// duplicate-header cases below, since fetch() cannot send two headers with the
+// same name in one request (the very thing that would otherwise make them
+// untestable at the E2E tier). `method` defaults to 'POST' to match every call
+// site.
 const rawRequest = (
   port: number,
   rawHeaderLines: string,
   body = '',
   method = 'POST',
-): Promise<{ status: number; body: string }> =>
+): Promise<number> =>
   new Promise((resolve, reject) => {
     const socket = connect(port, '127.0.0.1', () => {
       socket.write(
@@ -197,17 +210,28 @@ const rawRequest = (
       const statusLine = raw.split('\r\n')[0] ?? '';
       const match = /^HTTP\/1\.1 (?<status>\d+)/u.exec(statusLine);
       const statusText = match?.groups?.['status'];
-      const separatorIndex = raw.indexOf('\r\n\r\n');
-      const headerBlock = separatorIndex === -1 ? '' : raw.slice(0, separatorIndex);
-      const rawBody = separatorIndex === -1 ? '' : raw.slice(separatorIndex + 4);
-      const isChunked = /transfer-encoding:\s*chunked/iu.test(headerBlock);
-      resolve({
-        status: statusText === undefined ? 0 : Number(statusText),
-        body: isChunked ? decodeChunkedBody(rawBody) : rawBody,
-      });
+      resolve(statusText === undefined ? 0 : Number(statusText));
     });
     socket.on('error', reject);
   });
+
+// Polls a condition that becomes true on another turn of the event loop (a
+// child's stderr pipe delivering a line it wrote after answering a request),
+// rather than sleeping a fixed amount and hoping. Returns the condition's
+// final value so the caller asserts on CONTENT and fails on the deadline.
+const waitUntil = async (predicate: () => boolean, timeoutMs = 5000): Promise<boolean> => {
+  const start = Date.now();
+  while (Date.now() - start <= timeoutMs) {
+    if (predicate()) {
+      return true;
+    }
+    // Sequential on purpose: a bounded poll must sleep between attempts.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 25);
+    });
+  }
+  return predicate();
+};
 
 // A monotonically increasing JSON-RPC id generator, returned as a `const`
 // closure rather than a bare `let` counter directly inside the describe
@@ -218,28 +242,9 @@ const makeIdGenerator = (): (() => number) => {
   return () => current++;
 };
 
-describe('serve --http — Streamable HTTP E2E', () => {
+describe('serve --http — stateless Streamable HTTP E2E', () => {
   let child: ReturnType<typeof spawn> | undefined;
   const nextId = makeIdGenerator();
-  const initializeBody = () => ({
-    jsonrpc: '2.0',
-    id: nextId(),
-    method: 'initialize',
-    params: {
-      protocolVersion: '2025-11-25',
-      capabilities: {},
-      clientInfo: { name: 'e2e', version: '1' },
-    },
-  });
-  const initSession = async (port: number): Promise<string> => {
-    const res = await postJsonRpc(port, undefined, initializeBody());
-    expect(res.status).toBe(200);
-    const sessionId = res.headers.get('mcp-session-id');
-    if (sessionId === null) {
-      throw new Error('serve --http did not return a session id on initialize');
-    }
-    return sessionId;
-  };
 
   afterEach(async () => {
     if (child !== undefined) {
@@ -265,38 +270,335 @@ describe('serve --http — Streamable HTTP E2E', () => {
     await Promise.all(homes.map((home) => rm(home, { recursive: true, force: true })));
   });
 
-  it('initializes, returns a session header, rejects a stale session with 404, requires the bearer on every method, and 403s a bad Origin', async () => {
+  it('serves the 2026-07-28 flow end to end — server/discover, tools/list with its advertised cache hint, then tools/call — and mints no session id anywhere', async () => {
     const spawned = await spawnServeHttp();
     child = spawned.proc;
     const { port } = spawned;
 
-    const sessionId = await initSession(port);
+    const discover = await postModern(
+      port,
+      'server/discover',
+      modernBody(nextId(), 'server/discover'),
+    );
+    expect(discover.status).toBe(200);
+    // A stateless endpoint never hands one out — on ANY response, not just
+    // this one (the two below are checked the same way).
+    expect(discover.headers.get('mcp-session-id')).toBeNull();
+    const discovered = (await discover.json()) as JsonRpcEnvelope;
+    expect(discovered.result?.supportedVersions).toContain('2026-07-28');
 
-    const staleDelete = await fetch(url(port), {
-      method: 'DELETE',
-      headers: authHeaders('does-not-exist'),
-    });
-    expect(staleDelete.status).toBe(404);
+    const list = await postModern(port, 'tools/list', modernBody(nextId(), 'tools/list'));
+    expect(list.status).toBe(200);
+    expect(list.headers.get('mcp-session-id')).toBeNull();
+    const listed = (await list.json()) as JsonRpcEnvelope;
+    expect(listed.result?.resultType).toBe('complete');
+    // Falsification: without the cacheHints wiring, the SDK emits its own
+    // conservative default (ttlMs 0), so this exact equality fails.
+    expect(listed.result?.ttlMs).toBe(3_600_000);
+    expect(listed.result?.cacheScope).toBe('private');
+    const toolNames = listed.result?.tools?.map((tool) => tool.name) ?? [];
+    expect(toolNames).toContain(META_TOOL);
+    expect(toolNames.length).toBeGreaterThan(1); // The petstore fixture's own operations, too
 
+    const call = await postModern(
+      port,
+      'tools/call',
+      modernBody(nextId(), 'tools/call', { name: META_TOOL, arguments: {} }),
+      { 'mcp-name': META_TOOL },
+    );
+    expect(call.status).toBe(200);
+    expect(call.headers.get('mcp-session-id')).toBeNull();
+    const called = (await call.json()) as JsonRpcEnvelope;
+    expect(called.result?.isError).toBe(false);
+    expect(called.result?.resultType).toBe('complete');
+
+    child.kill('SIGTERM');
+  }, 20_000);
+
+  it('requires the bearer on every request (401) and 403s a present, non-allowlisted Origin', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+
+    const { authorization: _dropped, ...noAuthHeaders } = modernHeaders('tools/list');
+    const listBody = JSON.stringify(modernBody(nextId(), 'tools/list'));
     const noAuth = await fetch(url(port), {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: ACCEPT_HEADER,
-        'mcp-session-id': sessionId,
-      },
-      body: JSON.stringify({ jsonrpc: '2.0', id: nextId(), method: 'tools/list' }),
+      headers: noAuthHeaders,
+      body: listBody,
     });
     expect(noAuth.status).toBe(401);
 
-    const badOrigin = await fetch(url(port), {
-      method: 'POST',
-      headers: { ...authHeaders(sessionId), origin: 'https://evil.example' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: nextId(), method: 'tools/list' }),
+    const badOrigin = await postModern(port, 'tools/list', modernBody(nextId(), 'tools/list'), {
+      origin: 'https://evil.example',
     });
     expect(badOrigin.status).toBe(403);
 
     child.kill('SIGTERM');
+  }, 15_000);
+
+  it('answers GET and DELETE with 405 once authenticated, and 401 without the bearer — the guard runs on every HTTP method, and the 2025 session operations have no stateless equivalent', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+
+    const getNoAuth = await fetch(url(port), {
+      method: 'GET',
+      headers: { accept: 'text/event-stream' },
+    });
+    expect(getNoAuth.status).toBe(401);
+    const deleteNoAuth = await fetch(url(port), { method: 'DELETE' });
+    expect(deleteNoAuth.status).toBe(401);
+
+    const get = await fetch(url(port), {
+      method: 'GET',
+      headers: { accept: 'text/event-stream', authorization: `Bearer ${TOKEN}` },
+    });
+    expect(get.status).toBe(405);
+    // The 405 is answered by the transport's own method gate, before any body
+    // handling — `Allow` names the single method this endpoint serves and is
+    // what distinguishes that answer from a delegated one.
+    expect(get.headers.get('allow')).toBe('POST');
+    const del = await fetch(url(port), {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(del.status).toBe(405);
+    expect(del.headers.get('allow')).toBe('POST');
+  }, 15_000);
+
+  it('serves a claim-less 2025-era POST (no initialize, no _meta claim, bearer still required) — legacy stateless serving stays on', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+
+    const noBearer = await fetch(url(port), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: ACCEPT_HEADER },
+      body: JSON.stringify({ jsonrpc: '2.0', id: nextId(), method: 'tools/list' }),
+    });
+    expect(noBearer.status).toBe(401);
+
+    const legacy = await fetch(url(port), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: ACCEPT_HEADER,
+        authorization: `Bearer ${TOKEN}`,
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: nextId(), method: 'tools/list' }),
+    });
+    expect(legacy.status).toBe(200);
+    // The legacy leg frames its answer as a one-event SSE stream; the modern
+    // leg answers with a bare JSON body. Reading either shape keeps this test
+    // about WHETHER a 2025 client is still served, not about its framing.
+    const text = await legacy.text();
+    const dataLine = text.split('\n').find((line) => line.startsWith('data: '));
+    const payload = JSON.parse(
+      dataLine === undefined ? text : dataLine.slice(6),
+    ) as JsonRpcEnvelope;
+    expect(payload.result?.tools?.map((tool) => tool.name)).toContain(META_TOOL);
+
+    child.kill('SIGTERM');
+  }, 15_000);
+
+  it('ignores a stray Mcp-Session-Id header — single or duplicated, the request still succeeds and no session id comes back', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+
+    const stray = await postModern(port, 'tools/list', modernBody(nextId(), 'tools/list'), {
+      'mcp-session-id': 'left-over-from-a-2025-client',
+    });
+    expect(stray.status).toBe(200);
+    expect(stray.headers.get('mcp-session-id')).toBeNull();
+    expect(((await stray.json()) as JsonRpcEnvelope).result?.resultType).toBe('complete');
+
+    // Two session-id header lines on the wire: nothing in this transport reads
+    // the header at all, so neither value can steer the request anywhere.
+    const duplicatedBody = JSON.stringify(modernBody(nextId(), 'tools/list'));
+    const duplicated = await rawRequest(
+      port,
+      `Host: 127.0.0.1:${String(port)}\r\nAccept: ${ACCEPT_HEADER}\r\n` +
+        `Content-Type: application/json\r\nAuthorization: Bearer ${TOKEN}\r\n` +
+        `MCP-Protocol-Version: 2026-07-28\r\nMcp-Method: tools/list\r\n` +
+        `Mcp-Session-Id: id1\r\nMcp-Session-Id: id2\r\n`,
+      duplicatedBody,
+    );
+    expect(duplicated).toBe(200);
+  }, 15_000);
+
+  it('surfaces the header/body agreement ladder unswallowed: a missing Mcp-Method header 400s with -32020, and its REASON reaches sanitized stderr while stdout stays empty', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+    // Attached after spawn on purpose: a piped child's output is buffered
+    // until it is read, so nothing emitted during startup is lost by
+    // subscribing here.
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    child.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+
+    const { 'mcp-method': _dropped, ...headersWithoutMethod } = modernHeaders('tools/list');
+    const listBody = JSON.stringify(modernBody(nextId(), 'tools/list'));
+    const res = await fetch(url(port), {
+      method: 'POST',
+      headers: headersWithoutMethod,
+      body: listBody,
+    });
+    // The front reads and re-parses the body before handing off; this pins
+    // that it neither answers this itself nor loses the handler's own answer.
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as JsonRpcEnvelope).error?.code).toBe(-32_020);
+
+    // The wire answer carries the code and a fixed message; the REASON only
+    // exists in the transport's error sink. Polled rather than slept on: the
+    // child writes its warning after answering, and a fixed sleep would be
+    // both a flake (a slow machine) and a delay (a fast one).
+    const sawWarning = await waitUntil(() =>
+      // Framed and sanitized through the same warning path the startup
+      // diagnostics use — never raw, since the text can echo client input.
+      /openapi-mcp: warning: http transport:/u.test(Buffer.concat(stderrChunks).toString('utf8')),
+    );
+    expect(sawWarning).toBe(true);
+    // Nothing on stdout, ever: in HTTP mode the process writes no MCP JSON
+    // there, and an error sink that logged to stdout would be the classic way
+    // to corrupt a stdio client's stream.
+    expect(Buffer.concat(stdoutChunks).toString('utf8')).toBe('');
+  }, 15_000);
+
+  it('a duplicate Host header (one allowed value + one evil value) is rejected — proves the guard reads req.headersDistinct, not the collapsing req.headers', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+    const duplicateHostHeaders =
+      `Host: 127.0.0.1:${String(port)}\r\n` +
+      `Host: evil.example:${String(port)}\r\n` +
+      `Accept: ${ACCEPT_HEADER}\r\n` +
+      `Content-Type: application/json\r\n` +
+      `MCP-Protocol-Version: 2026-07-28\r\n` +
+      `Mcp-Method: tools/list\r\n` +
+      `Authorization: Bearer ${TOKEN}\r\n`;
+    const listBody = JSON.stringify(modernBody(nextId(), 'tools/list'));
+    const status = await rawRequest(port, duplicateHostHeaders, listBody);
+    // Using req.headers.host would silently keep ONLY the first (allowed) value,
+    // wrongly passing the Host guard and letting the request through;
+    // req.headersDistinct.host sees BOTH values and fails closed (403).
+    expect(status).toBe(403);
+  }, 15_000);
+
+  it('enforces the 4 MB inbound body cap with a DELIBERATE 400 (not a socket reset/500) — and rejects invalid JSON with a 400 JSON-RPC parse error, not a 500', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+
+    const oversized = 'x'.repeat(4 * 1024 * 1024 + 1);
+    const tooBig = await fetch(url(port), {
+      method: 'POST',
+      headers: modernHeaders('tools/list'),
+      body: oversized,
+    });
+    expect(tooBig.status).toBe(400);
+    expect(((await tooBig.json()) as JsonRpcEnvelope).error?.code).toBe(-32_600);
+
+    const badJson = await fetch(url(port), {
+      method: 'POST',
+      headers: modernHeaders('tools/list'),
+      body: '{not json',
+    });
+    expect(badJson.status).toBe(400);
+    expect(((await badJson.json()) as JsonRpcEnvelope).error?.code).toBe(-32_700);
+  }, 15_000);
+
+  it('GLOBAL rate exhaustion is SHARED across requests (proves the limiter stayed process-wide even though every request is served by a FRESH server instance)', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+    // DEFAULT_RATE_LIMIT is 120 tools/call invocations / 60s, process-wide.
+    // `tools/list` itself is a protocol-level method the low-level Server
+    // answers directly and NEVER reaches the rate limiter — only `tools/call`
+    // does — so every call here targets `tools/call` on the read-only
+    // openapi_mcp_status meta tool. Each of these requests is served by its
+    // OWN freshly-constructed server instance: if the limiter were built
+    // per-instance instead of being passed in as one shared reference, every
+    // request would start with a full budget and this could never exhaust. The
+    // rate-exhausted signal is a dispatcher-level `isError` result INSIDE a 200
+    // JSON-RPC envelope, never an HTTP status code — asserting on the HTTP
+    // status here would pass vacuously.
+    let lastBody: JsonRpcEnvelope | undefined;
+    for (let index = 0; index < 121; index += 1) {
+      // Sequential on purpose: exhausting a shared rate limit requires strictly ordered calls.
+      const res = await postModern(
+        port,
+        'tools/call',
+        modernBody(nextId(), 'tools/call', { name: META_TOOL, arguments: {} }),
+        { 'mcp-name': META_TOOL },
+      );
+      // Sequential on purpose: reading each response body in order, matching the request above.
+      lastBody = (await res.json()) as JsonRpcEnvelope;
+    }
+    expect(lastBody?.result?.isError).toBe(true);
+    expect(lastBody?.result?.content?.[0]?.text).toBe(
+      'rate limit exceeded — too many tool calls; retry later',
+    );
+  }, 40_000);
+
+  it('graceful SIGINT/SIGTERM exits 0 and completes within the shutdown bound, with a live connection still open from a prior request', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+
+    // A completed request leaves its keep-alive connection open in the global
+    // fetch agent's pool, so the listener is holding a real client connection
+    // when the signal arrives — the concrete scenario that would keep
+    // http.Server#close() pending without the shutdown handling.
+    const warmup = await postModern(port, 'tools/list', modernBody(nextId(), 'tools/list'));
+    expect(warmup.status).toBe(200);
+
+    const start = Date.now();
+    child.kill('SIGTERM');
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(0);
+    // The bound MUST be BELOW SHUTDOWN_FORCE_MS (5000ms), not above it: a
+    // graceful shutdown finishes in well under a second (the sub-4s figure is
+    // almost all fixed process-teardown overhead, not shutdown work), whereas
+    // a shutdown that fell through to the bounded closeAllConnections()
+    // fallback would only exit at ~5000ms. A `< 10_000` bound would pass in
+    // BOTH cases, leaving the graceful path unfalsified.
+    expect(Date.now() - start).toBeLessThan(4000);
+  }, 15_000);
+
+  it('a client that aborts a request mid-flight does not wedge the listener — the next request is served normally', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+
+    // A POST that declares far more body than it ever sends, then vanishes.
+    // The 2026-era cancellation signal IS the closed request stream (there is
+    // no notifications/cancelled), so this is the shape a cancelled call takes
+    // on the wire; that the signal reaches the dispatcher is asserted
+    // in-process by the core suite, which can observe it directly.
+    await new Promise<void>((resolve, reject) => {
+      const socket = connect(port, '127.0.0.1', () => {
+        socket.write(
+          `POST / HTTP/1.1\r\nHost: 127.0.0.1:${String(port)}\r\nAccept: ${ACCEPT_HEADER}\r\n` +
+            `Content-Type: application/json\r\nAuthorization: Bearer ${TOKEN}\r\n` +
+            `MCP-Protocol-Version: 2026-07-28\r\nMcp-Method: tools/list\r\n` +
+            `Content-Length: 100000\r\nConnection: close\r\n\r\n{"partial"`,
+        );
+        setTimeout(() => {
+          socket.destroy();
+          resolve();
+        }, 100);
+      });
+      socket.on('error', reject);
+    });
+
+    const stillAlive = await postModern(port, 'tools/list', modernBody(nextId(), 'tools/list'));
+    expect(stillAlive.status).toBe(200);
   }, 15_000);
 
   it('rejects --http without --http-token-env at startup (usage error)', async () => {
@@ -385,387 +687,4 @@ describe('serve --http — Streamable HTTP E2E', () => {
     // just that SOME error occurred.
     expect(stderrText).not.toMatch(/does-not-exist|ENOENT|no such file/iu);
   });
-
-  it('an authenticated request reuses the REAL registered session — deleting it makes the SAME id 404 on the next request (not silently accepted forever)', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const sessionId = await initSession(port);
-
-    const list = await postJsonRpc(port, sessionId, {
-      jsonrpc: '2.0',
-      id: nextId(),
-      method: 'tools/list',
-    });
-    expect(list.status).toBe(200);
-
-    const del = await fetch(url(port), { method: 'DELETE', headers: authHeaders(sessionId) });
-    expect(del.status).not.toBe(404); // A live session accepts termination
-
-    const reuseAfterDelete = await postJsonRpc(port, sessionId, {
-      jsonrpc: '2.0',
-      id: nextId(),
-      method: 'tools/list',
-    });
-    expect(reuseAfterDelete.status).toBe(404); // The SAME id no longer resolves to a session
-  }, 15_000);
-
-  it('supports a SECOND, independent concurrent session — each gets its own id and both work', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const sessionA = await initSession(port);
-    const sessionB = await initSession(port);
-    expect(sessionA).not.toBe(sessionB);
-
-    const callA = await postJsonRpc(port, sessionA, {
-      jsonrpc: '2.0',
-      id: nextId(),
-      method: 'tools/list',
-    });
-    const callB = await postJsonRpc(port, sessionB, {
-      jsonrpc: '2.0',
-      id: nextId(),
-      method: 'tools/list',
-    });
-    expect(callA.status).toBe(200);
-    expect(callB.status).toBe(200);
-  }, 15_000);
-
-  it('SESSION ISOLATION: terminating session A does not disturb session B', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const sessionA = await initSession(port);
-    const sessionB = await initSession(port);
-
-    await fetch(url(port), { method: 'DELETE', headers: authHeaders(sessionA) });
-    const stillA = await postJsonRpc(port, sessionA, {
-      jsonrpc: '2.0',
-      id: nextId(),
-      method: 'tools/list',
-    });
-    expect(stillA.status).toBe(404); // A is really gone
-
-    const stillB = await postJsonRpc(port, sessionB, {
-      jsonrpc: '2.0',
-      id: nextId(),
-      method: 'tools/list',
-    });
-    expect(stillB.status).toBe(200); // B is entirely unaffected
-  }, 15_000);
-
-  it('rejects an UNAUTHENTICATED GET and DELETE (401) — auth is required on every HTTP method, not just POST', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const sessionId = await initSession(port);
-
-    const getNoAuth = await fetch(url(port), {
-      method: 'GET',
-      headers: { accept: 'text/event-stream', 'mcp-session-id': sessionId },
-    });
-    expect(getNoAuth.status).toBe(401);
-
-    const deleteNoAuth = await fetch(url(port), {
-      method: 'DELETE',
-      headers: { 'mcp-session-id': sessionId },
-    });
-    expect(deleteNoAuth.status).toBe(401);
-  }, 15_000);
-
-  it('enforces the max-8-concurrent-session cap — the 9th initialize is rejected cleanly and no dangling session id 404s later', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const sessionIds: string[] = [];
-    for (let index = 0; index < 8; index += 1) {
-      // Sequential on purpose: sessions must be created one at a time to land within the same 8-slot capacity.
-      sessionIds.push(await initSession(port));
-    }
-    const ninth = await postJsonRpc(port, undefined, initializeBody());
-    expect(ninth.status).toBe(503);
-    expect(ninth.headers.get('mcp-session-id')).toBeNull(); // No dangling session id was ever handed out
-
-    // Every one of the original 8 still works — capacity was not corrupted
-    // by the rejected 9th attempt.
-    const stillWorks = await postJsonRpc(port, sessionIds[0], {
-      jsonrpc: '2.0',
-      id: nextId(),
-      method: 'tools/list',
-    });
-    expect(stillWorks.status).toBe(200);
-  }, 20_000);
-
-  it('a BURST of 9 concurrent initialize requests still admits at most 8 sessions with 8 DISTINCT ids and no dangling session — a genuine concurrency race, not a sequential approximation of one', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    // All 9 fired together via Promise.all (not awaited one-by-one) — this
-    // is what actually exercises the synchronous-reservation approach:
-    // a callback-based ("check capacity, then await, then register")
-    // design could let more than 8 of these all pass their own capacity
-    // check before any of them finishes registering.
-    const responses = await Promise.all(
-      Array.from({ length: 9 }, () => postJsonRpc(port, undefined, initializeBody())),
-    );
-    const succeeded = responses.filter((res) => res.status === 200);
-    const rejected = responses.filter((res) => res.status === 503);
-    expect(succeeded).toHaveLength(8);
-    expect(rejected).toHaveLength(1);
-    const sessionIds = succeeded.map((res) => res.headers.get('mcp-session-id'));
-    expect(new Set(sessionIds).size).toBe(8); // Every admitted session got a DISTINCT id — none collided or was double-counted
-  }, 20_000);
-
-  it('a malformed initialize (missing Accept header) never consumes a session-capacity slot — 8 of them in a row still leave room for a 9th REAL initialize', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    for (let index = 0; index < 8; index += 1) {
-      // Shaped exactly like an initialize request but missing the Accept
-      // header entirely — the SDK's handlePostRequest validates Accept
-      // BEFORE ever reaching the isInitializeRequest branch that assigns a
-      // sessionId and fires onsessioninitialized (verified against the
-      // v1.29.0 source, webStandardStreamableHttp.js), so this must 406
-      // WITHOUT ever touching session capacity.
-      // Without `handleFreshInitialize`, the slot reserved synchronously
-      // BEFORE the transport is even constructed would never be released,
-      // and 8 of these would permanently exhaust the 8-session cap.
-      // Sequential on purpose: each malformed attempt's (non-)effect on capacity is observed before the next.
-      const malformed = await fetch(url(port), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` }, // No Accept header
-        body: JSON.stringify(initializeBody()),
-      });
-      expect(malformed.status).toBe(406);
-      expect(malformed.headers.get('mcp-session-id')).toBeNull();
-    }
-    const ninth = await initSession(port); // A real, well-formed initialize — asserts status 200 and a session id internally
-    expect(typeof ninth).toBe('string');
-  }, 20_000);
-
-  it('a duplicate Host header (one allowed value + one evil value) is rejected — proves the guard reads req.headersDistinct, not the collapsing req.headers', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const duplicateHostHeaders =
-      `Host: 127.0.0.1:${String(port)}\r\n` +
-      `Host: evil.example:${String(port)}\r\n` +
-      `Accept: ${ACCEPT_HEADER}\r\n` +
-      `Content-Type: application/json\r\n` +
-      `Authorization: Bearer ${TOKEN}\r\n`;
-    const result = await rawRequest(port, duplicateHostHeaders, JSON.stringify(initializeBody()));
-    // Using req.headers.host would silently keep ONLY the first (allowed) value,
-    // wrongly passing the Host guard and letting the request through;
-    // req.headersDistinct.host sees BOTH values and fails closed (403).
-    expect(result.status).toBe(403);
-  }, 15_000);
-
-  it('a duplicated mcp-session-id header (the SAME valid session id sent twice) is rejected by THIS module own 404 gate, not merely by the SDK transport downstream', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const sessionId = await initSession(port);
-
-    // DELETE, not POST: a POST with an unresolved session id is, by design,
-    // routed to the fresh-initialize path (it is the only way a client ever
-    // ACQUIRES a session id in the first place), so it cannot discriminate
-    // this case on its own. DELETE has no such special-casing — an
-    // unresolved session id there goes straight to this module's own 404
-    // gate, exactly the code path the strict helper protects. A single
-    // 'mcp-session-id' header with this same id is already proven to
-    // succeed (not 404) by the earlier "reuses the REAL registered session"
-    // test above, so sending it twice is what makes this otherwise-working
-    // request fail.
-    const duplicateSessionHeaders =
-      `Host: 127.0.0.1:${String(port)}\r\n` +
-      `Accept: ${ACCEPT_HEADER}\r\n` +
-      `Authorization: Bearer ${TOKEN}\r\n` +
-      `Mcp-Session-Id: ${sessionId}\r\n` +
-      `Mcp-Session-Id: ${sessionId}\r\n`;
-    const result = await rawRequest(port, duplicateSessionHeaders, '', 'DELETE');
-    expect(result.status).toBe(404);
-    // The status code ALONE does not discriminate this regression: the
-    // MCP SDK transport's OWN session check (webStandardStreamableHttp.js's
-    // validateSession) ALSO independently 404s on ANY duplicated
-    // mcp-session-id — its header read goes through the Web-standard
-    // Headers.get(), which comma-joins repeated headers into one string
-    // that can never equal a real (UUID) session id — so a bare
-    // `expect(status).toBe(404)` would pass EVEN with the loose
-    // `value[0]`-style helper reinstated (verified empirically while
-    // building this test: the loose helper still 404s here, just via a
-    // DIFFERENT layer). What the strict helper actually changes is WHICH
-    // layer answers: this module's OWN 404 gate now fires — with the
-    // message below — strictly BEFORE the request ever reaches
-    // transport.handleRequest, whereas the loose helper would resolve the
-    // duplicate to its real, matching session id, sail past this gate, and
-    // rely ENTIRELY on the SDK's own downstream rejection (message
-    // 'Session not found', not this one) to save it. Asserting the exact
-    // message text is what makes this test bind to the actual fix.
-    const parsedBody = JSON.parse(result.body) as { error?: { code: number; message: string } };
-    expect(parsedBody.error?.message).toBe('unknown or expired session');
-  }, 15_000);
-
-  it('a POST carrying a DUPLICATED mcp-session-id header plus a valid initialize body is 404d, never fresh-initialized (fresh-init must key on the RAW header being ABSENT, not on the strict helper resolving to undefined)', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-
-    // Two DIFFERENT values, sent as two separate header lines: the strict
-    // helper (`strictSingleHeader`) resolves ANY duplicated header —
-    // matching or not — to `undefined`, same as a genuinely absent header.
-    // Before the fix, `handleRequest` gated the fresh-initialize branch on
-    // that same `sessionId === undefined` value, so a POST + initialize
-    // body with a duplicated header would be MISREAD as "no session id
-    // yet" and fresh-initialize a NEW session (200 + a new
-    // `mcp-session-id`) instead of 404ing. The fix reads the RAW header
-    // (`req.headersDistinct['mcp-session-id']`) for the fresh-init gate
-    // instead: it is PRESENT (length 2) here, so the branch is skipped and
-    // the request falls through to the existing 404 gate below, exactly
-    // like the DELETE case above.
-    const duplicateSessionInitHeaders =
-      `Host: 127.0.0.1:${String(port)}\r\n` +
-      `Accept: ${ACCEPT_HEADER}\r\n` +
-      `Content-Type: application/json\r\n` +
-      `Authorization: Bearer ${TOKEN}\r\n` +
-      `Mcp-Session-Id: id1\r\n` +
-      `Mcp-Session-Id: id2\r\n`;
-    const result = await rawRequest(
-      port,
-      duplicateSessionInitHeaders,
-      JSON.stringify(initializeBody()),
-    );
-    // Falsification: on a `sessionId === undefined` gate keyed off the
-    // strict helper, this exact request fresh-initializes — status 200, a
-    // new `mcp-session-id` header, and no JSON-RPC error — instead of
-    // 404ing. On a `rawSessionIdHeader === undefined` gate keyed off the raw
-    // header, it 404s with this module's own "unknown or expired session"
-    // message — the same message the DELETE-based test above asserts —
-    // proving the fix routes the duplicate to the 404 gate rather than the
-    // SDK's own downstream rejection.
-    expect(result.status).toBe(404);
-    const parsedBody = JSON.parse(result.body) as { error?: { code: number; message: string } };
-    expect(parsedBody.error?.message).toBe('unknown or expired session');
-  }, 15_000);
-
-  it('enforces the 4 MB inbound body cap with a DELIBERATE 400 (not a socket reset/500) — and rejects invalid JSON with a 400 JSON-RPC parse error, not a 500', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const sessionId = await initSession(port);
-
-    const oversized = 'x'.repeat(4 * 1024 * 1024 + 1);
-    const tooBig = await fetch(url(port), {
-      method: 'POST',
-      headers: authHeaders(sessionId),
-      body: oversized,
-    });
-    expect(tooBig.status).toBe(400);
-    const tooBigJson = (await tooBig.json()) as { error?: { code: number } };
-    expect(tooBigJson.error?.code).toBe(-32_600);
-
-    const badJson = await fetch(url(port), {
-      method: 'POST',
-      headers: authHeaders(sessionId),
-      body: '{not json',
-    });
-    expect(badJson.status).toBe(400);
-    const badJsonBody = (await badJson.json()) as { error?: { code: number } };
-    expect(badJsonBody.error?.code).toBe(-32_700);
-  }, 15_000);
-
-  it('GLOBAL rate exhaustion is SHARED across sessions (proves the limiter is process-shared, not per-session)', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const sessionA = await initSession(port);
-    const sessionB = await initSession(port);
-    // DEFAULT_RATE_LIMIT is 120 tools/call invocations / 60s, process-wide.
-    // `tools/list` itself is a protocol-level method the low-level Server
-    // answers directly and NEVER reaches the rate limiter — only
-    // `tools/call` does — so every call here targets
-    // `tools/call` on the read-only `openapi_mcp_status` meta tool.
-    // Alternate between the two sessions so no single session's own
-    // traffic could explain an eventual rejection — only a SHARED budget
-    // does. The rate-exhausted signal is a dispatcher-level `isError`
-    // result INSIDE a 200 JSON-RPC envelope, never an HTTP status code —
-    // asserting on the HTTP status here would pass vacuously.
-    const toolsCallBody = () => ({
-      jsonrpc: '2.0',
-      id: nextId(),
-      method: 'tools/call',
-      params: { name: 'openapi_mcp_status', arguments: {} },
-    });
-    let lastBody: { result?: { isError?: boolean; content?: { text: string }[] } } | undefined;
-    for (let index = 0; index < 121; index += 1) {
-      const session = index % 2 === 0 ? sessionA : sessionB;
-      // Sequential on purpose: exhausting a shared rate limit requires strictly ordered calls.
-      const res = await postJsonRpc(port, session, toolsCallBody());
-      // Sequential on purpose: reading each response body in order, matching the request above.
-      lastBody = (await res.json()) as typeof lastBody;
-    }
-    expect(lastBody?.result?.isError).toBe(true);
-    expect(lastBody?.result?.content?.[0]?.text).toBe(
-      'rate limit exceeded — too many tool calls; retry later',
-    );
-  }, 30_000);
-
-  it('graceful SIGINT/SIGTERM exits 0 and completes within the shutdown bound, EVEN WITH an active, long-lived SSE (GET) connection deliberately left open', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
-    const sessionId = await initSession(port);
-
-    // Open a GET (SSE) stream and deliberately never consume/close its body
-    // from our side — this is the concrete scenario that would keep
-    // http.Server#close() pending indefinitely without transport/
-    // session-draining on close: an ordinary POST connection closes itself
-    // once its response is sent, so it would NOT actually exercise this bug.
-    //
-    // AWAIT the fetch itself — per the Fetch spec, the returned promise
-    // resolves as soon as the RESPONSE HEADERS arrive (the body stays an
-    // unconsumed ReadableStream, which is exactly what we want: open, but
-    // never read). This makes the SSE connection DETERMINISTICALLY open
-    // before SIGTERM fires below. Firing `child.kill('SIGTERM')` immediately
-    // after issuing the GET, without awaiting anything first, would race the
-    // connection's actual establishment (a TCP connect + the server
-    // accepting it + routing to the SSE handler, none of which is
-    // instantaneous) against the signal. Under that race, SIGTERM could
-    // arrive before the connection existed at all, silently degrading this
-    // test to the same "ordinary POST that closes itself" case the comment
-    // above says is NOT what this test is for — passing for the wrong
-    // reason on a slow CI box, or flaking on a fast one.
-    const sseController = new AbortController();
-    const sseResponse = await fetch(url(port), {
-      method: 'GET',
-      headers: {
-        accept: 'text/event-stream',
-        'mcp-session-id': sessionId,
-        authorization: `Bearer ${TOKEN}`,
-      },
-      signal: sseController.signal,
-    });
-    expect(sseResponse.status).toBe(200);
-    expect(sseResponse.headers.get('content-type')).toMatch(/text\/event-stream/u);
-
-    const start = Date.now();
-    child.kill('SIGTERM');
-    const code = await new Promise<number | null>((resolve) => {
-      child?.once('exit', (exitCode) => resolve(exitCode));
-    });
-    expect(code).toBe(0);
-    // The bound MUST be BELOW SHUTDOWN_FORCE_MS (5000ms), not above it. A
-    // graceful session drain closes the open SSE transport
-    // immediately, so `httpServer.close()`'s callback fires and the child exits
-    // in well under a second (the sub-4s figure is almost all fixed
-    // process-teardown overhead, not shutdown work). If the drain is BROKEN, the
-    // open SSE keeps `httpServer.close()` pending until the bounded
-    // `closeAllConnections()` fallback forcibly destroys it at ~5000ms — so the
-    // process would only exit at ~SHUTDOWN_FORCE_MS. A `< 10_000` bound would
-    // pass in BOTH cases (5s < 10s), leaving the drain unfalsified; `< 4000`
-    // passes ONLY on a real graceful drain and fails on the 5s forced-close
-    // fallback path.
-    expect(Date.now() - start).toBeLessThan(4000);
-    sseController.abort();
-  }, 15_000);
 });

@@ -174,7 +174,6 @@ export {
   createExecutor,
   createMetaExecutor,
   createRateLimiter,
-  createSessionStore,
   DEFAULT_RATE_LIMIT,
   evaluateRequest,
   extractBearerToken,
@@ -199,8 +198,6 @@ export type {
   RateLimiterOptions,
   RequestGuardOptions,
   ServerSnapshot,
-  SessionStore,
-  SessionStoreOptions,
   SnapshotPipelineInput,
   SnapshotTool,
   SnapshotToolKind,
@@ -208,11 +205,12 @@ export type {
   ToolExecutor,
   WireTool,
 } from './server/index.ts';
-export { createProtocolSession } from './server/sdk-v1/protocol.ts';
-export type { ProtocolSessionOptions } from './server/sdk-v1/protocol.ts';
-export { connectStdio } from './server/sdk-v1/stdio.ts';
-export { createStreamableHttpServer } from './server/sdk-v1/streamable-http.ts';
+export { serveStdioSession } from './server/sdk/stdio.ts';
+export type { StdioSessionDeps, StdioSessionHandle } from './server/sdk/stdio.ts';
+export { createProtocolSession } from './server/sdk/protocol.ts';
+export type { ProtocolSessionOptions } from './server/sdk/protocol.ts';
+export { createStreamableHttpServer } from './server/sdk/streamable-http.ts';
 export type {
   StreamableHttpOptions,
   StreamableHttpServerHandle,
-} from './server/sdk-v1/streamable-http.ts';
+} from './server/sdk/streamable-http.ts';

@@ -1,5 +1,5 @@
 // SDK-neutral domain result type. Mirrors the shape MCP's CallToolResult
-// needs WITHOUT importing the SDK — server/sdk-v1/protocol.ts is the only
+// needs WITHOUT importing the SDK — server/sdk/protocol.ts is the only
 // place that ever imports the SDK's own CallToolResult type and maps this
 // onto it.
 export type ToolCallOutcome = {

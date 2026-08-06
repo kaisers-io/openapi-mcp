@@ -58,11 +58,38 @@ type JsonRpcMessage = {
   error?: { code: number; message: string };
 };
 
-// StdioServerTransport frames JSON-RPC messages one-per-line (verified
-// against the SDK's shared/stdio.js ReadBuffer/serializeMessage).
+// The stdio binding frames JSON-RPC messages one-per-line (verified against
+// the SDK's own ReadBuffer/serializeMessage in @modelcontextprotocol/server/stdio).
 const send = (proc: ReturnType<typeof spawn>, message: JsonRpcMessage): void => {
   proc.stdin?.write(`${JSON.stringify(message)}\n`);
 };
+
+const MODERN_PROTOCOL_VERSION = '2026-07-28';
+
+// The per-request envelope every 2026-07-28 request carries. stdio has no
+// header layer, so this claim in `params._meta` is the ONLY signal that
+// selects the modern era for the connection — and the modern seam revalidates
+// it on every request, not just the opening one.
+const MODERN_ENVELOPE = {
+  'io.modelcontextprotocol/protocolVersion': MODERN_PROTOCOL_VERSION,
+  'io.modelcontextprotocol/clientCapabilities': {},
+};
+
+const sendModern = (
+  proc: ReturnType<typeof spawn>,
+  id: number,
+  method: string,
+  params: Record<string, unknown> = {},
+): void => {
+  send(proc, { jsonrpc: '2.0', id, method, params: { ...params, _meta: MODERN_ENVELOPE } });
+};
+
+// The tools/list order is fixed by the snapshot, not by the wire: the meta tool is
+// always first, then the spec's operations in document order (`legacyList` is
+// omitted upstream — it carries a cookie parameter). Pinning the exact array
+// (not a containment check) is what makes a reordering of the derived list a
+// test failure rather than an invisible change for every cached client.
+const EXPECTED_TOOL_ORDER = ['openapi_mcp_status', 'listPets', 'createPet'];
 
 type Collected = {
   stdoutLines: string[];
@@ -135,7 +162,7 @@ describe('serve — stdio subprocess E2E', () => {
     }
   });
 
-  it('initialize/list/call(meta)/call(upstream, REAL execution against a local server)/shutdown, with stdout carrying ONLY JSON-RPC', async () => {
+  it('discover/list/call(meta)/call(upstream, REAL execution against a local server)/shutdown on 2026-07-28, with stdout carrying ONLY JSON-RPC', async () => {
     const upstream = await startUpstream();
     const SECRET = 'sk-e2e-secret-01234567890123456789';
     tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
@@ -173,45 +200,35 @@ describe('serve — stdio subprocess E2E', () => {
     );
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
 
-    send(child, {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-11-25',
-        capabilities: {},
-        clientInfo: { name: 'e2e', version: '1.0.0' },
-      },
-    });
+    // There is no `initialize` on 2026-07-28: the connection's era is decided
+    // by the opening request's envelope claim, and `server/discover` is what
+    // reports the revisions this server can actually serve.
+    sendModern(child, 1, 'server/discover');
     await waitFor(() => stdoutLines.length > 0);
-    const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
-    expect(initResponse.result?.['protocolVersion']).toBe('2025-11-25');
-    send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
+    const discoverResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(discoverResponse.result?.['supportedVersions']).toContain(MODERN_PROTOCOL_VERSION);
+    expect(discoverResponse.result?.['resultType']).toBe('complete');
+    expect(typeof discoverResponse.result?.['ttlMs']).toBe('number');
+    expect(discoverResponse.result?.['cacheScope']).toBe('private');
 
-    send(child, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    sendModern(child, 2, 'tools/list');
     await waitFor(() => stdoutLines.length >= 2);
     const listResponse = JSON.parse(stdoutLines[1] as string) as JsonRpcMessage;
     const tools = (listResponse.result?.['tools'] as { name: string }[]) ?? [];
-    expect(tools.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(['openapi_mcp_status', 'listPets']),
-    );
+    expect(tools.map((tool) => tool.name)).toEqual(EXPECTED_TOOL_ORDER);
+    // The adapter's cache hint reaches the wire ON THIS ERA: a server that
+    // never configured one would answer ttlMs 0 here, so these three are a
+    // real observation of the hint, not of the SDK's defaults.
+    expect(listResponse.result?.['ttlMs']).toBe(3_600_000);
+    expect(listResponse.result?.['cacheScope']).toBe('private');
+    expect(listResponse.result?.['resultType']).toBe('complete');
 
-    send(child, {
-      jsonrpc: '2.0',
-      id: 3,
-      method: 'tools/call',
-      params: { name: 'openapi_mcp_status', arguments: {} },
-    });
+    sendModern(child, 3, 'tools/call', { name: 'openapi_mcp_status', arguments: {} });
     await waitFor(() => stdoutLines.length >= 3);
     const metaResponse = JSON.parse(stdoutLines[2] as string) as JsonRpcMessage;
     expect(metaResponse.result?.['isError']).not.toBe(true);
 
-    send(child, {
-      jsonrpc: '2.0',
-      id: 4,
-      method: 'tools/call',
-      params: { name: 'listPets', arguments: {} },
-    });
+    sendModern(child, 4, 'tools/call', { name: 'listPets', arguments: {} });
     await waitFor(() => stdoutLines.length >= 4);
     const upstreamResponse = JSON.parse(stdoutLines[3] as string) as JsonRpcMessage;
     // REAL execution: a genuine structuredContent envelope from the local
@@ -230,12 +247,7 @@ describe('serve — stdio subprocess E2E', () => {
     // A 404 from the same upstream (the local server only handles GET
     // /pets — createPet's POST /pets falls through to its 404 branch) maps
     // to a redacted isError, never a structuredContent envelope.
-    send(child, {
-      jsonrpc: '2.0',
-      id: 5,
-      method: 'tools/call',
-      params: { name: 'createPet', arguments: { name: 'Rex' } },
-    });
+    sendModern(child, 5, 'tools/call', { name: 'createPet', arguments: { name: 'Rex' } });
     await waitFor(() => stdoutLines.length >= 5);
     const notFoundResponse = JSON.parse(stdoutLines[4] as string) as JsonRpcMessage;
     expect(notFoundResponse.result?.['isError']).toBe(true);
@@ -244,9 +256,13 @@ describe('serve — stdio subprocess E2E', () => {
 
     child.kill('SIGTERM');
     await upstream.close();
-    await new Promise<void>((resolve) => {
-      child?.once('exit', () => resolve());
+    const exitCode = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (code) => resolve(code));
     });
+    // A signalled shutdown still runs the session teardown to completion and
+    // exits normally — the transport's stdin listener is released rather than
+    // left holding the process open until the runtime kills it.
+    expect(exitCode).toBe(0);
 
     // Airtight stdout-purity assertion (the one thing an in-process InMemory
     // transport tier cannot catch), evaluated on the RAW
@@ -267,6 +283,73 @@ describe('serve — stdio subprocess E2E', () => {
       expect(parsed.jsonrpc).toBe('2.0');
     }
     expect(stderrLines.every((line) => !line.includes('{'))).toBe(true); // Stderr carries plain-text diagnostics, not JSON-RPC
+  }, 10_000);
+
+  // Era negotiation: the SAME server, the SAME factory, opened with a 2025-era
+  // `initialize` instead of an envelope claim. A claim-less opening pins the
+  // legacy era for the connection, so an existing client that never learned
+  // 2026-07-28 keeps working unchanged — and its results keep the 2025 shape
+  // (no resultType/ttlMs/cacheScope), which is what proves the era was
+  // genuinely selected rather than the modern encoding leaking everywhere.
+  it('still serves a legacy 2025-11-25 initialize handshake from the same stdio entry', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        bin,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        'http://127.0.0.1:1',
+        '--trust-spec-updates',
+        '--allow',
+        '**',
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    const { stdoutLines, rawStdout } = collectLines(child);
+
+    send(child, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'e2e', version: '1.0.0' },
+      },
+    });
+    await waitFor(() => stdoutLines.length > 0);
+    const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(initResponse.result?.['protocolVersion']).toBe('2025-11-25');
+    send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
+
+    send(child, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
+    await waitFor(() => stdoutLines.length >= 2);
+    const listResponse = JSON.parse(stdoutLines[1] as string) as JsonRpcMessage;
+    const tools = (listResponse.result?.['tools'] as { name: string }[]) ?? [];
+    expect(tools.map((tool) => tool.name)).toEqual(EXPECTED_TOOL_ORDER);
+    expect(listResponse.result?.['resultType']).toBeUndefined();
+    expect(listResponse.result?.['ttlMs']).toBeUndefined();
+
+    send(child, {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'openapi_mcp_status', arguments: {} },
+    });
+    await waitFor(() => stdoutLines.length >= 3);
+    const metaResponse = JSON.parse(stdoutLines[2] as string) as JsonRpcMessage;
+    expect(metaResponse.result?.['isError']).not.toBe(true);
+
+    child.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      child?.once('exit', () => resolve());
+    });
+    const finalRaw = rawStdout();
+    expect(finalRaw === '' || finalRaw.endsWith('\n')).toBe(true);
+    expect(finalRaw.split('\n').filter((line) => line !== '')).toHaveLength(3);
   }, 10_000);
 
   // FALSIFICATION target: pointing buildTools back at
@@ -300,21 +383,9 @@ describe('serve — stdio subprocess E2E', () => {
       },
     );
     const { stdoutLines } = collectLines(child);
-    send(child, {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-11-25',
-        capabilities: {},
-        clientInfo: { name: 'e2e', version: '1.0.0' },
-      },
-    });
+    sendModern(child, 1, 'tools/list');
     await waitFor(() => stdoutLines.length > 0);
-    send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
-    send(child, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
-    await waitFor(() => stdoutLines.length >= 2);
-    const listResponse = JSON.parse(stdoutLines[1] as string) as JsonRpcMessage;
+    const listResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
     const tools =
       (listResponse.result?.['tools'] as { name: string; inputSchema: unknown }[]) ?? [];
     const getTrace = tools.find((tool) => tool.name === 'getTrace');
@@ -416,7 +487,7 @@ describe('serve — stdio subprocess E2E', () => {
     expect(stderrLines.join('\n').length).toBeGreaterThan(0);
   });
 
-  it('a dead --deny pattern in non-strict mode is reported as a sanitized stderr warning and the server still initializes normally (security fix)', async () => {
+  it('a dead --deny pattern in non-strict mode is reported as a sanitized stderr warning and the server still serves normally (security fix)', async () => {
     tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
     child = spawn(
       process.execPath,
@@ -439,19 +510,12 @@ describe('serve — stdio subprocess E2E', () => {
       'openapi-mcp: warning: --deny "zzz-no-such-op" matches no operation',
     );
 
-    send(child, {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-11-25',
-        capabilities: {},
-        clientInfo: { name: 'e2e', version: '1.0.0' },
-      },
-    });
+    sendModern(child, 1, 'tools/list');
     await waitFor(() => stdoutLines.length > 0);
-    const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
-    expect(initResponse.result?.['protocolVersion']).toBe('2025-11-25');
+    const listResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(
+      (listResponse.result?.['tools'] as { name: string }[] | undefined)?.length,
+    ).toBeGreaterThan(0);
 
     child.kill('SIGTERM');
     await new Promise<void>((resolve) => {
@@ -476,19 +540,10 @@ describe('serve — stdio subprocess E2E', () => {
     );
     const { stdoutLines } = collectLines(child);
 
-    send(child, {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-11-25',
-        capabilities: {},
-        clientInfo: { name: 'e2e', version: '1.0.0' },
-      },
-    });
+    sendModern(child, 1, 'server/discover');
     await waitFor(() => stdoutLines.length > 0);
-    const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
-    expect(initResponse.result?.['protocolVersion']).toBe('2025-11-25');
+    const discoverResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(discoverResponse.result?.['supportedVersions']).toContain(MODERN_PROTOCOL_VERSION);
 
     child.stdin?.end();
     const code = await new Promise<number | null>((resolve) => {
@@ -560,26 +615,9 @@ describe('serve — stdio subprocess E2E', () => {
       proc: ReturnType<typeof spawn>,
     ): Promise<{ isError: boolean; text: string | undefined }> => {
       const { stdoutLines } = collectLines(proc);
-      send(proc, {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-11-25',
-          capabilities: {},
-          clientInfo: { name: 'e2e', version: '1.0.0' },
-        },
-      });
+      sendModern(proc, 1, 'tools/call', { name: 'listPets', arguments: {} });
       await waitFor(() => stdoutLines.length > 0);
-      send(proc, { jsonrpc: '2.0', method: 'notifications/initialized' });
-      send(proc, {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'listPets', arguments: {} },
-      });
-      await waitFor(() => stdoutLines.length >= 2);
-      const response = JSON.parse(stdoutLines[1] as string) as JsonRpcMessage;
+      const response = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
       const content = response.result?.['content'] as { type: string; text?: string }[] | undefined;
       return {
         isError: response.result?.['isError'] === true,

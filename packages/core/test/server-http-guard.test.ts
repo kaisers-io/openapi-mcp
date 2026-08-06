@@ -32,6 +32,7 @@ describe('isValidBearerToken', () => {
     expect(isValidBearerToken('A'.repeat(43))).toBe(true);
     expect(isValidBearerToken(`${'a1_-'.repeat(10)}aaa`)).toBe(true); // 43 chars, mixed base64url alphabet
   });
+
   it('accepts a 44-character PADDED standard Base64 token — the literal shape of `openssl rand -base64 32`', () => {
     // A real `openssl rand -base64 32` sample (32 random bytes, standard
     // Base64, one trailing '=' — verified against a live `openssl` run
@@ -39,6 +40,7 @@ describe('isValidBearerToken', () => {
     // produces, which the OLD ">=32 chars" grammar rejected outright.
     expect(isValidBearerToken('WYict4Op6AfC3OUC1GZwECUpTtD/ax6qk0+Bzly5eUY=')).toBe(true);
   });
+
   it('rejects a token that is the right LENGTH but does not decode to 32 bytes (256 bits) — 192-bit tokens no longer pass', () => {
     // 32 Base64 characters (the OLD grammar's minimum) decode to only 24
     // bytes (192 bits) — this is exactly the gap the "256-bit" claim
@@ -47,6 +49,7 @@ describe('isValidBearerToken', () => {
     expect(isValidBearerToken('A'.repeat(42))).toBe(false); // 31 decoded bytes
     expect(isValidBearerToken('A'.repeat(44))).toBe(false); // Unpadded 44 chars decodes to 33 bytes, not 32
   });
+
   it('rejects a short or non-base64 token', () => {
     expect(isValidBearerToken('short')).toBe(false);
     expect(isValidBearerToken('!'.repeat(43))).toBe(false);
@@ -65,10 +68,12 @@ describe('extractBearerToken', () => {
   it('extracts the token from a well-formed Bearer header', () => {
     expect(extractBearerToken(`Bearer ${TOKEN}`)).toBe(TOKEN);
   });
+
   it('is case-insensitive on the scheme (RFC 7235 §2.1) and tolerates 1*SP before the credential', () => {
     expect(extractBearerToken(`bearer ${TOKEN}`)).toBe(TOKEN);
     expect(extractBearerToken(`Bearer  ${TOKEN}`)).toBe(TOKEN); // Two spaces
   });
+
   it('returns undefined for an absent, malformed, or wrong-scheme header', () => {
     // oxlint-disable-next-line unicorn/no-useless-undefined -- authorizationHeader is a required (non-optional) parameter; dropping the argument changes call arity and fails to type-check (TS2554)
     expect(extractBearerToken(undefined)).toBeUndefined();
@@ -76,6 +81,7 @@ describe('extractBearerToken', () => {
     expect(extractBearerToken('Bearer')).toBeUndefined();
     expect(extractBearerToken(`Bearer ${TOKEN} extra`)).toBeUndefined();
   });
+
   it('rejects leading/trailing whitespace and non-SP separators — fail-closed', () => {
     expect(extractBearerToken(` Bearer ${TOKEN}`)).toBeUndefined(); // Leading space
     expect(extractBearerToken(`Bearer ${TOKEN} `)).toBeUndefined(); // Trailing space
@@ -85,6 +91,7 @@ describe('extractBearerToken', () => {
     const htab = String.fromCodePoint(9);
     expect(extractBearerToken(`Bearer${htab}${TOKEN}`)).toBeUndefined();
   });
+
   it('rejects a trailing line terminator — the `$` anchor requires actual end-of-input, not end-of-line', () => {
     // Built at runtime (never typed/pasted raw): a regex using the `m` flag,
     // or one that otherwise matched before a trailing newline, would extract

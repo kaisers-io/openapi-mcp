@@ -207,8 +207,8 @@ describe('normalizeSpec — omissions (never silent)', () => {
     );
     expect(spec.operations).toHaveLength(1);
     expect(spec.omitted).toEqual([
-      { method: 'OPTIONS', path: '/meta', reason: 'OPTIONS operations are never exposed in v1' },
-      { method: 'TRACE', path: '/meta', reason: 'TRACE operations are never exposed in v1' },
+      { method: 'OPTIONS', path: '/meta', reason: 'OPTIONS operations are never exposed' },
+      { method: 'TRACE', path: '/meta', reason: 'TRACE operations are never exposed' },
     ]);
   });
 

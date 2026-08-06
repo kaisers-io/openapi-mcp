@@ -31,7 +31,7 @@ Four pillars:
 
 ## Install
 
-Requirements: Node.js `>=24.12`, macOS or Linux.
+Requirements: Node.js `>=24.0`, macOS or Linux.
 
 ```bash
 npm i -g @kaisers-io/openapi-mcp
@@ -87,7 +87,7 @@ never appear literally in the committed file:
     "petstore": {
       "command": "npx",
       "args": [
-        "-y", "@kaisers-io/openapi-mcp@0.1.0", "serve",
+        "-y", "@kaisers-io/openapi-mcp@0.2.0", "serve",
         "--spec", "https://api.example.com/openapi.json",
         "--spec-header-env", "Authorization=SPEC_TOKEN",
         "--header-env", "Authorization=API_TOKEN",
@@ -115,7 +115,7 @@ own environment:
 [mcp_servers.petstore]
 command = "npx"
 args = [
-  "-y", "@kaisers-io/openapi-mcp@0.1.0", "serve",
+  "-y", "@kaisers-io/openapi-mcp@0.2.0", "serve",
   "--spec", "https://api.example.com/openapi.json",
   "--spec-header-env", "Authorization=SPEC_TOKEN",
   "--header-env", "Authorization=API_TOKEN",
@@ -133,7 +133,7 @@ Run the server once with `--http`, then point either host at it as a remote MCP 
 
 ```bash
 export TOKEN=$(openssl rand -base64 32)
-npx -y @kaisers-io/openapi-mcp@0.1.0 serve --spec https://api.example.com/openapi.json \
+npx -y @kaisers-io/openapi-mcp@0.2.0 serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
 
@@ -248,10 +248,15 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
 
 Clients must send `Authorization: Bearer <token>`. `--port` defaults to `3044`.
 
+The server speaks MCP revision `2026-07-28` and is stateless: each request is served on its
+own, with no `initialize` handshake and no session state (no `Mcp-Session-Id`). Older, 2025-era
+clients are served the same stateless way. The endpoint is POST-only — `GET` and `DELETE`
+return `405`. Cancellation is the client closing the request stream.
+
 ## Upgrading
 
 Host config examples above pin an exact version
-(`npx -y @kaisers-io/openapi-mcp@0.1.0 ...`) — **never `latest`**. This process runs with your
+(`npx -y @kaisers-io/openapi-mcp@0.2.0 ...`) — **never `latest`**. This process runs with your
 API credentials on every launch; letting `npx` silently resolve to whatever was just published
 is a supply-chain risk, not a convenience. To upgrade, bump the pinned version number in your
 host config deliberately (and re-run `npm i -g @kaisers-io/openapi-mcp` if you installed it

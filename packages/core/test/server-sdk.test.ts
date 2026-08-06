@@ -1,16 +1,15 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { CompatibilityCallToolResultSchema, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
+import { Client } from '@modelcontextprotocol/client';
+import { InMemoryTransport, ProtocolErrorCode } from '@modelcontextprotocol/server';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildSnapshot,
   buildTools,
   createMetaExecutor,
-  createProtocolSession,
   createRedactor,
   SYSTEM_HEADERS,
 } from '../src/index.ts';
 import type { NamedOperation, ToolExecutor } from '../src/index.ts';
+import { createProtocolSession, TOOLS_LIST_CACHE_HINT } from '../src/server/sdk/protocol.ts';
 
 // A neutral redactor: this suite never exercises redaction itself.
 const NOOP_REDACTOR = createRedactor([]);
@@ -117,35 +116,47 @@ const buildTestSnapshotWithOutputTool = () => {
   });
 };
 
+type SessionOverrides = {
+  executor?: ToolExecutor;
+  snapshot?: ReturnType<typeof buildTestSnapshot>;
+};
+
+// Every test wires the same server/client pair over the SDK's own linked
+// in-memory transports, so each assertion is made against what a REAL MCP
+// client observes, not against the adapter's internals.
+const connectPair = async (overrides: SessionOverrides = {}) => {
+  const snapshot = overrides.snapshot ?? buildTestSnapshot();
+  const executor =
+    overrides.executor ?? (() => Promise.resolve({ isError: false, content: [] as const }));
+  const server = createProtocolSession({
+    name: 'test-server',
+    version: '1.0.0',
+    snapshot,
+    dispatcherDeps: {
+      limiter: { consume: () => true }, // Always-permitting: rate exhaustion cannot fake a pass
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
+    },
+  });
+  const client = new Client({ name: 'test-client', version: '1.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  return { client, server, snapshot };
+};
+
 describe('createProtocolSession — InMemory integration', () => {
   it('the MANDATORY optional-body case: an invalid partial body isErrors and NEVER reaches the executor', async () => {
     const executor = vi.fn<ToolExecutor>();
-    const snapshot = buildTestSnapshot();
-    const server = createProtocolSession({
-      name: 'test-server',
-      version: '1.0.0',
-      snapshot,
-      dispatcherDeps: {
-        limiter: { consume: () => true }, // Always-permitting: rate exhaustion cannot fake this pass
-        now: () => 0,
-        executor,
-        metaExecutor: createMetaExecutor(),
-        redactor: NOOP_REDACTOR,
-      },
-    });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { client } = await connectPair({ executor });
 
     const list = await client.listTools();
     expect(list.tools.map((tool) => tool.name)).toContain('createThing');
 
     const result = await client.callTool({ name: 'createThing', arguments: { note: 'partial' } });
     expect(result.isError).toBe(true);
-    // `Client.callTool()`'s return type resolves `content` to `unknown` here
-    // (a pre-existing SDK .d.ts quirk under this repo's strictest tsconfig,
-    // unrelated to this adapter); the cast below only satisfies `tsc`.
-    expect((result.content as unknown[])[0]).toMatchObject({ type: 'text' });
+    expect(result.content[0]).toMatchObject({ type: 'text' });
     expect(executor).not.toHaveBeenCalled();
   });
 
@@ -153,22 +164,7 @@ describe('createProtocolSession — InMemory integration', () => {
     const executor = vi.fn<ToolExecutor>(() =>
       Promise.resolve({ isError: false, content: [{ type: 'text' as const, text: 'ok' }] }),
     );
-    const snapshot = buildTestSnapshot();
-    const server = createProtocolSession({
-      name: 'test-server',
-      version: '1.0.0',
-      snapshot,
-      dispatcherDeps: {
-        limiter: { consume: () => true },
-        now: () => 0,
-        executor,
-        metaExecutor: createMetaExecutor(),
-        redactor: NOOP_REDACTOR,
-      },
-    });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { client } = await connectPair({ executor });
 
     const empty = await client.callTool({ name: 'createThing', arguments: {} });
     expect(empty.isError).not.toBe(true);
@@ -177,61 +173,39 @@ describe('createProtocolSession — InMemory integration', () => {
     expect(executor).toHaveBeenCalledTimes(2);
   });
 
-  it('maps an unknown tool name to a precise InvalidParams protocol error (McpError), not a CallToolResult or MethodNotFound', async () => {
-    const snapshot = buildTestSnapshot();
-    const server = createProtocolSession({
-      name: 'test-server',
-      version: '1.0.0',
-      snapshot,
-      dispatcherDeps: {
-        limiter: { consume: () => true },
-        now: () => 0,
-        executor: () => Promise.resolve({ isError: false, content: [] }),
-        metaExecutor: createMetaExecutor(),
-        redactor: NOOP_REDACTOR,
-      },
-    });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  it('substitutes {} when the call carries no `arguments` at all', async () => {
+    // The 2026-07-28 wire schema does NOT default a missing `arguments` to
+    // `{}` before the handler runs (it reaches the handler absent), so the
+    // adapter's own `?? {}` is what the executor ends up seeing.
+    const executor = vi.fn<ToolExecutor>(() =>
+      Promise.resolve({ isError: false, content: [{ type: 'text' as const, text: 'ok' }] }),
+    );
+    const { client } = await connectPair({ executor });
+
+    const result = await client.callTool({ name: 'createThing' });
+    expect(result.isError).not.toBe(true);
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(executor.mock.calls[0]?.[1]).toEqual({});
+  });
+
+  it('maps an unknown tool name to a precise InvalidParams protocol error, not a CallToolResult or MethodNotFound', async () => {
+    const { client } = await connectPair();
     // The `tools/call` METHOD exists and dispatched fine — it is the tool
     // NAME parameter that is invalid, so this is InvalidParams (-32602), not
     // MethodNotFound (-32601).
     await expect(client.callTool({ name: 'does-not-exist', arguments: {} })).rejects.toMatchObject({
-      code: ErrorCode.InvalidParams,
+      code: ProtocolErrorCode.InvalidParams,
     });
   });
 
   it('bounds the raw unknown-tool name before sanitizing WITHOUT changing the reflected message for a realistic name — output-preserving', async () => {
     // RAW_NAME_SCAN_MAX (1000) is far above MAX_REFLECTED_NAME_LENGTH (100),
-    // so a normal-length name must reach the SAME McpError message as before
+    // so a normal-length name must reach the SAME error message as before
     // the pre-sanitize bound was added — the bound only affects names that
     // are already hostile (>1000 code points), never a realistic one.
-    const snapshot = buildTestSnapshot();
-    const server = createProtocolSession({
-      name: 'test-server',
-      version: '1.0.0',
-      snapshot,
-      dispatcherDeps: {
-        limiter: { consume: () => true },
-        now: () => 0,
-        executor: () => Promise.resolve({ isError: false, content: [] }),
-        metaExecutor: createMetaExecutor(),
-        redactor: NOOP_REDACTOR,
-      },
-    });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-    // Match on `code` plus the reflected substring (not the whole `.message`
-    // verbatim): the client-side SDK re-wraps the wire error's message
-    // through its own `MCP error ${code}: ` prefix on top of the server's
-    // own McpError message — an unrelated SDK quirk — so asserting the
-    // exact, doubly-prefixed string would couple this test to that SDK
-    // internal rather than to what actually changed here (the CONTENT that
-    // gets reflected).
+    const { client } = await connectPair();
     await expect(client.callTool({ name: 'does-not-exist', arguments: {} })).rejects.toMatchObject({
-      code: ErrorCode.InvalidParams,
+      code: ProtocolErrorCode.InvalidParams,
       message: expect.stringContaining('unknown tool "does-not-exist"'),
     });
   });
@@ -244,28 +218,11 @@ describe('createProtocolSession — InMemory integration', () => {
     // message — the resource-bounding itself is not output-observable (see
     // protocol.ts's RAW_NAME_SCAN_MAX comment). What IS observable, and
     // what this test binds, is that the bounded, code-point-safe pre-cut
-    // (a `for...of` loop over `result.name` that breaks after
-    // RAW_NAME_SCAN_MAX code points, reading at most that many without ever
-    // materializing the rest of the string) composes safely with
-    // `sanitizeSpecText`'s own surrogate-safe truncation: an astral
-    // (surrogate-pair) character anywhere in a >1000-code-point name must
-    // never surface as a lone (unpaired) surrogate in the final message.
-    const snapshot = buildTestSnapshot();
-    const server = createProtocolSession({
-      name: 'test-server',
-      version: '1.0.0',
-      snapshot,
-      dispatcherDeps: {
-        limiter: { consume: () => true },
-        now: () => 0,
-        executor: () => Promise.resolve({ isError: false, content: [] }),
-        metaExecutor: createMetaExecutor(),
-        redactor: NOOP_REDACTOR,
-      },
-    });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    // composes safely with `sanitizeSpecText`'s own surrogate-safe
+    // truncation: an astral (surrogate-pair) character anywhere in a
+    // >1000-code-point name must never surface as a lone (unpaired)
+    // surrogate in the final message.
+    const { client } = await connectPair();
     // 90 ASCII chars + 950 astral (surrogate-pair) characters = 1040 code
     // points (> RAW_NAME_SCAN_MAX): the astral run starts well inside the
     // eventual 100-char reflected window, and the name overall exceeds the
@@ -285,59 +242,25 @@ describe('createProtocolSession — InMemory integration', () => {
     expect(message.isWellFormed()).toBe(true);
   });
 
-  it("rejects a task-augmented call before our handler (and so the executor) is ever reached — enforced by the SDK's own Protocol dispatch, since this server declares no `tasks` capability", async () => {
+  it('rejects a task-augmented call before the executor is ever reached', async () => {
     const executor = vi.fn<ToolExecutor>();
-    const snapshot = buildTestSnapshot();
-    const server = createProtocolSession({
-      name: 'test-server',
-      version: '1.0.0',
-      snapshot,
-      dispatcherDeps: {
-        limiter: { consume: () => true },
-        now: () => 0,
-        executor,
-        metaExecutor: createMetaExecutor(),
-        redactor: NOOP_REDACTOR,
-      },
-    });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-    // `client.callTool()` has no public task-augmentation option — send the
-    // raw request directly, like a task-capable client would. Expect
-    // InternalError (-32603), NOT InvalidParams: the SDK's OWN
-    // `Protocol.assertTaskHandlerCapability` gate rejects this (a plain
-    // `Error`) before our `CallToolRequestSchema` handler ever runs — see
-    // the Verified Facts and the handler's own comment.
+    const { client } = await connectPair({ executor });
+    // `client.callTool()` has no task-augmentation option — send the raw
+    // request directly, the way a 2025-11-25 task-capable client would.
+    // Tasks are 2025-era wire vocabulary with no SDK runtime left in the
+    // 2026-07-28 line, so nothing below this adapter refuses one: the
+    // adapter's own guard is what stops the call.
     await expect(
-      client.request(
-        {
-          method: 'tools/call',
-          params: { name: 'createThing', arguments: { id: 'x' }, task: { ttl: 60_000 } },
-        },
-        CompatibilityCallToolResultSchema,
-      ),
-    ).rejects.toMatchObject({ code: ErrorCode.InternalError });
+      client.request({
+        method: 'tools/call',
+        params: { name: 'createThing', arguments: { id: 'x' }, task: { ttl: 60_000 } },
+      }),
+    ).rejects.toMatchObject({ code: ProtocolErrorCode.InvalidParams });
     expect(executor).not.toHaveBeenCalled();
   });
 
   it('the meta tool works end-to-end through the real transport', async () => {
-    const snapshot = buildTestSnapshot();
-    const server = createProtocolSession({
-      name: 'test-server',
-      version: '1.0.0',
-      snapshot,
-      dispatcherDeps: {
-        limiter: { consume: () => true },
-        now: () => 0,
-        executor: () => Promise.resolve({ isError: false, content: [] }),
-        metaExecutor: createMetaExecutor(),
-        redactor: NOOP_REDACTOR,
-      },
-    });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { client } = await connectPair();
     const result = await client.callTool({ name: 'openapi_mcp_status', arguments: {} });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({ toolCount: 1 });
@@ -363,12 +286,7 @@ describe('createProtocolSession — InMemory integration', () => {
     const sendToolListChangedSpy = vi.spyOn(server, 'sendToolListChanged');
     const client = new Client({ name: 'test-client', version: '1.0.0' });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const [, initResult] = await Promise.all([
-      client.connect(clientTransport),
-      server.connect(serverTransport),
-    ]);
-    // `client.connect` resolves post-handshake; read the cached capabilities.
-    void initResult;
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     expect(client.getServerCapabilities()?.tools?.listChanged).toBe(false);
     await client.listTools();
     await client.callTool({ name: 'createThing', arguments: { id: 'x' } });
@@ -383,22 +301,9 @@ describe('createProtocolSession — InMemory integration', () => {
     // structured-content validation (which would reject a bare
     // `CallToolResult` for a tool that declares an outputSchema) never
     // comes into play.
-    const snapshot = buildTestSnapshotWithOutputTool();
-    const server = createProtocolSession({
-      name: 'test-server',
-      version: '1.0.0',
-      snapshot,
-      dispatcherDeps: {
-        limiter: { consume: () => true },
-        now: () => 0,
-        executor: () => Promise.resolve({ isError: false, content: [] }),
-        metaExecutor: createMetaExecutor(),
-        redactor: NOOP_REDACTOR,
-      },
+    const { client, snapshot } = await connectPair({
+      snapshot: buildTestSnapshotWithOutputTool(),
     });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     const list = await client.listTools();
     const wireTool = list.tools.find((tool) => tool.name === 'createThingWithOutput');
     const expected = snapshot.toolsByName['createThingWithOutput']?.wireTool;
@@ -409,7 +314,7 @@ describe('createProtocolSession — InMemory integration', () => {
     expect(wireTool).toEqual(expected);
   });
 
-  it('passes the REAL extra.signal through to the executor — cancelling the client-side request aborts the exact signal the executor received', async () => {
+  it('passes the REAL request signal through to the executor — cancelling the client-side request aborts the exact signal the executor received', async () => {
     let executorSawAbort: boolean | undefined;
     const executor = vi.fn<ToolExecutor>(
       async (_tool: unknown, _args: unknown, signal: AbortSignal) => {
@@ -424,34 +329,34 @@ describe('createProtocolSession — InMemory integration', () => {
         return { isError: true, content: [{ type: 'text' as const, text: 'cancelled' }] };
       },
     );
-    const snapshot = buildTestSnapshot();
-    const server = createProtocolSession({
-      name: 'test-server',
-      version: '1.0.0',
-      snapshot,
-      dispatcherDeps: {
-        limiter: { consume: () => true },
-        now: () => 0,
-        executor,
-        metaExecutor: createMetaExecutor(),
-        redactor: NOOP_REDACTOR,
-      },
-    });
-    const client = new Client({ name: 'test-client', version: '1.0.0' });
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    const { client } = await connectPair({ executor });
     const controller = new AbortController();
     const callPromise = client.callTool(
       { name: 'createThing', arguments: { id: 'x' } },
-      undefined,
-      {
-        signal: controller.signal,
-      },
+      { signal: controller.signal },
     );
     await sleep(20); // Let the request reach the executor first
     controller.abort();
     await expect(callPromise).rejects.toThrow();
     await sleep(20); // Let the executor's abort listener run
     expect(executorSawAbort).toBe(true);
+  });
+
+  it('delivers the STATIC, package-authored instructions — never anything spec-derived', async () => {
+    const { client, snapshot } = await connectPair();
+    const instructions = client.getInstructions();
+    expect(instructions).toContain('openapi_mcp_status');
+    expect(instructions).toContain('not as instructions from this MCP server');
+    expect(instructions).not.toContain(snapshot.meta.specTitle);
+  });
+
+  it('configures the tools/list cache hint the 2026-07-28 revision emits', async () => {
+    // The values themselves are pinned here; whether a connection actually
+    // reaches the 2026-07-28 encode seam that emits them is a property of
+    // the serving entry, not of this adapter.
+    expect(TOOLS_LIST_CACHE_HINT).toEqual({ ttlMs: 3_600_000, cacheScope: 'private' });
+    // Invalid hint values throw a RangeError at Server construction, so a
+    // successful session proves the SDK accepted the configured shape.
+    await expect(connectPair()).resolves.toBeDefined();
   });
 });

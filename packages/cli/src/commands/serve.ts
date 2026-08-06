@@ -4,10 +4,8 @@ import {
   buildSnapshot,
   buildTools,
   compileEnvelopeValidator,
-  connectStdio,
   createExecutor,
   createMetaExecutor,
-  createProtocolSession,
   createRateLimiter,
   createRedactor,
   createStreamableHttpServer,
@@ -15,6 +13,7 @@ import {
   isValidBearerToken,
   parseSpecSource,
   runSpecPipeline,
+  serveStdioSession,
   SYSTEM_HEADERS,
   usageError,
   validationError,
@@ -28,6 +27,7 @@ import type {
 import pkg from '../../package.json' with { type: 'json' };
 import { registerApiOptions, resolveApiConfig } from '../api-options.ts';
 import type { ApiCmdOpts } from '../api-options.ts';
+import type { CliContext } from '../context.ts';
 import { emitError, emitWarnings } from '../output.ts';
 import {
   deadPatternMessage,
@@ -50,6 +50,51 @@ const MAX_HEADER_BYTES = 16_384;
 const MAX_CONCURRENT_UPSTREAM_CALLS = 16;
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+// At most one transport warning per this window, per route.
+const TRANSPORT_WARNING_WINDOW_MS = 1000;
+
+// The BOUNDED stderr route both transports' out-of-band error sinks report
+// through. A sink that fires once per unservable request is an amplifier: a
+// client holding a valid bearer (or, on stdio, the one client there is) can
+// drive one synchronous stderr write per malformed request for as long as it
+// likes — enough to swamp a terminal or fill a log with text it chose. This
+// caps that at one framed line per window and drops the rest, and — the part
+// that keeps a drop from being a silent lie — reports HOW MANY were dropped
+// on the next line that does get through.
+//
+// Check-on-emit, never a timer: nothing is scheduled, so this holds no
+// pending work that could keep the event loop alive past a shutdown signal.
+// The accepted cost is that a burst suppressed at the very END of a run is
+// never reported, since no later warning arrives to carry the count.
+//
+// The clock is `ctx.now` — the same injected clock the rest of the command
+// uses, never Date.now directly — so the window is exercised with a fake
+// clock instead of by sleeping. Text still goes through emitWarnings, so
+// every line (the suppression notice included) stays sanitized and framed.
+export const createTransportWarningRoute = (
+  ctx: CliContext,
+  label: string,
+): ((error: Error) => void) => {
+  let lastEmittedMs: number | undefined;
+  let suppressed = 0;
+  return (error: Error): void => {
+    const nowMs = ctx.now();
+    if (lastEmittedMs !== undefined && nowMs - lastEmittedMs < TRANSPORT_WARNING_WINDOW_MS) {
+      suppressed += 1;
+      return;
+    }
+    lastEmittedMs = nowMs;
+    const dropped = suppressed;
+    suppressed = 0;
+    emitWarnings(ctx, [
+      ...(dropped === 0
+        ? []
+        : [`${label}: ${String(dropped)} more warning${dropped === 1 ? '' : 's'} suppressed`]),
+      `${label}: ${error.message}`,
+    ]);
+  };
+};
 
 const tryParseUrl = (raw: string): URL | undefined => {
   try {
@@ -334,39 +379,34 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
       ]);
       if (httpConfig === undefined) {
-        const server = createProtocolSession({
-          name: 'openapi-mcp',
-          version: pkg.version,
-          snapshot,
-          dispatcherDeps,
-        });
-        await connectStdio(server);
-        // Connect() resolves once the transport is attached; block here until
-        // a graceful shutdown signal (SIGINT/SIGTERM) OR the MCP client
-        // disconnecting (stdin EOF) so the CLI process stays alive for
-        // exactly the transport's lifetime and no longer.
-        //
-        // VERIFIED empirically against the pinned @modelcontextprotocol/sdk
-        // (dist/esm/server/stdio.js, StdioServerTransport): it attaches only
-        // 'data'/'error' listeners to stdin, never 'end' — it does NOT
-        // self-close on EOF, so `Server`'s (Protocol's) `onclose` callback
-        // never fires from a client disconnect; it only fires when close()
-        // is called. A probe of both variants (an `onclose`-driven resolve
-        // vs. this stdin-'end'-driven resolve) against the real SDK, with a
-        // child process's stdin closed the way a disconnecting client
-        // closes it, showed the `onclose` variant still exits 13 (unsettled
-        // top-level await) while this variant exits 0. So the promise must
-        // listen to stdin's OWN 'end' event directly, not delegate to
-        // `server.onclose`, and `server.close()` is unconditional afterward
-        // (the transport is never already self-closed, so no double-close
-        // guard is needed here).
-        // oxlint-disable-next-line promise/avoid-new -- races three independent event sources (SIGINT/SIGTERM/stdin 'end') with no single promise-returning API that covers all three
-        await new Promise<void>((resolve) => {
-          process.once('SIGINT', () => resolve());
-          process.once('SIGTERM', () => resolve());
-          process.stdin.once('end', () => resolve());
-        });
-        await server.close();
+        const session = serveStdioSession(
+          { name: 'openapi-mcp', version: pkg.version, snapshot, dispatcherDeps },
+          {
+            // Out-of-band transport errors carry no JSON-RPC reply — route
+            // them through the SAME sanitizing stderr path the startup
+            // diagnostics use rather than dropping them, since stdout is
+            // MCP-JSON-only and their text can echo client-supplied input.
+            // Rate-bounded, because one line per unservable message is an
+            // amplifier the client controls (see createTransportWarningRoute).
+            onError: createTransportWarningRoute(ctx, 'stdio transport'),
+          },
+        );
+        const shutdown = Promise.withResolvers<void>();
+        const onShutdownSignal = (): void => shutdown.resolve();
+        process.once('SIGINT', onShutdownSignal);
+        process.once('SIGTERM', onShutdownSignal);
+        // The session owns the connection's lifetime (it ends when the client
+        // closes stdin or the transport goes away); a shutdown signal ends it
+        // early. close() afterwards is unconditional and is what releases
+        // stdin — without it a signalled process would idle on an open pipe
+        // instead of exiting.
+        await Promise.race([session.closed, shutdown.promise]);
+        // `once` only removes the handler that fired: whichever signal lost
+        // the race (both of them, when the connection ended on its own) would
+        // otherwise keep this listener on the process for the rest of the run.
+        process.removeListener('SIGINT', onShutdownSignal);
+        process.removeListener('SIGTERM', onShutdownSignal);
+        await session.close();
       } else {
         const guard: RequestGuardOptions = {
           // No CLI flag for browser Origins (documented scope: a single
@@ -384,17 +424,28 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           dispatcherDeps,
           guard,
           port: httpConfig.port,
-          now: ctx.now,
+          // Same reasoning — and the same bounded route — as the stdio
+          // branch's onError above: an out-of-band transport error has no
+          // JSON-RPC reply to ride on, and its text can echo client-supplied
+          // input, so it goes through the SAME sanitizing stderr path as the
+          // startup diagnostics (never raw, never stdout), at a bounded rate.
+          onError: createTransportWarningRoute(ctx, 'http transport'),
         });
         await httpServer.listen();
         // Block until a graceful shutdown signal — there is no client
         // stdin stream to watch for EOF in HTTP mode (unlike the stdio
-        // branch below), so SIGINT/SIGTERM are the only shutdown triggers.
-        // oxlint-disable-next-line promise/avoid-new -- races two independent process signal events (SIGINT/SIGTERM) with no single promise-returning API that covers both
-        await new Promise<void>((resolve) => {
-          process.once('SIGINT', () => resolve());
-          process.once('SIGTERM', () => resolve());
-        });
+        // branch above), so SIGINT/SIGTERM are the only shutdown triggers.
+        // Named handler + removeListener, mirroring the stdio branch above:
+        // whichever signal loses the race would otherwise keep a listener on
+        // the process throughout close(), so a second signal during a hung
+        // teardown would be swallowed instead of getting default behavior.
+        const shutdown = Promise.withResolvers<void>();
+        const onShutdownSignal = (): void => shutdown.resolve();
+        process.once('SIGINT', onShutdownSignal);
+        process.once('SIGTERM', onShutdownSignal);
+        await shutdown.promise;
+        process.removeListener('SIGINT', onShutdownSignal);
+        process.removeListener('SIGTERM', onShutdownSignal);
         await httpServer.close();
       }
       state.exitCode = EXIT.OK;

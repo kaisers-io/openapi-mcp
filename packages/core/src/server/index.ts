@@ -37,8 +37,3 @@ export {
   type IncomingHeaders,
   type RequestGuardOptions,
 } from './http/request-guard.ts';
-export {
-  createSessionStore,
-  type SessionStore,
-  type SessionStoreOptions,
-} from './http/sessions.ts';

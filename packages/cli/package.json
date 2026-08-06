@@ -1,6 +1,6 @@
 {
   "name": "@kaisers-io/openapi-mcp",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Turn any OpenAPI spec into a strict, locally running MCP server",
   "license": "MIT",
   "repository": {
@@ -27,9 +27,9 @@
     "@commander-js/extra-typings": "15.0.0",
     "@kaisers-io/openapi-mcp-core": "workspace:*",
     "commander": "15.0.0",
-    "undici": "8.8.0"
+    "undici": "8.10.0"
   },
   "engines": {
-    "node": ">=24.12"
+    "node": ">=24.0"
   }
 }
