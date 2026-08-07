@@ -189,7 +189,9 @@
         // in a describe block; inlining them would duplicate that setup in
         // every test body.
         "vitest/no-hooks": "off",
-        // Off: many test bodies legitimately assert several related
+        // Off: 101 test bodies across 18 test files (heaviest:
+        // cli/test/serve.test.ts, pipeline.test.ts,
+        // cli/test/serve-http.test.ts) legitimately assert several related
         // properties of one outcome in a single test (e.g. every field of
         // a response envelope, or every argument a mock was called with);
         // the default cap of 5 would force splitting one cohesive
@@ -232,25 +234,44 @@
         // change what the assertion actually verifies, which is a behavior
         // change to the test, not a style fix.
         "vitest/prefer-strict-equal": "off",
-        // Off: primitives.test.ts asserts safeParse(...).success with
-        // toBe(false), which is stricter than the falsy-check this rule
-        // would substitute (success is typed boolean, so toBe(false) is
-        // the exact check; toBeFalsy() would also pass for 0 or '').
+        // Off: 183 sites across 28 test files (heaviest:
+        // toolgen-schema.test.ts, cache-store.test.ts,
+        // filter-pattern.test.ts) assert a typed boolean with toBe(false)
+        // — primitives.test.ts's and toolgen-schema.test.ts's
+        // safeParse(...).success, filter-pattern.test.ts's match(...) —
+        // which is stricter than the falsy-check this rule would
+        // substitute (success is typed boolean, so toBe(false) is the
+        // exact check; toBeFalsy() would also pass for 0 or '').
         "vitest/prefer-to-be-falsy": "off",
-        // Off: primitives.test.ts asserts inside a try/catch because the
+        // Off: 71 sites across 13 test files (heaviest:
+        // cache-paths.test.ts, cache-store.test.ts,
+        // http-pinned-dispatcher.test.ts) put an expect inside a branch
+        // the rule cannot see is exhaustive — cache-paths.test.ts's
+        // `if (policy.kind !== 'persistent') expect.unreachable(...)`
+        // narrowing guard, and primitives.test.ts's try/catch, where the
         // code under test throws on the invalid branch and returns
-        // normally on the valid one; the assertion belongs in whichever
-        // branch actually runs, which the rule cannot see is exhaustive.
+        // normally on the valid one so the assertion belongs in whichever
+        // branch actually runs.
         "vitest/no-conditional-expect": "off",
-        // Off: context.test.ts asserts `typeof ctx.homeDir()` with
-        // toBe('string') because the value under test is a plain string,
+        // Off: 3 sites across 3 test files assert a runtime `typeof`
+        // against a plain primitive — cli/test/context.test.ts's
+        // `typeof ctx.homeDir()` toBe('string'), toolgen-schema.test.ts's
+        // `typeof MAX_CONVERT_DEPTH` and cli/test/serve.test.ts's
+        // `typeof discoverResponse.result?.['ttlMs']` toBe('number') —
         // not a class instance or branded type that expectTypeOf's static
         // type check would add anything to.
         "vitest/prefer-expect-type-of": "off",
-        // Off: output.test.ts's sample payload fixture (`{ a: 1 }`) uses a
-        // single-letter key because the test exercises payload shape, not
-        // the key's name; renaming it to satisfy id-length would suggest a
-        // meaning the fixture doesn't have.
+        // Off: 190 sites across 15 test files (heaviest:
+        // toolgen-schema.test.ts, cache-store.test.ts,
+        // toolgen-layout.test.ts) name a single-letter identifier on
+        // purpose: fixture keys whose spelling is not what the test
+        // exercises (cli/test/output.test.ts's `{ a: 1 }` payload,
+        // dereference.test.ts's a -> b -> c $ref chain), single-letter
+        // parameters of local assertion helpers (toolgen-schema.test.ts's
+        // `ok`/`wirePattern` taking `r: SchemaResult`), and the seeded-PRNG
+        // locals in cache-store.test.ts's deterministic fixture generator.
+        // Renaming any of them would suggest a meaning the fixture doesn't
+        // have.
         "id-length": "off",
         // Off: 296 sites across 30 test files (heaviest:
         // toolgen-schema.test.ts, toolgen-layout.test.ts,
@@ -259,10 +280,16 @@
         // safeParse(...).success — which is stricter than the truthy-check
         // this rule would substitute (toBeTruthy() also passes for 1 or 'x').
         "vitest/prefer-to-be-truthy": "off",
-        // Off: main.test.ts defines inline CommandRegistrar closures
-        // (boom/helpToStderr) inside the test body because they capture
-        // per-test mock state (call counts, thrown errors) that a
-        // module-scoped helper couldn't isolate between tests.
+        // Off: 40 sites across 13 test files (heaviest:
+        // http-pinned-dispatcher.test.ts, filter-pattern.test.ts,
+        // egress.test.ts) declare a one-scenario stub in the test body
+        // that consumes it — http-pinned-dispatcher.test.ts's per-test
+        // `Resolve` fakes, each returning exactly the address list that one
+        // test pins against, and cli/test/main.test.ts's CommandRegistrar
+        // closures (boom/helpToStderr) registering the one command their
+        // test runs. They capture nothing, which is what the rule keys on,
+        // but hoisting them would move a single-use fixture away from its
+        // only caller and collect unrelated scenario stubs at module scope.
         "unicorn/consistent-function-scoping": "off",
         // Configured (not off): these are the repo's assertion-wrapper
         // helpers, so the rule can't see the expect(...) calls buried inside
@@ -275,10 +302,17 @@
           "error",
           { "assertFunctionNames": ["expect", "expectUsageError", "agree", "rejectsWithCause"] }
         ],
-        // Off: load.test.ts narrows source.kind with an if inside the test
-        // body because the fixture's SpecSource union must be narrowed
-        // before its file-only or url-only field can be read; the
-        // narrowing is the thing under test, not incidental control flow.
+        // Off: 185 sites across 25 test files (heaviest:
+        // cache-store.test.ts, server-dispatch.test.ts, pipeline.test.ts)
+        // branch inside the test body to narrow a discriminated union
+        // before a variant-only field can be read — load.test.ts's
+        // `source.kind` if-narrowing over SpecSource,
+        // server-dispatch.test.ts's inline
+        // `result.kind === 'outcome' && result.outcome.isError` — or to
+        // build a table-driven negative fixture (cache-store.test.ts
+        // deleting the keys a case marks undefined before asserting
+        // zCacheMeta rejects it). The narrowing is the thing under test,
+        // not incidental control flow.
         "vitest/no-conditional-in-test": "off",
         // Off: 36 sites across 9 test files (heaviest:
         // toolgen-schema.test.ts) use literal `null` because the fixture
@@ -293,38 +327,66 @@
         // own mock response and assertions; splitting such a file would
         // separate a scenario from the single test verifying it end to end.
         "max-lines": "off",
-        // Off: sanitize.test.ts and output.test.ts embed escaped
-        // backslashes ('\\x', '\\u001b') as literal two-character string
-        // content because that is the exact byte sequence the sanitizer is
-        // asserted against; converting them to String.raw template
-        // literals risks silently changing which characters the fixture
-        // contains, for no runtime difference.
+        // Off: 23 sites across 7 test files (heaviest:
+        // filter-pattern.test.ts, cli/test/output.test.ts,
+        // cache-paths.test.ts) embed escaped backslashes as literal
+        // two-character string content because that is the exact byte
+        // sequence the code under test is asserted against —
+        // sanitize.test.ts's and output.test.ts's '\\x'/'\\u001b', and
+        // filter-pattern.test.ts's 'a\\d' glob, which must stay a literal
+        // backslash followed by d for the matcher to be exercised at all;
+        // converting them to String.raw template literals risks silently
+        // changing which characters the fixture contains, for no runtime
+        // difference.
         "unicorn/prefer-string-raw": "off",
-        // Off: cache-lock.test.ts and context.test.ts use
-        // expect(await ...) rather than await expect(...).resolves
-        // throughout because several of these assertions destructure or
-        // transform the resolved value before asserting on it, which the
-        // .resolves chain form doesn't support in the same expression.
+        // Off: 70 sites across 10 test files (heaviest:
+        // cli/test/context.test.ts, cache-store.test.ts,
+        // cache-lock.test.ts) use expect(await ...) rather than
+        // await expect(...).resolves. Several transform or destructure the
+        // resolved value before asserting on it — context.test.ts's
+        // `expect(await modeOf(target)).toBe('700')` reads the permission
+        // bits off the awaited path — which the .resolves chain form
+        // doesn't support in the same expression, and the neighboring
+        // assertions in those same bodies keep the one shape.
         "vitest/prefer-expect-resolves": "off",
-        // Off: context.test.ts's writeFileAtomic/readFileTextCapped
-        // failure-path tests assert only that a real filesystem error is
-        // thrown, not its exact message, because the message text (ENOENT
-        // vs. EACCES wording, path formatting) is OS- and filesystem-
-        // dependent and would make the test flaky across platforms.
+        // Off: 14 sites across 6 test files (heaviest:
+        // server-rate-limit.test.ts, cache-store.test.ts,
+        // cli/test/context.test.ts) assert that a call throws or rejects
+        // without pinning the text. context.test.ts's writeFileAtomic/
+        // readFileTextCapped failure paths surface a real filesystem
+        // error whose message (ENOENT vs. EACCES wording, path formatting)
+        // is OS- and filesystem-dependent and would make the test flaky
+        // across platforms; cache-store.test.ts's rejections come from an
+        // injected write crash; and server-rate-limit.test.ts's
+        // createRateLimiter cases assert the fail-closed property itself —
+        // that every non-finite or non-positive maxCalls/windowMs is
+        // rejected at construction — which is what the test is for.
         "vitest/require-to-throw-message": "off",
-        // Off for tests: race/deadline scenarios (session eviction, shutdown
-        // timers, cache-lock contention, DNS-abort races) are constructed
-        // directly with `new Promise` to control exactly when a fixture
-        // settles, mirroring the same non-abortable/event-emitter primitives
-        // the src-side sites wrap
+        // Off for tests: 55 sites across 10 test files (heaviest:
+        // cli/test/serve.test.ts, cli/test/serve-http.test.ts,
+        // http-pinned-dispatcher.test.ts, server-http.test.ts) construct a
+        // promise directly with `new Promise` — to bridge an event-emitter
+        // or callback lifecycle that has no promise form (the real local
+        // upstream's server.listen/close and the spawned CLI's exit in the
+        // two serve suites, node:net's LookupFunction callback in
+        // http-pinned-dispatcher.test.ts), and to control exactly when a
+        // race or deadline fixture settles (shutdown timers, cache-lock
+        // contention, DNS-abort races)
         "promise/avoid-new": "off",
-        // Off for tests: fixtures assert against detached late-rejection
-        // handlers and callback-contract bridges (mirroring pinnedLookup and
-        // the DNS-race consumers in src) via `.then()`/`.catch()` chains
+        // Off for tests: 2 sites, both needing an unawaited chain.
+        // server-sdk-stdio.test.ts's lifetimeWithin maps the close promise
+        // with `.then()` inside a Promise.race so both arms of the race
+        // resolve to a typed outcome; cache-store.test.ts captures a
+        // concurrent write's rejection with `.catch()` without awaiting it,
+        // which is what lets that write interleave with the removal
+        // sequence under test
         "promise/prefer-await-to-then": "off",
-        // Off for tests: fixtures call gzipSync/spawnSync/validateHopUrlSync
-        // synchronously by design to set up deterministic input before
-        // exercising the code under test
+        // Off for tests: 15 sites across 2 test files call
+        // gzipSync/spawnSync/validateHopUrlSync synchronously by design to
+        // set up deterministic input before exercising the code under test
+        // — http-pinned-dispatcher.test.ts's two gzipSync response bodies
+        // and its twelve validateHopUrlSync redirect-target checks, plus
+        // one spawnSync in cli/test/context.test.ts
         "node/no-sync": "off"
       }
     },
@@ -332,8 +394,11 @@
       "files": ["packages/core/src/spec/pipeline.ts"],
       "rules": {
         // Off for the pipeline only: it is the composition root of the spec
-        // subsystem and imports load, parse, validate, dereference, normalize,
-        // naming, budgets, fetch, cache paths/fs/store/ttl, and the filter engine
+        // subsystem and imports 18 modules against a cap of 10 -- load, parse,
+        // validate, dereference, normalize, naming, budgets, fetch, cache
+        // errors/fs/paths/store/ttl, the filter engine and its pattern types,
+        // the egress and resolved-header types, and the shared error
+        // constructors
         "import/max-dependencies": "off",
         // Off: pipeline.ts is the spec subsystem's composition root -- policy
         // resolution, the fail-closed cache read, the conditional-refresh
