@@ -31,7 +31,7 @@ Claude Code (`.mcp.json`, expands `${VAR}` — export `SPEC_TOKEN`/`API_TOKEN` f
       "command": "npx",
       "args": [
         "-y",
-        "@kaisers-io/openapi-mcp@0.2.0",
+        "@kaisers-io/openapi-mcp@0.3.0",
         "serve",
         "--spec",
         "https://api.example.com/openapi.json",
@@ -58,7 +58,7 @@ whitelist them with `env_vars`):
 [mcp_servers.petstore]
 command = "npx"
 args = [
-  "-y", "@kaisers-io/openapi-mcp@0.2.0", "serve",
+  "-y", "@kaisers-io/openapi-mcp@0.3.0", "serve",
   "--spec", "https://api.example.com/openapi.json",
   "--spec-header-env", "Authorization=SPEC_TOKEN",
   "--header-env", "Authorization=API_TOKEN",
