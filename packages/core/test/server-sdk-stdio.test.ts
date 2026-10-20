@@ -132,7 +132,7 @@ describe('serveStdioSession', () => {
     await session.close();
   });
 
-  it('ends the session lifetime on stdin EOF — the SDK transport itself never observes it', async () => {
+  it('ends the session lifetime on stdin EOF', async () => {
     const { session, stdin, request, nextResponse } = openSession();
     request(1, 'tools/list');
     await nextResponse(1);

@@ -22,10 +22,10 @@ export type StdioSessionHandle = {
   // rejects — a failure that ends the connection is reported through
   // `onError`, not through this lifetime.
   readonly closed: Promise<void>;
-  // Detaches this session from the given streams, and — on the paths where
-  // the connection is still up (a shutdown signal, stdin EOF) — tears down
-  // the pinned session and the transport. When the transport already closed
-  // itself that teardown has run, and this only releases the streams. Safe
+  // Detaches this session from the given streams, and — when the connection
+  // is still up (a shutdown signal) — tears down the pinned session and the
+  // transport. When the transport already closed itself (stdin EOF, a failed
+  // write) that teardown has run, and this only releases the streams. Safe
   // to call at any point, including after `closed` has settled.
   close: () => Promise<void>;
 };
@@ -44,19 +44,8 @@ export const serveStdioSession = (
 ): StdioSessionHandle => {
   const stdin = deps.stdin ?? process.stdin;
   const transport = new StdioServerTransport(stdin, deps.stdout ?? process.stdout);
-  // One lifetime fed by three independent callback sources.
+  // One lifetime fed by two independent callback sources.
   const { promise: closed, resolve: markClosed } = Promise.withResolvers<void>();
-  // The SDK's stdio transport attaches only 'data'/'error' handlers to
-  // stdin — it never watches for EOF, so a client that closes its end of the
-  // pipe would otherwise leave this connection open forever. On stdio, that
-  // EOF IS the client disconnecting: the spec reads stdin close as the
-  // shutdown signal and wants a prompt exit, so a request still in flight
-  // when EOF arrives is DELIBERATELY abandoned with the connection rather
-  // than drained — draining would mean waiting, unbounded, on an upstream
-  // call for a client that already hung up. A client that wants its
-  // response must keep its end of the pipe open until it has read it.
-  const onEnd = (): void => markClosed();
-  stdin.once('end', onEnd);
   // `serveStdio` starts the transport itself, and a start that fails is
   // reported through `onerror` and then dropped: no session ever opens, so
   // `onclose` never fires and nothing else would ever end the lifetime
@@ -76,8 +65,15 @@ export const serveStdioSession = (
     transport,
     ...(deps.onError === undefined ? {} : { onerror: deps.onError }),
   });
-  // The other way a connection ends: the transport closing from the inside
-  // (a failed stdout write, an oversized frame) with stdin still open.
+  // The other way a connection ends: the transport closing itself — on stdin
+  // EOF (the SDK transport watches 'end'/'close' on stdin) or from the inside
+  // (a failed stdout write, an oversized frame) with stdin still open. On
+  // stdio, that EOF IS the client disconnecting: the spec reads stdin close
+  // as the shutdown signal and wants a prompt exit, so a request still in
+  // flight when EOF arrives is DELIBERATELY abandoned with the connection
+  // rather than drained — draining would mean waiting, unbounded, on an
+  // upstream call for a client that already hung up. A client that wants
+  // its response must keep its end of the pipe open until it has read it.
   // Composes onto — never replaces — the callback `serveStdio` installed
   // above, which is what tears the pinned instance down.
   const entryOnClose = transport.onclose;
@@ -89,10 +85,6 @@ export const serveStdioSession = (
   return {
     closed,
     close: async () => {
-      // The EOF listener is this module's own — the transport neither
-      // registered it nor removes it — and these streams are the caller's
-      // to reuse, so nothing of this session may outlive it on them.
-      stdin.off('end', onEnd);
       await handle.close();
     },
   };
