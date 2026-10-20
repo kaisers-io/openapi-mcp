@@ -53,6 +53,7 @@ Claude Code (`.mcp.json`, expands `${VAR}` — export `SPEC_TOKEN`/`API_TOKEN` f
 Codex CLI (`config.toml`, no `${VAR}` expansion — export the secrets in your shell and
 whitelist them with `env_vars`):
 
+<!-- prettier-ignore -->
 ```toml
 [mcp_servers.petstore]
 command = "npx"

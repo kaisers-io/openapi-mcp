@@ -44,6 +44,10 @@
     // type imports from the same module into two statements by design;
     // genuine duplicate value imports are still flagged.
     "no-duplicate-imports": ["error", { "allowSeparateTypeImports": true }],
+    // Configured (not off): the rule's default ("always") would demand
+    // merging consecutive declarations; the codebase declares one binding
+    // per statement, so "never" enforces the existing style.
+    "one-var": ["error", "never"],
     // Off: modules export many named symbols each (functions, types,
     // constants); forcing a single default export per file would fight
     // that structure rather than the other way around.

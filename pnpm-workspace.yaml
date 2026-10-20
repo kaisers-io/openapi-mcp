@@ -1,4 +1,4 @@
 packages:
   - packages/*
-minimumReleaseAgeExclude:
-  - '@seriousme/openapi-schema-validator@2.9.1'
+saveExact: true
+engineStrict: true
