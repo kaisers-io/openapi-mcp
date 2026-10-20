@@ -18,7 +18,7 @@ only from environment variables, and never applies a refreshed spec silently.
 npm i -g @kaisers-io/openapi-mcp
 ```
 
-Requirements: Node.js `>=24.0`, macOS or Linux.
+Requirements: Node.js `>=24.11`, macOS or Linux.
 
 ## Quick start
 
@@ -31,7 +31,7 @@ Claude Code (`.mcp.json`, expands `${VAR}` — export `SPEC_TOKEN`/`API_TOKEN` f
       "command": "npx",
       "args": [
         "-y",
-        "@kaisers-io/openapi-mcp@0.2.0",
+        "@kaisers-io/openapi-mcp@0.3.0",
         "serve",
         "--spec",
         "https://api.example.com/openapi.json",
@@ -53,11 +53,12 @@ Claude Code (`.mcp.json`, expands `${VAR}` — export `SPEC_TOKEN`/`API_TOKEN` f
 Codex CLI (`config.toml`, no `${VAR}` expansion — export the secrets in your shell and
 whitelist them with `env_vars`):
 
+<!-- prettier-ignore -->
 ```toml
 [mcp_servers.petstore]
 command = "npx"
 args = [
-  "-y", "@kaisers-io/openapi-mcp@0.2.0", "serve",
+  "-y", "@kaisers-io/openapi-mcp@0.3.0", "serve",
   "--spec", "https://api.example.com/openapi.json",
   "--spec-header-env", "Authorization=SPEC_TOKEN",
   "--header-env", "Authorization=API_TOKEN",

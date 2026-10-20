@@ -132,7 +132,7 @@ describe('serveStdioSession', () => {
     await session.close();
   });
 
-  it('ends the session lifetime on stdin EOF — the SDK transport itself never observes it', async () => {
+  it('ends the session lifetime on stdin EOF', async () => {
     const { session, stdin, request, nextResponse } = openSession();
     request(1, 'tools/list');
     await nextResponse(1);
@@ -141,6 +141,26 @@ describe('serveStdioSession', () => {
     expect(await lifetimeWithin(session.closed, 20)).toBe('still-open');
     stdin.end();
     await session.closed;
+    await session.close();
+  });
+
+  // EOF handling lives in the SDK transport, not this module: these two pin
+  // the paths a plain `end()` does not reach, so an SDK bump that drops them
+  // fails here.
+  it('ends the session lifetime when stdin is destroyed without an EOF', async () => {
+    const { session, stdin, request, nextResponse } = openSession();
+    request(1, 'tools/list');
+    await nextResponse(1);
+    stdin.destroy();
+    expect(await lifetimeWithin(session.closed, 500)).toBe('ended');
+    await session.close();
+  });
+
+  it('ends the session lifetime when stdin is already gone before the session starts', async () => {
+    const stdin = new PassThrough();
+    stdin.destroy();
+    const { session } = openSession(undefined, stdin);
+    expect(await lifetimeWithin(session.closed, 500)).toBe('ended');
     await session.close();
   });
 
@@ -153,6 +173,7 @@ describe('serveStdioSession', () => {
     // The streams are the caller's and may outlive this session: closing it
     // must leave nothing of it attached to them.
     expect(stdin.listenerCount('end')).toBe(0);
+    expect(stdin.listenerCount('close')).toBe(0);
     expect(stdin.listenerCount('data')).toBe(0);
   });
 

@@ -8,8 +8,8 @@ permissions:
 jobs:
   check:
     strategy:
-      # An empty `node` falls back to .node-version (the dev pin); 24.0.0 is the published engines floor.
-      matrix: { os: [ubuntu-latest, macos-latest], node: ['', '24.0.0'] }
+      # An empty `node` falls back to .node-version (the dev pin); 24.11.0 is the published engines floor.
+      matrix: { os: [ubuntu-latest, macos-latest], node: ['', '24.11.0'] }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
