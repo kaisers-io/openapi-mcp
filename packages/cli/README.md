@@ -18,7 +18,7 @@ only from environment variables, and never applies a refreshed spec silently.
 npm i -g @kaisers-io/openapi-mcp
 ```
 
-Requirements: Node.js `>=24.0`, macOS or Linux.
+Requirements: Node.js `>=24.11`, macOS or Linux.
 
 ## Quick start
 

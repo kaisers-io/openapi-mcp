@@ -31,7 +31,7 @@ Four pillars:
 
 ## Install
 
-Requirements: Node.js `>=24.0`, macOS or Linux.
+Requirements: Node.js `>=24.11`, macOS or Linux.
 
 ```bash
 npm i -g @kaisers-io/openapi-mcp
