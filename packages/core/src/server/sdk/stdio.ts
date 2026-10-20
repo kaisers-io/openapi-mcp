@@ -84,8 +84,6 @@ export const serveStdioSession = (
   };
   return {
     closed,
-    close: async () => {
-      await handle.close();
-    },
+    close: () => handle.close(),
   };
 };
