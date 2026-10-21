@@ -1,6 +1,22 @@
 import { validationError } from '../errors.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
-import { assertInternal, createCycleDetector, isRecord, resolvePointer } from './refs.ts';
+import {
+  assertInternal,
+  createCycleDetector,
+  isRecord,
+  resolvePointer,
+  unionRefs,
+  withoutRef,
+} from './refs.ts';
+import {
+  childContext,
+  mergeReferenceSiblings,
+  mergeSchemaSiblings,
+  nullObject,
+  REFERENCE_OBJECT_OVERRIDES,
+} from './ref-siblings.ts';
+import type { Context } from './ref-siblings.ts';
+import type { OpenapiVersion } from './validate.ts';
 
 export { checkRefs, createCycleDetector, resolveShallow } from './refs.ts';
 
@@ -36,31 +52,6 @@ type Walked = {
 
 type MemoEntry = { value: unknown; size: number; height: number };
 
-const union = (
-  left: ReadonlySet<string> | undefined,
-  right: ReadonlySet<string> | undefined,
-): ReadonlySet<string> | undefined => {
-  if (left === undefined) {
-    return right;
-  }
-  if (right === undefined) {
-    return left;
-  }
-  return new Set([...left, ...right]);
-};
-
-const without = (
-  set: ReadonlySet<string> | undefined,
-  ref: string,
-): ReadonlySet<string> | undefined => {
-  if (set?.has(ref) !== true) {
-    return set;
-  }
-  const rest = new Set(set);
-  rest.delete(ref);
-  return rest.size === 0 ? undefined : rest;
-};
-
 // A container's summary: itself plus its children
 const combine = (value: unknown, children: readonly Walked[]): Walked => {
   let size = 1;
@@ -68,7 +59,7 @@ const combine = (value: unknown, children: readonly Walked[]): Walked => {
   let height = 0;
   for (const child of children) {
     size += child.size;
-    open = union(open, child.open);
+    open = unionRefs(open, child.open);
     height = Math.max(height, child.height);
   }
   checkExpanded(size);
@@ -79,6 +70,9 @@ export type DereferencerOptions = {
   // Return a `{ $ref }` cycle marker for every $ref that is on a reference
   // cycle, instead of expanding it until the cycle closes. See below.
   collapseCycles?: boolean;
+  // Whether keywords next to a $ref apply (3.1) or are ignored (3.0, or no
+  // version given), issue #63
+  openapiVersion?: OpenapiVersion;
 };
 
 export type Dereferencer = {
@@ -115,11 +109,14 @@ export type Dereferencer = {
 // The output objects are shared, so consumers must never mutate them; none
 // does (normalization and tool generation only read, and the server snapshot
 // freezes them).
+// Keywords next to a $ref (openapiVersion, see mergeSchemaSiblings) are merged
+// per occurrence; the target they are merged into is still shared.
 export const createDereferencer = (
   document: Record<string, unknown>,
   options: DereferencerOptions = {},
 ): Dereferencer => {
   const isCyclic = createCycleDetector(document);
+  const applySiblings = options.openapiVersion === '3.1';
   // Imperative on purpose: both counters are running totals shared across
   // every recursive `walk` and every `resolve` call (one budget for the whole
   // expansion, not a per-branch one), incremented as a side effect so the
@@ -137,7 +134,7 @@ export const createDereferencer = (
     }
   };
 
-  const walkRef = (ref: string, refStack: readonly string[]): Walked => {
+  const walkRef = (ref: string, refStack: readonly string[], context: Context): Walked => {
     assertInternal(ref);
     if (refStack.includes(ref)) {
       // Cycle: keep an opaque marker; consumers decide representability
@@ -148,7 +145,10 @@ export const createDereferencer = (
       allocate(1);
       return { value: { $ref: ref }, size: 1, open: undefined, height: 0 };
     }
-    const cached = memo.get(ref);
+    // The same pointer could in principle be reached as a schema and as a
+    // Reference Object target; siblings inside it are read differently
+    const memoKey = `${context === 'other' ? 'o' : 's'}${ref}`;
+    const cached = memo.get(memoKey);
     if (cached !== undefined) {
       // The deepest ref check inside it ran at stack length height - 1 above
       // this one, and a check fails at stack length >= maxRefDepth
@@ -177,22 +177,54 @@ export const createDereferencer = (
         return { value: { $ref: ref }, size: 1, open: new Set([passThroughRef]), height: 0 };
       }
     }
-    // Sibling keys next to $ref are dropped (documented v1 simplification)
-    const walked = walk(target, [...refStack, ref]);
+    const walked = walk(target, [...refStack, ref], context === 'schemas' ? 'schema' : context);
     const height = walked.height + 1;
     if (walked.open === undefined) {
-      memo.set(ref, { value: walked.value, size: walked.size, height });
+      memo.set(memoKey, { value: walked.value, size: walked.size, height });
     }
-    return { value: walked.value, size: walked.size, open: without(walked.open, ref), height };
+    return { value: walked.value, size: walked.size, open: withoutRef(walked.open, ref), height };
   };
 
-  const walk = (node: unknown, refStack: readonly string[]): Walked => {
+  // The keywords next to a $ref, expanded themselves (they may hold $refs),
+  // applied to the expanded target (3.1 only, see mergeSchemaSiblings)
+  const walkRefWithSiblings = (
+    node: Record<string, unknown>,
+    ref: string,
+    refStack: readonly string[],
+    context: Context,
+  ): Walked => {
+    const target = walkRef(ref, refStack, context);
+    const siblingEntries = Object.entries(node).filter(
+      ([key]) => key !== '$ref' && (context !== 'other' || REFERENCE_OBJECT_OVERRIDES.has(key)),
+    );
+    if (!applySiblings || siblingEntries.length === 0) {
+      // 3.0: siblings MUST be ignored, and so are the ones a Reference Object
+      // may not carry
+      return target;
+    }
+    const siblingSchema = context === 'other' ? 'other' : 'schema';
+    const siblings = siblingEntries.map(
+      ([key, value]) => [key, walk(value, refStack, siblingSchema)] as const,
+    );
+    const siblingValues = Object.assign(
+      nullObject(),
+      Object.fromEntries(siblings.map(([key, walked]) => [key, walked.value])),
+    );
+    const merged =
+      context === 'other'
+        ? mergeReferenceSiblings(target.value, siblingValues)
+        : mergeSchemaSiblings(target.value, siblingValues);
+    allocate(1 + siblings.length);
+    return combine(merged, [target, ...siblings.map(([, walked]) => walked)]);
+  };
+
+  const walk = (node: unknown, refStack: readonly string[], context: Context): Walked => {
     if (Array.isArray(node)) {
       allocate(1 + node.length);
       // Each element is charged once above and again when walked, so undo
       // the per-element charge: the preflight only has to fail early
       uniqueNodes -= node.length;
-      const items = node.map((item) => walk(item, refStack));
+      const items = node.map((item) => walk(item, refStack, context));
       return combine(
         items.map((item) => item.value),
         items,
@@ -204,7 +236,7 @@ export const createDereferencer = (
     }
     const ref = node['$ref'];
     if (typeof ref === 'string') {
-      return walkRef(ref, refStack);
+      return walkRefWithSiblings(node, ref, refStack, context);
     }
     const entries = Object.entries(node);
     allocate(1 + entries.length);
@@ -215,7 +247,7 @@ export const createDereferencer = (
     // which handle a null-prototype object unchanged.
     const result: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
     const children = entries.map(([key, value]) => {
-      const child = walk(value, refStack);
+      const child = walk(value, refStack, childContext(context, key));
       result[key] = child.value;
       return child;
     });
@@ -225,7 +257,7 @@ export const createDereferencer = (
   return {
     resolve: (node) => {
       try {
-        const walked = walk(node, []);
+        const walked = walk(node, [], 'other');
         expandedNodes += walked.size;
         checkExpanded(expandedNodes);
         return walked.value;
@@ -244,5 +276,10 @@ export const createDereferencer = (
 // longer does this — it resolves only the exposed operations (see
 // createDereferencer) — but the full form stays available to callers that
 // want a self-contained document.
-export const dereference = (document: Record<string, unknown>): Record<string, unknown> =>
-  createDereferencer(document).resolve(document) as Record<string, unknown>;
+export const dereference = (
+  document: Record<string, unknown>,
+  openapiVersion?: OpenapiVersion,
+): Record<string, unknown> =>
+  createDereferencer(document, openapiVersion === undefined ? {} : { openapiVersion }).resolve(
+    document,
+  ) as Record<string, unknown>;

@@ -218,3 +218,42 @@ export const createCycleDetector = (
     return cyclic.has(ref);
   };
 };
+
+// For normalization: a reference that does not resolve is left as the
+// `{ $ref }` it is, which callers already omit as unresolvable. The pipeline
+// rejects dangling references before normalizing (checkRefs); this only keeps
+// a hand-built or already-dereferenced document (cycle markers) from throwing.
+export const resolveShallowOrSelf = (document: Record<string, unknown>, node: unknown): unknown => {
+  try {
+    return resolveShallow(document, node);
+  } catch {
+    return node;
+  }
+};
+
+// Set helpers for the dereferencer's open-cycle bookkeeping; undefined is
+// the empty set, so the common no-cycle case allocates nothing
+export const unionRefs = (
+  left: ReadonlySet<string> | undefined,
+  right: ReadonlySet<string> | undefined,
+): ReadonlySet<string> | undefined => {
+  if (left === undefined) {
+    return right;
+  }
+  if (right === undefined) {
+    return left;
+  }
+  return new Set([...left, ...right]);
+};
+
+export const withoutRef = (
+  set: ReadonlySet<string> | undefined,
+  ref: string,
+): ReadonlySet<string> | undefined => {
+  if (set?.has(ref) !== true) {
+    return set;
+  }
+  const rest = new Set(set);
+  rest.delete(ref);
+  return rest.size === 0 ? undefined : rest;
+};

@@ -436,7 +436,10 @@ const finish = (
       : [...warnings, PENDING_PROMOTION_WARNING];
   // Filter first, then dereference only what is exposed (decision D2): the
   // node budgets now measure what the model will actually see
-  const dereferencer = createDereferencer(processed.document, { collapseCycles: true });
+  const dereferencer = createDereferencer(processed.document, {
+    collapseCycles: true,
+    openapiVersion: spec.openapiVersion,
+  });
   const exposed = filtered.exposed.map((entry) => ({
     ...entry,
     operation: materialize(entry.operation, dereferencer),
