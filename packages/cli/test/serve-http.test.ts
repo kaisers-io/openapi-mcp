@@ -437,8 +437,12 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     // subscribing here.
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
-    child.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
-    child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdoutChunks.push(chunk);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+    });
 
     const { 'mcp-method': _dropped, ...headersWithoutMethod } = modernHeaders('tools/list');
     const listBody = JSON.stringify(modernBody(nextId(), 'tools/list'));
@@ -623,7 +627,9 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
       },
     );
     const stderrChunks: Buffer[] = [];
-    child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+    });
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
     });
@@ -674,7 +680,9 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
       },
     );
     const stderrChunks: Buffer[] = [];
-    child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+    });
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
     });
