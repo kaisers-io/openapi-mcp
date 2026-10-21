@@ -83,6 +83,13 @@ Notes:
   `structuredContent`, because a tool's structured content must match its output schema.
   Both limits are always finite. There is no "unlimited" setting, because MCP servers must
   rate-limit tool calls.
+- Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
+  While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
+  decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly
+  4 × `--max-response-bytes` per in-flight call, times `--max-concurrency` at worst
+  (about 640 MB with the defaults of `10MB` and `16`). For a tool with an output schema, the
+  text copy of a structured result is capped at 8 KB, with a `…[truncated]` marker. The full
+  data is in `structuredContent`.
 
 Example:
 

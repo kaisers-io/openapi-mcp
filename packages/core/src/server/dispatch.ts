@@ -1,7 +1,12 @@
 import type { RateLimiter } from './rate-limit.ts';
 import type { Redactor } from '../redact.ts';
 import { sanitizeDisplayText, sanitizeSpecText } from '../spec/sanitize.ts';
-import { retryableErrorOutcome, structuredOutcome, textOutcome } from './result.ts';
+import {
+  retryableErrorOutcome,
+  structuredOutcome,
+  textOutcome,
+  wasSecretScanned,
+} from './result.ts';
 import type { DispatchResult, ToolCallOutcome } from './result.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
 
@@ -117,25 +122,21 @@ const PARSE_THREW_OUTCOME: ToolCallOutcome = textOutcome(
 // server/execute/response.ts's own GENERIC_UNSAFE_TEXT wording.
 const BOUNDARY_UNSAFE_TEXT = 'tool execution result could not be returned safely';
 
-// The dispatch-boundary finalizer: runs as the LAST step before ANY outcome
-// leaves createDispatcher.call. Every content[].text block is redacted; if
-// structuredContent is present and a secret is found ANYWHERE inside it, the
-// whole structuredContent is dropped and a generic isError is returned
-// instead — never a redacted-but-successful envelope, and never a
-// partially-redacted structuredContent (redactJson is NOT used here:
-// rewriting structured data invites subtly-wrong reserialization; the only
-// safe move on a hit is to withhold the data entirely). This runs for EVERY
-// outcome, from the meta executor and from any future executor, not only the
-// built-in upstream one — a bug in a single executor's own redaction can
-// never alone leak a secret past this boundary.
+// The dispatch-boundary finalizer, the LAST step before ANY outcome leaves
+// createDispatcher.call: every content[].text block is redacted; a secret
+// ANYWHERE in structuredContent (or meta) drops it for a generic isError —
+// never a redacted-but-successful or partially-redacted envelope (redactJson
+// is NOT used: rewriting structured data invites subtly-wrong
+// reserialization). It runs for EVERY executor, so a bug in one executor's
+// own redaction can never alone leak a secret past this boundary.
+// The one exception: a structuredContent object the executor already
+// tree-scanned with this SAME redactor (markSecretScanned) is not walked a
+// second time — every other result still is.
 // Fail-closed scan wrapper shared by both call sites in finalizeOutcome:
-// scanForSecret can throw on a pathological input (redact.ts's own
-// documented contract), and both sites below treat "found a secret" and
-// "threw while scanning" identically — matching response.ts's own
-// scanSafely contract. Extracting this keeps the try/catch itself intact
-// (never converted to `.catch()` — this is a synchronous call, and a
-// throwing getter/Proxy on the scanned value must still be caught here,
-// not turned into an unhandled rejection or a missed sync throw).
+// scanForSecret can throw on a pathological input (redact.ts's contract);
+// "found a secret" and "threw while scanning" are treated identically, as
+// in response.ts's scanSafely. A synchronous try/catch on purpose: a
+// throwing getter/Proxy on the scanned value must be caught right here.
 const scanForSecretSafely = (redactor: Redactor, value: unknown): boolean => {
   try {
     return redactor.scanForSecret(value);
@@ -147,6 +148,7 @@ const scanForSecretSafely = (redactor: Redactor, value: unknown): boolean => {
 const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOutcome => {
   if (
     (outcome.structuredContent !== undefined &&
+      !wasSecretScanned(outcome.structuredContent, redactor) &&
       scanForSecretSafely(redactor, outcome.structuredContent)) ||
     (outcome.meta !== undefined && scanForSecretSafely(redactor, outcome.meta))
   ) {

@@ -181,6 +181,7 @@ export {
   extractBearerToken,
   isAuthorized,
   isValidBearerToken,
+  markSecretScanned,
   META_TOOL_NAME,
   structuredOutcome,
   textOutcome,

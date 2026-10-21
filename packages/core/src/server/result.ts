@@ -13,6 +13,21 @@ export type ToolCallOutcome = {
   meta?: Record<string, unknown>;
 };
 
+// Structured results that an executor has ALREADY scanned for secrets in
+// full, keyed by the redactor that scanned them. The dispatch boundary skips
+// its own (identical) tree scan only for an object scanned by the very same
+// redactor instance, so the defense-in-depth scan still runs for every other
+// executor, and for a different secret set. A WeakMap holds no reference
+// that outlives the result.
+const scannedBy = new WeakMap<object, unknown>();
+
+export const markSecretScanned = (value: object, redactor: unknown): void => {
+  scannedBy.set(value, redactor);
+};
+
+export const wasSecretScanned = (value: object, redactor: unknown): boolean =>
+  scannedBy.get(value) === redactor;
+
 export const textOutcome = (text: string, isError = false): ToolCallOutcome => ({
   isError,
   content: [{ type: 'text', text }],

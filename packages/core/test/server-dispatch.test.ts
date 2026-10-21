@@ -6,6 +6,7 @@ import {
   createDispatcher,
   createMetaExecutor,
   createRedactor,
+  markSecretScanned,
   structuredOutcome,
   SYSTEM_HEADERS,
   textOutcome,
@@ -838,5 +839,60 @@ describe('dispatch-boundary redaction', () => {
       contentType: 'application/json',
       data: {},
     });
+  });
+});
+
+describe('createDispatcher — boundary scan of structuredContent (scan once)', () => {
+  const SECRET = 'example-token-not-a-secret';
+  const leaky = { data: { note: SECRET } };
+
+  const dispatchWith = (redactor: ReturnType<typeof createRedactor>, executor: ToolExecutor) => {
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: { consume: () => true, retryAfterMs: () => 0 },
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor,
+    });
+    return dispatcher.call({ name: 'createThing', arguments: {}, signal: noSignal });
+  };
+
+  it('still scans structuredContent from any executor that did not scan it itself', async () => {
+    const redactor = createRedactor([SECRET]);
+    const result = await dispatchWith(redactor, () =>
+      Promise.resolve(structuredOutcome('ok', { ...leaky })),
+    );
+    expect(result).toMatchObject({
+      kind: 'outcome',
+      outcome: {
+        isError: true,
+        content: [{ text: 'tool execution result could not be returned safely' }],
+      },
+    });
+  });
+
+  it('skips the repeat tree scan only for a result scanned by the SAME redactor', async () => {
+    const redactor = createRedactor([SECRET]);
+    const scan = vi.spyOn(redactor, 'scanForSecret');
+    const clean = { data: Array.from({ length: 100 }, (_unused, id) => ({ id })) };
+    const result = await dispatchWith(redactor, () => {
+      markSecretScanned(clean, redactor);
+      return Promise.resolve(structuredOutcome('ok', clean));
+    });
+    expect(result).toMatchObject({ kind: 'outcome', outcome: { isError: false } });
+    // Only the short text block is scanned at the boundary, never the tree.
+    expect(scan.mock.calls.map(([value]) => value)).not.toContain(clean);
+  });
+
+  it('does NOT trust a scan made by a different redactor', async () => {
+    const boundary = createRedactor([SECRET]);
+    const other = createRedactor(['some-other-example-value']);
+    const result = await dispatchWith(boundary, () => {
+      const content = { ...leaky };
+      markSecretScanned(content, other);
+      return Promise.resolve(structuredOutcome('ok', content));
+    });
+    expect(result).toMatchObject({ kind: 'outcome', outcome: { isError: true } });
   });
 });
