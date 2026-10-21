@@ -5,9 +5,9 @@ import { assertBaseUrlShape, resolveBaseUrl } from '../src/commands/serve.ts';
 // In-process unit coverage for the base-URL resolution helpers serve.ts's
 // action body wires together — the CLI's own serve.test.ts/
 // serve-http.test.ts suites drive these through a real spawned subprocess
-// (v8 coverage instrumentation never sees inside a child process), so this
-// file is what actually exercises resolveBaseUrl's/assertBaseUrlShape's own
-// branches for the coverage gate, alongside the E2E behavior proof.
+// and always pass --base-url, so this file is what exercises
+// resolveBaseUrl's/assertBaseUrlShape's other branches for the coverage
+// gate, alongside the E2E behavior proof.
 const baseSpec: NormalizedSpec = {
   title: 't',
   specVersion: '1',

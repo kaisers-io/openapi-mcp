@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CLI_ENTRY, stopChild } from './cli-subprocess.ts';
 import { SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
 // A real, local upstream (127.0.0.1, ephemeral port) that the executor
@@ -47,7 +48,6 @@ const startUpstream = (): Promise<{
     });
   });
 
-const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 
 type JsonRpcMessage = {
@@ -149,12 +149,10 @@ describe('serve — stdio subprocess E2E', () => {
   afterEach(async () => {
     // `kill()` only SIGNALS — the child may still have in-flight cache I/O
     // under tempHome, so await its actual exit before removing the directory.
-    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
-      const exited = new Promise<void>((resolve) => {
-        child?.once('exit', () => resolve());
-      });
-      child.kill('SIGKILL');
-      await exited;
+    // stopChild asks for a graceful exit first, so the child also writes its
+    // coverage (cli-subprocess.ts).
+    if (child !== undefined) {
+      await stopChild(child);
     }
     child = undefined;
     if (tempHome !== undefined) {
@@ -170,7 +168,7 @@ describe('serve — stdio subprocess E2E', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'petstore.json',
@@ -297,7 +295,7 @@ describe('serve — stdio subprocess E2E', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'petstore.json',
@@ -364,7 +362,7 @@ describe('serve — stdio subprocess E2E', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'header-collision.json',
@@ -398,9 +396,13 @@ describe('serve — stdio subprocess E2E', () => {
   });
 
   it('a startup failure (missing spec file) goes to stderr as plain text, even with the global --json flag, and never touches stdout', async () => {
-    child = spawn(process.execPath, [bin, '--json', 'serve', '--spec', 'does-not-exist.json'], {
-      cwd: fixturesDir,
-    });
+    child = spawn(
+      process.execPath,
+      [CLI_ENTRY, '--json', 'serve', '--spec', 'does-not-exist.json'],
+      {
+        cwd: fixturesDir,
+      },
+    );
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
@@ -413,7 +415,7 @@ describe('serve — stdio subprocess E2E', () => {
   });
 
   it("a PRE-action commander parse failure (missing --spec) with the global --json flag never touches stdout — the failure happens before serve.ts's own action body ever runs", async () => {
-    child = spawn(process.execPath, [bin, '--json', 'serve'], { cwd: fixturesDir }); // No --spec at all
+    child = spawn(process.execPath, [CLI_ENTRY, '--json', 'serve'], { cwd: fixturesDir }); // No --spec at all
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
@@ -435,7 +437,7 @@ describe('serve — stdio subprocess E2E', () => {
     // actually diverge.
     child = spawn(
       process.execPath,
-      [bin, '--json', 'serve', '--spec', 'petstore.json', '--bogus-flag'],
+      [CLI_ENTRY, '--json', 'serve', '--spec', 'petstore.json', '--bogus-flag'],
       { cwd: fixturesDir },
     );
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
@@ -455,7 +457,7 @@ describe('serve — stdio subprocess E2E', () => {
     // isServeInvocation() scan would stop on `--` itself, misclassify this
     // as a non-serve invocation, and fall back to getGlobalOpts (json:true),
     // writing the {"ok":false,...} envelope to stdout.
-    child = spawn(process.execPath, [bin, '--json', '--', 'serve'], { cwd: fixturesDir });
+    child = spawn(process.execPath, [CLI_ENTRY, '--json', '--', 'serve'], { cwd: fixturesDir });
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
@@ -476,7 +478,9 @@ describe('serve — stdio subprocess E2E', () => {
     // (`--json`/`--verbose`) and `--` would stop at `--bogus`, classify this
     // as a non-serve invocation, and fall back to getGlobalOpts (json:true)
     // — leaking the {"ok":false,...} envelope to stdout.
-    child = spawn(process.execPath, [bin, '--json', '--bogus', 'serve'], { cwd: fixturesDir });
+    child = spawn(process.execPath, [CLI_ENTRY, '--json', '--bogus', 'serve'], {
+      cwd: fixturesDir,
+    });
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
@@ -493,7 +497,7 @@ describe('serve — stdio subprocess E2E', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'petstore.json',
@@ -536,7 +540,7 @@ describe('serve — stdio subprocess E2E', () => {
     tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
     child = spawn(
       process.execPath,
-      [bin, 'serve', '--spec', 'petstore.json', '--base-url', 'http://127.0.0.1:1'],
+      [CLI_ENTRY, 'serve', '--spec', 'petstore.json', '--base-url', 'http://127.0.0.1:1'],
       { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
     );
     const { stdoutLines } = collectLines(child);
@@ -591,7 +595,7 @@ describe('serve — stdio subprocess E2E', () => {
       spawn(
         process.execPath,
         [
-          bin,
+          CLI_ENTRY,
           'serve',
           '--spec',
           'petstore.json',

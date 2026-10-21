@@ -14,6 +14,8 @@ export default defineConfig({
     ...sharedTestConfig,
     name: '@kaisers-io/openapi-mcp e2e',
     include: SUBPROCESS_E2E_FILES,
+    // Routes the spawned CLI's V8 coverage into the report (issue #86)
+    setupFiles: ['./test/child-coverage.setup.ts'],
     sequence: { groupOrder: 1 },
     testTimeout: SUBPROCESS_TEST_TIMEOUT_MS,
     hookTimeout: SUBPROCESS_TEST_TIMEOUT_MS,
