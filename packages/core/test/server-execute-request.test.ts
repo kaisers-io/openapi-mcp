@@ -979,3 +979,57 @@ describe('buildRequest — declared JSON media-type variants (#54)', () => {
     expect(err(result)).toMatch(/content type/iu);
   });
 });
+
+// #59: OAS 3.1.1 §4.8.12.4 Style Examples — brackets and delimiters are
+// percent-encoded exactly as in the spec's examples.
+describe('buildRequest — query deepObject / spaceDelimited / pipeDelimited (#59)', () => {
+  const styled = (
+    style: 'deepObject' | 'spaceDelimited' | 'pipeDelimited',
+    explode: boolean,
+  ): RequestMapper => ({
+    bodyMode: 'none',
+    fields: {
+      created: { destination: 'query', wireName: 'created', style, explode, required: false },
+    },
+  });
+  const run = (
+    style: 'deepObject' | 'spaceDelimited' | 'pipeDelimited',
+    explode: boolean,
+    created: unknown,
+  ) => buildRequest(styled(style, explode), 'get', '/x', { created }, budgets);
+
+  it('deepObject: name[key]=value with encoded brackets', () => {
+    const built = ok(run('deepObject', true, { gt: 1, lte: 5 }));
+    expect(built.query).toBe('created%5Bgt%5D=1&created%5Blte%5D=5');
+  });
+
+  it('deepObject: keys and values containing &, =, # are percent-encoded', () => {
+    const built = ok(run('deepObject', true, { 'a&b=': 'x#y&z=1' }));
+    expect(built.query).toBe('created%5Ba%26b%3D%5D=x%23y%26z%3D1');
+  });
+
+  it('deepObject: a nested value or a non-object value fails closed', () => {
+    expect(err(run('deepObject', true, { gt: { a: 1 } }))).toMatch(/cannot be serialized/u);
+    expect(err(run('deepObject', true, 'x'))).toMatch(/deepObject/u);
+  });
+
+  it('pipeDelimited: array joined with %7C; spaceDelimited with %20', () => {
+    expect(ok(run('pipeDelimited', false, ['a', 'b'])).query).toBe('created=a%7Cb');
+    expect(ok(run('spaceDelimited', false, ['a', 'b'])).query).toBe('created=a%20b');
+  });
+
+  it('delimited object: k, v, k, v sequence', () => {
+    expect(ok(run('pipeDelimited', false, { R: 100, G: 200 })).query).toBe(
+      'created=R%7C100%7CG%7C200',
+    );
+  });
+
+  it('delimited: a value containing its own delimiter is rejected as ambiguous', () => {
+    expect(err(run('pipeDelimited', false, ['a|b', 'c']))).toMatch(/delimiter/u);
+    expect(err(run('spaceDelimited', false, ['a b']))).toMatch(/delimiter/u);
+  });
+
+  it('delimited: other reserved characters are still encoded', () => {
+    expect(ok(run('pipeDelimited', false, ['a&b', 'c=#'])).query).toBe('created=a%26b%7Cc%3D%23');
+  });
+});

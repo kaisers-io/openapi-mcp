@@ -11,7 +11,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 export type FieldMapping =
   | { destination: 'path'; wireName: string; style: 'simple'; explode: boolean; required: true }
-  | { destination: 'query'; wireName: string; style: 'form'; explode: boolean; required: boolean }
+  | {
+      destination: 'query';
+      wireName: string;
+      style: QueryStyle;
+      explode: boolean;
+      required: boolean;
+    }
   | {
       destination: 'header';
       wireName: string;
@@ -20,6 +26,8 @@ export type FieldMapping =
       required: boolean;
     }
   | { destination: 'body'; bodyPath: readonly string[]; required: boolean };
+
+export type QueryStyle = 'form' | 'deepObject' | 'spaceDelimited' | 'pipeDelimited';
 
 export type RequestMapper = {
   bodyMode: 'flattened' | 'single' | 'none';
@@ -46,6 +54,84 @@ const STYLE_SUPPORT: Readonly<Record<'path' | 'query' | 'header', 'simple' | 'fo
   query: 'form',
   header: 'simple',
 };
+
+const SCALAR_TYPES: ReadonlySet<unknown> = new Set(['string', 'number', 'integer', 'boolean']);
+
+// A schema whose instances are scalars: a scalar `type` (3.1 `[T,'null']`
+// included), or a typeless enum/const. Anything else — an object, an array, a
+// composition, an unconstrained `{}` — is not provably scalar.
+const isScalarSchema = (node: unknown): boolean => {
+  if (!isRecord(node)) {
+    return false;
+  }
+  const { type } = node;
+  if (typeof type === 'string') {
+    return SCALAR_TYPES.has(type);
+  }
+  if (Array.isArray(type)) {
+    return (
+      type.some((name) => SCALAR_TYPES.has(name)) &&
+      type.every((name) => SCALAR_TYPES.has(name) || name === 'null')
+    );
+  }
+  return type === undefined && (Array.isArray(node['enum']) || 'const' in node);
+};
+
+// An object whose declared property values (and additionalProperties schema,
+// if any) are scalars — the only object shape deepObject and the delimited
+// styles define ("Allows objects with scalar properties"; "The representation
+// of array or object properties is not defined", OAS 3.1.1 §4.8.12.3). A
+// free-form object (no declared properties) is accepted: its values are only
+// known at call time, where buildRequest rejects a nested value fail-closed.
+const isScalarObjectSchema = (node: Record<string, unknown>): boolean => {
+  if (node['type'] !== 'object' && !isRecord(node['properties'])) {
+    return false;
+  }
+  const properties = isRecord(node['properties']) ? Object.values(node['properties']) : [];
+  const ap = node['additionalProperties'];
+  const apScalar = ap === undefined || typeof ap === 'boolean' || isScalarSchema(ap);
+  return apScalar && properties.every((child) => isScalarSchema(child));
+};
+
+// Query styles beyond `form`, restricted to the cells OAS 3.1.1 §4.8.12.4
+// (Style Examples) defines — every `n/a` cell omits (fail-closed):
+//   - deepObject: object of scalars, explode MUST be true (explode=false is
+//     n/a; the spec default for non-form styles is false, so it must be
+//     declared explicitly);
+//   - spaceDelimited / pipeDelimited: array of scalars or object of scalars,
+//     explode=false only (explode=true is n/a).
+const queryStyleProblem = (
+  style: QueryStyle,
+  explode: boolean,
+  schema: unknown,
+): string | undefined => {
+  if (style === 'form') {
+    return undefined;
+  }
+  const node = isRecord(schema) ? schema : {};
+  if (style === 'deepObject') {
+    if (!explode) {
+      return 'deepObject requires explode: true';
+    }
+    return isScalarObjectSchema(node)
+      ? undefined
+      : 'deepObject requires an object of scalar values';
+  }
+  if (explode) {
+    return `${style} is only defined with explode: false`;
+  }
+  const scalarArray = node['type'] === 'array' && isScalarSchema(node['items']);
+  return scalarArray || isScalarObjectSchema(node)
+    ? undefined
+    : `${style} requires an array or object of scalar values`;
+};
+
+const QUERY_STYLES: ReadonlySet<unknown> = new Set([
+  'form',
+  'deepObject',
+  'spaceDelimited',
+  'pipeDelimited',
+]);
 
 export const paramFields = (
   operation: OperationRecord,
@@ -85,10 +171,18 @@ export const paramFields = (
       return { unrepresentable: `parameter "${name}" uses content instead of schema` };
     }
     const style = typeof param['style'] === 'string' ? param['style'] : STYLE_SUPPORT[location];
-    if (style !== STYLE_SUPPORT[location]) {
+    const styleSupported =
+      location === 'query' ? QUERY_STYLES.has(style) : style === STYLE_SUPPORT[location];
+    if (!styleSupported) {
       return { unrepresentable: `parameter "${name}" uses the unsupported style "${style}"` };
     }
     const explode = typeof param['explode'] === 'boolean' ? param['explode'] : style === 'form';
+    if (location === 'query') {
+      const problem = queryStyleProblem(style as QueryStyle, explode, param['schema']);
+      if (problem !== undefined) {
+        return { unrepresentable: `parameter "${name}": ${problem}` };
+      }
+    }
     const converted = convertSchema(param['schema'] ?? {}, version);
     if (!('ok' in converted)) {
       return { unrepresentable: `parameter "${name}": ${converted.unrepresentable}` };
@@ -119,7 +213,13 @@ export const paramFields = (
           return { destination: 'path', wireName: name, style: 'simple', explode, required: true };
         }
         case 'query': {
-          return { destination: 'query', wireName: name, style: 'form', explode, required };
+          return {
+            destination: 'query',
+            wireName: name,
+            style: style as QueryStyle,
+            explode,
+            required,
+          };
         }
         default: {
           return { destination: 'header', wireName: name, style: 'simple', explode, required };
