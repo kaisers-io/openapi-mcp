@@ -1056,3 +1056,82 @@ describe('convertSchema — nullable and single-member allOf idioms (#41)', () =
     expect('unrepresentable' in convertSchema({ type: [], enum: ['a'] }, '3.1')).toBe(true);
   });
 });
+
+// #43: oneOf requires EXACTLY one matching subschema (JSON Schema Core 2020-12
+// §10.2.1.3); anyOf at least one (§10.2.1.2).
+describe('convertSchema — oneOf exclusivity (#43)', () => {
+  it('rejects a value matching two oneOf branches, accepts one matching exactly one', () => {
+    const s = ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'string', maxLength: 3 }] }));
+    expect(s.safeParse('ab').success).toBe(false);
+    expect(s.safeParse('abcd').success).toBe(true);
+  });
+
+  it('number vs integer: an integer matches both branches and is rejected', () => {
+    const s = ok(convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }));
+    expect(s.safeParse(3).success).toBe(false);
+    expect(s.safeParse(3.5).success).toBe(true);
+  });
+
+  it('disjoint branches keep working (distinct types, distinct discriminator values)', () => {
+    const primitive = ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] }));
+    expect(primitive.safeParse('x').success).toBe(true);
+    expect(primitive.safeParse(3).success).toBe(true);
+    expect(primitive.safeParse(true).success).toBe(false);
+    const card = {
+      type: 'object',
+      required: ['kind', 'number'],
+      properties: { kind: { const: 'card' }, number: { type: 'string' } },
+    };
+    const bank = {
+      type: 'object',
+      required: ['kind', 'iban'],
+      properties: { kind: { const: 'bank' }, iban: { type: 'string' } },
+    };
+    const payment = ok(
+      convertSchema({ oneOf: [card, bank], discriminator: { propertyName: 'kind' } }),
+    );
+    expect(payment.safeParse({ kind: 'card', number: '4' }).success).toBe(true);
+    expect(payment.safeParse({ kind: 'bank', iban: 'DE' }).success).toBe(true);
+    expect(payment.safeParse({ kind: 'cash' }).success).toBe(false);
+  });
+
+  it('emits oneOf on the wire for a oneOf source, anyOf for an anyOf source', () => {
+    const oneOf = z.toJSONSchema(
+      ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] })),
+    ) as Record<string, unknown>;
+    expect(Array.isArray(oneOf['oneOf'])).toBe(true);
+    expect(oneOf['anyOf']).toBeUndefined();
+    const anyOf = z.toJSONSchema(
+      ok(convertSchema({ anyOf: [{ type: 'string' }, { type: 'string', maxLength: 3 }] })),
+    ) as Record<string, unknown>;
+    expect(anyOf['oneOf']).toBeUndefined();
+  });
+
+  it('leaves anyOf inclusive', () => {
+    const s = ok(convertSchema({ anyOf: [{ type: 'string' }, { type: 'string', maxLength: 3 }] }));
+    expect(s.safeParse('ab').success).toBe(true);
+  });
+
+  it('treats branches that differ only by an advertised-not-enforced keyword as overlapping (fail-closed narrowing)', () => {
+    // `pattern` is advertised, never enforced (ReDoS avoidance), so both
+    // branches match any string and the oneOf rejects it — narrower than the
+    // spec, never wider. Documented limitation.
+    const s = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'string', pattern: '^[0-9]+$' },
+          { type: 'string', pattern: '^[a-z]+$' },
+        ],
+      }),
+    );
+    expect(s.safeParse('123').success).toBe(false);
+  });
+
+  it('enforces exclusivity in response mode too', () => {
+    const s = ok(
+      convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }, '3.1', 0, 'response'),
+    );
+    expect(s.safeParse(3).success).toBe(false);
+    expect(s.safeParse(3.5).success).toBe(true);
+  });
+});

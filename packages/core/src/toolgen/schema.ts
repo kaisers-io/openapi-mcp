@@ -669,6 +669,8 @@ const unionSchema = (
   depth: number,
   version: OpenapiVersion,
   mode: SchemaMode,
+  // `oneOf` (exclusive) vs `anyOf` (inclusive).
+  exclusive: boolean,
 ): SchemaResult => {
   const members: z.ZodType[] = [];
   // Imperative on purpose: any single unrepresentable variant aborts the
@@ -690,7 +692,16 @@ const unionSchema = (
   if (members.length === 1) {
     return { ok: members[0] as z.ZodType };
   }
-  return { ok: z.union(members as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]]) };
+  // `oneOf` passes only if EXACTLY one subschema matches (JSON Schema Core
+  // 2020-12 §10.2.1.3); `anyOf` if at least one does (§10.2.1.2). A plain
+  // z.union is inclusive, so a value matching two oneOf branches (e.g. 3
+  // against `number` and `integer`) was accepted and the wire said `anyOf` —
+  // a silent widening of the declared contract (#43). z.xor runs every member
+  // (O(branches), bounded by the spec) and fails on zero OR several matches;
+  // z.toJSONSchema emits it as `oneOf`, so the advertised schema — and the
+  // Ajv-validated outputSchema — say the same thing as the spec.
+  const tuple = members as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]];
+  return { ok: exclusive ? z.xor(tuple) : z.union(tuple) };
 };
 
 const convertComposite = (
@@ -724,10 +735,10 @@ const convertComposite = (
       : objectSchema(merged, depth, version, mode);
   }
   if (Array.isArray(node['oneOf'])) {
-    return unionSchema(node['oneOf'], depth, version, mode);
+    return unionSchema(node['oneOf'], depth, version, mode, true);
   }
   if (Array.isArray(node['anyOf'])) {
-    return unionSchema(node['anyOf'], depth, version, mode);
+    return unionSchema(node['anyOf'], depth, version, mode, false);
   }
   if (node['type'] === 'array') {
     return arraySchema(node, depth, version, mode);

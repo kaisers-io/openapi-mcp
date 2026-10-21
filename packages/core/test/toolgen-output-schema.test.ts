@@ -257,3 +257,34 @@ describe('deriveOutputSchema — response-mode conversion (#33, #47)', () => {
     expect(validate(envelope({}))).toBe(false);
   });
 });
+
+describe('deriveOutputSchema — oneOf exclusivity (#43)', () => {
+  it('advertises oneOf and rejects data matching more than one branch', () => {
+    const outputSchema = deriveOutputSchema(
+      op({
+        '200': {
+          content: {
+            'application/json': {
+              schema: { oneOf: [{ type: 'number' }, { type: 'integer' }] },
+            },
+          },
+        },
+      }),
+      '3.1',
+    ) as Record<string, unknown>;
+    const branch = (outputSchema['oneOf'] as Record<string, unknown>[])[0] as Record<
+      string,
+      unknown
+    >;
+    const { data } = branch['properties'] as Record<string, Record<string, unknown>>;
+    expect(Array.isArray(data?.['oneOf'])).toBe(true);
+    const validate = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+    const envelope = (value: unknown) => ({
+      status: 200,
+      contentType: 'application/json',
+      data: value,
+    });
+    expect(validate(envelope(3.5))).toBe(true);
+    expect(validate(envelope(3))).toBe(false);
+  });
+});
