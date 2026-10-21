@@ -77,23 +77,35 @@ type ProcessedSpec = {
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-const enforceToolBudget = (spec: NormalizedSpec): void => {
-  if (spec.operations.length > SPEC_BUDGETS.maxToolCount) {
+// Two levels (issue #32). The raw cap bounds the unfiltered document and runs
+// before anything is cached; the tool budget bounds what is exposed and runs
+// after filtering (see finish), so --allow can carve a small tool set out of
+// an API that documents more operations than the budget.
+const enforceOperationBudget = (spec: NormalizedSpec): void => {
+  if (spec.operations.length > SPEC_BUDGETS.maxOperationCount) {
     throw validationError(
-      `spec defines ${spec.operations.length} operations — exceeds the ${SPEC_BUDGETS.maxToolCount}-tool budget`,
+      `spec defines ${spec.operations.length} operations — exceeds the ${SPEC_BUDGETS.maxOperationCount}-operation limit`,
     );
   }
 };
 
-// Parse, validate, dereference, normalize, and enforce the tool budget. Every
-// cache write happens downstream of this function, so an unvalidated or
-// over-budget spec can never reach the disk.
+const enforceToolBudget = (exposedCount: number): void => {
+  if (exposedCount > SPEC_BUDGETS.maxToolCount) {
+    throw validationError(
+      `${exposedCount} tools would be exposed after filtering — exceeds the ${SPEC_BUDGETS.maxToolCount}-tool budget; narrow the set with --allow or --deny`,
+    );
+  }
+};
+
+// Parse, validate, dereference, normalize, and enforce the raw operation cap.
+// Every cache write happens downstream of this function, so an unvalidated or
+// over-limit spec can never reach the disk.
 const processSpecText = (text: string): ProcessedSpec => {
   const parsed = parseSpecText(text);
   const validated = validateOpenApiDocument(parsed);
   const dereferenced = dereference(validated.document);
   const spec = normalizeSpec(dereferenced, validated.version);
-  enforceToolBudget(spec);
+  enforceOperationBudget(spec);
   return { spec, document: dereferenced };
 };
 
@@ -108,9 +120,9 @@ const processCachedDocument = (
   openapiVersion: OpenapiVersion,
 ): NormalizedSpec => {
   const spec = normalizeSpec(document, openapiVersion);
-  // Re-enforced per run: this bounds what will be exposed now, which is not
-  // what the write-path check established
-  enforceToolBudget(spec);
+  // Re-enforced per run: an entry written under an older, larger limit must
+  // not bypass the current one. The exposed-set budget runs in finish.
+  enforceOperationBudget(spec);
   return spec;
 };
 
@@ -370,6 +382,9 @@ const finish = (
   const named = assignToolNames(spec.operations);
   // One budget for the whole filtering pass
   const filtered = applyFilters(named, opts.allow, opts.deny);
+  // Every result, fresh or cached, passes through here: this is the one place
+  // the exposed set is known, so the tool budget is enforced on it here
+  enforceToolBudget(filtered.exposed.length);
   // Reporting the candidate only on the `candidate` status would mean a
   // later start inside the TTL returns `fresh` with no candidate hash and no
   // warning — the candidate would be on disk, gating the update, and
@@ -455,6 +470,14 @@ const commitRefresh = async (
       cacheStatus: 'candidate',
     });
   }
+  // Filtered (and the exposed-set tool budget enforced) BEFORE the accepted
+  // write: a run that refuses to serve must not leave a trust-on-first-use
+  // baseline behind as a side effect
+  const result = finish(processed.spec, opts, warnings, {
+    contentHash: refreshed.loaded.contentHash,
+    displaySource: refreshed.loaded.displaySource,
+    cacheStatus: acceptedCacheStatus(layout, cached, unchanged),
+  });
   if (layout !== undefined) {
     await writeAccepted(layout, deps.cacheFs, {
       document: processed.document,
@@ -470,10 +493,5 @@ const commitRefresh = async (
       ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
     });
   }
-  const cacheStatus = acceptedCacheStatus(layout, cached, unchanged);
-  return finish(processed.spec, opts, warnings, {
-    contentHash: refreshed.loaded.contentHash,
-    displaySource: refreshed.loaded.displaySource,
-    cacheStatus,
-  });
+  return result;
 };
