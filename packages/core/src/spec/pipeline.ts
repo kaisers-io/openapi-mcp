@@ -315,7 +315,16 @@ export const runSpecPipeline = async (
     // as an unexpected exit 1.
     // A typed store error (notably a lock conflict, exit 5) passes through
     // untouched.
-    return await commitRefresh(processedRefresh, refreshed, cached, layout, opts, deps, warnings);
+    return await commitRefresh(
+      processedRefresh,
+      refreshed,
+      cached,
+      layout,
+      opts,
+      deps,
+      warnings,
+      source.kind,
+    );
   }
 
   // 304 Not Modified: reuse the accepted baseline, bump only the timestamp
@@ -427,6 +436,7 @@ const commitRefresh = async (
   opts: SpecPipelineOptions,
   deps: SpecPipelineDeps,
   warnings: string[],
+  sourceKind: 'file' | 'url',
 ): Promise<SpecPipelineResult> => {
   const unchanged = cached?.meta.sourceContentHash === refreshed.loaded.contentHash;
   const gate = cached !== undefined && !unchanged && !opts.trustSpecUpdates;
@@ -455,7 +465,31 @@ const commitRefresh = async (
       cacheStatus: 'candidate',
     });
   }
-  if (layout !== undefined) {
+  // Nothing to persist when the source is byte-identical to the accepted one
+  // and no candidate is waiting (#75). `cached` was read and hash-verified
+  // earlier in this run, so rewriting it would only re-serialize the
+  // document, re-read and re-hash the accepted object, take the writer lock
+  // and churn meta.json — every run, for bytes that are already on disk.
+  //  - A file source records nothing worth updating: its TTL never
+  //    short-circuits (it is re-read on every run), so `fetchedAt` is unused.
+  //  - A URL source answering 200 with identical bytes only refreshes its
+  //    bookkeeping (fetchedAt, validators) through the metadata-only path a
+  //    304 already uses, with the 200's validators replacing the old ones.
+  // A waiting candidate still takes the full write below: the source has
+  // reverted to the accepted content, and that write is what clears it.
+  const bookkeepingOnly = cached !== undefined && unchanged && cached.meta.candidate === undefined;
+  if (layout !== undefined && bookkeepingOnly && sourceKind === 'url') {
+    await touchRevalidated(
+      layout,
+      deps.cacheFs,
+      opts.nowMs,
+      {
+        ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
+        ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
+      },
+      { replaceValidators: true },
+    );
+  } else if (layout !== undefined && !bookkeepingOnly) {
     await writeAccepted(layout, deps.cacheFs, {
       document: processed.document,
       sourceContentHash: refreshed.loaded.contentHash,
