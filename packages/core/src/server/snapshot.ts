@@ -75,7 +75,7 @@ const metaWireTool = (): WireTool => ({
   name: META_TOOL_NAME,
   description:
     "Report this server's accepted spec, tool inventory, and omissions. Read-only, package-authored — never spec-derived.",
-  inputSchema: z.toJSONSchema(META_INPUT_SCHEMA) as Record<string, unknown>,
+  inputSchema: z.toJSONSchema(META_INPUT_SCHEMA),
   outputSchema: META_OUTPUT_SCHEMA,
   // Not the OpenAPI-method heuristic (this is our own tool, not a wrapped
   // operation): explicitly read-only and NOT open-world — it only reads local
@@ -86,9 +86,9 @@ const metaWireTool = (): WireTool => ({
 const wireToolOf = (generated: GeneratedTool): WireTool => ({
   name: generated.toolName,
   description: generated.description,
-  inputSchema: generated.wireSchema as Record<string, unknown>,
+  inputSchema: generated.wireSchema,
   ...(generated.outputSchema === undefined ? {} : { outputSchema: generated.outputSchema }),
-  annotations: generated.annotations as unknown as Record<string, unknown>,
+  annotations: generated.annotations,
 });
 
 const assertObjectRoot = (

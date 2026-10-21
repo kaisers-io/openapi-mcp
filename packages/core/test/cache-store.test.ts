@@ -2487,7 +2487,7 @@ describe('every exported cache operation types its raw I/O', () => {
       (fs: MemoryCacheFs) => withNamespaceLock(LAYOUT, fs, NOW, () => Promise.resolve(0)),
     ],
   ] as const)('%s reports validation exit 3 when %s fails raw', async (_name, method, call) => {
-    const fs = await breaking(method as keyof MemoryCacheFs);
+    const fs = await breaking(method);
     await expect(call(fs)).rejects.toMatchObject({ code: 'validation', exitCode: 3 });
   });
 

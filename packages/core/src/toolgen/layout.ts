@@ -235,7 +235,7 @@ const bodyFields = (
     ) {
       return { unrepresentable: 'the request body has a malformed "required" array' };
     }
-    const requiredProps = new Set(Array.isArray(requiredRaw) ? (requiredRaw as string[]) : []);
+    const requiredProps = new Set(Array.isArray(requiredRaw) ? requiredRaw : []);
     // A required name with no declared property cannot be enforced on the flatten
     // path (which iterates declared properties only) — omit, mirroring
     // objectSchema. Object.hasOwn so an inherited name is not treated as declared.

@@ -176,7 +176,7 @@ describe('dereference — cycles and budgets', () => {
     const input = JSON.parse('{"a":1,"__proto__":{"x":2}}') as Record<string, unknown>;
     const out = dereference(input);
     expect(Object.hasOwn(out, '__proto__')).toBe(true);
-    expect((out as Record<string, unknown>)['a']).toBe(1);
+    expect(out['a']).toBe(1);
     // The __proto__ value landed as a real own key, not as out's prototype: a
     // plain {} accumulator would have set getPrototypeOf(out) to the {x:2} value
     // and dropped the own key. The null-proto accumulator keeps the prototype

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildTools, SYSTEM_HEADERS } from '../src/index.ts';
-import type { HttpMethod, NamedOperation } from '../src/index.ts';
+import type { NamedOperation } from '../src/index.ts';
 
 const named = (
   toolName: string,
@@ -9,7 +9,7 @@ const named = (
 ): NamedOperation => ({
   toolName,
   operation: {
-    method: 'post' as HttpMethod,
+    method: 'post',
     path: '/x',
     tags: [],
     deprecated: false,

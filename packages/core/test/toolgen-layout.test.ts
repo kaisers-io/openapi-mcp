@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { buildLayout, paramFields } from '../src/index.ts';
-import type { HttpMethod, OperationRecord } from '../src/index.ts';
+import type { OperationRecord } from '../src/index.ts';
 
 const op = (parameters: readonly Record<string, unknown>[]): OperationRecord => ({
-  method: 'get' as HttpMethod,
+  method: 'get',
   path: '/x',
   tags: [],
   deprecated: false,
@@ -198,7 +198,7 @@ const bodyOp = (
   requestBody: Record<string, unknown> | undefined,
   parameters: readonly Record<string, unknown>[] = [],
 ): OperationRecord => ({
-  method: 'post' as HttpMethod,
+  method: 'post',
   path: '/x',
   tags: [],
   deprecated: false,
