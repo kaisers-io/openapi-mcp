@@ -1,8 +1,11 @@
+import { randomBytes } from 'node:crypto';
 import { HEADER_NAME_RE } from '../../http/headers.ts';
 import {
   FORM_URLENCODED,
   isJsonEssence,
+  isSafePartName,
   isStrictBase64,
+  MULTIPART_FORM_DATA,
   OCTET_STREAM,
   parseMediaType,
 } from '../../toolgen/media-type.ts';
@@ -506,13 +509,18 @@ type SerializedBody = {
   contentType?: string;
 };
 
-const bodyEncoding = (contentType: string): 'json' | 'form' | 'binary' | undefined => {
+const bodyEncoding = (
+  contentType: string,
+): 'json' | 'form' | 'binary' | 'multipart' | undefined => {
   const essence = parseMediaType(contentType)?.essence;
   if (essence !== undefined && isJsonEssence(essence)) {
     return 'json';
   }
   if (essence === OCTET_STREAM) {
     return 'binary';
+  }
+  if (essence === MULTIPART_FORM_DATA) {
+    return 'multipart';
   }
   return essence === FORM_URLENCODED ? 'form' : undefined;
 };
@@ -525,6 +533,49 @@ const binaryBody = (payload: unknown): { ok: Uint8Array } | { error: string } =>
   typeof payload === 'string' && isStrictBase64(payload)
     ? { ok: new Uint8Array(Buffer.from(payload, 'base64')) }
     : { error: 'an application/octet-stream body must be a valid base64 string' };
+
+// The multipart/form-data encoding (RFC 7578): one part per top-level body property.
+// Text parts carry the scalar's string form as UTF-8 with no part
+// Content-Type (§4.4 default text/plain); binary parts (mapping.binary) carry
+// the decoded base64 bytes as `application/octet-stream` with a filename
+// (§4.2), which most servers require to treat a part as a file. The boundary
+// is 192 random bits, generated per request; a part that happens to contain
+// the delimiter fails closed rather than producing an ambiguous body.
+const multipartBody = (
+  payload: Record<string, unknown>,
+  binaryKeys: ReadonlySet<string>,
+): { ok: Uint8Array; boundary: string } | { error: string } => {
+  const boundary = `openapi-mcp-${randomBytes(24).toString('hex')}`;
+  const delimiter = Buffer.from(`--${boundary}`);
+  const chunks: Buffer[] = [];
+  // Imperative on purpose: each part can fail (bad name, bad value, bad
+  // base64) and must stop the whole body at the first failure.
+  for (const [name, value] of Object.entries(payload)) {
+    if (!isSafePartName(name)) {
+      return { error: `multipart part name "${name}" cannot be encoded safely` };
+    }
+    let content: Buffer;
+    let headers = `Content-Disposition: form-data; name="${name}"`;
+    if (binaryKeys.has(name)) {
+      const decoded = binaryBody(value);
+      if ('error' in decoded) {
+        return { error: `multipart part "${name}" must be a valid base64 string` };
+      }
+      content = Buffer.from(decoded.ok);
+      headers += `; filename="${name}"\r\nContent-Type: application/octet-stream`;
+    } else if (isPrimitive(value)) {
+      content = Buffer.from(String(value), 'utf8');
+    } else {
+      return { error: `multipart part "${name}" must be a string, number or boolean` };
+    }
+    if (content.includes(delimiter)) {
+      return { error: 'a multipart part contains the generated boundary' };
+    }
+    chunks.push(Buffer.from(`--${boundary}\r\n${headers}\r\n\r\n`), content, Buffer.from('\r\n'));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return { ok: new Uint8Array(Buffer.concat(chunks)), boundary };
+};
 
 const serializeBody = (
   mapper: RequestMapper,
@@ -585,6 +636,25 @@ const serializeBody = (
       return { ok: {} };
     }
     payload = assembled.object;
+  }
+  if (encoding === 'multipart') {
+    if (!isPlainObject(payload)) {
+      return { error: 'a multipart/form-data body must be an object' };
+    }
+    const binaryKeys = new Set(
+      bodyFieldEntries.flatMap(([, mapping]) =>
+        mapping.binary === true && mapping.bodyPath.length === 1
+          ? [mapping.bodyPath[0] as string]
+          : [],
+      ),
+    );
+    const encoded = multipartBody(payload, binaryKeys);
+    if ('error' in encoded) {
+      return encoded;
+    }
+    return {
+      ok: { body: encoded.ok, contentType: `${contentType}; boundary=${encoded.boundary}` },
+    };
   }
   if (encoding === 'binary') {
     const decoded = binaryBody(payload);

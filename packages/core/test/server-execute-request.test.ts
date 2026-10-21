@@ -1099,3 +1099,60 @@ describe('buildRequest — application/octet-stream body (#71)', () => {
     expect(err(buildRequest(mapper, 'post', '/upload', { body: big }, budgets))).toMatch(/budget/u);
   });
 });
+
+// #71: multipart/form-data encoding (RFC 7578).
+describe('buildRequest — multipart/form-data body (#71)', () => {
+  const mapper: RequestMapper = {
+    bodyMode: 'flattened',
+    bodyContentType: 'multipart/form-data',
+    bodyRequired: true,
+    fields: {
+      file: { destination: 'body', bodyPath: ['file'], required: true, binary: true },
+      note: { destination: 'body', bodyPath: ['note'], required: false },
+      count: { destination: 'body', bodyPath: ['count'], required: false },
+    },
+  };
+
+  const parse = (built: { body?: Uint8Array; contentType?: string }) => {
+    const request = new Request('http://example.test/', {
+      method: 'POST',
+      headers: { 'content-type': built.contentType ?? '' },
+      body: built.body ?? null,
+    });
+    return request.formData();
+  };
+
+  it('encodes text and binary parts that a standard parser reads back', async () => {
+    const built = ok(
+      buildRequest(
+        mapper,
+        'post',
+        '/upload',
+        { file: 'AAEC/w==', note: 'hi there', count: 3 },
+        budgets,
+      ),
+    );
+    expect(built.contentType).toMatch(/^multipart\/form-data; boundary=[0-9A-Za-z-]+$/u);
+    const form = await parse(built);
+    expect(form.get('note')).toBe('hi there');
+    expect(form.get('count')).toBe('3');
+    const file = form.get('file') as File;
+    expect(file.type).toBe('application/octet-stream');
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0, 1, 2, 255]);
+  });
+
+  it('fails closed on invalid base64 or a non-scalar text part', () => {
+    expect(err(buildRequest(mapper, 'post', '/upload', { file: 'a*b=' }, budgets))).toMatch(
+      /base64/u,
+    );
+    expect(
+      err(buildRequest(mapper, 'post', '/upload', { file: 'AA==', note: { a: 1 } }, budgets)),
+    ).toMatch(/multipart/u);
+  });
+
+  it('uses a fresh random boundary per request', () => {
+    const first = ok(buildRequest(mapper, 'post', '/upload', { file: 'AA==' }, budgets));
+    const second = ok(buildRequest(mapper, 'post', '/upload', { file: 'AA==' }, budgets));
+    expect(first.contentType).not.toBe(second.contentType);
+  });
+});

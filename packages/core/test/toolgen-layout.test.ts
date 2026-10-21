@@ -955,3 +955,64 @@ describe('buildLayout — application/octet-stream bodies (#71)', () => {
     expect('unrepresentable' in binaryOp({ 'application/octet-stream': { schema } })).toBe(true);
   });
 });
+
+// #71: multipart/form-data bodies — flattened like form-urlencoded, with
+// binary parts exposed as base64 string fields.
+describe('buildLayout — multipart/form-data bodies (#71)', () => {
+  const multipart = (schema: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    buildLayout(
+      bodyOp({ required: true, content: { 'multipart/form-data': { schema, ...extra } } }),
+      new Set(),
+    );
+  const upload = {
+    type: 'object',
+    required: ['file'],
+    properties: {
+      file: { type: 'string', format: 'binary' },
+      note: { type: 'string' },
+    },
+  };
+
+  it('flattens the parts and marks the binary part', () => {
+    const l = layout(multipart(upload));
+    expect(l.mapper.bodyMode).toBe('flattened');
+    expect(l.mapper.bodyContentType).toBe('multipart/form-data');
+    expect(l.mapper.fields['file']).toEqual({
+      destination: 'body',
+      bodyPath: ['file'],
+      required: true,
+      binary: true,
+    });
+    expect(l.mapper.fields['note']).toEqual({
+      destination: 'body',
+      bodyPath: ['note'],
+      required: false,
+    });
+    expect(l.inputSchema.safeParse({ file: 'aGVsbG8=', note: 'x' }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ file: 'not base64!' }).success).toBe(false);
+    expect(l.inputSchema.safeParse({ note: 'x' }).success).toBe(false);
+  });
+
+  it.each([
+    ['an encoding object', upload, { encoding: { file: { contentType: 'image/png' } } }],
+    ['a non-object root', { type: 'string', format: 'binary' }, {}],
+    [
+      'a part name that cannot be put in a Content-Disposition header',
+      { type: 'object', properties: { 'a"b': { type: 'string' } } },
+      {},
+    ],
+  ])('still omits multipart with %s', (_label, schema, extra) => {
+    expect('unrepresentable' in multipart(schema, extra)).toBe(true);
+  });
+
+  it('omits a declared multipart key that carries parameters (the boundary is generated)', () => {
+    const r = buildLayout(
+      bodyOp({
+        required: true,
+        content: { 'multipart/form-data; boundary=x': { schema: upload } },
+      }),
+      new Set(),
+    );
+    expect('unrepresentable' in r).toBe(true);
+  });
+});
