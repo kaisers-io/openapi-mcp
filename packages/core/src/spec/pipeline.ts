@@ -338,15 +338,28 @@ export const runSpecPipeline = async (
     // validators and preserves both slots.
     //
     // Typed, like every other cache mutation, so a raw fs failure here
-    // cannot surface as an unexpected exit 1. A typed OpenapiMcpError from
-    // the store (notably a lock conflict, exit 5) is passed through
-    // unchanged.
-    await touchRevalidated(layout, deps.cacheFs, opts.nowMs, {
-      ...(notModifiedValidators.etag === undefined ? {} : { etag: notModifiedValidators.etag }),
-      ...(notModifiedValidators.lastModified === undefined
-        ? {}
-        : { lastModified: notModifiedValidators.lastModified }),
-    });
+    // cannot surface as an unexpected exit 1.
+    //
+    // Best effort (#65): the entry being served was read and hash-verified
+    // in this run and the source confirmed it unchanged, so the write only
+    // records fetchedAt and validators. A lock held by another process
+    // (servers starting together, or a crashed writer) must not fail the
+    // start-up over that; the verified baseline is served with a warning.
+    const touched = await touchRevalidated(
+      layout,
+      deps.cacheFs,
+      opts.nowMs,
+      {
+        ...(notModifiedValidators.etag === undefined ? {} : { etag: notModifiedValidators.etag }),
+        ...(notModifiedValidators.lastModified === undefined
+          ? {}
+          : { lastModified: notModifiedValidators.lastModified }),
+      },
+      { bestEffort: true },
+    );
+    if (!touched.recorded) {
+      warnings.push(lockedBookkeepingWarning(touched.reason));
+    }
   }
   const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
   return finish(spec, opts, warnings, {
@@ -356,6 +369,10 @@ export const runSpecPipeline = async (
     cached,
   });
 };
+
+// Shared by both best-effort bookkeeping paths (304, unchanged 200)
+const lockedBookkeepingWarning = (reason: string): string =>
+  `cache metadata not updated, serving the verified baseline: ${reason}`;
 
 type FinishInput = {
   contentHash: string;
@@ -479,7 +496,8 @@ const commitRefresh = async (
   // reverted to the accepted content, and that write is what clears it.
   const bookkeepingOnly = cached !== undefined && unchanged && cached.meta.candidate === undefined;
   if (layout !== undefined && bookkeepingOnly && sourceKind === 'url') {
-    await touchRevalidated(
+    // Best effort for the same reason as the 304 path (#65)
+    const touched = await touchRevalidated(
       layout,
       deps.cacheFs,
       opts.nowMs,
@@ -487,8 +505,11 @@ const commitRefresh = async (
         ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
         ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
       },
-      { replaceValidators: true },
+      { replaceValidators: true, bestEffort: true },
     );
+    if (!touched.recorded) {
+      warnings.push(lockedBookkeepingWarning(touched.reason));
+    }
   } else if (layout !== undefined && !bookkeepingOnly) {
     await writeAccepted(layout, deps.cacheFs, {
       document: processed.document,

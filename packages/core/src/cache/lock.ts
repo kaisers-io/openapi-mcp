@@ -1,12 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { conflictError, notFoundError } from '../errors.ts';
-// `isCacheAbsence` is called by readLockHolder below and `withCacheErrors`
-// wraps the two exports at the bottom of this file, so both are imported
-// HERE. Both come from the dependency-neutral `cache/errors.ts`: `store.ts`
-// already imports `lock.ts`, so taking them from the store instead would be
-// an import cycle.
-import { isCacheAbsence, withCacheErrors } from './errors.ts';
+// `withCacheErrors` wraps the exports at the bottom of this file. It comes
+// from the dependency-neutral `cache/errors.ts`: `store.ts` already imports
+// `lock.ts`, so taking it from the store instead would be an import cycle.
+import { withCacheErrors } from './errors.ts';
 import type { CacheFs } from './fs.ts';
+import { describeLockHolder, readLockHolder } from './lock-holder.ts';
 import type { CacheLayout } from './paths.ts';
 
 // This does NOT authorize a takeover. A held lock is always a conflict;
@@ -14,69 +13,88 @@ import type { CacheLayout } from './paths.ts';
 // "cache unlock" needs --force.
 export const LOCK_STALE_MS = 60_000;
 
-// The record is a single small JSON object. An over-cap lock file is NOT
-// treated as "malformed, therefore stale" — readFileTextCapped raises a typed
-// validationError on the cap and the narrowed catch propagates it. That is
-// deliberate: a truncated record is a plausible crash artefact, but a lock
-// file larger than a kilobyte is evidence of tampering, and the same
-// fail-closed reasoning that governs a corrupt cache entry applies here too —
-// fail closed and let an operator decide.
-const LOCK_FILE_MAX_BYTES = 1024;
+// Bounded retry before a STRICT acquisition reports a conflict (#65), so two
+// writers that merely overlap for a moment serialize instead of one failing.
+// Exponential with "equal jitter" (half fixed, half random — see AWS,
+// "Exponential Backoff And Jitter"): the random half de-synchronizes
+// processes that started together, the fixed half keeps every wait
+// meaningful. The schedule sums to at most ~2 s, after which a holder is
+// assumed not to be finishing soon (a long refresh, or a crashed owner) and
+// the conflict is reported exactly as before.
+export const LOCK_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200, 400, 600, 600];
 
-type LockHolder = {
-  owner: string;
-  acquiredAt: number;
-};
+const jittered = (delayMs: number): number =>
+  Math.round(delayMs / 2 + Math.random() * (delayMs / 2));
 
-// Returns undefined for a lock file that is genuinely ABSENT or MALFORMED —
-// two states that carry no expiry information.
-//
-// It must NOT return undefined for an EACCES or EIO. Catching every read
-// failure here would turn an unreadable lock during contention into a typed
-// `conflictError` (exit 5) and an unreadable lock during release into "not
-// ours, leave it alone" — and because both outcomes are either non-errors or
-// already-typed errors, the definition-level wrapper could not correct either
-// afterward: a wrapper cannot recover information an inner catch has already
-// discarded. The non-absence error is therefore propagated from here, and the
-// boundary types it as validation exit 3.
-const readLockHolder = async (
+type Acquisition = { acquired: true; owner: string } | { acquired: false; message: string };
+
+// One acquisition, with or without the bounded retry. Never throws for a held
+// lock: it returns the operator message instead, so the strict and the
+// best-effort entry points below share every word of it.
+const acquire = async (
   layout: CacheLayout,
   fs: CacheFs,
-): Promise<LockHolder | undefined> => {
-  // Imperative on purpose: the catch below `return`s `undefined` — a type
-  // distinct from the `string` this variable holds on success — so folding
-  // it into `.catch(...)` would need a sentinel checked afterward, i.e. a
-  // control-flow restructuring, and this lock primitive's imperative shape
-  // is deliberately left alone.
-  let raw: string;
-  try {
-    raw = await fs.readFileTextCapped(layout.lockPath, LOCK_FILE_MAX_BYTES);
-  } catch (error) {
-    if (!isCacheAbsence(error)) {
-      throw error;
+  nowMs: number,
+  retry: boolean,
+): Promise<Acquisition> => {
+  await fs.mkdirSecure(layout.dir);
+  const owner = randomUUID();
+  const { runtime } = fs;
+  const record = `${JSON.stringify({
+    owner,
+    acquiredAt: nowMs,
+    ...(runtime === undefined ? {} : { pid: runtime.pid, hostname: runtime.hostname }),
+  })}\n`;
+  // Without a runtime there is no sleep to back off with, so a fake
+  // filesystem keeps the old single-attempt behaviour
+  const delays = retry && runtime !== undefined ? LOCK_RETRY_DELAYS_MS : [];
+  // Imperative on purpose: each attempt depends on the previous one failing,
+  // and the backoff sleeps in between — a sequential loop by nature
+  for (let attempt = 0; ; attempt += 1) {
+    if (await fs.createExclusive(layout.lockPath, record)) {
+      return { acquired: true, owner };
     }
-    return undefined;
+    const delay = delays[attempt];
+    if (delay === undefined || runtime === undefined) {
+      break;
+    }
+    await runtime.sleep(jittered(delay));
   }
-  // Imperative on purpose: JSON.parse is synchronous, so there is no promise
-  // to `.catch`, and a try-as-expression here would need an IIFE this repo's
-  // style forbids for its own sake.
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
+  // A held lock is ALWAYS a conflict. There is no automatic stale takeover,
+  // because it cannot be made safe at a distance: B reads a stale record
+  // belonging to A, C removes it and acquires a fresh lock, and B then
+  // unlinks C's LIVE lock. The owner token protects release, not takeover,
+  // and re-reading before the unlink only shrinks the window. Recovery is
+  // the explicit "openapi-mcp cache unlock" instead. The pid/hostname in the
+  // record do not change this: they let an operator (and the message below)
+  // tell a dead owner from a live one, but a decision taken on them at a
+  // distance would have exactly the same B/C race.
+  const holder = await readLockHolder(layout, fs);
+  const heldForMs = holder === undefined ? undefined : nowMs - holder.acquiredAt;
+  const who = holder === undefined ? undefined : describeLockHolder(holder, runtime);
+  const details = [
+    ...(who === undefined ? [] : [who]),
+    ...(heldForMs === undefined || heldForMs < LOCK_STALE_MS
+      ? []
+      : [`held for ${String(Math.floor(heldForMs / 1000))}s`]),
+  ];
+  // The recovery hint matches what `cache unlock` will accept: an aged lock
+  // needs no flag; a young one whose owner looks dead on this host still
+  // needs --force (see describeLockHolder)
+  const aged = heldForMs !== undefined && heldForMs >= LOCK_STALE_MS;
+  const ownerGone = who?.endsWith('process not running') === true;
+  let hint = ' — retry once it finishes';
+  if (aged) {
+    hint += ', or run "openapi-mcp cache unlock" if the owning process is gone';
+  } else if (ownerGone) {
+    hint += ', or run "openapi-mcp cache unlock --force" if the owning process is gone';
   }
-  if (typeof parsed !== 'object' || parsed === null) {
-    return undefined;
-  }
-  const { owner, acquiredAt } = parsed as Record<string, unknown>;
-  if (typeof owner !== 'string' || typeof acquiredAt !== 'number') {
-    return undefined;
-  }
-  if (!Number.isSafeInteger(acquiredAt)) {
-    return undefined;
-  }
-  return { owner, acquiredAt };
+  return {
+    acquired: false,
+    message: `cache entry ${layout.namespace} is locked by another openapi-mcp process${
+      details.length === 0 ? '' : ` (${details.join(', ')})`
+    }${hint}`,
+  };
 };
 
 // Refresh, promote, and any accepted/candidate write run under a
@@ -84,36 +102,17 @@ const readLockHolder = async (
 // check a real compare-and-swap. Readers take no lock — they rely on meta.json
 // being the sole commit point and on verifying the hashes it records.
 //
-// The holder record carries a random owner token rather than a process id:
-// core takes no process globals, and the token additionally lets the release
-// step confirm it still owns the lock before removing it.
-const withNamespaceLockImpl = async <T>(
+// The holder record's identity is a random owner token, not the process id:
+// a pid can be reused and is meaningless on another host, while the token
+// lets the release step confirm it still owns the lock before removing it.
+// The pid and hostname recorded beside it (injected through CacheFs.runtime,
+// since core takes no process globals) are diagnostics for the operator only.
+const runHolding = async <T>(
   layout: CacheLayout,
   fs: CacheFs,
-  nowMs: number,
+  owner: string,
   run: () => Promise<T>,
 ): Promise<T> => {
-  await fs.mkdirSecure(layout.dir);
-  const owner = randomUUID();
-  const record = `${JSON.stringify({ owner, acquiredAt: nowMs })}\n`;
-  const acquired = await fs.createExclusive(layout.lockPath, record);
-  if (!acquired) {
-    // A held lock is ALWAYS a conflict. There is no automatic stale takeover,
-    // because it cannot be made safe at a distance: B reads a stale record
-    // belonging to A, C removes it and acquires a fresh lock, and B then
-    // unlinks C's LIVE lock. The owner token protects release, not takeover,
-    // and re-reading before the unlink only shrinks the window. Recovery is
-    // the explicit "openapi-mcp cache unlock" instead.
-    const holder = await readLockHolder(layout, fs);
-    const heldForMs = holder === undefined ? undefined : nowMs - holder.acquiredAt;
-    throw conflictError(
-      `cache entry ${layout.namespace} is locked by another openapi-mcp process${
-        heldForMs === undefined || heldForMs < LOCK_STALE_MS
-          ? ' — retry once it finishes'
-          : ` (held for ${String(Math.floor(heldForMs / 1000))}s) — retry once it finishes, or run "openapi-mcp cache unlock" if the owning process is gone`
-      }`,
-    );
-  }
   try {
     return await run();
   } finally {
@@ -136,6 +135,42 @@ const withNamespaceLockImpl = async <T>(
   }
 };
 
+// The strict lock every write that changes what is accepted goes through:
+// bounded retry, then a conflictError (exit 5).
+const withNamespaceLockImpl = async <T>(
+  layout: CacheLayout,
+  fs: CacheFs,
+  nowMs: number,
+  run: () => Promise<T>,
+): Promise<T> => {
+  const acquisition = await acquire(layout, fs, nowMs, true);
+  if (!acquisition.acquired) {
+    throw conflictError(acquisition.message);
+  }
+  return runHolding(layout, fs, acquisition.owner, run);
+};
+
+// The best-effort variant (#65), for writes that are only bookkeeping on an
+// entry the caller has already verified (a 304, or a 200 with unchanged
+// bytes, refreshing fetchedAt and validators). One attempt, no retry: when
+// several servers start together, the first to get the lock records the
+// revalidation and the others need not wait for it. A held lock is reported
+// as a value, never thrown, so the caller can keep serving the verified
+// baseline with a warning. Anything else (I/O failure, a corrupt entry found
+// under the lock) still throws.
+const tryWithNamespaceLockImpl = async <T>(
+  layout: CacheLayout,
+  fs: CacheFs,
+  nowMs: number,
+  run: () => Promise<T>,
+): Promise<{ acquired: true; value: T } | { acquired: false; message: string }> => {
+  const acquisition = await acquire(layout, fs, nowMs, false);
+  if (!acquisition.acquired) {
+    return acquisition;
+  }
+  return { acquired: true, value: await runHolding(layout, fs, acquisition.owner, run) };
+};
+
 // The explicit operator recovery path that replaces automatic stale breaking.
 // It is deliberately a separate, named action rather than something a
 // write silently performs: removing a lock that a live process still holds
@@ -145,7 +180,7 @@ const unlockNamespaceImpl = async (
   fs: CacheFs,
   nowMs: number,
   opts: { force: boolean },
-): Promise<{ heldForMs: number }> => {
+): Promise<{ heldForMs: number; holder?: string | undefined }> => {
   if (!(await fs.pathExists(layout.lockPath))) {
     throw notFoundError(`cache entry ${layout.namespace} holds no lock`);
   }
@@ -154,13 +189,18 @@ const unlockNamespaceImpl = async (
   // removed with --force: absent evidence of age, we do not get to assume the
   // holder is dead
   const heldForMs = holder === undefined ? 0 : nowMs - holder.acquiredAt;
+  const who = holder === undefined ? undefined : describeLockHolder(holder, fs.runtime);
+  // The age rule is unchanged even when the owner looks dead on this host:
+  // see describeLockHolder for why a dead pid informs but does not authorize
   if (!opts.force && (holder === undefined || heldForMs < LOCK_STALE_MS)) {
     throw conflictError(
-      `the lock on cache entry ${layout.namespace} is not known to be stale — wait for the owning process, or pass --force to remove it anyway`,
+      `the lock on cache entry ${layout.namespace}${
+        who === undefined ? '' : ` (${who})`
+      } is not known to be stale — wait for the owning process, or pass --force to remove it anyway`,
     );
   }
   await fs.removeFile(layout.lockPath);
-  return { heldForMs };
+  return { heldForMs, ...(who === undefined ? {} : { holder: who }) };
 };
 
 // The one error boundary, applied at the DEFINITION so coverage is structural
@@ -176,5 +216,9 @@ const unlockNamespaceImpl = async (
 export const withNamespaceLock = withCacheErrors(
   'acquire the namespace lock',
   withNamespaceLockImpl,
+);
+export const tryWithNamespaceLock = withCacheErrors(
+  'acquire the namespace lock',
+  tryWithNamespaceLockImpl,
 );
 export const unlockNamespace = withCacheErrors('unlock the namespace', unlockNamespaceImpl);

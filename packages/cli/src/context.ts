@@ -15,10 +15,11 @@ import {
   stat,
 } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { homedir, hostname as osHostname } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { cachePathTypeError, validationError } from '@kaisers-io/openapi-mcp-core';
-import type { CacheFs, PinnedDeps } from '@kaisers-io/openapi-mcp-core';
+import type { CacheFs, CacheRuntime, PinnedDeps } from '@kaisers-io/openapi-mcp-core';
 import { fetch as undiciFetch } from 'undici';
 
 export type CliContext = {
@@ -113,7 +114,33 @@ const rejectUnlessRealDirectory = (path: string, info: Stats): void => {
   }
 };
 
+// What the writer lock records about this process, and how it backs off
+// (#65). process.kill(pid, 0) sends no signal: it only asks whether the pid
+// exists. ESRCH means no such process; EPERM means it exists but belongs to
+// another user, which is still "running".
+const realCacheRuntime = (): CacheRuntime => ({
+  pid: process.pid,
+  hostname: osHostname(),
+  isProcessAlive: (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return !(
+        error !== null &&
+        typeof error === 'object' &&
+        'code' in error &&
+        error.code === 'ESRCH'
+      );
+    }
+  },
+  sleep: async (ms) => {
+    await sleep(ms);
+  },
+});
+
 const realCacheFs = (): CacheFs => ({
+  runtime: realCacheRuntime(),
   mkdirSecure: async (path) => {
     // Calling mkdir(path, { recursive: true, mode: 0o700 }) does NOT produce
     // a usable tree (probed): under umask 0177 it fails outright with
