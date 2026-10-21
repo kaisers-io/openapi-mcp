@@ -63,7 +63,14 @@ const malformedKeyword = (
   node: Record<string, unknown>,
   version: OpenapiVersion,
 ): string | undefined => {
-  for (const keyword of ['minLength', 'maxLength', 'minItems', 'maxItems']) {
+  for (const keyword of [
+    'minLength',
+    'maxLength',
+    'minItems',
+    'maxItems',
+    'minProperties',
+    'maxProperties',
+  ]) {
     if (keyword in node && !nonNegInt(node[keyword])) {
       return keyword;
     }
@@ -96,6 +103,9 @@ const malformedKeyword = (
     (!finite(node['multipleOf']) || (node['multipleOf'] as number) <= 0)
   ) {
     return 'multipleOf';
+  }
+  if ('uniqueItems' in node && typeof node['uniqueItems'] !== 'boolean') {
+    return 'uniqueItems';
   }
   if ('pattern' in node && typeof node['pattern'] !== 'string') {
     return 'pattern';
@@ -153,9 +163,12 @@ const KNOWN_KEYWORDS: ReadonlySet<string> = new Set([
   'items',
   'minItems',
   'maxItems',
+  'uniqueItems',
   'properties',
   'required',
   'additionalProperties',
+  'minProperties',
+  'maxProperties',
   // Benign metadata (no validation effect):
   'title',
   'description',
@@ -201,9 +214,12 @@ const ASSERTION_KEYWORDS: ReadonlySet<string> = new Set([
   'items',
   'minItems',
   'maxItems',
+  'uniqueItems',
   'properties',
   'required',
   'additionalProperties',
+  'minProperties',
+  'maxProperties',
 ]);
 
 const valueMatchesType = (value: unknown, type: string): boolean => {
@@ -566,7 +582,42 @@ const openObject = (schema: z.ZodType, mode: SchemaMode): z.ZodType =>
         .pipe(schema)
     : schema;
 
+const ownPropertyCount = (value: unknown): number =>
+  Object.keys(value as Record<string, unknown>).length;
+
+// minProperties / maxProperties (JSON Schema Validation 2020-12 §6.5.1-2)
+// count the instance's own properties — exactly, by refinement on the parsed
+// object (absent optional properties are not materialized by Zod, and a
+// strict object has already rejected undeclared ones). Advertised via .meta in
+// convertSchema.
 const objectSchema = (
+  node: Record<string, unknown>,
+  depth: number,
+  version: OpenapiVersion,
+  mode: SchemaMode,
+): SchemaResult => {
+  const base = objectShapeSchema(node, depth, version, mode);
+  if (!('ok' in base)) {
+    return base;
+  }
+  const min = node['minProperties'];
+  const max = node['maxProperties'];
+  const withMin =
+    typeof min === 'number'
+      ? base.ok.refine((value) => ownPropertyCount(value) >= min, {
+          message: `must have at least ${min} propert${min === 1 ? 'y' : 'ies'}`,
+        })
+      : base.ok;
+  const withMax =
+    typeof max === 'number'
+      ? withMin.refine((value) => ownPropertyCount(value) <= max, {
+          message: `must have at most ${max} propert${max === 1 ? 'y' : 'ies'}`,
+        })
+      : withMin;
+  return { ok: withMax };
+};
+
+const objectShapeSchema = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
@@ -648,6 +699,34 @@ const objectSchema = (
   return { ok: openObject(z.object(shape).catchall(apConv.ok), mode) };
 };
 
+// JSON instance equality (JSON Schema Core 2020-12 §4.2.2): object member
+// order is irrelevant and numbers compare mathematically. A canonical
+// encoding with sorted object keys makes equal instances encode identically
+// (JSON.stringify already maps 1 and 1.0 — the same JS number — alike).
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    const members = Object.keys(value)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`);
+    return `{${members.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+};
+
+// O(n) over the encoded items. A pathological input that cannot be encoded
+// (e.g. nesting deep enough to overflow the stack) is treated as NOT unique,
+// so validation fails closed instead of throwing past Zod.
+const allDistinct = (items: readonly unknown[]): boolean => {
+  try {
+    return new Set(items.map((item) => canonicalJson(item))).size === items.length;
+  } catch {
+    return false;
+  }
+};
+
 const arraySchema = (
   node: Record<string, unknown>,
   depth: number,
@@ -661,7 +740,11 @@ const arraySchema = (
   const base = z.array(item.ok);
   const withMin = typeof node['minItems'] === 'number' ? base.min(node['minItems']) : base;
   const withMax = typeof node['maxItems'] === 'number' ? withMin.max(node['maxItems']) : withMin;
-  return { ok: withMax };
+  // uniqueItems is enforced exactly (refine, opaque to z.toJSONSchema) and
+  // advertised via .meta in convertSchema.
+  return node['uniqueItems'] === true
+    ? { ok: withMax.refine((items) => allDistinct(items), { message: 'items must be unique' }) }
+    : { ok: withMax };
 };
 
 const unionSchema = (
@@ -986,6 +1069,16 @@ export const convertSchema = (
   }
   if (typeof node['multipleOf'] === 'number') {
     meta['multipleOf'] = node['multipleOf'];
+  }
+  // Enforced by refinement in arraySchema / objectSchema, advertised here.
+  if (node['uniqueItems'] === true) {
+    meta['uniqueItems'] = true;
+  }
+  if (typeof node['minProperties'] === 'number') {
+    meta['minProperties'] = node['minProperties'];
+  }
+  if (typeof node['maxProperties'] === 'number') {
+    meta['maxProperties'] = node['maxProperties'];
   }
   const advertised = Object.keys(meta).length > 0 ? built.ok.meta(meta) : built.ok;
   return { ok: withDescription(advertised, node) };
