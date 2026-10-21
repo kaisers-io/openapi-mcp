@@ -1,4 +1,5 @@
 import { isIP } from 'node:net';
+import { createPinnedAgentPool } from '../../http/agent-pool.ts';
 import { pinnedRequest } from '../../http/pinned-dispatcher.ts';
 import type { HopHeaders, PinnedDeps, PinnedRequestOptions } from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
@@ -178,9 +179,14 @@ const overFinalBudget = (
   return headerBytes > budgets.maxHeaderBytes;
 };
 
+// The executor's ToolExecutor plus the lifecycle of the pooled upstream
+// connections it owns: `close()` must run on server shutdown so no pooled
+// socket keeps the process alive.
+export type UpstreamExecutor = ToolExecutor & { close: () => Promise<void> };
+
 const runUpstreamCall = async (
   config: ExecutorConfig,
-  deps: ExecutorDeps,
+  transport: PinnedDeps,
   tool: SnapshotTool,
   args: unknown,
   signal: AbortSignal,
@@ -277,7 +283,7 @@ const runUpstreamCall = async (
     maxResponseBytes: config.maxResponseBytes,
     signal,
   };
-  const outcome = await pinnedRequest(finalUrl, requestOptions, deps.transport);
+  const outcome = await pinnedRequest(finalUrl, requestOptions, transport);
   const [firstSecretHeader] = config.secretHeaders;
   return mapResponse({
     outcome,
@@ -289,7 +295,7 @@ const runUpstreamCall = async (
   });
 };
 
-export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): ToolExecutor => {
+export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {
   // A closure counter, NOT a module-level singleton: the caller constructs
   // exactly one createExecutor and shares it between the stdio and HTTP
   // transports, so this one counter bounds concurrency across BOTH.
@@ -298,13 +304,25 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Tool
   // `finally` regardless of success, failure, or abort. The acquire/release
   // pair must stay a plain mutable counter, not a derived pure value.
   let inFlight = 0;
-  return async (tool, args, signal) => {
+  // Long-lived pinned Agents, pooled per (origin, trust policy) for the
+  // executor's lifetime, so consecutive calls reuse upstream connections.
+  // Per-Agent connections are capped at the same global concurrency limit
+  // (more could never be in use at once); a DNS lookup gets the call
+  // timeout as its own deadline, since a pooled Agent outlives any one call.
+  const agents = createPinnedAgentPool({
+    resolve: deps.transport.resolve,
+    timeoutSignal: deps.transport.timeoutSignal,
+    lookupTimeoutMs: config.timeoutMs,
+    connections: config.maxConcurrent,
+  });
+  const transport: PinnedDeps = { ...deps.transport, agents };
+  const execute: ToolExecutor = async (tool, args, signal) => {
     if (inFlight >= config.maxConcurrent) {
       return isError('too many concurrent upstream requests are already in flight');
     }
     inFlight += 1;
     try {
-      return await runUpstreamCall(config, deps, tool, args, signal);
+      return await runUpstreamCall(config, transport, tool, args, signal);
     } catch {
       // Belt-and-suspenders: the dispatcher also catches, but this module
       // never lets a raw throw (a library-internal message, a stack, a
@@ -314,4 +332,5 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Tool
       inFlight -= 1;
     }
   };
+  return Object.assign(execute, { close: agents.close });
 };

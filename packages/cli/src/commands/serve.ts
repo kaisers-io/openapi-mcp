@@ -448,6 +448,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         process.removeListener('SIGTERM', onShutdownSignal);
         await httpServer.close();
       }
+      // After the transport is gone: no further call can borrow a pooled
+      // upstream connection, and an idle keep-alive socket must not hold the
+      // process open past stdin EOF or a shutdown signal.
+      await executor.close();
       state.exitCode = EXIT.OK;
     } catch (error) {
       state.exitCode = emitError(ctx, errorOpts, error);

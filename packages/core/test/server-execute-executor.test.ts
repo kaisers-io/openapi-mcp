@@ -1,5 +1,7 @@
+import { createServer } from 'node:http';
+import type { AddressInfo, Socket } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
-import { Response } from 'undici';
+import { Response, fetch as undiciFetch } from 'undici';
 import { z } from 'zod';
 import { pinnedRequest } from '../src/http/pinned-dispatcher.ts';
 import {
@@ -471,6 +473,60 @@ describe('createExecutor — global concurrency semaphore', () => {
     releaseFirst(textResponse(200, ''));
     const firstOutcome = await first;
     expect(firstOutcome.isError).toBe(false);
+  });
+});
+
+describe('createExecutor — upstream connection reuse', () => {
+  it('reuses pooled connections across calls and closes them on close()', async () => {
+    const sockets = new Set<Socket>();
+    let connections = 0;
+    const server = createServer((_req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+    server.on('connection', (socket: Socket) => {
+      connections += 1;
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const { port } = server.address() as AddressInfo;
+    try {
+      const snapshot = buildToolSnapshot([pingOp]);
+      const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
+      const executor = createExecutor(
+        baseConfig({ baseUrl: `http://api.test:${port}`, validators: validatorsFor(snapshot) }),
+        {
+          transport: {
+            fetch: undiciFetch,
+            resolve: () => Promise.resolve(['127.0.0.1']),
+            timeoutSignal: (ms) => AbortSignal.timeout(ms),
+          },
+        },
+      );
+      for (let index = 0; index < 50; index += 1) {
+        const outcome = await executor(tool, {}, freshSignal());
+        expect(outcome.isError).toBe(false);
+      }
+      // Before pooling, every call opened its own connection (50 here).
+      expect(connections).toBeLessThanOrEqual(2);
+      expect(sockets.size).toBeGreaterThan(0);
+      await executor.close();
+      const deadline = Date.now() + 2000;
+      while (sockets.size > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      }
+      expect(sockets.size).toBe(0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
   });
 });
 
