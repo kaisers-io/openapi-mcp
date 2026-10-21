@@ -162,9 +162,10 @@
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
     {
-      "files": ["packages/core/**/*.ts", "packages/cli/**/*.ts"],
+      "files": ["packages/core/**/*.ts", "packages/cli/**/*.ts", "scripts/bench/**/*.ts"],
       "rules": {
-        // Configured (not off): both shipped packages (core and cli)
+        // Configured (not off): both shipped packages (core and cli), and the
+        // benchmark harness that follows their conventions,
         // mandate `type` over `interface` everywhere an object shape is
         // declared (interface survives only where TypeScript technically
         // requires it, each such site carrying its own justifying comment)

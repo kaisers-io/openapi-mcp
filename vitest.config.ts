@@ -2,7 +2,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    projects: ['packages/*'],
+    // Scripts/bench holds the benchmark harness; its pure gate logic is unit-tested
+    projects: ['packages/*', 'scripts/bench'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
