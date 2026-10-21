@@ -74,11 +74,14 @@ Notes:
 - Concurrency and rate limits apply to the whole process (stdio and HTTP alike). A call that
   finds `--max-concurrency` calls already in flight waits for a slot, first come first served.
   At most 4 × `--max-concurrency` calls can wait, and each waits no longer than `--timeout`.
-  A call refused because the queue is full or its wait timed out returns a tool error with
-  `structuredContent: { "error": "overloaded", "retryAfterMs": 1000 }`. A call over
-  `--rate-limit` returns `{ "error": "rate_limited", "retryAfterMs": <ms> }`. That value is
-  exact: it is the time until the oldest call in the window expires. Both limits are always
-  finite. There is no "unlimited" setting, because MCP servers must rate-limit tool calls.
+  A refused call returns a tool error whose text ends in `retry after <n>s`, and whose result
+  `_meta` holds `"openapi-mcp/error"` and `"openapi-mcp/retryAfterMs"`. The error is
+  `"overloaded"` with a fixed 1000 ms when the queue is full or the wait timed out. It is
+  `"rate_limited"` when a call is over `--rate-limit`, and then `retryAfterMs` is exact: it is
+  the time until the oldest call in the window expires. These details go in `_meta`, not
+  `structuredContent`, because a tool's structured content must match its output schema.
+  Both limits are always finite. There is no "unlimited" setting, because MCP servers must
+  rate-limit tool calls.
 
 Example:
 

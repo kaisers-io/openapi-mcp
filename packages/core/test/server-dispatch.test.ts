@@ -322,7 +322,7 @@ describe('createDispatcher', () => {
         content: [
           { type: 'text', text: 'rate limit exceeded — too many tool calls; retry after 1s' },
         ],
-        structuredContent: { error: 'rate_limited', retryAfterMs: 1000 },
+        meta: { 'openapi-mcp/error': 'rate_limited', 'openapi-mcp/retryAfterMs': 1000 },
       },
     });
     expect(executor).not.toHaveBeenCalled();
@@ -345,7 +345,7 @@ describe('createDispatcher', () => {
       outcome: {
         isError: true,
         content: [{ text: 'rate limit exceeded — too many tool calls; retry after 5s' }],
-        structuredContent: { error: 'rate_limited', retryAfterMs: 4200 },
+        meta: { 'openapi-mcp/error': 'rate_limited', 'openapi-mcp/retryAfterMs': 4200 },
       },
     });
   });

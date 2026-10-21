@@ -6,6 +6,11 @@ export type ToolCallOutcome = {
   isError: boolean;
   content: readonly { type: 'text'; text: string }[];
   structuredContent?: Record<string, unknown>;
+  // Result metadata, mapped onto CallToolResult `_meta`. Used for
+  // machine-readable details of an ERROR result: structuredContent must
+  // conform to the tool's outputSchema when one is declared (MCP tools spec,
+  // "Output Schema"), and an error detail never does.
+  meta?: Record<string, unknown>;
 };
 
 export const textOutcome = (text: string, isError = false): ToolCallOutcome => ({
@@ -22,10 +27,12 @@ export const structuredOutcome = (
   structuredContent,
 });
 
-// A machine-readable refusal a client (or the model) can act on: `error` is
-// a small closed code and `retryAfterMs` says when a retry can succeed. Only
-// ever used for LOCAL admission refusals (rate limit, overload) — values
-// this server computes itself, never upstream-derived text.
+// A machine-readable refusal a client can act on: `error` is a small closed
+// code and `retryAfterMs` says when a retry can succeed. Only ever used for
+// LOCAL admission refusals (rate limit, overload) — values this server
+// computes itself, never upstream-derived text. Carried in `_meta` under
+// this server's own key prefix (MCP `_meta` key grammar: `<prefix>/<name>`),
+// never in structuredContent — see ToolCallOutcome.meta above.
 export type RetryableError = {
   error: 'rate_limited' | 'overloaded';
   retryAfterMs: number;
@@ -44,7 +51,10 @@ export const retryableErrorOutcome = (
       text: `${message}; retry after ${Math.max(1, Math.ceil(detail.retryAfterMs / 1000))}s`,
     },
   ],
-  structuredContent: { ...detail },
+  meta: {
+    'openapi-mcp/error': detail.error,
+    'openapi-mcp/retryAfterMs': detail.retryAfterMs,
+  },
 });
 
 // The lookup step's own outcome: an unknown tool name is a PROTOCOL error

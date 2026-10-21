@@ -747,7 +747,7 @@ describe('serve — parallel tool calls and configurable limits (stdio subproces
     );
   }, 15_000);
 
-  it('--rate-limit takes effect and the refusal carries an exact retryAfterMs', async () => {
+  it('--rate-limit takes effect and the refusal carries an exact retryAfterMs in _meta', async () => {
     const port = await startSlowUpstream();
     const { proc, stdoutLines } = await spawnServe(port, [
       '--rate-limit',
@@ -764,11 +764,12 @@ describe('serve — parallel tool calls and configurable limits (stdio subproces
     expect(results.get(2)?.result?.['isError']).not.toBe(true);
     const refused = results.get(3)?.result;
     expect(refused?.['isError']).toBe(true);
-    const structured = refused?.['structuredContent'] as
-      | { error: string; retryAfterMs: number }
-      | undefined;
-    expect(structured?.error).toBe('rate_limited');
-    expect(structured?.retryAfterMs).toBeGreaterThan(55_000);
-    expect(structured?.retryAfterMs).toBeLessThanOrEqual(60_000);
+    // The detail rides in `_meta`, not structuredContent: listPets declares
+    // an outputSchema, which an error detail could never conform to.
+    expect(refused?.['structuredContent']).toBeUndefined();
+    const meta = refused?.['_meta'] as Record<string, unknown> | undefined;
+    expect(meta?.['openapi-mcp/error']).toBe('rate_limited');
+    expect(meta?.['openapi-mcp/retryAfterMs']).toBeGreaterThan(55_000);
+    expect(meta?.['openapi-mcp/retryAfterMs']).toBeLessThanOrEqual(60_000);
   }, 15_000);
 });

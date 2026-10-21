@@ -146,8 +146,9 @@ const scanForSecretSafely = (redactor: Redactor, value: unknown): boolean => {
 
 const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOutcome => {
   if (
-    outcome.structuredContent !== undefined &&
-    scanForSecretSafely(redactor, outcome.structuredContent)
+    (outcome.structuredContent !== undefined &&
+      scanForSecretSafely(redactor, outcome.structuredContent)) ||
+    (outcome.meta !== undefined && scanForSecretSafely(redactor, outcome.meta))
   ) {
     return textOutcome(BOUNDARY_UNSAFE_TEXT, true);
   }
@@ -240,8 +241,8 @@ export const createDispatcher = (
       // point).
       const nowMs = deps.now();
       if (!deps.limiter.consume(nowMs)) {
-        // Actionable: the text says when, and structuredContent carries the
-        // exact wait so a client can schedule the retry instead of guessing.
+        // Actionable: the text says when, and `_meta` carries the exact wait
+        // so a client can schedule the retry instead of guessing.
         const retryAfterMs = deps.limiter.retryAfterMs(nowMs);
         return {
           kind: 'outcome',

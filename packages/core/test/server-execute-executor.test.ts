@@ -449,6 +449,11 @@ describe('createExecutor — cleartext gate', () => {
   });
 });
 
+const OVERLOADED_META = {
+  'openapi-mcp/error': 'overloaded',
+  'openapi-mcp/retryAfterMs': 1000,
+};
+
 describe('createExecutor — global concurrency queue', () => {
   const pingSetup = () => {
     const snapshot = buildToolSnapshot([pingOp]);
@@ -593,7 +598,8 @@ describe('createExecutor — global concurrency queue', () => {
     const overflow = await executor(tool, {}, freshSignal());
     expect(overflow.isError).toBe(true);
     expect(overflow.content[0]?.text).toMatch(/already in flight or queued; retry after 1s/u);
-    expect(overflow.structuredContent).toEqual({ error: 'overloaded', retryAfterMs: 1000 });
+    expect(overflow.structuredContent).toBeUndefined();
+    expect(overflow.meta).toEqual(OVERLOADED_META);
     await flush();
     gated.releaseOne();
     await first;
@@ -612,7 +618,7 @@ describe('createExecutor — global concurrency queue', () => {
     // 2 in flight + 8 queued are admitted; the 11th is refused.
     const admitted = Array.from({ length: 10 }, () => executor(tool, {}, freshSignal()));
     const refused = await executor(tool, {}, freshSignal());
-    expect(refused.structuredContent).toEqual({ error: 'overloaded', retryAfterMs: 1000 });
+    expect(refused.meta).toEqual(OVERLOADED_META);
     for (let index = 0; index < 10; index += 1) {
       await flush();
       gated.releaseOne();
@@ -651,7 +657,7 @@ describe('createExecutor — global concurrency queue', () => {
     const outcome = await queued;
     expect(outcome.isError).toBe(true);
     expect(outcome.content[0]?.text).toMatch(/timed out waiting for a free upstream request slot/u);
-    expect(outcome.structuredContent).toEqual({ error: 'overloaded', retryAfterMs: 1000 });
+    expect(outcome.meta).toEqual(OVERLOADED_META);
     gated.releaseOne();
     await expect(first).resolves.toMatchObject({ isError: false });
     expect(gated.started()).toBe(1);

@@ -61,6 +61,7 @@ const outcomeToResult = (outcome: ToolCallOutcome): CallToolResult => ({
   ...(outcome.structuredContent === undefined
     ? {}
     : { structuredContent: outcome.structuredContent }),
+  ...(outcome.meta === undefined ? {} : { _meta: outcome.meta }),
 });
 
 // Bounds the RAW name to RAW_NAME_SCAN_MAX using a surrogate-safe,
