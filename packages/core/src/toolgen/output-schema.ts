@@ -34,6 +34,11 @@ const isJsonContentType = (contentType: string): boolean =>
   /^application\/(?:[\w.+-]+\+)?json$/u.test(contentType);
 
 const SUCCESS_STATUS_RE = /^2\d\d$/u;
+
+const RESPONSE_HEADERS_SCHEMA: JsonSchemaRecord = {
+  type: 'object',
+  additionalProperties: { type: 'string' },
+};
 // A literal OpenAPI 3.1 status-code RANGE key ("2XX"/"2xx"), or the "default"
 // response — either is treated as "might cover a success we cannot bound".
 const WILDCARD_OR_DEFAULT_SUCCESS_RE = /^2xx$/iu;
@@ -120,6 +125,11 @@ export const deriveOutputSchema = (
         status: { const: Number(key) },
         contentType: { const: contentType },
         data: dataSchema,
+        // Allowlisted upstream response headers (pagination, rate limits,
+        // validators), present only when the upstream sent any — see
+        // server/execute/forwarded-headers.ts. Optional, so a result
+        // without them still conforms.
+        headers: RESPONSE_HEADERS_SCHEMA,
       },
       required: ['status', 'contentType', 'data'],
       additionalProperties: false,

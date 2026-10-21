@@ -4,6 +4,11 @@ import type { Options, ValidateFunction } from 'ajv';
 import type { PinnedErrorReason, PinnedOutcome } from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText, TRUNCATION_MARKER } from '../../spec/sanitize.ts';
+import {
+  decorateTextOutcome,
+  forwardableHeaders,
+  upstreamRetryAfterMs,
+} from './forwarded-headers.ts';
 import { markSecretScanned, structuredOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
 
@@ -64,6 +69,12 @@ export type MapResponseOptions = {
   envVarHint?: string;
   // Text display cap for the no-outputSchema success path, in bytes.
   maxTextBytes: number;
+  // The configured API base URL. When given, allowlisted upstream response
+  // headers are forwarded into the result (see forwarded-headers.ts), with
+  // `Location` kept only when same-origin with it.
+  baseUrl?: string;
+  // Clock for an HTTP-date Retry-After; Date.now by default.
+  now?: () => number;
 };
 
 // Fixed, reason-keyed text — never the PinnedOutcome's own `detail` string,
@@ -344,6 +355,7 @@ const mapSchemaSuccess = (
   validator: EnvelopeValidator,
   redactor: Redactor,
   maxTextBytes: number,
+  forwarded: Readonly<Record<string, string>>,
 ): ToolCallOutcome => {
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
@@ -365,10 +377,14 @@ const mapSchemaSuccess = (
   if (!parseAttempt.ok) {
     return textOutcome(`upstream response for status ${status} was not valid JSON`, true);
   }
+  // Forwarded headers join the envelope (an optional `headers` property the
+  // generated outputSchema declares), so the validator below covers them.
+  // Each value was already sanitized and secret-checked on its own.
   const envelope: Record<string, unknown> = {
     status,
     contentType: branch.contentType,
     data: parseAttempt.value,
+    ...(Object.keys(forwarded).length === 0 ? {} : { headers: { ...forwarded } }),
   };
   // A secret anywhere in the structured data downgrades to a generic
   // isError — never a redacted-but-successful structuredContent. The
@@ -394,7 +410,10 @@ const mapSchemaSuccess = (
   return structuredOutcome(truncateUtf8(JSON.stringify(envelope), maxTextBytes), envelope);
 };
 
-export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
+const mapBody = (
+  opts: MapResponseOptions,
+  forwarded: Readonly<Record<string, string>>,
+): ToolCallOutcome => {
   const { outcome } = opts;
   if (outcome.kind === 'error') {
     return mapPinnedError(outcome.reason);
@@ -438,5 +457,25 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
     opts.validator,
     opts.redactor,
     opts.maxTextBytes,
+    forwarded,
+  );
+};
+
+export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
+  const { outcome } = opts;
+  if (outcome.kind === 'error' || opts.baseUrl === undefined) {
+    return mapBody(opts, {});
+  }
+  const forwarded = forwardableHeaders({
+    headers: outcome.headers,
+    responseUrl: outcome.url,
+    baseUrl: opts.baseUrl,
+    redactor: opts.redactor,
+  });
+  const nowMs = (opts.now ?? Date.now)();
+  return decorateTextOutcome(
+    mapBody(opts, forwarded),
+    forwarded,
+    upstreamRetryAfterMs(outcome.status, outcome.headers, nowMs),
   );
 };

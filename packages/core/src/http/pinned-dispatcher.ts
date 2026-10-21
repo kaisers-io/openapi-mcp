@@ -4,6 +4,7 @@ import { Agent } from 'undici';
 import type { fetch as undiciFetchType } from 'undici';
 import type { PinnedAgentPool } from './agent-pool.ts';
 import { classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
+import { captureResponseHeaders } from './response-headers.ts';
 
 // The SSRF connection-pinning core. undici's custom connect.lookup resolves
 // the hostname exactly once via the injected `resolve`, validates EVERY
@@ -170,6 +171,12 @@ export type PinnedResponse = {
   contentType?: string;
   // Decompressed, capped.
   bodyBytes: Uint8Array;
+  // The allowlisted, size-bounded response headers (lowercased names) —
+  // raw upstream values; see http/response-headers.ts.
+  headers: Readonly<Record<string, string>>;
+  // The URL of the hop that produced this response (after redirects), so
+  // a relative `Location`/`Link` target resolves against the right base.
+  url: string;
 };
 
 export type PinnedOutcome =
@@ -571,6 +578,8 @@ export const pinnedRequest = async (
         status: response.status,
         ...(contentType === null ? {} : { contentType }),
         bodyBytes,
+        headers: captureResponseHeaders(response.headers),
+        url: url.href,
       };
     } catch (error) {
       exceptional = true;

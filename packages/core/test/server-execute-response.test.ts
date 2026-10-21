@@ -52,6 +52,8 @@ const response = (
   status,
   ...(contentType === undefined ? {} : { contentType }),
   bodyBytes: typeof body === 'string' ? encoder.encode(body) : body,
+  headers: {},
+  url: 'https://api.example.test/',
 });
 
 const errorOutcome = (reason: PinnedErrorReason, detail?: string): PinnedOutcome => ({

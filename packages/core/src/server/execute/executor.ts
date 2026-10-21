@@ -318,6 +318,7 @@ const runUpstreamCall = async (
     redactor: config.redactor,
     ...(firstSecretHeader === undefined ? {} : { envVarHint: firstSecretHeader.envVar }),
     maxTextBytes: DISPLAY_TEXT_MAX,
+    baseUrl: config.baseUrl,
   });
 };
 
