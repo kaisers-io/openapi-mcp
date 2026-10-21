@@ -5,40 +5,94 @@ on:
 # PR-controlled code runs in every job (install/build/test) — keep the ambient token read-only.
 permissions:
   contents: read
+# A new push to a PR branch supersedes the previous run, so cancel it instead of letting the whole matrix
+# finish. Pushes to main are never cancelled: every main commit keeps a complete CI result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# Supply-chain conventions shared by every job (same as release.yml):
+# - Actions are pinned to full commit SHAs (a tag can be moved by its owner or by whoever compromises
+#   it); the `# vX.Y.Z` comment is what Dependabot (.github/dependabot.yml) reads to bump the pin.
+# - `persist-credentials: false`: no job pushes or fetches after checkout, so the GITHUB_TOKEN is not
+#   left in .git/config where PR-controlled code (tests, build tooling) could read it.
+# - `pnpm install --ignore-scripts`: no dependency lifecycle script runs. Nothing in the lockfile needs
+#   one (native tools — oxlint, oxfmt, rolldown, typescript — ship as prebuilt optionalDependencies),
+#   and pnpm's own build-script allow-list would block them anyway; this makes the intent explicit and
+#   independent of that config.
+# - `timeout-minutes` on every job: the GitHub default is 6 hours, which a hung subprocess test would burn.
 jobs:
   check:
+    timeout-minutes: 20
     strategy:
       # An empty `node` falls back to .node-version (the dev pin); 24.11.0 is the published engines floor.
       matrix: { os: [ubuntu-latest, macos-latest], node: ['', '24.11.0'] }
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: '${{ matrix.node }}', node-version-file: .node-version, cache: pnpm }
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm check
   bundle-determinism:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version-file: .node-version, cache: pnpm }
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: bash scripts/check-bundle-determinism.sh
   smoke:
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version-file: .node-version, cache: pnpm }
-      - run: pnpm install --frozen-lockfile && pnpm build
+      - run: pnpm install --frozen-lockfile --ignore-scripts && pnpm build
       - name: smoke-test the globally-installed bin
-        run: |
+        # The "ad-hoc" install is the tarball packed one line above from this checkout (it has no
+        # dependencies of its own) — not a registry package outside the lockfile.
+        run: | # zizmor: ignore[adhoc-packages]
           set -euo pipefail
           npm pack ./packages/cli --pack-destination /tmp
           npm install -g /tmp/kaisers-io-openapi-mcp-*.tgz
           bash scripts/smoke-cli.sh
+  audit:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: .node-version }
+      # Reads pnpm-lock.yaml only (no install needed). Deliberately NOT `--prod`: the published CLI bundles
+      # its runtime dependencies into dist/ from its *devDependencies* (commander, undici, …), so a
+      # prod-only audit would skip exactly the code that ships. Dev tooling is in scope too — CI runs it.
+      # This also covers transitive dependencies, which GitHub's dependency graph does not currently
+      # read from pnpm 12's multi-document lockfile (so Dependabot alerts cannot see them).
+      - run: pnpm audit --audit-level=high
+  # Lints the workflows themselves (template injection, credential persistence, unpinned `uses:` —
+  # zizmor's default policy requires every action to be SHA-pinned, so an unpinned ref fails here).
+  zizmor:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      # `advanced-security: false`: report to the log and fail the job on findings, instead of uploading
+      # SARIF to code scanning (unavailable while the repo is private, and SARIF mode never fails the job).
+      # The action installs zizmor from a hash-pinned wheel lock for the exact version below.
+      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          advanced-security: false
+          annotations: true
+          version: 1.31.1
 # NOTE: no publish job here — publishing lives in release.yml (tag-triggered, OIDC).
