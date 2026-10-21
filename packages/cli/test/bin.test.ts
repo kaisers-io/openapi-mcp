@@ -138,3 +138,69 @@ describe('bin stub entry selection', () => {
     expect(result.status).toBe(7);
   });
 });
+
+// Simulates another operating system the same way asNode simulates a runtime: `process.platform`
+// is an own, configurable property, replaced by a `--import` preload before the stub runs.
+const asPlatform = (platform: string): string[] => [
+  '--import',
+  `data:text/javascript,Object.defineProperty(process,'platform',{value:${JSON.stringify(platform)}})`,
+];
+
+const declaredOs = (): string[] => {
+  const pkg = JSON.parse(repoFile('packages/cli/package.json')) as { os?: string[] };
+  return pkg.os ?? [];
+};
+
+describe('platform: package.json, docs and the bin stub agree on macOS and Linux', () => {
+  // A built-looking package, so a case that gets past the guard visibly loads the entry.
+  const makeBuilt = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'openapi-mcp-platform-'));
+    pkgDir = dir;
+    mkdirSync(join(dir, 'bin'));
+    mkdirSync(join(dir, 'dist'));
+    copyFileSync(bin, join(dir, 'bin', 'openapi-mcp.mjs'));
+    writeFileSync(
+      join(dir, 'dist', 'openapi-mcp.mjs'),
+      'export const realContext = () => ({});\n' +
+        'export const run = async () => { console.log("loaded"); return 0; };\n',
+    );
+    return join(dir, 'bin', 'openapi-mcp.mjs');
+  };
+
+  afterEach(() => {
+    if (pkgDir !== undefined) {
+      rmSync(pkgDir, { recursive: true, force: true });
+      pkgDir = undefined;
+    }
+  });
+
+  it('declares exactly darwin and linux in the published package.json, so npm refuses other platforms', () => {
+    expect(declaredOs()).toStrictEqual(['darwin', 'linux']);
+  });
+
+  it('points Windows users at WSL in both READMEs', () => {
+    expect(repoFile('README.md')).toContain('WSL');
+    expect(repoFile('packages/cli/README.md')).toContain('WSL');
+  });
+
+  it.each(['darwin', 'linux'])('runs the CLI on %s', (platform) => {
+    const result = runStub(makeBuilt(), asPlatform(platform), []);
+    expect(result.stderr).toBe('');
+    expect(result.stdout.trim()).toBe('loaded');
+    expect(result.status).toBe(0);
+  });
+
+  it.each(['win32', 'freebsd'])(
+    'refuses %s with one line and exit 1, before loading the CLI',
+    (platform) => {
+      const result = runStub(makeBuilt(), asPlatform(platform), ['--version']);
+      expect(result.status).toBe(1);
+      // Nothing on stdout: the entry, which would print "loaded", was never imported.
+      expect(result.stdout).toBe('');
+      expect(result.stderr.trim().split('\n')).toStrictEqual([
+        `openapi-mcp supports macOS and Linux only (found ${platform}). ` +
+          'On Windows, run it inside WSL.',
+      ]);
+    },
+  );
+});

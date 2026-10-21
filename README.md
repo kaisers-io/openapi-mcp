@@ -31,7 +31,8 @@ Four pillars:
 
 ## Install
 
-Requirements: Node.js `>=24.11`, macOS or Linux.
+Requirements: Node.js `>=24.11`, macOS or Linux. Windows is not supported natively (the cache relies on POSIX file
+permissions and rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/).
 
 ```bash
 npm i -g @kaisers-io/openapi-mcp
