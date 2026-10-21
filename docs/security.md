@@ -129,7 +129,9 @@ credentials — so:
   digest comparison (both sides hashed, length-safe, no early exit on a length mismatch) to
   avoid timing side channels.
 - The server binds `127.0.0.1` only; `Origin`/`Host` are validated to guard against
-  DNS-rebinding.
+  DNS-rebinding. `Host` must be exactly `127.0.0.1:<port>` or `localhost:<port>` (the port
+  must match). Any other value, including `[::1]:<port>`, gets 403. A rebinding page always
+  sends its own hostname in `Host`, so it is still rejected.
 - The transport speaks MCP revision `2026-07-28` and is **stateless**: every request is served
   end to end on its own, with no `initialize` handshake and no session state — the modern era
   carries its context in a per-request `_meta` envelope instead. The SDK's built-in era support

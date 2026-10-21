@@ -76,12 +76,23 @@ const encodeLeaf = (raw: string): string | undefined => {
 // it. The static half of the path template is already vetted at build time
 // (toolgen/layout.ts's `isDangerousStaticSegment`) — this only guards the
 // dynamic VALUE.
+// An encoded dot counts the same as a literal one for that double-decode:
+// `.%2e`, `%2e.` and `%2e%2e` all become `..`, and a lone `%2e` becomes `.`,
+// so any dot pair involving at least one `%2e`, and a leaf that is nothing
+// but one encoded dot, are refused alike.
+const ENCODED_DOT_PAIR_RE = /%2e%2e|\.%2e|%2e\./u;
+
 const isDangerousPathLeaf = (raw: string): boolean => {
   if (raw === '.' || raw === '..' || raw.includes('/') || raw.includes('\\')) {
     return true;
   }
   const lower = raw.toLowerCase();
-  return lower.includes('%2f') || lower.includes('%5c') || lower.includes('%2e%2e');
+  return (
+    lower.includes('%2f') ||
+    lower.includes('%5c') ||
+    lower === '%2e' ||
+    ENCODED_DOT_PAIR_RE.test(lower)
+  );
 };
 
 type PathMapping = Extract<FieldMapping, { destination: 'path' }>;
@@ -255,6 +266,13 @@ type HeaderMapping = Extract<FieldMapping, { destination: 'header' }>;
 // rejected outright — never stripped, never encoded.
 // oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it rejects them outright)
 const HEADER_CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
+// A header value travels as bytes (RFC 9110 §5.5: field values are octets;
+// undici, like the Fetch standard, requires a ByteString). A code point
+// above U+00FF cannot be represented, and the transport would only throw
+// later as an opaque network failure — after the request was prepared — so
+// it is refused here as an argument error the caller can fix.
+// oxlint-disable-next-line no-control-regex -- the range starts at U+0000 only to state "every Latin-1 code point"; the negated class matches nothing below U+0100
+const NON_LATIN1_RE = /[^\u0000-\u00FF]/u;
 
 // `mapping.wireName` is spec-derived, untrusted text (the header parameter's
 // NAME, not its value). The undici transport THROWS at fetch time on a
@@ -280,6 +298,11 @@ const serializeHeaderValue = (
   ): { ok: string } | { error: string } => {
     if (HEADER_CONTROL_CHAR_RE.test(raw)) {
       return { error: `header parameter "${mapping.wireName}" contains a control character` };
+    }
+    if (NON_LATIN1_RE.test(raw)) {
+      return {
+        error: `header parameter "${mapping.wireName}" contains characters that cannot be sent in an HTTP header`,
+      };
     }
     if (delimiters.some((delimiter) => raw.includes(delimiter))) {
       return {

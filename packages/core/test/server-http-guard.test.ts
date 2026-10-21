@@ -259,3 +259,39 @@ describe('evaluateRequest — the Host/Origin/bearer matrix', () => {
     });
   });
 });
+
+describe('evaluateRequest — Host aliases', () => {
+  const local: RequestGuardOptions = {
+    ...opts,
+    allowedHostAliases: new Set(['localhost:3044']),
+  };
+  const auth = `Bearer ${TOKEN}`;
+
+  it.each(['127.0.0.1:3044', 'localhost:3044', 'LOCALHOST:3044'])('accepts Host %s', (host) => {
+    expect(evaluateRequest(local, headers({ host, authorization: auth }))).toEqual({
+      outcome: 'allow',
+    });
+  });
+
+  it.each([
+    'evil.example.com:3044',
+    'localhost:3045',
+    'localhost',
+    '127.0.0.1',
+    '[::1]:3044',
+    'localhost.evil.example:3044',
+    'evil.localhost:3044',
+  ])('still rejects Host %s with 403', (host) => {
+    expect(evaluateRequest(local, headers({ host, authorization: auth }))).toEqual({
+      outcome: 'deny',
+      status: 403,
+      reason: 'invalid or missing Host header',
+    });
+  });
+
+  it('accepts no alias unless one is configured', () => {
+    expect(
+      evaluateRequest(opts, headers({ host: 'localhost:3044', authorization: auth })),
+    ).toMatchObject({ outcome: 'deny', status: 403 });
+  });
+});
