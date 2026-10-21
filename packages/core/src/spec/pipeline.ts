@@ -20,8 +20,9 @@ import type { FetchSpecDeps } from './fetch.ts';
 import { loadSpecFromFile, parseSpecSource } from './load.ts';
 import type { LoadedSpecText } from './load.ts';
 import { normalizeSpec } from './normalize.ts';
-import type { NormalizedSpec } from './normalize.ts';
+import type { NormalizedSpec, OmittedOperation } from './normalize.ts';
 import { parseSpecText } from './parse.ts';
+import { operationKeysOf, pendingCandidateKeys, withholdRemoved } from './pending-candidate.ts';
 import { validateOpenApiDocument } from './validate.ts';
 import type { OpenapiVersion } from './validate.ts';
 
@@ -68,6 +69,9 @@ export type SpecPipelineResult = {
   deadPatterns: readonly DeadPattern[];
   warnings: readonly string[];
   cacheStatus: CacheStatus;
+  // Accepted operations hidden because the pending candidate removed them
+  // (#60); empty when no candidate is waiting
+  withheldOperations: readonly OmittedOperation[];
 };
 
 type ProcessedSpec = {
@@ -202,6 +206,7 @@ export const runSpecPipeline = async (
       contentHash: cached.meta.sourceContentHash,
       displaySource: cached.meta.displaySource,
       cacheStatus: 'fresh',
+      candidateOperationKeys: await pendingCandidateKeys(layout, deps.cacheFs, cached),
       // A restart inside the TTL still has to surface a waiting candidate
       cached,
     });
@@ -299,6 +304,7 @@ export const runSpecPipeline = async (
       contentHash: cached.meta.sourceContentHash,
       displaySource: cached.meta.displaySource,
       cacheStatus: 'stale',
+      candidateOperationKeys: await pendingCandidateKeys(layout, deps.cacheFs, cached),
       // A failed refresh does not make a waiting candidate disappear either
       cached,
     });
@@ -367,6 +373,7 @@ export const runSpecPipeline = async (
     displaySource: cached.meta.displaySource,
     cacheStatus: 'revalidated',
     cached,
+    candidateOperationKeys: await pendingCandidateKeys(layout, deps.cacheFs, cached),
   });
 };
 
@@ -379,6 +386,8 @@ type FinishInput = {
   candidateContentHash?: string | undefined;
   displaySource: string;
   cacheStatus: CacheStatus;
+  // The pending candidate's `METHOD path` keys, when one is waiting (#60)
+  candidateOperationKeys?: ReadonlySet<string> | undefined;
   // The entry being served, when one is. A candidate recorded in it must
   // surface on EVERY such result, not only on the run that created it.
   cached?: CacheEntry | undefined;
@@ -404,13 +413,18 @@ const finish = (
   // that entry is served.
   const pending = input.cached?.meta.candidate;
   const candidateContentHash = input.candidateContentHash ?? pending?.contentHash;
-  const allWarnings =
-    pending === undefined || input.candidateContentHash !== undefined
-      ? warnings
-      : [...warnings, PENDING_PROMOTION_WARNING];
+  const withholding = withholdRemoved(filtered.exposed, input.candidateOperationKeys);
+  const allWarnings = [
+    ...warnings,
+    ...(pending === undefined || input.candidateContentHash !== undefined
+      ? []
+      : [PENDING_PROMOTION_WARNING]),
+    ...(withholding.warning === undefined ? [] : [withholding.warning]),
+  ];
   return {
     spec,
-    namedOperations: filtered.exposed,
+    namedOperations: withholding.exposed,
+    withheldOperations: withholding.withheld,
     contentHash: input.contentHash,
     ...(candidateContentHash === undefined ? {} : { candidateContentHash }),
     displaySource: input.displaySource,
@@ -482,6 +496,9 @@ const commitRefresh = async (
       candidateContentHash: written.candidateContentHash,
       displaySource: cached.meta.displaySource,
       cacheStatus: 'candidate',
+      // The candidate was just validated in this run: its own document says
+      // which accepted operations it no longer has
+      candidateOperationKeys: operationKeysOf(processed.document),
     });
   }
   // Nothing to persist when the source is byte-identical to the accepted one
