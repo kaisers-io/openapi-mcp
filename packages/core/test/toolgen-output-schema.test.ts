@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { deriveOutputSchema } from '../src/index.ts';
-import type { OperationRecord } from '../src/index.ts';
+import { compileEnvelopeValidator, deriveOutputSchema } from '../src/index.ts';
+import type { EnvelopeValidator, OperationRecord } from '../src/index.ts';
 
 const op = (responses: Record<string, unknown>): OperationRecord => ({
   method: 'get',
@@ -178,5 +178,82 @@ describe('deriveOutputSchema — the object-envelope', () => {
       '3.1',
     );
     expect(schema).toBeUndefined();
+  });
+});
+
+// #33 / #47: response schemas are converted in RESPONSE mode — validated with
+// the same Ajv2020 path the server uses at runtime.
+describe('deriveOutputSchema — response-mode conversion (#33, #47)', () => {
+  const validatorFor = (schema: Record<string, unknown>): EnvelopeValidator => {
+    const outputSchema = deriveOutputSchema(
+      op({ '200': { content: { 'application/json': { schema } } } }),
+      '3.1',
+    );
+    if (outputSchema === undefined) {
+      throw new Error('expected an outputSchema');
+    }
+    return compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+  };
+  const envelope = (data: unknown) => ({ status: 200, contentType: 'application/json', data });
+
+  it('accepts an undocumented field when additionalProperties is absent', () => {
+    const validate = validatorFor({ type: 'object', properties: { id: { type: 'string' } } });
+    expect(validate(envelope({ id: 'a', created: 1 }))).toBe(true);
+    // Documented constraints still apply.
+    expect(validate(envelope({ id: 1 }))).toBe(false);
+  });
+
+  it('still rejects extra fields when additionalProperties:false is explicit', () => {
+    const validate = validatorFor({
+      type: 'object',
+      additionalProperties: false,
+      properties: { id: { type: 'string' } },
+    });
+    expect(validate(envelope({ id: 'a', created: 1 }))).toBe(false);
+  });
+
+  it('opens nested objects, array items and oneOf/anyOf members alike', () => {
+    const validate = validatorFor({
+      type: 'object',
+      properties: {
+        owner: { type: 'object', properties: { id: { type: 'string' } } },
+        list: { type: 'array', items: { type: 'object', properties: { n: { type: 'integer' } } } },
+        one: { oneOf: [{ type: 'object', properties: { a: { type: 'string' } } }] },
+        any: {
+          anyOf: [
+            { type: 'object', properties: { b: { type: 'string' } }, required: ['b'] },
+            { type: 'string' },
+          ],
+        },
+      },
+    });
+    expect(
+      validate(
+        envelope({
+          owner: { id: 'o', x: 1 },
+          list: [{ n: 1, x: 2 }],
+          one: { a: 'a', x: 3 },
+          any: { b: 'b', x: 4 },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps the envelope itself closed', () => {
+    const validate = validatorFor({ type: 'object', properties: { id: { type: 'string' } } });
+    expect(validate({ ...envelope({ id: 'a' }), extra: true })).toBe(false);
+  });
+
+  it('validates a response that omits a required writeOnly property; readOnly stays required', () => {
+    const validate = validatorFor({
+      type: 'object',
+      required: ['id', 'password'],
+      properties: {
+        id: { type: 'string', readOnly: true },
+        password: { type: 'string', writeOnly: true },
+      },
+    });
+    expect(validate(envelope({ id: 'a' }))).toBe(true);
+    expect(validate(envelope({}))).toBe(false);
   });
 });

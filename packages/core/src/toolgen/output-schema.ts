@@ -106,7 +106,10 @@ export const deriveOutputSchema = (
     if (!isRecord(entry)) {
       return undefined;
     }
-    const converted = convertSchema(entry['schema'] ?? {}, version);
+    // Response mode: undeclared fields stay allowed unless the spec says
+    // `additionalProperties: false`, and writeOnly properties are optional —
+    // see SchemaMode in schema.ts.
+    const converted = convertSchema(entry['schema'] ?? {}, version, 0, 'response');
     if (!('ok' in converted)) {
       return undefined;
     }

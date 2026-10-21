@@ -10,6 +10,26 @@ export const MAX_CONVERT_DEPTH = SPEC_BUDGETS.maxParseDepth;
 
 export type SchemaResult = { ok: z.ZodType } | { unrepresentable: string };
 
+// Which side of the HTTP exchange a schema describes. The same Schema Object
+// is routinely shared between a request body and a response (`User` with a
+// server-assigned `id`), but the two directions need different contracts:
+//   - 'request' — what the MODEL may send. Strict and fail-closed: an object
+//     that declares properties but no `additionalProperties` is CLOSED (the
+//     project's deliberate strict-input choice), and a `readOnly: true`
+//     property is dropped from both the shape and `required` (OAS 3.0.3
+//     §4.7.24.2 "readOnly … SHOULD NOT be sent as part of the request … the
+//     required will take effect on the response only"; JSON Schema
+//     Validation 2020-12 §9.4, which OAS 3.1.1 §4.8.24 adopts).
+//   - 'response' — what the UPSTREAM returns, described by the outputSchema.
+//     An absent `additionalProperties` keeps its JSON Schema meaning (any
+//     extra property allowed; JSON Schema Core 2020-12 §10.3.2.3, OAS 3.0.3
+//     §4.7.24.1 "additionalProperties defaults to true"), so a
+//     provider adding a field does not break the tool; only an EXPLICIT
+//     `additionalProperties: false` closes the object. A `writeOnly: true`
+//     property is never required (it "MAY be sent as part of a request but
+//     SHOULD NOT be sent as part of the response", OAS 3.0.3 §4.7.24.2).
+export type SchemaMode = 'request' | 'response';
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -508,10 +528,38 @@ const mergeAllOf = (
   return { type: 'object', properties, required: [...required] };
 };
 
+// `readOnly`/`writeOnly` are only meaningful on a property's own schema (OAS
+// 3.0.3 §4.7.24.2 "Relevant only for Schema properties definitions"); only an
+// explicit boolean `true` counts.
+const isAccessOnly = (child: unknown, keyword: 'readOnly' | 'writeOnly'): boolean =>
+  isRecord(child) && child[keyword] === true;
+
+// An object that admits undeclared keys (loose/catchall). Zod's object and
+// record parsers SKIP an own `__proto__` key silently (assigning it to the
+// parsed plain object would replace its prototype), so a request value like
+// `{"__proto__": …}` from the model would vanish from the outgoing body
+// without an error. In request mode reject it explicitly instead — the same
+// fail-closed stance DANGEROUS_KEYS takes for spec-declared names. Nested
+// values are `unknown` and pass through untouched as plain JSON data. The
+// guard is a refinement on the raw input, piped into the object schema, so
+// the wire schema (z.toJSONSchema, output side of the pipe) is unchanged.
+// Response schemas are validated by ajv against that wire schema, never by
+// Zod, so the guard is request-only.
+const openObject = (schema: z.ZodType, mode: SchemaMode): z.ZodType =>
+  mode === 'request'
+    ? z
+        .unknown()
+        .refine((value) => !(isRecord(value) && Object.hasOwn(value, '__proto__')), {
+          message: 'the key "__proto__" is not allowed',
+        })
+        .pipe(schema)
+    : schema;
+
 const objectSchema = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   const properties = isRecord(node['properties']) ? node['properties'] : {};
   const required = new Set(
@@ -527,44 +575,75 @@ const objectSchema = (
   // converting every property first and checking afterward would turn this
   // short-circuit into forced recursive conversion work for every property
   // on hostile input, even past the first failure.
+  const droppedReadOnly = new Set<string>();
   for (const [key, child] of Object.entries(properties)) {
     if (isDangerousKey(key)) {
       return { unrepresentable: `a property named "${key}"` };
     }
-    const conv = convertSchema(child, version, depth + 1);
+    // A readOnly property is not part of the request contract at all: drop it
+    // (and, below, its `required` entry) so the model is never asked to invent
+    // a server-assigned value, and a strict object rejects it if sent. It is
+    // not converted either — its schema only matters for the response side,
+    // which converts it in response mode.
+    if (mode === 'request' && isAccessOnly(child, 'readOnly')) {
+      droppedReadOnly.add(key);
+      continue;
+    }
+    const conv = convertSchema(child, version, depth + 1, mode);
     if (!('ok' in conv)) {
       return { unrepresentable: `property "${key}": ${conv.unrepresentable}` };
     }
-    shape[key] = required.has(key) ? conv.ok : conv.ok.optional();
+    // A writeOnly property SHOULD NOT appear in a response, so `required` on it
+    // applies to requests only; in response mode it is optional (still
+    // validated by its schema if a server does echo it).
+    const requiredHere =
+      required.has(key) && !(mode === 'response' && isAccessOnly(child, 'writeOnly'));
+    shape[key] = requiredHere ? conv.ok : conv.ok.optional();
   }
   // A required name with no declared property cannot be enforced (there is no
   // schema for it) — omit rather than silently accept its absence. Object.hasOwn,
   // not `in`, so an inherited name like `toString` is not treated as declared.
   for (const name of required) {
-    if (!Object.hasOwn(shape, name)) {
+    if (!Object.hasOwn(shape, name) && !droppedReadOnly.has(name)) {
       return { unrepresentable: `the required property "${name}" is not declared in properties` };
     }
   }
   const ap = node['additionalProperties'];
-  if (ap === undefined || ap === false) {
+  if (ap === false) {
     return { ok: z.strictObject(shape) };
   }
-  if (ap === true) {
-    return { ok: z.object(shape).loose() };
+  if (ap === undefined) {
+    // Absent additionalProperties means "any extra property allowed" (JSON
+    // Schema Core 2020-12 §10.3.2.3). Responses keep that meaning (#33). A
+    // request object that DECLARES properties stays closed — the strict-input
+    // design — but one that declares none is a free-form object (`metadata`,
+    // `labels`, …; #35): closing it would accept only `{}`, a narrower contract
+    // than the spec states. An empty `properties: {}` declares nothing, the
+    // same rule mergeAllOf/buildTyped apply ("empty properties is not object
+    // evidence"). `droppedReadOnly` counts as declared: an object whose
+    // properties are all readOnly accepts only `{}` in a request.
+    const declaresProperties = Object.keys(properties).length > 0;
+    return mode === 'request' && declaresProperties
+      ? { ok: z.strictObject(shape) }
+      : { ok: openObject(z.object(shape).loose(), mode) };
   }
-  const apConv = convertSchema(ap, version, depth + 1);
+  if (ap === true) {
+    return { ok: openObject(z.object(shape).loose(), mode) };
+  }
+  const apConv = convertSchema(ap, version, depth + 1, mode);
   if (!('ok' in apConv)) {
     return { unrepresentable: `additionalProperties: ${apConv.unrepresentable}` };
   }
-  return { ok: z.object(shape).catchall(apConv.ok) };
+  return { ok: openObject(z.object(shape).catchall(apConv.ok), mode) };
 };
 
 const arraySchema = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
-  const item = convertSchema(node['items'] ?? {}, version, depth + 1);
+  const item = convertSchema(node['items'] ?? {}, version, depth + 1, mode);
   if (!('ok' in item)) {
     return { unrepresentable: `array items: ${item.unrepresentable}` };
   }
@@ -578,6 +657,7 @@ const unionSchema = (
   variants: readonly unknown[],
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   const members: z.ZodType[] = [];
   // Imperative on purpose: any single unrepresentable variant aborts the
@@ -587,7 +667,7 @@ const unionSchema = (
   // checking afterward would turn this short-circuit into forced recursive
   // conversion work for every variant on hostile input.
   for (const variant of variants) {
-    const conv = convertSchema(variant, version, depth + 1);
+    const conv = convertSchema(variant, version, depth + 1, mode);
     if (!('ok' in conv)) {
       return { unrepresentable: `union member: ${conv.unrepresentable}` };
     }
@@ -606,6 +686,7 @@ const convertComposite = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   if (Array.isArray(node['allOf'])) {
     if (node['allOf'].length === 0) {
@@ -627,18 +708,18 @@ const convertComposite = (
     // strictest. The cast is behavior-preserving — the runtime check is unchanged.
     return 'unrepresentable' in merged
       ? (merged as { unrepresentable: string })
-      : objectSchema(merged, depth, version);
+      : objectSchema(merged, depth, version, mode);
   }
   if (Array.isArray(node['oneOf'])) {
-    return unionSchema(node['oneOf'], depth, version);
+    return unionSchema(node['oneOf'], depth, version, mode);
   }
   if (Array.isArray(node['anyOf'])) {
-    return unionSchema(node['anyOf'], depth, version);
+    return unionSchema(node['anyOf'], depth, version, mode);
   }
   if (node['type'] === 'array') {
-    return arraySchema(node, depth, version);
+    return arraySchema(node, depth, version, mode);
   }
-  return objectSchema(node, depth, version);
+  return objectSchema(node, depth, version, mode);
 };
 
 // The scalar/object/array dispatch. A sibling `nullable` wraps THIS result (a
@@ -650,6 +731,7 @@ const buildTyped = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   if (typeValue === 'null') {
     return { ok: z.null() };
@@ -668,14 +750,14 @@ const buildTyped = (
     // even when the source used a `[type,'null']` union (typeValue is the non-null
     // member). Without this, `type:['array','null']` would be misdispatched as an
     // object — accepting `{}`/null and rejecting valid arrays.
-    return convertComposite({ ...node, type: typeValue }, depth, version);
+    return convertComposite({ ...node, type: typeValue }, depth, version, mode);
   }
   if (isRecord(node['properties']) && Object.keys(node['properties']).length > 0) {
     // A typeless node with NON-EMPTY properties is treated as an object (the common
     // authoring intent). An EMPTY `properties: {}` carries no constraint and must
     // not narrow to strictObject({}) — it falls through to the typeless-orphan
     // check below, which omits (properties is an assertion keyword).
-    return convertComposite(node, depth, version);
+    return convertComposite(node, depth, version, mode);
   }
   if (typeValue === undefined) {
     // A typeless node carrying an assertion we cannot attach to a type must not
@@ -736,6 +818,7 @@ const build = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   const normalized = normalizeType(node['type'], version, node['nullable'] === true);
   if ('ok' in normalized || 'unrepresentable' in normalized) {
@@ -761,9 +844,9 @@ const build = (
     if (nullable) {
       return { unrepresentable: 'a nullable composition (allOf/oneOf/anyOf combined with null)' };
     }
-    return convertComposite(node, depth, version);
+    return convertComposite(node, depth, version, mode);
   }
-  const base = buildTyped(typeValue, node, depth, version);
+  const base = buildTyped(typeValue, node, depth, version, mode);
   if (!('ok' in base)) {
     return base;
   }
@@ -774,6 +857,12 @@ export const convertSchema = (
   node: unknown,
   version: OpenapiVersion = '3.1',
   depth = 0,
+  // The direction the converted schema validates. `'request'` (the default:
+  // tool inputs, parameters, request bodies) stays strict and drops readOnly
+  // properties; `'response'` (output schemas) leaves undeclared properties
+  // open and makes writeOnly properties optional. Propagated unchanged to
+  // every nested schema. See SchemaMode.
+  mode: SchemaMode = 'request',
 ): SchemaResult => {
   if (depth > MAX_CONVERT_DEPTH) {
     return { unrepresentable: 'schema nesting exceeds the depth budget' };
@@ -793,7 +882,7 @@ export const convertSchema = (
   if (conflict !== undefined) {
     return { unrepresentable: conflict };
   }
-  const built = build(node, depth, version);
+  const built = build(node, depth, version, mode);
   if (!('ok' in built)) {
     return built;
   }

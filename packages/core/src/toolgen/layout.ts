@@ -253,7 +253,17 @@ const bodyFields = (
     // short-circuit into forced conversion work for every property on
     // hostile input, even past the first failure.
     for (const [prop, child] of Object.entries(properties)) {
-      const converted = convertSchema(child, version, 1);
+      // A readOnly property is response-only (OAS 3.0.3 §4.7.24.2: it "SHOULD
+      // NOT be sent as part of the request", and `required` on it "will take
+      // effect on the response only"). It never becomes a tool input, so the
+      // model is not forced to invent a server-assigned `id`, and the strict
+      // input object rejects it if sent. Mirrors convertSchema's request mode
+      // for nested objects. If every property is readOnly the operation is
+      // kept with no body fields.
+      if (isRecord(child) && child['readOnly'] === true) {
+        continue;
+      }
+      const converted = convertSchema(child, version, 1, 'request');
       if (!('ok' in converted)) {
         return { unrepresentable: `body property "${prop}": ${converted.unrepresentable}` };
       }

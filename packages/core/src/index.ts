@@ -163,6 +163,7 @@ export type {
   LayoutResult,
   NamedOperation,
   RequestMapper,
+  SchemaMode,
   SchemaResult,
   ToolAnnotations,
   WireSchema,

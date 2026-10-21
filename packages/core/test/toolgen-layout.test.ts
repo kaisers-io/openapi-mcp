@@ -395,6 +395,82 @@ describe('buildLayout — body classification', () => {
   });
 });
 
+// #47: request bodies drop readOnly properties (OAS 3.0.3 / 3.1.1 Schema
+// Object: readOnly properties SHOULD NOT be sent in a request, and a
+// `required` readOnly property applies to the response only). #35: a
+// free-form object field accepts arbitrary keys.
+describe('buildLayout — request direction (#35, #47)', () => {
+  const userBody = (required: boolean) =>
+    jsonBody(
+      {
+        type: 'object',
+        required: ['id', 'name'],
+        properties: { id: { type: 'string', readOnly: true }, name: { type: 'string' } },
+      },
+      required,
+    );
+
+  it('drops a required readOnly property from a flattened body', () => {
+    const operation = bodyOp(userBody(true));
+    const l = layout(buildLayout(operation, new Set()));
+    expect(l.mapper.bodyMode).toBe('flattened');
+    expect(Object.keys(l.mapper.fields)).toEqual(['name']);
+    expect(l.inputSchema.safeParse({ name: 'x' }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ id: '1', name: 'x' }).success).toBe(false);
+  });
+
+  it('does not count a dropped readOnly property in the optional-body group', () => {
+    const operation = bodyOp(userBody(false));
+    const l = layout(buildLayout(operation, new Set()));
+    expect(l.inputSchema.safeParse({}).success).toBe(true);
+    expect(l.inputSchema.safeParse({ name: 'x' }).success).toBe(true);
+  });
+
+  it('drops nested readOnly properties inside a single (non-flattened) body', () => {
+    const body = jsonBody(
+      {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['id', 'name'],
+          properties: { id: { type: 'string', readOnly: true }, name: { type: 'string' } },
+        },
+      },
+      true,
+    );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
+    expect(l.mapper.bodyMode).toBe('single');
+    expect(l.inputSchema.safeParse({ body: [{ name: 'x' }] }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ body: [{ id: '1', name: 'x' }] }).success).toBe(false);
+  });
+
+  it('keeps the operation when every body property is readOnly (no body fields)', () => {
+    const body = jsonBody(
+      { type: 'object', properties: { id: { type: 'string', readOnly: true } } },
+      true,
+    );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
+    expect(Object.keys(l.mapper.fields)).toEqual([]);
+    expect(l.inputSchema.safeParse({}).success).toBe(true);
+  });
+
+  it('exposes a flattened free-form property as an object accepting arbitrary keys', () => {
+    const body = jsonBody(
+      {
+        type: 'object',
+        required: ['name'],
+        properties: { name: { type: 'string' }, metadata: { type: 'object' } },
+      },
+      true,
+    );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
+    const parsed = l.inputSchema.safeParse({ name: 'x', metadata: { env: 'prod', n: 1 } });
+    expect(parsed.success).toBe(true);
+    expect((parsed.data as Record<string, unknown>)['metadata']).toEqual({ env: 'prod', n: 1 });
+    expect(l.inputSchema.safeParse({ name: 'x', metadata: 'prod' }).success).toBe(false);
+  });
+});
+
 describe('buildLayout — collisions and optional body', () => {
   it('prefixes colliding names by location', () => {
     const body = jsonBody(
