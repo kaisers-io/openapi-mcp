@@ -39,3 +39,12 @@ const JSON_ESSENCE_RE = /^application\/(?:[\w.+-]+\+)?json$/u;
 export const isJsonEssence = (essence: string): boolean => JSON_ESSENCE_RE.test(essence);
 
 export const FORM_URLENCODED = 'application/x-www-form-urlencoded';
+
+export const OCTET_STREAM = 'application/octet-stream';
+
+// Strict RFC 4648 §4 base64 (standard alphabet, canonical `=` padding, no
+// whitespace or line breaks). A linear, anchored, fixed pattern — not
+// spec-supplied — so there is no ReDoS surface. Used both to validate the
+// tool input and, defensively, again before decoding it.
+const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
+export const isStrictBase64 = (value: string): boolean => BASE64_RE.test(value);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { buildLayout, paramFields } from '../src/index.ts';
 import type { HttpMethod, OperationRecord } from '../src/index.ts';
 
@@ -891,5 +892,66 @@ describe('buildLayout — required body presence (#40)', () => {
 
   it('does not set bodyRequired for an optional body', () => {
     expect(mapperFor(jsonBody(optionalOnly, false)).bodyRequired).toBeUndefined();
+  });
+});
+
+// #71: an application/octet-stream body is exposed as ONE base64 string field
+// (JSON-RPC tool arguments cannot carry raw bytes) and decoded before sending.
+describe('buildLayout — application/octet-stream bodies (#71)', () => {
+  const binaryOp = (content: Record<string, unknown>, required = true) =>
+    buildLayout(bodyOp({ ...(required ? { required: true } : {}), content }), new Set());
+
+  it('exposes a {type:string, format:binary} body as a base64 `body` field', () => {
+    const l = layout(
+      binaryOp({ 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } }),
+    );
+    expect(l.mapper.bodyMode).toBe('single');
+    expect(l.mapper.bodyContentType).toBe('application/octet-stream');
+    expect(l.mapper.fields['body']).toEqual({ destination: 'body', bodyPath: [], required: true });
+    expect(l.inputSchema.safeParse({ body: 'aGVsbG8=' }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ body: '' }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ body: 'not base64!' }).success).toBe(false);
+    expect(l.inputSchema.safeParse({ body: 'aGVsbG8' }).success).toBe(false);
+    expect(l.inputSchema.safeParse({ body: 123 }).success).toBe(false);
+    expect(l.inputSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('advertises the base64 encoding and the media type on the wire', () => {
+    const l = layout(
+      binaryOp({ 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } }),
+    );
+    const wire = z.toJSONSchema(l.inputSchema) as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    expect(wire.properties['body']).toMatchObject({
+      type: 'string',
+      contentEncoding: 'base64',
+      contentMediaType: 'application/octet-stream',
+    });
+  });
+
+  it('accepts a 3.1 octet-stream body with no schema', () => {
+    expect('ok' in binaryOp({ 'application/octet-stream': {} })).toBe(true);
+  });
+
+  it('prefers a JSON body over an octet-stream alternative', () => {
+    const l = layout(
+      binaryOp({
+        'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
+        'application/json': { schema: { type: 'object', properties: { a: { type: 'string' } } } },
+      }),
+    );
+    expect(l.mapper.bodyContentType).toBe('application/json');
+  });
+
+  it.each([
+    ['an object schema', { type: 'object', properties: { a: { type: 'string' } } }],
+    ['format: byte (base64 TEXT, not raw bytes)', { type: 'string', format: 'byte' }],
+    [
+      'an already-encoded 3.1 body (contentEncoding)',
+      { type: 'string', contentEncoding: 'base64' },
+    ],
+  ])('still omits an octet-stream body with %s', (_label, schema) => {
+    expect('unrepresentable' in binaryOp({ 'application/octet-stream': { schema } })).toBe(true);
   });
 });

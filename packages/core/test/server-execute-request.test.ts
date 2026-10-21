@@ -1069,3 +1069,33 @@ describe('buildRequest — required empty body (#40)', () => {
     expect(built.body).toBeUndefined();
   });
 });
+
+// #71: base64 tool input is decoded to the raw request bytes.
+describe('buildRequest — application/octet-stream body (#71)', () => {
+  const mapper: RequestMapper = {
+    bodyMode: 'single',
+    bodyContentType: 'application/octet-stream',
+    bodyRequired: true,
+    fields: { body: { destination: 'body', bodyPath: [], required: true } },
+  };
+
+  it('decodes base64 and sends the raw bytes with the declared content type', () => {
+    const built = ok(buildRequest(mapper, 'post', '/upload', { body: 'AAEC/w==' }, budgets));
+    expect(built.contentType).toBe('application/octet-stream');
+    expect([...(built.body ?? [])]).toEqual([0, 1, 2, 255]);
+  });
+
+  it('fails closed on invalid base64 or a non-string payload', () => {
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: 'a*b=' }, budgets))).toMatch(
+      /base64/u,
+    );
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: { a: 1 } }, budgets))).toMatch(
+      /base64/u,
+    );
+  });
+
+  it('counts the DECODED bytes against the body budget', () => {
+    const big = Buffer.alloc(budgets.maxBodyBytes + 1).toString('base64');
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: big }, budgets))).toMatch(/budget/u);
+  });
+});

@@ -368,6 +368,33 @@ describe('createExecutor — header assembly', () => {
     expect(new TextDecoder().decode(calls[0]?.init.body as Uint8Array)).toBe('{}');
   });
 
+  it('sends decoded raw bytes for an application/octet-stream body (#71)', async () => {
+    const uploadOp: NamedOperation = {
+      toolName: 'uploadFile',
+      operation: {
+        method: 'post',
+        path: '/upload',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([uploadOp]);
+    const tool = snapshot.toolsByName['uploadFile'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { body: 'AAEC/w==' }, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['content-type']).toBe('application/octet-stream');
+    const sent = calls[0]?.init.body as Uint8Array;
+    expect([...sent]).toEqual([0, 1, 2, 255]);
+  });
+
   it('rejects a tool argument whose header name collides with a reserved header (defensive re-check)', async () => {
     const snapshot = buildToolSnapshot([forcedHeaderOp]);
     const tool = snapshot.toolsByName['forcedHeaderThing'] as SnapshotTool;
