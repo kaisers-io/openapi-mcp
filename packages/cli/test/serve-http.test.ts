@@ -539,8 +539,8 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
       lastBody = (await res.json()) as JsonRpcEnvelope;
     }
     expect(lastBody?.result?.isError).toBe(true);
-    expect(lastBody?.result?.content?.[0]?.text).toBe(
-      'rate limit exceeded — too many tool calls; retry later',
+    expect(lastBody?.result?.content?.[0]?.text).toMatch(
+      /^rate limit exceeded — too many tool calls; retry after \d+s$/u,
     );
   }, 40_000);
 

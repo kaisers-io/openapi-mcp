@@ -1,7 +1,7 @@
 import type { RateLimiter } from './rate-limit.ts';
 import type { Redactor } from '../redact.ts';
 import { sanitizeDisplayText, sanitizeSpecText } from '../spec/sanitize.ts';
-import { structuredOutcome, textOutcome } from './result.ts';
+import { retryableErrorOutcome, structuredOutcome, textOutcome } from './result.ts';
 import type { DispatchResult, ToolCallOutcome } from './result.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
 
@@ -37,7 +37,7 @@ export type MetaExecutor = (
 
 export type DispatcherDeps = {
   snapshot: ServerSnapshot;
-  limiter: Pick<RateLimiter, 'consume'>;
+  limiter: Pick<RateLimiter, 'consume' | 'retryAfterMs'>;
   now: () => number;
   executor: ToolExecutor;
   metaExecutor: MetaExecutor;
@@ -238,11 +238,18 @@ export const createDispatcher = (
       // Rate consume BEFORE validation: a known-but-invalid call still spends
       // budget; an unknown tool never does (handled above, before this
       // point).
-      if (!deps.limiter.consume(deps.now())) {
+      const nowMs = deps.now();
+      if (!deps.limiter.consume(nowMs)) {
+        // Actionable: the text says when, and structuredContent carries the
+        // exact wait so a client can schedule the retry instead of guessing.
+        const retryAfterMs = deps.limiter.retryAfterMs(nowMs);
         return {
           kind: 'outcome',
           outcome: finalizeOutcome(
-            textOutcome('rate limit exceeded — too many tool calls; retry later', true),
+            retryableErrorOutcome('rate limit exceeded — too many tool calls', {
+              error: 'rate_limited',
+              retryAfterMs,
+            }),
             deps.redactor,
           ),
         };

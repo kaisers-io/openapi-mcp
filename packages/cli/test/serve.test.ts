@@ -654,3 +654,121 @@ describe('serve — stdio subprocess E2E', () => {
     child = undefined;
   }, 10_000);
 });
+
+// Concurrency and rate limiting end to end: real `serve` subprocess, real
+// pinned transport, a local upstream that answers after 20 ms. MCP hosts
+// issue parallel tool calls routinely; with the old fail-fast semaphore
+// (16 slots, no queue) a burst of 30 parallel calls returned errors for
+// every call past the 16th that arrived while all slots were busy.
+describe('serve — parallel tool calls and configurable limits (stdio subprocess)', () => {
+  let child: ReturnType<typeof spawn> | undefined;
+  let tempHome: string | undefined;
+  let upstream: Server | undefined;
+
+  afterEach(async () => {
+    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        child?.once('exit', () => resolve());
+      });
+      child.kill('SIGKILL');
+      await exited;
+    }
+    child = undefined;
+    if (upstream !== undefined) {
+      const server = upstream;
+      upstream = undefined;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+    if (tempHome !== undefined) {
+      await rm(tempHome, { recursive: true, force: true });
+      tempHome = undefined;
+    }
+  });
+
+  const startSlowUpstream = async (): Promise<number> => {
+    const server = createServer((_req, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify([{ id: 1, name: 'Rex' }]));
+      }, 20);
+    });
+    upstream = server;
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    return (server.address() as AddressInfo).port;
+  };
+
+  const spawnServe = async (port: number, extraArgs: readonly string[]) => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        bin,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        `http://127.0.0.1:${String(port)}`,
+        '--trust-spec-updates',
+        ...extraArgs,
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    return { proc: child, ...collectLines(child) };
+  };
+
+  const resultsById = (lines: readonly string[]): Map<number, JsonRpcMessage> =>
+    new Map(
+      lines
+        .map((line) => JSON.parse(line) as JsonRpcMessage)
+        .filter((message) => message.id !== undefined)
+        .map((message) => [message.id as number, message]),
+    );
+
+  it('30 parallel tools/call requests at default settings all succeed (0 errors)', async () => {
+    const port = await startSlowUpstream();
+    const { proc, stdoutLines } = await spawnServe(port, []);
+    sendModern(proc, 1, 'server/discover');
+    await waitFor(() => stdoutLines.length > 0);
+    for (let id = 100; id < 130; id += 1) {
+      sendModern(proc, id, 'tools/call', { name: 'listPets', arguments: {} });
+    }
+    await waitFor(() => stdoutLines.length >= 31, 8000);
+    const results = resultsById(stdoutLines);
+    const calls = Array.from({ length: 30 }, (_unused, index) => results.get(100 + index));
+    const errors = calls.filter((message) => message?.result?.['isError'] === true);
+    expect(errors).toEqual([]);
+    expect(calls.every((message) => message?.result?.['structuredContent'] !== undefined)).toBe(
+      true,
+    );
+  }, 15_000);
+
+  it('--rate-limit takes effect and the refusal carries an exact retryAfterMs', async () => {
+    const port = await startSlowUpstream();
+    const { proc, stdoutLines } = await spawnServe(port, [
+      '--rate-limit',
+      '2/1m',
+      '--max-concurrency',
+      '1',
+    ]);
+    for (let id = 1; id <= 3; id += 1) {
+      sendModern(proc, id, 'tools/call', { name: 'listPets', arguments: {} });
+    }
+    await waitFor(() => stdoutLines.length >= 3, 8000);
+    const results = resultsById(stdoutLines);
+    expect(results.get(1)?.result?.['isError']).not.toBe(true);
+    expect(results.get(2)?.result?.['isError']).not.toBe(true);
+    const refused = results.get(3)?.result;
+    expect(refused?.['isError']).toBe(true);
+    const structured = refused?.['structuredContent'] as
+      | { error: string; retryAfterMs: number }
+      | undefined;
+    expect(structured?.error).toBe('rate_limited');
+    expect(structured?.retryAfterMs).toBeGreaterThan(55_000);
+    expect(structured?.retryAfterMs).toBeLessThanOrEqual(60_000);
+  }, 15_000);
+});

@@ -2,6 +2,7 @@ import type { Command } from '@commander-js/extra-typings';
 import {
   HEADER_NAME_RE,
   parseByteSize,
+  parseDuration,
   parseHeaderEnvMapping,
   resolveHeaderEnvMappings,
   SYSTEM_HEADERS,
@@ -74,6 +75,15 @@ const MAX_HEADER_AGGREGATE_BYTES = 65_536;
 // worst-case per-call memory rather than reflecting a protocol limit.
 const MAX_RESPONSE_BYTES_CEILING = 104_857_600; // 100 MiB
 
+// Finite ceilings only — there is deliberately no "unlimited" value: the MCP
+// tools spec says servers MUST rate limit, and an unbounded concurrency cap
+// would let one client open unbounded upstream connections. The rate
+// limiter keeps one timestamp per call in its window, so its ceiling bounds
+// memory too.
+const MAX_CONCURRENCY_CEILING = 256;
+const MAX_RATE_LIMIT_CALLS = 100_000;
+const POSITIVE_INT_RE = /^[1-9]\d*$/u;
+
 // Mirrors redact.ts's own (non-exported) MIN_VARIANT_LENGTH: below this
 // length, createRedactor computes no encoding variants for a needle at all,
 // so registering a short static --header value buys no defense-in-depth and
@@ -109,6 +119,11 @@ export type ResolvedApiConfig = {
   secretValues: string[];
   maxResponseBytes: number;
   allowInsecureHttp: boolean;
+  // Upstream calls in flight at once (--max-concurrency); more wait in a
+  // bounded queue.
+  maxConcurrency: number;
+  // Tool calls per sliding window (--rate-limit <calls>/<duration>).
+  rateLimit: { maxCalls: number; windowMs: number };
 };
 
 export type ApiCmdOpts = {
@@ -122,6 +137,8 @@ export type ApiCmdOpts = {
   header: readonly string[];
   maxResponseBytes: string;
   allowInsecureHttp?: boolean;
+  maxConcurrency: string;
+  rateLimit: string;
 };
 
 // The --base-url/--header-env/--header/--max-response-bytes/
@@ -150,7 +167,13 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     .option(
       '--allow-insecure-http',
       'permit an operator credential (--header-env) over cleartext http to a non-loopback origin',
-    );
+    )
+    .option(
+      '--max-concurrency <n>',
+      'upstream calls in flight at once; further calls wait in a bounded queue',
+      '16',
+    )
+    .option('--rate-limit <calls/duration>', 'tool calls allowed per sliding window', '120/1m');
 
 // Shared by both header groups so the name/value size checks are defined
 // once. `secret` only changes the wording, never echoing a secret value.
@@ -314,6 +337,34 @@ const parseMaxResponseBytes = (raw: string): number => {
   return bytes;
 };
 
+const parseMaxConcurrency = (raw: string): number => {
+  const value = Number(raw);
+  if (!POSITIVE_INT_RE.test(raw) || value > MAX_CONCURRENCY_CEILING) {
+    throw usageError(
+      `invalid --max-concurrency "${raw}" — expected an integer from 1 to ${MAX_CONCURRENCY_CEILING}`,
+    );
+  }
+  return value;
+};
+
+const RATE_LIMIT_HINT = `expected <calls>/<duration>, e.g. "120/1m" or "10/1s" (calls 1 to ${MAX_RATE_LIMIT_CALLS})`;
+
+const parseRateLimit = (raw: string): { maxCalls: number; windowMs: number } => {
+  const separator = raw.indexOf('/');
+  const calls = separator === -1 ? '' : raw.slice(0, separator);
+  const maxCalls = Number(calls);
+  if (!POSITIVE_INT_RE.test(calls) || maxCalls > MAX_RATE_LIMIT_CALLS) {
+    throw usageError(`invalid --rate-limit "${raw}" — ${RATE_LIMIT_HINT}`);
+  }
+  // The duration grammar (and its Node-timer ceiling) is parseDuration's;
+  // its usage error names only the duration, so it is rethrown with the flag.
+  try {
+    return { maxCalls, windowMs: parseDuration(raw.slice(separator + 1)) };
+  } catch {
+    throw usageError(`invalid --rate-limit "${raw}" — ${RATE_LIMIT_HINT}`);
+  }
+};
+
 // Parses and cross-validates every API-request flag into one trusted config.
 // Every failure here is a startup usageError (exit 2), before any network
 // call or credential use.
@@ -346,5 +397,7 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
     secretValues,
     maxResponseBytes,
     allowInsecureHttp: cmdOpts.allowInsecureHttp === true,
+    maxConcurrency: parseMaxConcurrency(cmdOpts.maxConcurrency),
+    rateLimit: parseRateLimit(cmdOpts.rateLimit),
   };
 };

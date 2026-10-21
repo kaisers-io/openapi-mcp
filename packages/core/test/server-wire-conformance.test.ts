@@ -163,7 +163,7 @@ const makeServer = (port: number, snapshot: ServerSnapshot = buildBaseSnapshot()
     version: '9.9.9',
     snapshot,
     dispatcherDeps: {
-      limiter: { consume: () => true },
+      limiter: { consume: () => true, retryAfterMs: () => 0 },
       now: () => Date.now(),
       executor: noopExecutor,
       metaExecutor: createMetaExecutor(),

@@ -65,7 +65,7 @@ const buildTestSnapshot = (): ServerSnapshot => {
   });
 };
 
-const alwaysPermitLimiter = () => ({ consume: () => true });
+const alwaysPermitLimiter = () => ({ consume: () => true, retryAfterMs: () => 0 });
 const noSignal = new AbortController().signal;
 
 // A nested free-form property (OpenAPI `additionalProperties: {type:
@@ -273,7 +273,7 @@ describe('createDispatcher', () => {
     const consume = vi.fn<(nowMs: number) => boolean>(() => true);
     const dispatcher = createDispatcher({
       snapshot: buildTestSnapshot(),
-      limiter: { consume },
+      limiter: { consume, retryAfterMs: () => 0 },
       now: () => 0,
       executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
@@ -288,7 +288,7 @@ describe('createDispatcher', () => {
     const consume = vi.fn<(nowMs: number) => boolean>(() => true);
     const dispatcher = createDispatcher({
       snapshot: buildTestSnapshot(),
-      limiter: { consume },
+      limiter: { consume, retryAfterMs: () => 0 },
       now: () => 0,
       executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
@@ -308,7 +308,7 @@ describe('createDispatcher', () => {
     );
     const dispatcher = createDispatcher({
       snapshot: buildTestSnapshot(),
-      limiter: { consume: () => false },
+      limiter: { consume: () => false, retryAfterMs: () => 1000 },
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
@@ -317,9 +317,37 @@ describe('createDispatcher', () => {
     const result = await dispatcher.call({ name: 'createThing', arguments: {}, signal: noSignal });
     expect(result).toEqual({
       kind: 'outcome',
-      outcome: textOutcome('rate limit exceeded — too many tool calls; retry later', true),
+      outcome: {
+        isError: true,
+        content: [
+          { type: 'text', text: 'rate limit exceeded — too many tool calls; retry after 1s' },
+        ],
+        structuredContent: { error: 'rate_limited', retryAfterMs: 1000 },
+      },
     });
     expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("reports the limiter's exact retryAfterMs, read at the same instant the call was refused", async () => {
+    const retryAfterMs = vi.fn<(nowMs: number) => number>(() => 4200);
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: { consume: () => false, retryAfterMs },
+      now: () => 777,
+      executor: vi.fn<ToolExecutor>(),
+      metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
+    });
+    const result = await dispatcher.call({ name: 'createThing', arguments: {}, signal: noSignal });
+    expect(retryAfterMs).toHaveBeenCalledWith(777);
+    expect(result).toMatchObject({
+      kind: 'outcome',
+      outcome: {
+        isError: true,
+        content: [{ text: 'rate limit exceeded — too many tool calls; retry after 5s' }],
+        structuredContent: { error: 'rate_limited', retryAfterMs: 4200 },
+      },
+    });
   });
 
   it('an invalid partial optional-body call NEVER reaches the executor', async () => {
@@ -610,6 +638,7 @@ describe('createDispatcher', () => {
         consume: () => {
           throw new Error(secret);
         },
+        retryAfterMs: () => 0,
       },
       now: () => 0,
       executor: noopExecutor,

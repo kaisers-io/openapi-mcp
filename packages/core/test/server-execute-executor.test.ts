@@ -449,30 +449,212 @@ describe('createExecutor — cleartext gate', () => {
   });
 });
 
-describe('createExecutor — global concurrency semaphore', () => {
-  it('rejects a second overlapping call once maxConcurrent is reached', async () => {
+describe('createExecutor — global concurrency queue', () => {
+  const pingSetup = () => {
     const snapshot = buildToolSnapshot([pingOp]);
     const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
-    let releaseFirst: (response: Response) => void = () => {};
-    const pending = new Promise<Response>((resolve) => {
-      releaseFirst = resolve;
-    });
-    const fetch: PinnedDeps['fetch'] = () => pending;
-    const deps: ExecutorDeps = {
-      transport: { fetch, resolve: rejectingResolve, timeoutSignal },
+    return { snapshot, tool };
+  };
+
+  // A fake transport whose every response is held until the test releases
+  // it, recording how many requests were in flight at once.
+  const gatedTransport = () => {
+    const gates: ((response: Response) => void)[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    let started = 0;
+    const fetch: PinnedDeps['fetch'] = async () => {
+      started += 1;
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      const { promise, resolve } = Promise.withResolvers<Response>();
+      gates.push(resolve);
+      const response = await promise;
+      inFlight -= 1;
+      return response;
     };
+    return {
+      fetch,
+      peak: () => peak,
+      started: () => started,
+      releaseOne: () => gates.shift()?.(textResponse(200, '')),
+    };
+  };
+
+  const flush = async (): Promise<void> => {
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+  };
+
+  it('queues an overlapping call once maxConcurrent is reached, and runs it when a slot frees', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
     const executor = createExecutor(
       baseConfig({ maxConcurrent: 1, validators: validatorsFor(snapshot) }),
-      deps,
+      { transport: { fetch: gated.fetch, resolve: rejectingResolve, timeoutSignal } },
     );
     const first = executor(tool, {}, freshSignal());
     const second = executor(tool, {}, freshSignal());
-    const secondOutcome = await second;
-    expect(secondOutcome.isError).toBe(true);
-    expect(secondOutcome.content[0]?.text).toMatch(/too many concurrent/u);
-    releaseFirst(textResponse(200, ''));
-    const firstOutcome = await first;
-    expect(firstOutcome.isError).toBe(false);
+    await flush();
+    // The second call waits for the slot instead of failing fast.
+    expect(gated.started()).toBe(1);
+    gated.releaseOne();
+    await expect(first).resolves.toMatchObject({ isError: false });
+    await flush();
+    expect(gated.started()).toBe(2);
+    gated.releaseOne();
+    await expect(second).resolves.toMatchObject({ isError: false });
+  });
+
+  it('runs 10 parallel calls with maxConcurrent 2: all succeed, never more than 2 in flight', async () => {
+    const { snapshot, tool } = pingSetup();
+    let inFlight = 0;
+    let peak = 0;
+    const fetch: PinnedDeps['fetch'] = async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
+      inFlight -= 1;
+      return textResponse(200, '');
+    };
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 2, validators: validatorsFor(snapshot) }),
+      { transport: { fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    const outcomes = await Promise.all(
+      Array.from({ length: 10 }, () => executor(tool, {}, freshSignal())),
+    );
+    expect(outcomes.filter((outcome) => outcome.isError)).toEqual([]);
+    expect(peak).toBe(2);
+  });
+
+  it('serves queued calls in FIFO order', async () => {
+    const snapshot = buildToolSnapshot([idPathOp]);
+    const tool = snapshot.toolsByName['getThing'] as SnapshotTool;
+    const order: string[] = [];
+    const gates: (() => void)[] = [];
+    const fetch: PinnedDeps['fetch'] = async (input) => {
+      order.push(String(input));
+      const { promise, resolve } = Promise.withResolvers<void>();
+      gates.push(resolve);
+      await promise;
+      return jsonResponse(200, { id: 1 });
+    };
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, validators: validatorsFor(snapshot) }),
+      { transport: { fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    const calls = ['a', 'b', 'c', 'd'].map((id) => executor(tool, { id }, freshSignal()));
+    for (let index = 0; index < 4; index += 1) {
+      await flush();
+      gates.shift()?.();
+    }
+    await Promise.all(calls);
+    expect(order.map((url) => url.slice(-1))).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('removes an aborted queued call from the queue: the upstream is never called for it', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, validators: validatorsFor(snapshot) }),
+      { transport: { fetch: gated.fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    const first = executor(tool, {}, freshSignal());
+    const controller = new AbortController();
+    const queued = executor(tool, {}, controller.signal);
+    const third = executor(tool, {}, freshSignal());
+    await flush();
+    controller.abort();
+    const queuedOutcome = await queued;
+    expect(queuedOutcome.isError).toBe(true);
+    expect(queuedOutcome.content[0]?.text).toMatch(/cancelled/u);
+    gated.releaseOne();
+    await first;
+    await flush();
+    gated.releaseOne();
+    await expect(third).resolves.toMatchObject({ isError: false });
+    // Only `first` and `third` ever reached the upstream.
+    expect(gated.started()).toBe(2);
+  });
+
+  it('refuses a call once the queue is full, with an actionable retryAfterMs', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, maxQueued: 1, validators: validatorsFor(snapshot) }),
+      { transport: { fetch: gated.fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    const first = executor(tool, {}, freshSignal());
+    const queued = executor(tool, {}, freshSignal());
+    const overflow = await executor(tool, {}, freshSignal());
+    expect(overflow.isError).toBe(true);
+    expect(overflow.content[0]?.text).toMatch(/already in flight or queued; retry after 1s/u);
+    expect(overflow.structuredContent).toEqual({ error: 'overloaded', retryAfterMs: 1000 });
+    await flush();
+    gated.releaseOne();
+    await first;
+    await flush();
+    gated.releaseOne();
+    await expect(queued).resolves.toMatchObject({ isError: false });
+  });
+
+  it('defaults the queue to 4 x maxConcurrent', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 2, validators: validatorsFor(snapshot) }),
+      { transport: { fetch: gated.fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    // 2 in flight + 8 queued are admitted; the 11th is refused.
+    const admitted = Array.from({ length: 10 }, () => executor(tool, {}, freshSignal()));
+    const refused = await executor(tool, {}, freshSignal());
+    expect(refused.structuredContent).toEqual({ error: 'overloaded', retryAfterMs: 1000 });
+    for (let index = 0; index < 10; index += 1) {
+      await flush();
+      gated.releaseOne();
+    }
+    const outcomes = await Promise.all(admitted);
+    expect(outcomes.every((outcome) => !outcome.isError)).toBe(true);
+  });
+
+  it('bounds the wait by the call timeout: a call still queued at its deadline is refused', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const deadlines: AbortController[] = [];
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, validators: validatorsFor(snapshot) }),
+      {
+        transport: {
+          fetch: gated.fetch,
+          resolve: rejectingResolve,
+          timeoutSignal: () => {
+            const controller = new AbortController();
+            deadlines.push(controller);
+            return controller.signal;
+          },
+        },
+      },
+    );
+    const first = executor(tool, {}, freshSignal());
+    await flush();
+    const deadlinesBeforeQueueing = deadlines.length;
+    const queued = executor(tool, {}, freshSignal());
+    await flush();
+    // Exactly one extra deadline was started — for the WAIT, and only
+    // because this call had to queue.
+    expect(deadlines).toHaveLength(deadlinesBeforeQueueing + 1);
+    deadlines.at(-1)?.abort();
+    const outcome = await queued;
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toMatch(/timed out waiting for a free upstream request slot/u);
+    expect(outcome.structuredContent).toEqual({ error: 'overloaded', retryAfterMs: 1000 });
+    gated.releaseOne();
+    await expect(first).resolves.toMatchObject({ isError: false });
+    expect(gated.started()).toBe(1);
   });
 });
 

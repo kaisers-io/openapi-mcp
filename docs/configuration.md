@@ -57,6 +57,8 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
+| `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
+| `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
@@ -69,6 +71,14 @@ Notes:
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
+- Concurrency and rate limits apply to the whole process (stdio and HTTP alike). A call that
+  finds `--max-concurrency` calls already in flight waits for a slot, first come first served.
+  At most 4 × `--max-concurrency` calls can wait, and each waits no longer than `--timeout`.
+  A call refused because the queue is full or its wait timed out returns a tool error with
+  `structuredContent: { "error": "overloaded", "retryAfterMs": 1000 }`. A call over
+  `--rate-limit` returns `{ "error": "rate_limited", "retryAfterMs": <ms> }`. That value is
+  exact: it is the time until the oldest call in the window expires. Both limits are always
+  finite. There is no "unlimited" setting, because MCP servers must rate-limit tool calls.
 
 Example:
 

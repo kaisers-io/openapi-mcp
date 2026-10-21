@@ -5,13 +5,14 @@ import type { HopHeaders, PinnedDeps, PinnedRequestOptions } from '../../http/pi
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
-import { textOutcome } from '../result.ts';
+import { retryableErrorOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
 import type { SnapshotTool } from '../types.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
 import { mapResponse } from './response.ts';
 import type { EnvelopeValidator } from './response.ts';
+import { createSlotQueue } from './slots.ts';
 
 // The integration point wiring request-building, the pinned transport,
 // response-mapping, redaction, and a global outbound-concurrency semaphore
@@ -38,6 +39,9 @@ export type ExecutorConfig = {
   outboundBudgets: OutboundBudgets;
   // Global outbound-concurrency cap (default 16).
   maxConcurrent: number;
+  // Calls allowed to WAIT for a slot once maxConcurrent are in flight
+  // (default 4 x maxConcurrent); a call beyond that is refused at once.
+  maxQueued?: number;
   // By tool name; compiled eagerly once at server startup — this module only
   // looks the map up per call.
   validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
@@ -59,6 +63,16 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 // library-internal message never meant for a tool-call response.
 const isError = (message: string): ToolCallOutcome =>
   textOutcome(`tool execution failed: ${message}`, true);
+
+// An overloaded executor cannot know when a slot frees up (that depends on
+// upstream latency), so the refusal suggests a short, fixed back-off.
+export const OVERLOADED_RETRY_AFTER_MS = 1000;
+
+const overloaded = (message: string): ToolCallOutcome =>
+  retryableErrorOutcome(`tool execution failed: ${message}`, {
+    error: 'overloaded',
+    retryAfterMs: OVERLOADED_RETRY_AFTER_MS,
+  });
 
 // URL.hostname keeps brackets around an IPv6 literal; strip them before
 // classifying (mirrors egress.ts's/pinned-dispatcher.ts's own hostnameOf).
@@ -296,14 +310,12 @@ const runUpstreamCall = async (
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {
-  // A closure counter, NOT a module-level singleton: the caller constructs
-  // exactly one createExecutor and shares it between the stdio and HTTP
-  // transports, so this one counter bounds concurrency across BOTH.
-  // Imperative on purpose: `inFlight` is genuinely mutable shared state (a
-  // semaphore) — incremented before the guarded call and decremented in
-  // `finally` regardless of success, failure, or abort. The acquire/release
-  // pair must stay a plain mutable counter, not a derived pure value.
-  let inFlight = 0;
+  // A closure-owned admission queue, NOT a module-level singleton: the
+  // caller constructs exactly one createExecutor and shares it between the
+  // stdio and HTTP transports, so this one queue bounds concurrency across
+  // BOTH. Calls past maxConcurrent wait in FIFO order (bounded by maxQueued
+  // and by the call timeout) instead of failing straight away.
+  const slots = createSlotQueue(config.maxConcurrent, config.maxQueued ?? 4 * config.maxConcurrent);
   // Long-lived pinned Agents, pooled per (origin, trust policy) for the
   // executor's lifetime, so consecutive calls reuse upstream connections.
   // Per-Agent connections are capped at the same global concurrency limit
@@ -317,10 +329,16 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
   });
   const transport: PinnedDeps = { ...deps.transport, agents };
   const execute: ToolExecutor = async (tool, args, signal) => {
-    if (inFlight >= config.maxConcurrent) {
-      return isError('too many concurrent upstream requests are already in flight');
+    const slot = await slots.acquire(signal, () => deps.transport.timeoutSignal(config.timeoutMs));
+    if (slot === 'cancelled') {
+      return isError('the request was cancelled');
     }
-    inFlight += 1;
+    if (slot === 'overloaded') {
+      return overloaded('too many upstream requests are already in flight or queued');
+    }
+    if (slot === 'timeout') {
+      return overloaded('timed out waiting for a free upstream request slot');
+    }
     try {
       return await runUpstreamCall(config, transport, tool, args, signal);
     } catch {
@@ -329,7 +347,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
       // reflected secret) escape its own boundary either.
       return isError('an unexpected error occurred');
     } finally {
-      inFlight -= 1;
+      slots.release();
     }
   };
   return Object.assign(execute, { close: agents.close });

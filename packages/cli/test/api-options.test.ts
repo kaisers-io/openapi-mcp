@@ -408,3 +408,50 @@ describe('resolveApiConfig — startup budgets', () => {
     expectUsageError(() => resolve(args), '');
   });
 });
+
+describe('--max-concurrency and --rate-limit', () => {
+  it('defaults to 16 concurrent upstream calls and 120 calls per minute (unchanged)', () => {
+    const config = resolve([]);
+    expect(config.maxConcurrency).toBe(16);
+    expect(config.rateLimit).toEqual({ maxCalls: 120, windowMs: 60_000 });
+  });
+
+  it('parses explicit values', () => {
+    const config = resolve(['--max-concurrency', '4', '--rate-limit', '10/1s']);
+    expect(config.maxConcurrency).toBe(4);
+    expect(config.rateLimit).toEqual({ maxCalls: 10, windowMs: 1000 });
+    expect(resolve(['--rate-limit', '5000/2h']).rateLimit).toEqual({
+      maxCalls: 5000,
+      windowMs: 7_200_000,
+    });
+  });
+
+  it.each(['0', '-1', '1.5', '', 'abc', '16x', '257', '1e2', ' 4'])(
+    'rejects --max-concurrency %j',
+    (raw) => {
+      expectUsageError(() => resolve(['--max-concurrency', raw]), '--max-concurrency');
+    },
+  );
+
+  it.each([
+    '0/1m',
+    '-1/1m',
+    '1.5/1m',
+    '/1m',
+    '10',
+    '10/',
+    '10/0s',
+    '10/1.5s',
+    '10/1w',
+    '100001/1m',
+    '10/30d',
+    'x/1m',
+  ])('rejects --rate-limit %j', (raw) => {
+    expectUsageError(() => resolve(['--rate-limit', raw]), '--rate-limit');
+  });
+
+  it('rejects a missing value', () => {
+    expect(() => parseApiCmdOpts(['--max-concurrency'])).toThrow(/argument missing/u);
+    expect(() => parseApiCmdOpts(['--rate-limit'])).toThrow(/argument missing/u);
+  });
+});

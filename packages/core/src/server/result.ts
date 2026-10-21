@@ -22,6 +22,31 @@ export const structuredOutcome = (
   structuredContent,
 });
 
+// A machine-readable refusal a client (or the model) can act on: `error` is
+// a small closed code and `retryAfterMs` says when a retry can succeed. Only
+// ever used for LOCAL admission refusals (rate limit, overload) — values
+// this server computes itself, never upstream-derived text.
+export type RetryableError = {
+  error: 'rate_limited' | 'overloaded';
+  retryAfterMs: number;
+};
+
+// The text appends "; retry after <n>s" in whole seconds, never "0s": a
+// sub-second wait still reads as "1s" (the exact value is in retryAfterMs).
+export const retryableErrorOutcome = (
+  message: string,
+  detail: RetryableError,
+): ToolCallOutcome => ({
+  isError: true,
+  content: [
+    {
+      type: 'text',
+      text: `${message}; retry after ${Math.max(1, Math.ceil(detail.retryAfterMs / 1000))}s`,
+    },
+  ],
+  structuredContent: { ...detail },
+});
+
 // The lookup step's own outcome: an unknown tool name is a PROTOCOL error
 // (InvalidParams — the tool NAME is what's invalid, not the tools/call
 // METHOD, which exists and dispatched fine), never a ToolCallOutcome — the
