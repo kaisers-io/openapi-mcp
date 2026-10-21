@@ -282,6 +282,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       const built = buildTools(result.namedOperations, {
         reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
         openapiVersion: result.spec.openapiVersion,
+        defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
       });
       const snapshot = buildSnapshot(built, result);
 

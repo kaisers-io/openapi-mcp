@@ -9,5 +9,5 @@ export type { BuildToolsResult, GeneratedTool, WireSchema } from './build.ts';
 export { deriveAnnotations } from './annotations.ts';
 export type { ToolAnnotations } from './annotations.ts';
 export { composeDescription } from './description.ts';
-export { deriveOutputSchema } from './output-schema.ts';
-export type { JsonSchemaRecord } from './output-schema.ts';
+export { DEFAULT_RESPONSE_IS_ERROR_FLAG, deriveOutputSchema } from './output-schema.ts';
+export type { JsonSchemaRecord, OutputSchemaOptions } from './output-schema.ts';

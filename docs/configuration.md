@@ -52,6 +52,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
+| `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
@@ -69,6 +70,13 @@ Notes:
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
+- `--default-response-is-error` is opt-in. Without it, an operation that documents a
+  `default` response gets no output schema, because `default` may cover an undocumented
+  success status. With it, only the explicitly documented `2xx` responses form the output
+  schema; a `2XX` range key still disables it. An undocumented `2xx` at runtime then
+  returns a tool error naming the flag — never non-conforming structured output. `tools`
+  marks the affected tools with `[output schema assumes default = error]` (JSON:
+  `outputSchemaAssumesDefaultIsError: true`).
 
 Example:
 
@@ -112,6 +120,7 @@ API-request or transport flags (no `--base-url`, `--header*`, `--max-response-by
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
+| `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 
 Example:
 

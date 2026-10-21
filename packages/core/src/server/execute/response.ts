@@ -64,6 +64,11 @@ export type MapResponseOptions = {
   envVarHint?: string;
   // Text display cap for the no-outputSchema success path, in bytes.
   maxTextBytes: number;
+  // Set (to the CLI flag name) when this tool's outputSchema exists only
+  // because the operator assumed `default` documents errors (#72): an
+  // undocumented 2xx then names that assumption, so the operator can tell a
+  // spec gap from a server bug.
+  undeclaredSuccessHint?: string;
 };
 
 // Fixed, reason-keyed text — never the PinnedOutcome's own `detail` string,
@@ -324,9 +329,25 @@ const mapSchemaSuccess = (
   outputSchema: Record<string, unknown>,
   validator: EnvelopeValidator,
   redactor: Redactor,
+  undeclaredSuccessHint: string | undefined,
 ): ToolCallOutcome => {
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
+  if (
+    branch === undefined &&
+    undeclaredSuccessHint !== undefined &&
+    !branchesOf(outputSchema).some((candidate) => candidate.status === status)
+  ) {
+    // An undocumented success STATUS under the operator's "default = errors
+    // only" assumption: still fail closed (the declared outputSchema must
+    // never be violated), but say why, naming the flag. The hint is
+    // operator-supplied CLI text, never upstream data.
+    return textOutcome(
+      `upstream response status ${status} is not a documented success status of this operation; ` +
+        `its output schema assumes the spec's "default" response covers errors only (${undeclaredSuccessHint})`,
+      true,
+    );
+  }
   if (branch === undefined) {
     // Same upstream-controlled-essence redaction as mapNoSchemaSuccess's
     // unsupported-media-type message above.
@@ -400,5 +421,6 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
     opts.outputSchema,
     opts.validator,
     opts.redactor,
+    opts.undeclaredSuccessHint,
   );
 };

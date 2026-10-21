@@ -16,7 +16,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 //   - a wildcard/range status key (a literal "2XX") or a "default" response
 //     is documented at all: either MAY cover an undocumented success status
 //     this function has no way to enumerate, so the envelope could describe
-//     less than the tool can actually return;
+//     less than the tool can actually return (the operator may opt out for
+//     `default` only — see OutputSchemaOptions);
 //   - a 2xx response has no `content` at all (e.g. 204): nothing to encode;
 //   - a 2xx response's content map has ANY non-JSON sibling media type
 //     (e.g. both application/json AND text/plain): content negotiation could
@@ -36,11 +37,32 @@ const isJsonContentType = (contentType: string): boolean =>
 const SUCCESS_STATUS_RE = /^2\d\d$/u;
 // A literal OpenAPI 3.1 status-code RANGE key ("2XX"/"2xx"), or the "default"
 // response — either is treated as "might cover a success we cannot bound".
+// With `defaultResponseIsError` (an explicit operator opt-in, #72) the
+// `default` key is assumed to document error statuses only and no longer
+// counts; a "2XX" range key always does — it is a success range by definition.
 const WILDCARD_OR_DEFAULT_SUCCESS_RE = /^2xx$/iu;
-const hasUnboundedSuccess = (responses: Record<string, unknown>): boolean =>
+const hasUnboundedSuccess = (
+  responses: Record<string, unknown>,
+  defaultResponseIsError: boolean,
+): boolean =>
   Object.keys(responses).some(
-    (key) => key === 'default' || WILDCARD_OR_DEFAULT_SUCCESS_RE.test(key),
+    (key) =>
+      (key === 'default' && !defaultResponseIsError) || WILDCARD_OR_DEFAULT_SUCCESS_RE.test(key),
   );
+
+// The CLI flag that sets `defaultResponseIsError`, named in the runtime
+// error for an undocumented 2xx so the operator can find the assumption.
+export const DEFAULT_RESPONSE_IS_ERROR_FLAG = '--default-response-is-error';
+
+export type OutputSchemaOptions = {
+  // Treat an operation's `default` response as covering error statuses only,
+  // so it no longer suppresses the outputSchema. OAS 3.1.1 §4.8.16.1: `default`
+  // is "the documentation of responses other than the ones declared for
+  // specific HTTP response codes" — it MAY cover an undocumented success, which
+  // is why this is opt-in. At runtime such an undocumented 2xx still fails
+  // closed (`isError`), never a nonconforming structuredContent.
+  defaultResponseIsError?: boolean;
+};
 
 // Isolates the one throwing step (z.toJSONSchema) behind an Option-shaped
 // result so the caller never needs a `let` to survive the try/catch.
@@ -57,8 +79,9 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
 export const deriveOutputSchema = (
   operation: OperationRecord,
   version: OpenapiVersion,
+  options: OutputSchemaOptions = {},
 ): JsonSchemaRecord | undefined => {
-  if (hasUnboundedSuccess(operation.responses)) {
+  if (hasUnboundedSuccess(operation.responses, options.defaultResponseIsError === true)) {
     return undefined;
   }
   const successKeys = Object.keys(operation.responses).filter((key) => SUCCESS_STATUS_RE.test(key));

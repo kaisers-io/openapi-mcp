@@ -21,6 +21,11 @@ export type GeneratedTool = {
   description: string;
   annotations: ToolAnnotations;
   outputSchema?: JsonSchemaRecord;
+  // Set when the outputSchema exists ONLY because the operator opted into
+  // `defaultResponseIsError` (the operation documents a `default` response).
+  // Surfaced by `tools`, and used at runtime to name the flag when an
+  // undocumented 2xx arrives.
+  outputSchemaAssumesDefaultIsError?: true;
 };
 
 export type BuildToolsResult = {
@@ -75,6 +80,7 @@ const buildToolEntry = (
   named: NamedOperation,
   reservedHeaders: ReadonlySet<string>,
   openapiVersion: OpenapiVersion,
+  defaultResponseIsError: boolean,
 ): GeneratedTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
   const layout = buildLayout(named.operation, reservedHeaders, openapiVersion);
@@ -91,7 +97,13 @@ const buildToolEntry = (
   }
   const description = composeDescription(named.operation);
   const annotations = deriveAnnotations(named.operation.method);
-  const outputSchema = deriveOutputSchema(named.operation, openapiVersion);
+  const outputSchema = deriveOutputSchema(named.operation, openapiVersion, {
+    defaultResponseIsError,
+  });
+  const assumesDefaultIsError =
+    defaultResponseIsError &&
+    outputSchema !== undefined &&
+    Object.hasOwn(named.operation.responses, 'default');
   return {
     toolName: named.toolName,
     operation: named.operation,
@@ -101,6 +113,7 @@ const buildToolEntry = (
     description,
     annotations,
     ...(outputSchema === undefined ? {} : { outputSchema }),
+    ...(assumesDefaultIsError ? { outputSchemaAssumesDefaultIsError: true as const } : {}),
   };
 };
 
@@ -109,7 +122,12 @@ export const buildTools = (
   // `openapiVersion` is required (no default): the caller threads the spec's
   // version so a 3.0 `nullable: true` is honoured only under 3.0. buildLayout and
   // its convertSchema descendants receive it explicitly.
-  opts: { reservedHeaders: ReadonlySet<string>; openapiVersion: OpenapiVersion },
+  // `defaultResponseIsError`: see OutputSchemaOptions (opt-in, default off).
+  opts: {
+    reservedHeaders: ReadonlySet<string>;
+    openapiVersion: OpenapiVersion;
+    defaultResponseIsError?: boolean;
+  },
 ): BuildToolsResult => {
   // HTTP header names are case-insensitive, and the header drop in paramFields
   // looks up `reservedHeaders.has(name.toLowerCase())`. The caller's set contents
@@ -122,7 +140,12 @@ export const buildTools = (
   // One buildToolEntry call per operation, in namedOperations order — matches
   // the original for-of's iteration (and thus toolName/omission) order exactly.
   const entries = namedOperations.map((named) =>
-    buildToolEntry(named, reservedHeaders, opts.openapiVersion),
+    buildToolEntry(
+      named,
+      reservedHeaders,
+      opts.openapiVersion,
+      opts.defaultResponseIsError === true,
+    ),
   );
   return {
     tools: entries.filter((entry): entry is GeneratedTool => !('reason' in entry)),
