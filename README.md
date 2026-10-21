@@ -246,6 +246,11 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
 
+The token must be exactly 32 bytes from a cryptographically secure random source, encoded as
+padded Base64 (what `openssl rand -base64 32` prints) or unpadded Base64URL; any other shape,
+including hex, is rejected at startup. Exact rules and an openssl-free generator:
+[`docs/security.md`](docs/security.md#http-mode-authentication-and-limits).
+
 Clients must send `Authorization: Bearer <token>`. `--port` defaults to `3044`.
 
 The server speaks MCP revision `2026-07-28` and is stateless: each request is served on its
