@@ -47,10 +47,6 @@ openapi-mcp doctor
 `openapi-mcp doctor` prints CLI/Node versions and the effective cache root — a good first
 check when something looks wrong.
 
-The GitHub repository is currently private, so `npm i -g @kaisers-io/openapi-mcp` and the
-`npx` invocations below only work for accounts with registry/repo access until
-`openapi-mcp` goes public.
-
 ## Quickstart
 
 Preview the tools a spec would generate, without starting a server:
