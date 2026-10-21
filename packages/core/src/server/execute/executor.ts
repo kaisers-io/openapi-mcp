@@ -8,6 +8,7 @@ import type { ToolExecutor } from '../dispatch.ts';
 import { retryableErrorOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
 import type { SnapshotTool } from '../types.ts';
+import { deriveAccept } from './accept.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
 import { mapResponse } from './response.ts';
@@ -130,19 +131,21 @@ const withinBasePath = (finalPath: string, basePath: string): boolean =>
   finalPath.startsWith(basePath.endsWith('/') ? basePath : `${basePath}/`);
 
 // Assembles the two HopHeaders sets pinnedRequest needs: same-origin carries
-// content-type (only when a body is sent) + every operator-configured
-// static/secret header + whatever headers the tool's own arguments mapped to;
-// cross-origin carries only content-type — the minimal safe set for a
+// the derived accept + content-type (only when a body is sent) + every
+// operator-configured static/secret header + whatever headers the tool's own
+// arguments mapped to; cross-origin carries only accept and content-type —
+// the minimal safe set for a
 // redirect that has left the base origin (pinnedRequest itself enforces the
 // monotonic origin-crossing switch; this module only supplies the two sets).
 // Write order fixes precedence on a name collision (later write wins):
-// content-type/tool-arg headers FIRST, then --header, then --header-env
-// LAST — content < tool < --header < --header-env. Unreachable while the
+// accept/content-type/tool-arg headers FIRST, then --header, then
+// --header-env LAST — derived < tool < --header < --header-env. Unreachable while the
 // reserved-name gate in runUpstreamCall holds (a tool argument can never map
 // onto a reserved name), but this ordering makes the fallback correct rather
 // than inverted should that gate ever regress.
 const assembleHeaders = (
   config: ExecutorConfig,
+  accept: string,
   contentType: string | undefined,
   toolHeaders: Readonly<Record<string, string>>,
 ): HopHeaders => {
@@ -153,7 +156,9 @@ const assembleHeaders = (
   // build would create it as an own property and change what goes on the
   // wire. Preserving that exact key semantics matters more here than the
   // functional shape.
-  const sameOriginHeaders: Record<string, string> = {};
+  // Accept is written FIRST, so an operator's --header Accept:... wins; a
+  // tool argument can never reach it (`accept` is a reserved name).
+  const sameOriginHeaders: Record<string, string> = { accept };
   if (contentType !== undefined) {
     sameOriginHeaders['content-type'] = contentType;
   }
@@ -166,8 +171,10 @@ const assembleHeaders = (
   for (const header of config.secretHeaders) {
     sameOriginHeaders[header.name.toLowerCase()] = header.value;
   }
+  // Accept is content negotiation, not a credential: it survives a
+  // cross-origin redirect (as browsers keep it too).
   const crossOriginHeaders: Record<string, string> =
-    contentType === undefined ? {} : { 'content-type': contentType };
+    contentType === undefined ? { accept } : { accept, 'content-type': contentType };
   return { sameOriginHeaders, crossOriginHeaders };
 };
 
@@ -283,7 +290,12 @@ const runUpstreamCall = async (
   if (finalUrl.origin !== base.origin || !withinBasePath(finalUrl.pathname, base.pathname)) {
     return isError('the final request URL escaped the configured base URL');
   }
-  const headers = assembleHeaders(config, built.ok.contentType, built.ok.headers);
+  const headers = assembleHeaders(
+    config,
+    deriveAccept(generated.operation.responses),
+    built.ok.contentType,
+    built.ok.headers,
+  );
   if (overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)) {
     return isError('the final request exceeds the outbound resource budget');
   }

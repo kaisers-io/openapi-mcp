@@ -345,7 +345,9 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         staticHeaders: apiConfig.staticHeaders,
         reservedHeaderNames: apiConfig.reservedHeaderNames,
         redactor,
-        timeoutMs: args.options.timeoutMs,
+        // --request-timeout, NOT the spec fetch's --timeout: raising one for a
+        // slow spec URL must not silently change every API call's deadline.
+        timeoutMs: apiConfig.requestTimeoutMs,
         maxResponseBytes: apiConfig.maxResponseBytes,
         outboundBudgets: {
           maxUrlLength: MAX_URL_LENGTH,

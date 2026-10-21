@@ -124,6 +124,9 @@ export type ResolvedApiConfig = {
   maxConcurrency: number;
   // Tool calls per sliding window (--rate-limit <calls>/<duration>).
   rateLimit: { maxCalls: number; windowMs: number };
+  // Deadline for one upstream API call (--request-timeout), independent of
+  // the spec fetch's --timeout.
+  requestTimeoutMs: number;
 };
 
 export type ApiCmdOpts = {
@@ -139,6 +142,7 @@ export type ApiCmdOpts = {
   allowInsecureHttp?: boolean;
   maxConcurrency: string;
   rateLimit: string;
+  requestTimeout: string;
 };
 
 // The --base-url/--header-env/--header/--max-response-bytes/
@@ -173,7 +177,12 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
       'upstream calls in flight at once; further calls wait in a bounded queue',
       '16',
     )
-    .option('--rate-limit <calls/duration>', 'tool calls allowed per sliding window', '120/1m');
+    .option('--rate-limit <calls/duration>', 'tool calls allowed per sliding window', '120/1m')
+    .option(
+      '--request-timeout <duration>',
+      'deadline for each upstream API request (<int><s|m|h|d>); --timeout covers the spec fetch',
+      '30s',
+    );
 
 // Shared by both header groups so the name/value size checks are defined
 // once. `secret` only changes the wording, never echoing a secret value.
@@ -365,6 +374,14 @@ const parseRateLimit = (raw: string): { maxCalls: number; windowMs: number } => 
   }
 };
 
+const parseRequestTimeout = (raw: string): number => {
+  try {
+    return parseDuration(raw);
+  } catch {
+    throw usageError(`invalid --request-timeout "${raw}" — expected <int><s|m|h|d>, e.g. "30s"`);
+  }
+};
+
 // Parses and cross-validates every API-request flag into one trusted config.
 // Every failure here is a startup usageError (exit 2), before any network
 // call or credential use.
@@ -399,5 +416,6 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
     allowInsecureHttp: cmdOpts.allowInsecureHttp === true,
     maxConcurrency: parseMaxConcurrency(cmdOpts.maxConcurrency),
     rateLimit: parseRateLimit(cmdOpts.rateLimit),
+    requestTimeoutMs: parseRequestTimeout(cmdOpts.requestTimeout),
   };
 };

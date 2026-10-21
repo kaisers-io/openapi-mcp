@@ -337,6 +337,11 @@ export class TooLargeError extends Error {
 
 const isEgressError = (value: unknown): value is EgressError => value instanceof EgressError;
 
+const withoutContentType = (headers: Readonly<Record<string, string>>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'content-type'),
+  );
+
 // Bounds a hostile/cyclical cause chain so classification cannot loop
 // forever. undici wraps a connect-time lookup failure as a generic
 // TypeError("fetch failed") whose `.cause` carries the ORIGINAL EgressError;
@@ -462,10 +467,20 @@ export const pinnedRequest = async (
   // side-effecting hop chain capped at MAX_REDIRECTS.
   let url = initialUrl;
   let crossed = false;
+  // A 303 See Other turns any method into a body-less GET (RFC 9110
+  // §15.4.4); every other redirect keeps the original method.
+  let method = opts.method.toUpperCase();
+  let seeOther = false;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-    // Redirect hops are never trusted — only hop 0 (--base-url) carries the
-    // caller's trust.
-    const trusted = hop === 0 ? opts.baseTrusted : false;
+    // Only the trusted base origin itself carries the caller's trust (from
+    // --base-url): hop 0, and a redirect that stays on exactly that origin
+    // (scheme+host+port) without ever having left it — the same monotonic
+    // rule as the header stripping below. A same-host trailing-slash or
+    // `/v1` -> `/v1/` redirect on a private --base-url therefore works,
+    // while any other origin (and anything after a cross-origin hop) stays
+    // untrusted. The DNS answer for the hop is still validated per socket.
+    const onTrustedOrigin = hop === 0 || (url.origin === originalOrigin && !crossed);
+    const trusted = opts.baseTrusted && onTrustedOrigin;
     const policy: PinnedPolicy = { allowPrivateNetwork: opts.allowPrivateNetwork, trusted };
     // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
     const sync = validateHopUrlSync(url, policy);
@@ -482,12 +497,12 @@ export const pinnedRequest = async (
     // MONOTONIC: once the chain has left the original origin, it never
     // regains credentials, even bouncing back to the original origin later.
     const onOriginalOrigin = url.origin === originalOrigin && !crossed;
-    const headers = onOriginalOrigin
+    const hopHeaders = onOriginalOrigin
       ? opts.headers.sameOriginHeaders
       : opts.headers.crossOriginHeaders;
-    const { method } = opts;
-    const sendBody =
-      hop === 0 && opts.body !== undefined && !GET_HEAD_METHODS.has(method.toUpperCase());
+    // After a 303 the request has no body, so it carries no content-type.
+    const headers = seeOther ? withoutContentType(hopHeaders) : hopHeaders;
+    const sendBody = hop === 0 && opts.body !== undefined && !GET_HEAD_METHODS.has(method);
     // Declared then assigned inside try/catch (not `.catch()`): a fetch
     // rejection must first destroy() the agent and classify the error
     // (cancelled vs timeout vs egress vs network) before this function can
@@ -524,7 +539,15 @@ export const pinnedRequest = async (
     try {
       if (REDIRECT_STATUSES.has(response.status)) {
         await response.body?.cancel().catch(() => {});
-        if (WRITE_METHODS.has(method.toUpperCase())) {
+        // 303 is always safe to follow as a GET: it points at a different
+        // resource describing the outcome (the "created, see here"
+        // pattern), never at a place to resend the write. 301/302/307/308
+        // after a write are still refused — re-sending (307/308) or
+        // silently rewriting (301/302) a write is not this client's call.
+        if (response.status === 303 && method !== 'HEAD') {
+          seeOther ||= method !== 'GET';
+          method = 'GET';
+        } else if (WRITE_METHODS.has(method)) {
           return { kind: 'error', reason: 'redirect-write-method' };
         }
         const location = response.headers.get('location');

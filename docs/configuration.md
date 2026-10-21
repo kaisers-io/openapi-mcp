@@ -14,7 +14,7 @@ only the on-disk spec cache.
 
 Two flag value shapes are used across commands:
 
-- **Duration** (`--timeout`, `--ttl`): `<int><s|m|h|d>` — an integer immediately followed by
+- **Duration** (`--timeout`, `--ttl`, `--request-timeout`): `<int><s|m|h|d>` — an integer immediately followed by
   one unit letter, e.g. `30s`, `5m`, `1h`, `2d`. No other units, no decimals, no spaces.
 - **Size** (`--max-response-bytes`): `<int><B|KB|MB>` or a plain integer byte count, e.g.
   `10MB`, `512KB`, `2048B`, or `2048` (bytes, unit omitted).
@@ -57,6 +57,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
+| `--request-timeout <duration>` | no | deadline for each upstream API request (independent of `--timeout`, which covers the spec fetch) | `30s` |
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
 | `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
@@ -73,7 +74,7 @@ Notes:
   error.
 - Concurrency and rate limits apply to the whole process (stdio and HTTP alike). A call that
   finds `--max-concurrency` calls already in flight waits for a slot, first come first served.
-  At most 4 × `--max-concurrency` calls can wait, and each waits no longer than `--timeout`.
+  At most 4 × `--max-concurrency` calls can wait, and each waits no longer than `--request-timeout`.
   A refused call returns a tool error whose text ends in `retry after <n>s`, and whose result
   `_meta` holds `"openapi-mcp/error"` and `"openapi-mcp/retryAfterMs"`. The error is
   `"overloaded"` with a fixed 1000 ms when the queue is full or the wait timed out. It is

@@ -33,7 +33,12 @@ export type BuildToolsResult = {
 // HTTP client; Cookie/Set-Cookie carry credentials. Lowercased for
 // case-insensitive matching. Callers union additional operator-configured
 // auth-header names into the reservedHeaders set passed to buildTools.
+// `accept` is derived from the operation's declared response media types
+// (an operator may still override it with --header); OpenAPI itself says a
+// header parameter named Accept, Content-Type or Authorization "SHALL be
+// ignored" (OAS 3.1 Parameter Object, `name`).
 export const SYSTEM_HEADERS: ReadonlySet<string> = new Set([
+  'accept',
   'authorization',
   'proxy-authorization',
   'www-authenticate',

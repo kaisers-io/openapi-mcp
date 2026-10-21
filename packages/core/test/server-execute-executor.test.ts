@@ -917,3 +917,74 @@ describe('createExecutor — trust propagation into pinnedRequest', () => {
     expect(opts?.allowPrivateNetwork).toBe(true);
   });
 });
+
+describe('createExecutor — Accept derived from the declared response media types', () => {
+  const negotiatedOp: NamedOperation = {
+    toolName: 'getReport',
+    operation: {
+      method: 'get',
+      path: '/report',
+      tags: [],
+      deprecated: false,
+      parameters: [{ name: 'Accept', in: 'header', required: false, schema: { type: 'string' } }],
+      responses: {
+        '200': {
+          content: {
+            'application/xml': { schema: { type: 'string' } },
+            'application/json; charset=utf-8': { schema: { type: 'object' } },
+          },
+        },
+        '404': { content: { 'application/problem+json': { schema: { type: 'object' } } } },
+      },
+    },
+  };
+
+  const acceptSent = async (
+    op: NamedOperation,
+    overrides: Partial<ExecutorConfig> = {},
+    args: Record<string, unknown> = {},
+  ): Promise<string | undefined> => {
+    const snapshot = buildToolSnapshot([op]);
+    const tool = snapshot.toolsByName[op.toolName] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(
+      baseConfig({ validators: validatorsFor(snapshot), ...overrides }),
+      deps,
+    );
+    await executor(tool, args, freshSignal());
+    return calls[0]?.init.headers?.['accept'];
+  };
+
+  it('asks for the declared JSON type first and other declared types at a lower weight', async () => {
+    expect(await acceptSent(negotiatedOp)).toBe(
+      'application/json, application/xml;q=0.9, */*;q=0.1',
+    );
+  });
+
+  it('asks for the declared JSON type of a plain JSON operation', async () => {
+    expect(await acceptSent(idPathOp, {}, { id: '1' })).toBe('application/json, */*;q=0.1');
+  });
+
+  it('falls back to JSON-first for an operation that declares no success media type', async () => {
+    expect(await acceptSent(pingOp)).toBe('application/json, */*;q=0.1');
+  });
+
+  it('lets an operator --header Accept override the derived value', async () => {
+    expect(
+      await acceptSent(negotiatedOp, {
+        staticHeaders: [{ name: 'Accept', value: 'application/vnd.example+json' }],
+      }),
+    ).toBe('application/vnd.example+json');
+  });
+
+  it("drops a spec 'Accept' header parameter from the tool input (OAS: it SHALL be ignored)", async () => {
+    const snapshot = buildToolSnapshot([negotiatedOp]);
+    const tool = snapshot.toolsByName['getReport'] as SnapshotTool;
+    const { properties } = tool.wireTool.inputSchema as { properties?: Record<string, unknown> };
+    expect(Object.keys(properties ?? {}).map((key) => key.toLowerCase())).not.toContain('accept');
+    // An extra argument named like the header is not mapped onto the wire.
+    expect(await acceptSent(negotiatedOp, {}, { Accept: 'text/html' })).toBe(
+      'application/json, application/xml;q=0.9, */*;q=0.1',
+    );
+  });
+});
