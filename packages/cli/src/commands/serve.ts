@@ -3,7 +3,7 @@ import {
   assertAllowedRedirectTarget,
   buildSnapshot,
   buildTools,
-  compileEnvelopeValidator,
+  createEnvelopeCompiler,
   createExecutor,
   createMetaExecutor,
   createRateLimiter,
@@ -325,7 +325,9 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // startup, so an incompatible schema fails fast rather than on the
       // first matching call. `validators.has` is the executor's fail-closed
       // contract — every upstream tool gets an entry, `undefined` only for a
-      // genuine no-outputSchema tool.
+      // genuine no-outputSchema tool. One compiler context serves the whole
+      // snapshot (issue #42): the meta-schema is compiled once, not per tool.
+      const compileEnvelopeValidator = createEnvelopeCompiler();
       const validatorEntries = snapshot.tools
         .filter((tool) => tool.kind === 'upstream')
         .map((tool) => {

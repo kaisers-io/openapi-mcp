@@ -56,8 +56,16 @@ export type {
   BuiltRequest,
   OutboundBudgets,
 } from './server/execute/request.ts';
-export { compileEnvelopeValidator, mapResponse } from './server/execute/response.ts';
-export type { EnvelopeValidator, MapResponseOptions } from './server/execute/response.ts';
+export {
+  compileEnvelopeValidator,
+  createEnvelopeCompiler,
+  mapResponse,
+} from './server/execute/response.ts';
+export type {
+  EnvelopeCompiler,
+  EnvelopeValidator,
+  MapResponseOptions,
+} from './server/execute/response.ts';
 export { MAX_REDIRECTS, fetchSpec, fetchSpecConditional } from './spec/fetch.ts';
 export type { ConditionalFetchResult, FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
 export { parseSpecText } from './spec/parse.ts';

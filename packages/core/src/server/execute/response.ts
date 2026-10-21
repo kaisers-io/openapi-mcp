@@ -37,21 +37,45 @@ const addFormats = unwrapDefault<(ajv: AjvInstance) => unknown>(addFormatsModule
 
 export type EnvelopeValidator = (envelope: unknown) => boolean;
 
-// Compiles once, eagerly, so an incompatible outputSchema throws AT this
+export type EnvelopeCompiler = (
+  outputSchema: Record<string, unknown> | undefined,
+) => EnvelopeValidator | undefined;
+
+// One compiler context for a whole server snapshot (issue #42). A fresh Ajv
+// instance per tool compiled the draft 2020-12 META-schema again for every
+// tool (Ajv compiles it lazily, the first time an instance validates a schema
+// against it): about 85% of the per-tool cost, 5.9 s for 500 tools. Sharing
+// one instance pays that once.
+//
+// Scoped, not global: the caller creates one per snapshot, so the compiled
+// validators it retains live exactly as long as the server that uses them and
+// two servers never share state. `addUsedSchema: false` keeps compiled
+// schemas out of the instance's id registry, so two tools whose schemas carry
+// the same `$id` cannot collide (Ajv throws on a duplicate id otherwise). The
+// options are otherwise those of the per-tool instance, so validation results
+// are identical.
+//
+// Each call compiles eagerly, so an incompatible outputSchema throws AT the
 // call — i.e. at server startup, never on the first matching tool call.
-// `undefined` in, `undefined` out: a tool with no outputSchema has nothing
-// to validate against.
+// `undefined` in, `undefined` out: a tool with no outputSchema has nothing to
+// validate against.
+export const createEnvelopeCompiler = (): EnvelopeCompiler => {
+  const ajv = new Ajv2020({ strict: false, addUsedSchema: false });
+  addFormats(ajv);
+  return (outputSchema): EnvelopeValidator | undefined => {
+    if (outputSchema === undefined) {
+      return undefined;
+    }
+    const validate = ajv.compile(outputSchema);
+    return (envelope: unknown): boolean => validate(envelope) === true;
+  };
+};
+
+// A single validator with a context of its own. Prefer createEnvelopeCompiler
+// for more than one tool.
 export const compileEnvelopeValidator = (
   outputSchema: Record<string, unknown> | undefined,
-): EnvelopeValidator | undefined => {
-  if (outputSchema === undefined) {
-    return undefined;
-  }
-  const ajv = new Ajv2020({ strict: false });
-  addFormats(ajv);
-  const validate = ajv.compile(outputSchema);
-  return (envelope: unknown): boolean => validate(envelope) === true;
-};
+): EnvelopeValidator | undefined => createEnvelopeCompiler()(outputSchema);
 
 export type MapResponseOptions = {
   outcome: PinnedOutcome;
