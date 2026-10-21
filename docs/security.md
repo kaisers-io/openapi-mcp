@@ -28,12 +28,16 @@ Everything below is a defense *in addition to* that requirement, not a replaceme
   before it is attached.
 - Spec parsing enforces resource budgets before anything is trusted or cached: a bounded spec
   fetch timeout and size, bounded YAML alias/anchor counts, bounded parse and `$ref`
-  expansion depth, a bounded total schema-node count after dereferencing, a capped operation
+  expansion depth, every `$ref` resolvable and document-internal, a capped operation
   count (4096), and a capped single-description length (truncated with a marker past the cap).
   Violating any of these is a hard failure before the spec is written to cache. The number of
   tools actually exposed after `--allow`/`--deny` filtering is capped separately (512) and
   checked on every run, since it depends on the filters rather than on the cached document; a
-  narrow `--allow` can therefore serve a few tools from an API that documents more. External
+  narrow `--allow` can therefore serve a few tools from an API that documents more. Only the
+  exposed operations are dereferenced, each shared `$ref` target once, under two node budgets
+  checked on every run: unique allocated nodes (500,000) and the size of the result read as a
+  tree (10,000,000), so neither shared models nor a "billion laughs" `$ref` graph can make
+  dereferencing or tool generation unbounded. External
   (cross-document) `$ref`s are rejected outright as a spec-level hard failure.
 - A refreshed spec fetched at runtime never silently changes what a model can do: the cache
   keeps a durable accepted baseline plus at most one pending candidate. The only change

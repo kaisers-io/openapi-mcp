@@ -63,7 +63,15 @@ export type { ConditionalFetchResult, FetchSpecDeps, FetchSpecOptions } from './
 export { parseSpecText } from './spec/parse.ts';
 export { validateOpenApiDocument } from './spec/validate.ts';
 export type { OpenapiVersion, ValidatedSpec } from './spec/validate.ts';
-export { dereference } from './spec/dereference.ts';
+export {
+  checkRefs,
+  createDereferencer,
+  createCycleDetector,
+  dereference,
+  MAX_EXPANDED_NODES,
+  resolveShallow,
+} from './spec/dereference.ts';
+export type { Dereferencer, DereferencerOptions } from './spec/dereference.ts';
 export { HTTP_METHODS, normalizeSpec } from './spec/normalize.ts';
 export type {
   HttpMethod,
@@ -97,6 +105,7 @@ export type { CacheLayout, CachePolicy } from './cache/paths.ts';
 export { LOCK_STALE_MS, unlockNamespace, withNamespaceLock } from './cache/lock.ts';
 export {
   CACHE_META_SCHEMA_VERSION,
+  LEGACY_CACHE_META_SCHEMA_VERSION,
   CACHE_TEXT_MAX,
   FETCHED_AT_MAX,
   zCacheMeta,

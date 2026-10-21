@@ -3,11 +3,19 @@ import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  assignToolNames,
+  buildTools,
+  CACHE_META_SCHEMA_VERSION,
+  dereference,
   HTTP_METHODS,
   hashContent,
+  normalizeSpec,
   parseFilterPattern,
+  parseSpecText,
   runSpecPipeline,
   SPEC_BUDGETS,
+  SYSTEM_HEADERS,
+  validateOpenApiDocument,
 } from '../src/index.ts';
 import type { CacheFs, CacheMeta, SpecPipelineDeps } from '../src/index.ts';
 
@@ -1146,5 +1154,306 @@ describe('runSpecPipeline — tool budget after filtering (issue #32)', () => {
       code: 'validation',
       message: expect.stringContaining('512-tool budget') as string,
     });
+  });
+});
+
+describe('runSpecPipeline — filter before dereference, raw-document cache (issue #89)', () => {
+  const specUrl = 'https://api.example.com/layered.json';
+  // Issue #89's generator: `schemas` schemas in `layers` layers, each
+  // referencing `refs` schemas of the next one
+  const layered = (schemas: number, refs: number, pathCount: number, layers: number): string => {
+    const perLayer = Math.ceil(schemas / layers);
+    const components: Record<string, unknown> = {};
+    for (let index = 0; index < schemas; index += 1) {
+      const layer = Math.floor(index / perLayer);
+      const properties: Record<string, unknown> = {
+        id: { type: 'string' },
+        name: { type: 'string', maxLength: 64 },
+        count: { type: 'integer', minimum: 0 },
+      };
+      if (layer < layers - 1) {
+        for (let ref = 0; ref < refs; ref += 1) {
+          const target = Math.min(schemas - 1, (layer + 1) * perLayer + ((index + ref) % perLayer));
+          properties[`rel${ref}`] = { $ref: `#/components/schemas/S${target}` };
+        }
+      }
+      components[`S${index}`] = { type: 'object', required: ['id'], properties };
+    }
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < pathCount; index += 1) {
+      const schema = { $ref: `#/components/schemas/S${index % schemas}` };
+      const ok = { 200: { description: 'ok', content: { 'application/json': { schema } } } };
+      paths[`/r${index}`] = {
+        get: { operationId: `get${index}`, responses: ok },
+        put: {
+          operationId: `put${index}`,
+          requestBody: { content: { 'application/json': { schema } } },
+          responses: ok,
+        },
+      };
+    }
+    return JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'layered', version: '1' },
+      paths,
+      components: { schemas: components },
+    });
+  };
+  const textDeps = (text: string): typeof fileDeps => ({
+    ...fileDeps,
+    fetcher: (() => Promise.resolve(new Response(text))) as unknown as SpecFetcher,
+  });
+
+  it('accepts a spec whose shared nested models used to exceed the node budget', async () => {
+    // 200 x 2 x 8: about 11,000 source nodes; copying every $ref occurrence
+    // went past 500,000 nodes, sharing them stays far below
+    const result = await runSpecPipeline(
+      specUrl,
+      { ...baseOpts, ...allowAll },
+      textDeps(layered(200, 2, 200, 8)),
+    );
+    expect(result.namedOperations).toHaveLength(400);
+  });
+
+  it('dereferences only the exposed operations', async () => {
+    // The getDeep response runs through a 70-deep $ref chain, past the 64-level
+    // depth budget: refused when exposed, irrelevant when filtered out
+    const chain: Record<string, unknown> = {};
+    for (let index = 0; index < 70; index += 1) {
+      chain[`C${index}`] = {
+        type: 'object',
+        properties: { next: { $ref: `#/components/schemas/C${index + 1}` } },
+      };
+    }
+    chain['C70'] = { type: 'string' };
+    const text = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'deep', version: '1' },
+      paths: {
+        '/ok': { get: { operationId: 'getOk', responses: { 200: { description: 'ok' } } } },
+        '/deep': {
+          get: {
+            operationId: 'getDeep',
+            responses: {
+              200: {
+                description: 'ok',
+                content: { 'application/json': { schema: { $ref: '#/components/schemas/C0' } } },
+              },
+            },
+          },
+        },
+      },
+      components: { schemas: chain },
+    });
+    const narrow = await runSpecPipeline(
+      specUrl,
+      { ...baseOpts, allow: [parseFilterPattern('getOk')] },
+      textDeps(text),
+    );
+    expect(narrow.namedOperations.map((named) => named.toolName)).toEqual(['getOk']);
+    await expect(
+      runSpecPipeline(
+        specUrl,
+        { ...baseOpts, allow: [parseFilterPattern('getDeep')] },
+        textDeps(text),
+      ),
+    ).rejects.toMatchObject({ message: expect.stringContaining('maximum depth') as string });
+  });
+
+  it('still refuses a dangling $ref anywhere in the spec before caching it', async () => {
+    const cacheFs = memoryCacheFs();
+    const text = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'dangling', version: '1' },
+      paths: {
+        '/ok': { get: { operationId: 'getOk', responses: { 200: { description: 'ok' } } } },
+        '/bad': {
+          get: {
+            operationId: 'getBad',
+            responses: { 200: { $ref: '#/components/responses/Missing' } },
+          },
+        },
+      },
+    });
+    await expect(
+      runSpecPipeline(
+        specUrl,
+        { ...baseOpts, cacheRoot: '/cache', allow: [parseFilterPattern('getOk')] },
+        { ...textDeps(text), cacheFs },
+      ),
+    ).rejects.toMatchObject({ message: expect.stringContaining('does not resolve') as string });
+    expect(cacheFs.files.size).toBe(0);
+  });
+
+  it('persists the validated source document, not its dereferenced form', async () => {
+    const cacheFs = memoryCacheFs();
+    const text = layered(200, 2, 200, 7);
+    await runSpecPipeline(
+      specUrl,
+      { ...baseOpts, cacheRoot: '/cache', ...allowAll },
+      {
+        ...textDeps(text),
+        cacheFs,
+      },
+    );
+    const meta = metaOf(cacheFs);
+    expect(meta.schemaVersion).toBe(CACHE_META_SCHEMA_VERSION);
+    const stored = [...cacheFs.files.entries()].find(([key]) =>
+      key.includes(meta.acceptedContentHash),
+    )?.[1];
+    // The same JSON the source parses to: $refs and components intact, about
+    // the source's size where the dereferenced form was about 4.5 MB
+    expect(JSON.parse(stored ?? '')).toEqual(JSON.parse(text));
+    expect(stored?.length).toBeLessThan(2 * text.length);
+  });
+
+  it('generates the same tools as dereferencing the whole document first', async () => {
+    for (const name of ['petstore-3.0.json', 'petstore-3.1.yaml']) {
+      const text = await readFile(fixture(name), 'utf8');
+      const validated = validateOpenApiDocument(parseSpecText(text));
+      const reference = normalizeSpec(dereference(validated.document), validated.version);
+      const result = await runSpecPipeline(fixture(name), { ...baseOpts, ...allowAll }, fileDeps);
+      const opts = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: validated.version };
+      const before = buildTools(assignToolNames(reference.operations), opts);
+      const after = buildTools(result.namedOperations, opts);
+      const wire = (built: typeof before): unknown =>
+        built.tools.map((tool) => [
+          tool.toolName,
+          tool.description,
+          tool.wireSchema,
+          tool.outputSchema,
+        ]);
+      expect(JSON.stringify(wire(after))).toBe(JSON.stringify(wire(before)));
+      expect(after.omitted).toEqual(before.omitted);
+      expect(result.spec.omitted).toEqual(reference.omitted);
+    }
+  });
+
+  it('migrates a pre-#89 entry: refetched without validators, rewritten as the source document', async () => {
+    const cacheFs = memoryCacheFs();
+    const text = remoteSpec('Remote');
+    const seen: (string | null)[] = [];
+    const fetcher = ((_url: string | URL | Request, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get('if-none-match'));
+      return Promise.resolve(new Response(text, { headers: { etag: '"v1"' } }));
+    }) as unknown as SpecFetcher;
+    const opts = { ...baseOpts, cacheRoot: '/cache', ...allowAll };
+    await runSpecPipeline(specUrl, opts, { ...fileDeps, fetcher, cacheFs });
+    // Rewrite the entry the way a version 1 build stored it: schemaVersion 1
+    // and the document in its dereferenced form
+    const meta = metaOf(cacheFs);
+    const legacyText = JSON.stringify(dereference(JSON.parse(text) as Record<string, unknown>));
+    const legacyHash = hashContent(legacyText);
+    const objectKey = [...cacheFs.files.keys()].find((key) =>
+      key.includes(meta.acceptedContentHash),
+    )!;
+    cacheFs.files.delete(objectKey);
+    cacheFs.files.set(objectKey.replace(meta.acceptedContentHash, legacyHash), legacyText);
+    cacheFs.files.set(
+      metaPathOf(cacheFs),
+      JSON.stringify({ ...meta, schemaVersion: 1, acceptedContentHash: legacyHash }),
+    );
+    // Inside the TTL: a current-format entry would be served without a fetch
+    const migrated = await runSpecPipeline(
+      specUrl,
+      { ...opts, nowMs: 60_000 },
+      {
+        ...fileDeps,
+        fetcher,
+        cacheFs,
+      },
+    );
+    expect(migrated.cacheStatus).toBe('revalidated');
+    expect(seen).toEqual([null, null]);
+    expect(metaOf(cacheFs).schemaVersion).toBe(CACHE_META_SCHEMA_VERSION);
+    // Now current: the next start inside the TTL is a plain cache hit
+    const hit = await runSpecPipeline(
+      specUrl,
+      { ...opts, nowMs: 120_000 },
+      {
+        ...fileDeps,
+        fetcher,
+        cacheFs,
+      },
+    );
+    expect(hit.cacheStatus).toBe('fresh');
+    expect(seen).toHaveLength(2);
+  });
+
+  it('serves a pre-#89 entry as the last known good baseline when the migration fetch fails', async () => {
+    const cacheFs = memoryCacheFs();
+    const text = remoteSpec('Remote');
+    const opts = { ...baseOpts, cacheRoot: '/cache', ...allowAll };
+    await runSpecPipeline(specUrl, opts, { ...textDeps(text), cacheFs });
+    cacheFs.files.set(
+      metaPathOf(cacheFs),
+      JSON.stringify({ ...metaOf(cacheFs), schemaVersion: 1 }),
+    );
+    const down = {
+      ...fileDeps,
+      cacheFs,
+      fetcher: (() =>
+        Promise.resolve(new Response('down', { status: 503 }))) as unknown as SpecFetcher,
+    };
+    const stale = await runSpecPipeline(specUrl, { ...opts, nowMs: 60_000 }, down);
+    expect(stale.cacheStatus).toBe('stale');
+    expect(stale.namedOperations.map((named) => named.toolName)).toEqual(['listThings']);
+  });
+});
+
+describe('runSpecPipeline — densely cyclic models (issue #89)', () => {
+  it('serves a spec whose cyclic models used to exhaust the node budget, failing closed per schema', async () => {
+    // Ten mutually referencing schemas, like a SaaS model where customer,
+    // subscription and invoice all expand each other
+    const schemas: Record<string, unknown> = {};
+    for (let index = 0; index < 10; index += 1) {
+      const properties: Record<string, unknown> = { id: { type: 'string' } };
+      for (let other = 0; other < 10; other += 1) {
+        properties[`to${other}`] = { $ref: `#/components/schemas/S${other}` };
+      }
+      schemas[`S${index}`] = { type: 'object', properties };
+    }
+    const text = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'cyclic', version: '1' },
+      paths: {
+        '/cyclic': {
+          get: {
+            operationId: 'getCyclic',
+            responses: {
+              200: {
+                description: 'ok',
+                content: { 'application/json': { schema: { $ref: '#/components/schemas/S0' } } },
+              },
+            },
+          },
+        },
+        '/plain': {
+          get: {
+            operationId: 'getPlain',
+            responses: {
+              200: {
+                description: 'ok',
+                content: { 'application/json': { schema: { type: 'string' } } },
+              },
+            },
+          },
+        },
+      },
+      components: { schemas },
+    });
+    const result = await runSpecPipeline('https://api.example.com/cyclic.json', baseOpts, {
+      ...fileDeps,
+      fetcher: (() => Promise.resolve(new Response(text))) as unknown as SpecFetcher,
+    });
+    const built = buildTools(result.namedOperations, {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    // The cyclic response cannot be represented, so that tool has no output
+    // schema — the same verdict a full expansion reaches; the plain one does
+    const byName = new Map(built.tools.map((tool) => [tool.toolName, tool]));
+    expect(byName.get('getCyclic')?.outputSchema).toBeUndefined();
+    expect(byName.get('getPlain')?.outputSchema).toBeDefined();
   });
 });

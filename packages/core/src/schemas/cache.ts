@@ -3,8 +3,17 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 
 // A literal, not a range: an entry written by any other version is unreadable
 // by construction, which surfaces as a corrupt entry rather than a partially
-// understood one
-export const CACHE_META_SCHEMA_VERSION = 1;
+// understood one.
+//
+// Version 2 (issue #89): the persisted spec object is the validated SOURCE
+// document, no longer its dereferenced form. Version 1 entries stay readable
+// (LEGACY_CACHE_META_SCHEMA_VERSION): their dereferenced document is still a
+// valid spec, and the pipeline revalidates a version 1 entry unconditionally
+// so an unchanged source is rewritten in the version 2 form — the approval it
+// records is of the source bytes, which are compared by hash. Anything else
+// stays unreadable.
+export const CACHE_META_SCHEMA_VERSION = 2;
+export const LEGACY_CACHE_META_SCHEMA_VERSION = 1;
 
 // Content hashes are sha256 hex digests produced by the store from the exact
 // persisted bytes
@@ -86,7 +95,10 @@ const zCandidate = z.strictObject({
 // by something this build does not understand, and guessing is the failure
 // mode this schema exists to prevent by failing closed instead.
 export const zCacheMeta: z.ZodType<CacheMeta> = z.strictObject({
-  schemaVersion: z.literal(CACHE_META_SCHEMA_VERSION),
+  schemaVersion: z.union([
+    z.literal(CACHE_META_SCHEMA_VERSION),
+    z.literal(LEGACY_CACHE_META_SCHEMA_VERSION),
+  ]),
   // Always the redacted origin + path form; enforced again on write
   displaySource: z.string().min(1).max(DISPLAY_SOURCE_MAX),
   cacheKey: z.string().regex(CACHE_KEY_RE).optional(),

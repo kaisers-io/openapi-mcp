@@ -5,6 +5,7 @@ import type { CacheLayout } from '../cache/paths.ts';
 import { readCacheEntry, touchRevalidated, writeAccepted, writeCandidate } from '../cache/store.ts';
 import type { CacheEntry } from '../cache/store.ts';
 import { evaluateFreshness } from '../cache/ttl.ts';
+import { CACHE_META_SCHEMA_VERSION } from '../schemas/cache.ts';
 import { usageError, validationError } from '../errors.ts';
 import { applyFilters } from '../filter/engine.ts';
 import type { DeadPattern } from '../filter/engine.ts';
@@ -14,13 +15,13 @@ import type { ResolvedHeader } from '../http/headers.ts';
 import { assignToolNames } from '../toolgen/naming.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
-import { dereference } from './dereference.ts';
+import { checkRefs, createDereferencer } from './dereference.ts';
 import { fetchSpecConditional } from './fetch.ts';
 import type { FetchSpecDeps } from './fetch.ts';
 import { loadSpecFromFile, parseSpecSource } from './load.ts';
 import type { LoadedSpecText } from './load.ts';
 import { normalizeSpec } from './normalize.ts';
-import type { NormalizedSpec } from './normalize.ts';
+import type { NormalizedSpec, OperationRecord } from './normalize.ts';
 import { parseSpecText } from './parse.ts';
 import { validateOpenApiDocument } from './validate.ts';
 import type { OpenapiVersion } from './validate.ts';
@@ -70,6 +71,10 @@ export type SpecPipelineResult = {
   cacheStatus: CacheStatus;
 };
 
+// `spec` is normalized from the NOT yet dereferenced `document` (decision D2,
+// issue #89): its operations carry the raw parameters, request body and
+// responses, $refs included. Only the operations that survive filtering are
+// dereferenced, in finish.
 type ProcessedSpec = {
   spec: NormalizedSpec;
   document: Record<string, unknown>;
@@ -97,33 +102,38 @@ const enforceToolBudget = (exposedCount: number): void => {
   }
 };
 
-// Parse, validate, dereference, normalize, and enforce the raw operation cap.
-// Every cache write happens downstream of this function, so an unvalidated or
-// over-limit spec can never reach the disk.
+// Parse, validate, check every $ref, normalize, and enforce the raw operation
+// cap. Every cache write happens downstream of this function, so an
+// unvalidated, dangling-$ref or over-limit spec can never reach the disk. The
+// validated document itself is what gets cached (decision D1): it is the
+// source's own size, where its dereferenced form was 15-30x larger.
 const processSpecText = (text: string): ProcessedSpec => {
   const parsed = parseSpecText(text);
   const validated = validateOpenApiDocument(parsed);
-  const dereferenced = dereference(validated.document);
-  const spec = normalizeSpec(dereferenced, validated.version);
+  checkRefs(validated.document);
+  const spec = normalizeSpec(validated.document, validated.version);
   enforceOperationBudget(spec);
-  return { spec, document: dereferenced };
+  return { spec, document: validated.document };
 };
 
-// A cached document is already parsed and already dereferenced, so this path
-// skips both. It also does NOT re-validate against the meta-schema: these
+// A cached document is already parsed, so this path skips that. It also does
+// NOT re-validate against the meta-schema: these
 // bytes were validated before they were written and readCacheEntry has
 // already checked their sha256 against meta.acceptedContentHash. The 3.0/3.1
 // discriminator that would otherwise have been the reason to revalidate comes
 // from meta.openapiVersion, which is persisted for exactly this.
+// Entries written before the cache format bump hold the dereferenced document
+// instead of the source one; that is still a valid, $ref-free (up to cycle
+// markers) document and goes through the same path.
 const processCachedDocument = (
   document: Record<string, unknown>,
   openapiVersion: OpenapiVersion,
-): NormalizedSpec => {
+): ProcessedSpec => {
   const spec = normalizeSpec(document, openapiVersion);
   // Re-enforced per run: an entry written under an older, larger limit must
   // not bypass the current one. The exposed-set budget runs in finish.
   enforceOperationBudget(spec);
-  return spec;
+  return { spec, document };
 };
 
 export const runSpecPipeline = async (
@@ -203,14 +213,20 @@ export const runSpecPipeline = async (
 
   // File specs are re-read and hash-compared on every run, so
   // the TTL never short-circuits them; only URL sources take the no-network path.
+  // An entry in the pre-#89 format (its document is the dereferenced form) is
+  // refetched WITHOUT validators, so the server sends the bytes rather than a
+  // 304: unchanged bytes are then rewritten as an accepted entry in the
+  // current format, and changed ones go through the usual candidate gate.
   const decision =
-    cached === undefined || source.kind === 'file'
+    cached === undefined ||
+    source.kind === 'file' ||
+    cached.meta.schemaVersion !== CACHE_META_SCHEMA_VERSION
       ? { kind: 'revalidate' as const }
       : evaluateFreshness(cached.meta, opts.nowMs, opts.ttlMs);
 
   if (cached !== undefined && decision.kind === 'fresh') {
-    const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
-    return finish(spec, opts, warnings, {
+    const processed = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
+    return finish(processed, opts, warnings, {
       contentHash: cached.meta.sourceContentHash,
       displaySource: cached.meta.displaySource,
       cacheStatus: 'fresh',
@@ -306,8 +322,8 @@ export const runSpecPipeline = async (
     warnings.push(
       `spec refresh failed, serving the last known good accepted baseline: ${describeCause(error)}`,
     );
-    const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
-    return finish(spec, opts, warnings, {
+    const processed = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
+    return finish(processed, opts, warnings, {
       contentHash: cached.meta.sourceContentHash,
       displaySource: cached.meta.displaySource,
       cacheStatus: 'stale',
@@ -351,8 +367,8 @@ export const runSpecPipeline = async (
         : { lastModified: notModifiedValidators.lastModified }),
     });
   }
-  const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
-  return finish(spec, opts, warnings, {
+  const processed = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
+  return finish(processed, opts, warnings, {
     contentHash: cached.meta.sourceContentHash,
     displaySource: cached.meta.displaySource,
     cacheStatus: 'revalidated',
@@ -373,12 +389,33 @@ type FinishInput = {
 const PENDING_PROMOTION_WARNING =
   'a refreshed spec is waiting as a candidate; the accepted baseline is being served — run "openapi-mcp cache promote" to accept it';
 
+// Dereferences what an exposed operation hands to tool generation. One
+// dereferencer serves every operation of a run, so a $ref target shared by
+// many operations is expanded once and its output object is shared.
+const materialize = (
+  operation: OperationRecord,
+  dereferencer: ReturnType<typeof createDereferencer>,
+): OperationRecord => {
+  const { requestBody } = operation;
+  return {
+    ...operation,
+    parameters: operation.parameters.map(
+      (parameter) => dereferencer.resolve(parameter) as Record<string, unknown>,
+    ),
+    ...(requestBody === undefined
+      ? {}
+      : { requestBody: dereferencer.resolve(requestBody) as Record<string, unknown> }),
+    responses: dereferencer.resolve(operation.responses) as Record<string, unknown>,
+  };
+};
+
 const finish = (
-  spec: NormalizedSpec,
+  processed: ProcessedSpec,
   opts: SpecPipelineOptions,
   warnings: readonly string[],
   input: FinishInput,
 ): SpecPipelineResult => {
+  const { spec } = processed;
   const named = assignToolNames(spec.operations);
   // One budget for the whole filtering pass
   const filtered = applyFilters(named, opts.allow, opts.deny);
@@ -397,9 +434,16 @@ const finish = (
     pending === undefined || input.candidateContentHash !== undefined
       ? warnings
       : [...warnings, PENDING_PROMOTION_WARNING];
+  // Filter first, then dereference only what is exposed (decision D2): the
+  // node budgets now measure what the model will actually see
+  const dereferencer = createDereferencer(processed.document, { collapseCycles: true });
+  const exposed = filtered.exposed.map((entry) => ({
+    ...entry,
+    operation: materialize(entry.operation, dereferencer),
+  }));
   return {
     spec,
-    namedOperations: filtered.exposed,
+    namedOperations: exposed,
     contentHash: input.contentHash,
     ...(candidateContentHash === undefined ? {} : { candidateContentHash }),
     displaySource: input.displaySource,
@@ -462,8 +506,8 @@ const commitRefresh = async (
     warnings.push(
       'the spec source changed; the refreshed spec is stored as a candidate awaiting "openapi-mcp cache promote"',
     );
-    const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
-    return finish(spec, opts, warnings, {
+    const baseline = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
+    return finish(baseline, opts, warnings, {
       contentHash: cached.meta.sourceContentHash,
       candidateContentHash: written.candidateContentHash,
       displaySource: cached.meta.displaySource,
@@ -473,7 +517,7 @@ const commitRefresh = async (
   // Filtered (and the exposed-set tool budget enforced) BEFORE the accepted
   // write: a run that refuses to serve must not leave a trust-on-first-use
   // baseline behind as a side effect
-  const result = finish(processed.spec, opts, warnings, {
+  const result = finish(processed, opts, warnings, {
     contentHash: refreshed.loaded.contentHash,
     displaySource: refreshed.loaded.displaySource,
     cacheStatus: acceptedCacheStatus(layout, cached, unchanged),

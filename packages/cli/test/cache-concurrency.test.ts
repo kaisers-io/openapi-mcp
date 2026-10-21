@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { EXIT } from '@kaisers-io/openapi-mcp-core';
+import { CACHE_META_SCHEMA_VERSION, EXIT } from '@kaisers-io/openapi-mcp-core';
 import { realContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 
@@ -142,7 +142,7 @@ describe('cross-process cache races and the authenticated bypass (real filesyste
       }
       // Meta.json is the sole commit point: it parses and describes real bytes
       const meta = await readMeta();
-      expect(meta['schemaVersion']).toBe(1);
+      expect(meta['schemaVersion']).toBe(CACHE_META_SCHEMA_VERSION);
       expect(meta['acceptedContentHash']).toMatch(/^[0-9a-f]{64}$/u);
       const dir = await namespaceDir();
       const names = await readdir(dir);
