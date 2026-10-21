@@ -14,6 +14,8 @@ import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import type { CacheFs } from './fs.ts';
 import { tryWithNamespaceLock, withNamespaceLock } from './lock.ts';
+import { STALE_REVISION_REASON, sameRevision, staleRevisionError } from './revision.ts';
+import type { ExpectedRevision } from './revision.ts';
 import {
   CACHE_MAX_PERSISTED_BYTES,
   CACHE_META_MAX_BYTES,
@@ -682,6 +684,8 @@ const writeAcceptedImpl = async (
     cacheKey?: string | undefined;
     etag?: string | undefined;
     lastModified?: string | undefined;
+    // The revision this decision was made against (#34): see revision.ts
+    expected?: ExpectedRevision | undefined;
   },
 ): Promise<{ acceptedContentHash: string }> => {
   // The openapiVersion is DERIVED here, not supplied by the caller: accepting
@@ -715,6 +719,24 @@ const writeAcceptedImpl = async (
     }
     if (existing.kind === 'ok') {
       await assertAcceptedObjectIntact(layout, fs, existing.meta);
+    }
+    const current = existing.kind === 'ok' ? existing.meta : undefined;
+    if (input.expected !== undefined && !sameRevision(input.expected.meta, current)) {
+      // A concurrent writer already committed exactly this outcome (two
+      // first-use loads of the same spec): nothing left to do, and nothing a
+      // second commit could add
+      if (
+        current !== undefined &&
+        current.candidate === undefined &&
+        current.acceptedContentHash === acceptedContentHash &&
+        current.sourceContentHash === input.sourceContentHash
+      ) {
+        return { acceptedContentHash };
+      }
+      // Otherwise this decision (trust-on-first-use, or accept-over-X) was
+      // made against a revision that no longer exists, and committing it
+      // would replace whatever was accepted in the meantime
+      throw staleRevisionError(layout.namespace);
     }
     const verifiedHashes = new Set(
       existing.kind === 'ok' ? [existing.meta.acceptedContentHash] : [],
@@ -759,6 +781,8 @@ const writeCandidateImpl = async (
     fetchedAt: number;
     etag?: string | undefined;
     lastModified?: string | undefined;
+    // The revision this decision was made against (#34): see revision.ts
+    expected?: ExpectedRevision | undefined;
   },
 ): Promise<{ candidateContentHash: string }> => {
   if (input.title.length > CACHE_TEXT_MAX || input.specVersion.length > CACHE_TEXT_MAX) {
@@ -785,6 +809,20 @@ const writeCandidateImpl = async (
     // Meta.json alone is not enough: verify the accepted OBJECT it names is
     // still intact before recording a candidate beside it
     await assertAcceptedObjectIntact(layout, fs, existing.meta);
+    if (input.expected !== undefined && !sameRevision(input.expected.meta, existing.meta)) {
+      // A concurrent run already recorded this very candidate against the
+      // same accepted baseline: the outcome stands, and its newer-or-equal
+      // bookkeeping is kept rather than rewound
+      if (
+        input.expected.meta?.acceptedContentHash === existing.meta.acceptedContentHash &&
+        existing.meta.candidate?.contentHash === candidateContentHash
+      ) {
+        return { candidateContentHash };
+      }
+      // The candidate was diffed against an accepted baseline (or a waiting
+      // candidate) that has since been replaced
+      throw staleRevisionError(layout.namespace);
+    }
     // The accepted half is copied through untouched: a candidate is stored,
     // never activated, so meta.title/specVersion keep describing what is
     // actually served. The validators recorded are the ones returned WITH the
@@ -846,15 +884,39 @@ const touchRevalidatedImpl = async (
   // result says so (with the operator message) and nothing is written. The
   // checks below still run whenever the lock IS obtained, so a corrupt entry
   // still fails closed.
-  opts: { replaceValidators?: boolean; bestEffort?: boolean } = {},
+  //
+  // `expected` (#34): the revision the caller verified and revalidated. If
+  // the accepted object or the waiting candidate changed since, these
+  // validators describe a representation the entry no longer holds, so
+  // nothing is written and the result says why. If only the bookkeeping moved
+  // on (a concurrent run recorded a revalidation at least as recent), the
+  // newer record is kept as it is.
+  opts: {
+    replaceValidators?: boolean;
+    bestEffort?: boolean;
+    expected?: ExpectedRevision | undefined;
+  } = {},
 ): Promise<{ recorded: true } | { recorded: false; reason: string }> => {
-  const touch = async (): Promise<void> => {
+  const touch = async (): Promise<{ recorded: true } | { recorded: false; reason: string }> => {
     const existing = await readMetaFile(layout, fs);
+    if (existing.kind === 'corrupt') {
+      throw corruptEntryError(existing.reason);
+    }
+    const { expected } = opts;
+    if (
+      expected !== undefined &&
+      !sameRevision(expected.meta, existing.kind === 'ok' ? existing.meta : undefined)
+    ) {
+      return {
+        recorded: false,
+        reason: `cache entry ${layout.namespace} was not updated: ${STALE_REVISION_REASON}`,
+      };
+    }
     if (existing.kind === 'miss') {
       throw validationError(`cache entry ${layout.namespace} has no baseline to revalidate`);
     }
-    if (existing.kind === 'corrupt') {
-      throw corruptEntryError(existing.reason);
+    if (expected !== undefined && existing.meta.fetchedAt >= nowMs) {
+      return { recorded: true };
     }
     // Meta.json alone is not enough: a 304 confirms the SOURCE is unchanged,
     // it says nothing about whether the locally persisted bytes are still
@@ -881,13 +943,17 @@ const touchRevalidatedImpl = async (
     };
     await prepareDirs(layout, fs);
     await fs.writeFileAtomic(layout.metaPath, serializeMeta(meta));
+    return { recorded: true };
   };
   if (opts.bestEffort === true) {
     const attempt = await tryWithNamespaceLock(layout, fs, nowMs, touch);
-    return attempt.acquired ? { recorded: true } : { recorded: false, reason: attempt.message };
+    return attempt.acquired ? attempt.value : { recorded: false, reason: attempt.message };
   }
-  await withNamespaceLock(layout, fs, nowMs, touch);
-  return { recorded: true };
+  const result = await withNamespaceLock(layout, fs, nowMs, touch);
+  if (!result.recorded) {
+    throw staleRevisionError(layout.namespace);
+  }
+  return result;
 };
 
 // ---------------------------------------------------------------------------

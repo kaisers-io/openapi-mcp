@@ -355,7 +355,7 @@ export const runSpecPipeline = async (
           ? {}
           : { lastModified: notModifiedValidators.lastModified }),
       },
-      { bestEffort: true },
+      { bestEffort: true, expected: { meta: cached.meta } },
     );
     if (!touched.recorded) {
       warnings.push(lockedBookkeepingWarning(touched.reason));
@@ -470,6 +470,8 @@ const commitRefresh = async (
       // representation the cache no longer had
       ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
       ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
+      // Compare-and-swap (#34): the revision this decision was made against
+      expected: { meta: cached.meta },
     });
     warnings.push(
       'the spec source changed; the refreshed spec is stored as a candidate awaiting "openapi-mcp cache promote"',
@@ -505,7 +507,7 @@ const commitRefresh = async (
         ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
         ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
       },
-      { replaceValidators: true, bestEffort: true },
+      { replaceValidators: true, bestEffort: true, expected: { meta: cached?.meta } },
     );
     if (!touched.recorded) {
       warnings.push(lockedBookkeepingWarning(touched.reason));
@@ -523,6 +525,8 @@ const commitRefresh = async (
       ...(opts.cacheKey === undefined ? {} : { cacheKey: opts.cacheKey }),
       ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
       ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
+      // Compare-and-swap (#34): the revision this decision was made against
+      expected: { meta: cached?.meta },
     });
   }
   const cacheStatus = acceptedCacheStatus(layout, cached, unchanged);
