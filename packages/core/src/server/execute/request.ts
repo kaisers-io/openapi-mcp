@@ -556,10 +556,14 @@ const serializeBody = (
     if ('error' in assembled) {
       return assembled;
     }
-    // An entirely-absent optional body group sends no body at all — the
+    // An entirely-absent OPTIONAL body group sends no body at all — the
     // all-or-nothing refine in buildLayout already guarantees the group is
-    // either fully present or fully absent by the time we get here.
-    if (!assembled.anyPresent) {
+    // either fully present or fully absent by the time we get here. A
+    // REQUIRED body is sent even when every (optional) field is absent: it
+    // falls through with the empty object, so the upstream receives `{}` (or
+    // an empty form body) with its Content-Type rather than no body at all
+    // (#40). Presence comes from the mapper, never from populated fields.
+    if (!assembled.anyPresent && mapper.bodyRequired !== true) {
       return { ok: {} };
     }
     payload = assembled.object;

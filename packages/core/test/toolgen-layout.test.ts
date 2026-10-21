@@ -870,3 +870,26 @@ describe('paramFields — deepObject / spaceDelimited / pipeDelimited (#59)', ()
     ).toBe(true);
   });
 });
+
+// #40: body presence is recorded in the mapper, not inferred from which
+// flattened fields happen to be populated.
+describe('buildLayout — required body presence (#40)', () => {
+  const optionalOnly = { type: 'object', properties: { note: { type: 'string' } } };
+  const mapperFor = (requestBody: Record<string, unknown>) => {
+    const operation = bodyOp(requestBody);
+    return layout(buildLayout(operation, new Set())).mapper;
+  };
+
+  it('records bodyRequired for a required body, in both flattened and single mode', () => {
+    expect(mapperFor(jsonBody(optionalOnly, true))).toMatchObject({
+      bodyMode: 'flattened',
+      bodyRequired: true,
+    });
+    const arrayBody = jsonBody({ type: 'array', items: { type: 'string' } }, true);
+    expect(mapperFor(arrayBody).bodyRequired).toBe(true);
+  });
+
+  it('does not set bodyRequired for an optional body', () => {
+    expect(mapperFor(jsonBody(optionalOnly, false)).bodyRequired).toBeUndefined();
+  });
+});
