@@ -8,6 +8,11 @@
     "perf": "error",
     "style": "error"
   },
+  // Type-aware rules (typescript/no-floating-promises and friends) only run
+  // with type information, which oxlint gets from oxlint-tsgolint. Set here
+  // rather than as a CLI flag so `pnpm lint`, CI and editor integrations all
+  // run the same rule set (issue #85).
+  "options": { "typeAware": true },
   "rules": {
     "capitalized-comments": ["error", "always", { "ignoreConsecutiveComments": true }],
     // Off: object key order follows domain grouping (e.g. a schema's
@@ -157,7 +162,50 @@
     // would deepen the indentation of each loop body for the same control
     // flow. Too broad for file-scoped overrides to stay honest, so the
     // exception stays global.
-    "no-continue": "off"
+    "no-continue": "off",
+    // Async sequencing guards (issue #85). The cache lock must be released
+    // only after run() settles, commitEntry must write objects before
+    // meta.json, and a rejection must reach its catch; a single un-awaited
+    // call breaks that silently and tsc does not report it. Listed
+    // explicitly so they stay on whatever happens to the categories above.
+    "typescript/no-floating-promises": "error",
+    "typescript/no-misused-promises": "error",
+    "typescript/await-thenable": "error",
+    "typescript/require-await": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    // Configured (not the default "in-try-catch"): this option reports only
+    // the cases that change behaviour, i.e. a promise returned without await
+    // from inside try/catch/finally, whose rejection then skips the catch.
+    // The default would also demand removing the deliberate `return await`
+    // outside a try, which keeps the caller's frame in async stack traces.
+    "typescript/return-await": ["error", "error-handling-correctness-only"],
+    // Off for now: type-aware rules outside #85's scope that the categories
+    // above switch on together with the ones above, and that have findings
+    // on main (counts when type-aware linting was enabled). Each needs its
+    // own review of whether the code or the rule should change, so they are
+    // follow-up work, not part of the async guard.
+    "typescript/prefer-readonly-parameter-types": "off", // 700
+    "typescript/no-unsafe-type-assertion": "off", // 353
+    "typescript/no-confusing-void-expression": "off", // 46
+    "typescript/only-throw-error": "off", // 10
+    "typescript/no-misused-spread": "off", // 9
+    "typescript/no-unsafe-member-access": "off", // 8
+    "typescript/dot-notation": "off", // 7
+    "typescript/no-unsafe-call": "off", // 5
+    "typescript/no-unsafe-assignment": "off", // 4
+    "typescript/no-unsafe-argument": "off", // 4
+    "typescript/no-base-to-string": "off", // 4
+    "typescript/no-unnecessary-type-parameters": "off", // 2
+    "typescript/no-unnecessary-boolean-literal-compare": "off", // 2
+    "typescript/switch-exhaustiveness-check": "off", // 1
+    "typescript/strict-boolean-expressions": "off", // 1
+    "typescript/require-array-sort-compare": "off", // 1
+    "typescript/prefer-nullish-coalescing": "off", // 1
+    "typescript/no-unsafe-return": "off", // 1
+    "typescript/no-unnecessary-type-conversion": "off", // 1
+    "typescript/no-unnecessary-template-expression": "off", // 1
+    "typescript/no-deprecated": "off", // 1
+    "typescript/consistent-return": "off" // 1
   },
   "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
   "overrides": [
