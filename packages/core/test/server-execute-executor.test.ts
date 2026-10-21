@@ -1368,3 +1368,188 @@ describe('createExecutor — pagination hints', () => {
     expect(outcome.content.at(-1)?.text).toBe('pagination: {"next":{"org":"acme","page":2}}');
   });
 });
+
+describe('createExecutor — optional retries for retry-safe requests', () => {
+  const idemOp: NamedOperation = {
+    toolName: 'createOrder',
+    operation: {
+      method: 'post',
+      path: '/orders',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' } },
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { sku: { type: 'string' } }, required: ['sku'] },
+          },
+        },
+      },
+      responses: { '201': { description: 'created' } },
+    },
+  };
+  const putOp: NamedOperation = {
+    ...pingOp,
+    toolName: 'putThing',
+    operation: { ...pingOp.operation, method: 'put' },
+  };
+
+  type Step = number | 'reset';
+  // A scripted fake transport plus a fake clock: sleep() advances the clock
+  // instead of waiting, so the backoff schedule is asserted exactly.
+  const scripted = (steps: Step[], headers: Record<string, string> = {}) => {
+    let clock = 0;
+    const sleeps: number[] = [];
+    const calls: FetchCall[] = [];
+    const fetch: PinnedDeps['fetch'] = (input, init) => {
+      calls.push({ url: String(input), init: (init ?? {}) as FetchCall['init'] });
+      const step = steps.shift() ?? 200;
+      if (step === 'reset') {
+        return Promise.reject(new TypeError('fetch failed', { cause: new Error('ECONNRESET') }));
+      }
+      return Promise.resolve(new Response(step === 200 ? 'ok' : 'busy', { status: step, headers }));
+    };
+    const deps: ExecutorDeps = {
+      transport: { fetch, resolve: rejectingResolve, timeoutSignal },
+      retry: {
+        now: () => clock,
+        random: () => 0.5,
+        sleep: (ms, signal) => {
+          sleeps.push(ms);
+          clock += ms;
+          return signal.aborted ? Promise.reject(new Error('aborted')) : Promise.resolve();
+        },
+      },
+    };
+    return { deps, calls, sleeps };
+  };
+
+  const run = (
+    op: NamedOperation,
+    deps: ExecutorDeps,
+    retries: number,
+    args: Record<string, unknown> = {},
+    signal = freshSignal(),
+  ) => {
+    const snapshot = buildToolSnapshot([op]);
+    const tool = snapshot.toolsByName[op.toolName] as SnapshotTool;
+    const executor = createExecutor(
+      baseConfig({ retries, validators: validatorsFor(snapshot) }),
+      deps,
+    );
+    return executor(tool, args, signal);
+  };
+
+  it('GET 503, 503, 200 with --retries 2 succeeds on the third attempt with jittered backoff', async () => {
+    const { deps, calls, sleeps } = scripted([503, 503, 200]);
+    const outcome = await run(pingOp, deps, 2);
+    expect(outcome.isError).toBe(false);
+    expect(calls).toHaveLength(3);
+    // Full jitter with random() = 0.5 over a 250 ms, then 500 ms window.
+    expect(sleeps).toEqual([125, 250]);
+  });
+
+  it('--retries 0 (the default) never retries', async () => {
+    const { deps, calls } = scripted([503, 200]);
+    const outcome = await run(pingOp, deps, 0);
+    expect(outcome.isError).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('gives up after the configured number of retries and returns the last upstream error', async () => {
+    const { deps, calls } = scripted([502, 502, 502, 200]);
+    const outcome = await run(pingOp, deps, 2);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toMatch(/502/u);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('retries a connection error that happened before any response (PUT is idempotent)', async () => {
+    const { deps, calls } = scripted(['reset', 200]);
+    const outcome = await run(putOp, deps, 1);
+    expect(outcome.isError).toBe(false);
+    expect(calls).toHaveLength(2);
+  });
+
+  it.each([400, 401, 403, 404, 409, 500, 501])('never retries a %i', async (status) => {
+    const { deps, calls } = scripted([status, 200]);
+    await run(pingOp, deps, 3);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('never retries a POST without an Idempotency-Key parameter', async () => {
+    const { deps, calls } = scripted([503, 201]);
+    const outcome = await run(createThingOp, deps, 3, { name: 'x' });
+    expect(outcome.isError).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('retries a POST that declares Idempotency-Key, sending ONE generated key on every attempt', async () => {
+    const { deps, calls } = scripted([503, 504, 201]);
+    const outcome = await run(idemOp, deps, 2, { sku: 'a' });
+    expect(outcome.isError).toBe(false);
+    expect(calls).toHaveLength(3);
+    const keys = calls.map((call) => call.init.headers?.['idempotency-key']);
+    expect(keys[0]).toMatch(/^[\da-f-]{36}$/u);
+    expect(new Set(keys).size).toBe(1);
+  });
+
+  it("keeps the caller's own Idempotency-Key on every attempt", async () => {
+    const snapshot = buildToolSnapshot([idemOp]);
+    const field = Object.entries(
+      (snapshot.toolsByName['createOrder'] as SnapshotTool).generated?.mapper.fields ?? {},
+    ).find(([, mapping]) => mapping.destination === 'header')?.[0] as string;
+    const { deps, calls } = scripted([503, 201]);
+    await run(idemOp, deps, 1, { sku: 'a', [field]: 'caller-key-1' });
+    expect(calls.map((call) => call.init.headers?.['idempotency-key'])).toEqual([
+      'caller-key-1',
+      'caller-key-1',
+    ]);
+  });
+
+  it('does not add an Idempotency-Key when retries are off', async () => {
+    const { deps, calls } = scripted([201]);
+    await run(idemOp, deps, 0, { sku: 'a' });
+    expect(calls[0]?.init.headers?.['idempotency-key']).toBeUndefined();
+  });
+
+  it('waits for a 429 Retry-After instead of the jittered delay', async () => {
+    const { deps, sleeps, calls } = scripted([429, 200], { 'retry-after': '1' });
+    const outcome = await run(pingOp, deps, 1);
+    expect(outcome.isError).toBe(false);
+    expect(sleeps).toEqual([1000]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('stops when the next backoff would cross the call deadline, reporting the upstream Retry-After', async () => {
+    // Retry-After 10 s, but the call timeout (baseConfig) is 5 s.
+    const { deps, calls } = scripted([503, 200], { 'retry-after': '10' });
+    const outcome = await run(pingOp, deps, 3);
+    expect(outcome.isError).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(outcome.meta).toEqual({ 'openapi-mcp/upstreamRetryAfterMs': 10_000 });
+  });
+
+  it('returns cancelled, with no further attempt, when the caller aborts during backoff', async () => {
+    const controller = new AbortController();
+    const { deps, calls } = scripted([503, 200]);
+    const sleep = deps.retry?.sleep;
+    const withAbort: ExecutorDeps = {
+      ...deps,
+      retry: {
+        ...deps.retry,
+        sleep: (ms, signal) => {
+          controller.abort();
+          return sleep?.(ms, signal) ?? Promise.resolve();
+        },
+      },
+    };
+    const outcome = await run(pingOp, withAbort, 2, {}, controller.signal);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toMatch(/cancelled/u);
+    expect(calls).toHaveLength(1);
+  });
+});

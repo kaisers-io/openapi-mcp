@@ -358,6 +358,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         // stdio + HTTP because `createExecutor` is constructed exactly ONCE
         // below; up to 4x as many calls may queue for a slot.
         maxConcurrent: apiConfig.maxConcurrency,
+        retries: apiConfig.retries,
         validators,
       };
       // ONE executor instance, shared by the stdio AND HTTP branches below,

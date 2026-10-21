@@ -58,6 +58,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--request-timeout <duration>` | no | deadline for each upstream API request (independent of `--timeout`, which covers the spec fetch) | `30s` |
+| `--retries <n>` | no | retry a transient upstream failure up to `n` times (0–3), only for retry-safe requests (see below) | `0` |
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
 | `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
@@ -101,6 +102,14 @@ Notes:
   maps to `cursor`, `next_page_token` to `page_token`, `nextPageToken` to `pageToken`, and
   Stripe-style `has_more` with the last item's `id` maps to `starting_after`. The hint never
   contains a raw URL.
+- Retries (`--retries`, off by default): a failed upstream call is retried only for
+  `GET`, `HEAD`, `PUT` and `DELETE` requests. A `POST` or `PATCH` is retried only when its
+  operation declares an `Idempotency-Key` header. The server then sends one key, the
+  caller's value or a generated UUID, on every attempt. Only `429`, `502`, `503`, `504`, and
+  connection errors that happen before any response arrived are retried. Backoff is
+  exponential with full jitter (250 ms base, 5 s cap), or the upstream's `Retry-After` when
+  it sends one. Retries stay within `--request-timeout`, the call's concurrency slot and its
+  single rate-limit charge.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly

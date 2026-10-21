@@ -866,7 +866,12 @@ describe('pinnedRequest', () => {
       buildOpts(),
       buildDeps({ fetch: () => Promise.reject(new Error('ECONNREFUSED-ish')) }),
     );
-    expect(outcome).toEqual({ kind: 'error', reason: 'network', detail: 'ECONNREFUSED-ish' });
+    expect(outcome).toEqual({
+      kind: 'error',
+      reason: 'network',
+      detail: 'ECONNREFUSED-ish',
+      beforeResponse: true,
+    });
   });
 
   it('swallows a rejecting agent.close() call in the finally teardown of a normal response', async () => {
@@ -1041,7 +1046,12 @@ describe('pinnedRequest', () => {
       buildOpts(),
       buildDeps({ fetch: () => Promise.reject(new Error('ECONNREFUSED-ish')) }),
     );
-    expect(outcome).toEqual({ kind: 'error', reason: 'network', detail: 'ECONNREFUSED-ish' });
+    expect(outcome).toEqual({
+      kind: 'error',
+      reason: 'network',
+      detail: 'ECONNREFUSED-ish',
+      beforeResponse: true,
+    });
   });
 
   it('classifies a fetch() rejection whose cause is a non-object (not an EgressError chain) as network', async () => {
@@ -1052,7 +1062,12 @@ describe('pinnedRequest', () => {
         fetch: () => Promise.reject(new Error('fetch failed', { cause: 'not an object' })),
       }),
     );
-    expect(outcome).toEqual({ kind: 'error', reason: 'network', detail: 'fetch failed' });
+    expect(outcome).toEqual({
+      kind: 'error',
+      reason: 'network',
+      detail: 'fetch failed',
+      beforeResponse: true,
+    });
   });
 
   it('classifies a fetch() rejection as egress when the branded EgressError is nested inside an aggregated cause.errors array', async () => {
@@ -1087,7 +1102,12 @@ describe('pinnedRequest', () => {
       buildOpts(),
       buildDeps({ fetch: () => Promise.reject(aggregated) }),
     );
-    expect(outcome).toEqual({ kind: 'error', reason: 'egress', detail: 'fetch failed' });
+    expect(outcome).toEqual({
+      kind: 'error',
+      reason: 'egress',
+      detail: 'fetch failed',
+      beforeResponse: true,
+    });
   });
 
   it('allows a private-address hop 0 when baseTrusted is set (the --base-url case)', async () => {
