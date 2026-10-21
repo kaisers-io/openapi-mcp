@@ -201,3 +201,42 @@ describe('buildTools — wire schema + sanitization', () => {
     expect(tool?.outputSchema).toBeDefined();
   });
 });
+
+describe('buildTools — common nullable / allOf idioms are no longer omitted (#41)', () => {
+  it('generates the operation instead of listing it in omitted', () => {
+    const body = (schema: Record<string, unknown>) => ({
+      required: true,
+      content: { 'application/json': { schema } },
+    });
+    const { tools, omitted } = buildTools(
+      [
+        named(
+          'nullableRef',
+          [],
+          body({
+            type: 'object',
+            properties: {
+              parent: {
+                nullable: true,
+                allOf: [{ type: 'object', properties: { id: { type: 'string' } } }],
+              },
+            },
+          }),
+        ),
+        named(
+          'describedRef',
+          [],
+          body({
+            type: 'object',
+            properties: {
+              status: { description: 'status', allOf: [{ type: 'string', enum: ['a', 'b'] }] },
+            },
+          }),
+        ),
+      ],
+      { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.0' },
+    );
+    expect(omitted).toEqual([]);
+    expect(tools.map((tool) => tool.toolName)).toEqual(['nullableRef', 'describedRef']);
+  });
+});
