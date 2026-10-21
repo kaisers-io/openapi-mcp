@@ -12,7 +12,9 @@ import { deriveAccept } from './accept.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
 import { mapResponse } from './response.ts';
-import type { EnvelopeValidator } from './response.ts';
+import type { EnvelopeValidator, PageInput } from './response.ts';
+import { nextPageHint } from '../../toolgen/pagination.ts';
+import type { PaginationPlan } from '../../toolgen/pagination.ts';
 import { createSlotQueue } from './slots.ts';
 
 // The integration point wiring request-building, the pinned transport,
@@ -319,6 +321,16 @@ const runUpstreamCall = async (
     ...(firstSecretHeader === undefined ? {} : { envVarHint: firstSecretHeader.envVar }),
     maxTextBytes: DISPLAY_TEXT_MAX,
     baseUrl: config.baseUrl,
+    ...(generated.pagination === undefined
+      ? {}
+      : {
+          paginate: (page: PageInput) =>
+            nextPageHint(generated.pagination as PaginationPlan, {
+              ...page,
+              requestUrl: finalUrl.href,
+              args: data,
+            }),
+        }),
   });
 };
 

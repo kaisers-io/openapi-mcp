@@ -9,6 +9,8 @@ import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
 import { deriveOutputSchema } from './output-schema.ts';
 import type { JsonSchemaRecord } from './output-schema.ts';
+import { detectPagination } from './pagination.ts';
+import type { PaginationPlan } from './pagination.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
 
@@ -21,6 +23,8 @@ export type GeneratedTool = {
   description: string;
   annotations: ToolAnnotations;
   outputSchema?: JsonSchemaRecord;
+  // Present only for a paginated GET (see toolgen/pagination.ts).
+  pagination?: PaginationPlan;
 };
 
 export type BuildToolsResult = {
@@ -96,7 +100,14 @@ const buildToolEntry = (
   }
   const description = composeDescription(named.operation);
   const annotations = deriveAnnotations(named.operation.method);
-  const outputSchema = deriveOutputSchema(named.operation, openapiVersion);
+  const pagination = detectPagination(
+    named.operation,
+    layout.ok.mapper,
+    wireResult.ok as Record<string, unknown>,
+  );
+  const outputSchema = deriveOutputSchema(named.operation, openapiVersion, {
+    pagination: pagination !== undefined,
+  });
   return {
     toolName: named.toolName,
     operation: named.operation,
@@ -106,6 +117,7 @@ const buildToolEntry = (
     description,
     annotations,
     ...(outputSchema === undefined ? {} : { outputSchema }),
+    ...(pagination === undefined ? {} : { pagination }),
   };
 };
 

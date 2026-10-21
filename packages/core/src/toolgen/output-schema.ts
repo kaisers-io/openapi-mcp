@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import { PAGINATION_SCHEMA } from './pagination.ts';
 import { convertSchema } from './schema.ts';
 
 export type JsonSchemaRecord = Record<string, unknown>;
@@ -62,6 +63,8 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
 export const deriveOutputSchema = (
   operation: OperationRecord,
   version: OpenapiVersion,
+  // A paginated tool's envelope also declares the `pagination` hint.
+  options: { pagination?: boolean } = {},
 ): JsonSchemaRecord | undefined => {
   if (hasUnboundedSuccess(operation.responses)) {
     return undefined;
@@ -130,6 +133,7 @@ export const deriveOutputSchema = (
         // server/execute/forwarded-headers.ts. Optional, so a result
         // without them still conforms.
         headers: RESPONSE_HEADERS_SCHEMA,
+        ...(options.pagination === true ? { pagination: PAGINATION_SCHEMA } : {}),
       },
       required: ['status', 'contentType', 'data'],
       additionalProperties: false,

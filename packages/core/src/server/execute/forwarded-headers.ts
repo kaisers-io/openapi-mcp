@@ -1,6 +1,7 @@
 import { parseRetryAfter } from '../../http/response-headers.ts';
 import type { Redactor } from '../../redact.ts';
 import { sanitizeSpecText } from '../../spec/sanitize.ts';
+import type { PageHint } from '../../toolgen/pagination.ts';
 import type { ToolCallOutcome } from '../result.ts';
 
 // Turns the transport's captured response headers into what a tool result
@@ -99,21 +100,24 @@ export const decorateTextOutcome = (
   outcome: ToolCallOutcome,
   forwarded: Readonly<Record<string, string>>,
   retryAfterMs: number | undefined,
+  // A paginated text result's next-page hint, as its own block.
+  pagination?: PageHint,
 ): ToolCallOutcome => {
   const entries = Object.entries(forwarded);
-  const withHeaders: ToolCallOutcome =
+  const blocks: { type: 'text'; text: string }[] =
     entries.length === 0 || outcome.structuredContent !== undefined
-      ? outcome
-      : {
-          ...outcome,
-          content: [
-            ...outcome.content,
-            {
-              type: 'text',
-              text: `headers:\n${entries.map(([name, value]) => `${name}: ${value}`).join('\n')}`,
-            },
-          ],
-        };
+      ? []
+      : [
+          {
+            type: 'text',
+            text: `headers:\n${entries.map(([name, value]) => `${name}: ${value}`).join('\n')}`,
+          },
+        ];
+  if (pagination !== undefined) {
+    blocks.push({ type: 'text', text: `pagination: ${JSON.stringify(pagination)}` });
+  }
+  const withHeaders: ToolCallOutcome =
+    blocks.length === 0 ? outcome : { ...outcome, content: [...outcome.content, ...blocks] };
   return retryAfterMs === undefined
     ? withHeaders
     : {

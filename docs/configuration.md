@@ -91,6 +91,16 @@ Notes:
   headers are never read. `Link` is not forwarded as a raw URL. A value that contains a
   configured secret is dropped. On a `429` or `503`, a valid `Retry-After` is also reported
   as `_meta["openapi-mcp/upstreamRetryAfterMs"]`.
+- Pagination: a `GET` tool is paginated when it has a query parameter named `cursor`,
+  `page_token`/`pageToken`, `after`, `starting_after`, `page`, `offset`, `limit`, `per_page`
+  or `page_size`/`pageSize`, or when it declares a `Link` response header. For such a tool,
+  each successful result carries `pagination.next`, the arguments for the next call, or
+  `null` when no next page is known. A `Link: <…>; rel="next"` header is used only if it has
+  the same origin and path as the request and all of its query parameters map onto the
+  tool's own query parameters. Otherwise a body cursor is used: `next_cursor`/`nextCursor`
+  maps to `cursor`, `next_page_token` to `page_token`, `nextPageToken` to `pageToken`, and
+  Stripe-style `has_more` with the last item's `id` maps to `starting_after`. The hint never
+  contains a raw URL.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly
