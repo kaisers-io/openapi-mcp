@@ -3,8 +3,10 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   symlink,
@@ -15,6 +17,59 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readExactly, realContext, resolveErrWidth, testContext } from '../src/context.ts';
+
+// The fail-closed error paths of the real cacheFs are reached two ways below:
+// with REAL mode bits (chmod 0o000/0o500, a restrictive umask), and with an
+// INJECTED fs failure. Real mode bits are the honest end-to-end check, but a
+// process holding CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH — uid 0 in a Docker
+// CI image or devcontainer — bypasses them, so those cases cannot assert
+// EACCES there. The injected variants exercise the same branches on every
+// uid, so the coverage survives a root run. `spy: true` keeps every export
+// the real implementation, only wrapped in a spy, so each call reaches the
+// real filesystem unless a test queues a failure.
+vi.mock(import('node:fs/promises'), { spy: true });
+
+// Whether THIS process is denied `op` by a directory's mode bits. Probed
+// behaviourally rather than by `process.getuid() === 0`: what bypasses mode
+// bits is a capability, not the uid (probed: uid 0 with CAP_DAC_OVERRIDE and
+// CAP_DAC_READ_SEARCH dropped via setpriv still gets EACCES; conversely a
+// non-root process holding them bypasses mode bits), and the two capabilities
+// cover different operations, so each probe mirrors the exact operation its
+// tests rely on.
+const deniedByModeBits = async (
+  dirMode: number,
+  op: (dir: string) => Promise<unknown>,
+): Promise<boolean> => {
+  const probe = await mkdtemp(join(tmpdir(), 'openapi-mcp-modebits-'));
+  try {
+    await writeFile(join(probe, 'file'), '');
+    await chmod(probe, dirMode);
+    await op(probe);
+    return false;
+  } catch (error) {
+    if (error !== null && typeof error === 'object' && 'code' in error && error.code === 'EACCES') {
+      return true;
+    }
+    throw error;
+  } finally {
+    await chmod(probe, 0o700);
+    await rm(probe, { recursive: true, force: true });
+  }
+};
+// Search through a 0o000 directory (bypassed by either capability)
+const searchDenied = await deniedByModeBits(0o000, (dir) => stat(join(dir, 'file')));
+// Create inside a 0o500 directory (bypassed only by CAP_DAC_OVERRIDE)
+const writeDenied = await deniedByModeBits(0o500, (dir) => mkdir(join(dir, 'sub')));
+// Appended to the name of each real-mode-bit test so a skip says why in the
+// reporter output, not only in this file
+const REAL_MODE_BITS = '[real mode bits; skipped when this process bypasses them, e.g. root]';
+
+const injectedFsError = (code: string, syscall: string, path: string): NodeJS.ErrnoException =>
+  Object.assign(new Error(`${code}: injected ${syscall} failure, '${path}'`), {
+    code,
+    syscall,
+    path,
+  });
 
 describe('realContext', () => {
   afterEach(() => {
@@ -119,21 +174,25 @@ describe('realContext cacheFs', () => {
     expect(await modeOf(join(dir, 'ns'))).toBe('700');
   });
 
-  it('propagates a non-absence stat failure from pathExists instead of reporting false', async () => {
-    // An unreadable parent must never be reported as "nothing cached here":
-    // a miss is the one outcome that may become trust-on-first-use
-    const locked = join(dir, 'locked');
-    await mkdir(locked, { mode: 0o700 });
-    await writeFile(join(locked, 'meta.json'), '{}');
-    await chmod(locked, 0o000);
-    try {
-      await expect(
-        realContext().cacheFs.pathExists(join(locked, 'meta.json')),
-      ).rejects.toMatchObject({ code: 'EACCES' });
-    } finally {
-      await chmod(locked, 0o700);
-    }
-  });
+  it.skipIf(!searchDenied)(
+    `propagates a non-absence stat failure from pathExists instead of reporting false ${REAL_MODE_BITS}`,
+    async () => {
+      // An unreadable parent must never be reported as "nothing cached here":
+      // a miss is the one outcome that may become trust-on-first-use. The
+      // injected variants below cover this branch where this test is skipped.
+      const locked = join(dir, 'locked');
+      await mkdir(locked, { mode: 0o700 });
+      await writeFile(join(locked, 'meta.json'), '{}');
+      await chmod(locked, 0o000);
+      try {
+        await expect(
+          realContext().cacheFs.pathExists(join(locked, 'meta.json')),
+        ).rejects.toMatchObject({ code: 'EACCES' });
+      } finally {
+        await chmod(locked, 0o700);
+      }
+    },
+  );
 
   it('still reports false for genuine absence, including a non-directory component', async () => {
     const { cacheFs } = realContext();
@@ -143,22 +202,27 @@ describe('realContext cacheFs', () => {
     expect(await cacheFs.pathExists(join(dir, 'afile', 'under'))).toBe(false);
   });
 
-  it('leaves no temp file behind when the write fails midway', async () => {
-    // A read-only directory fails the rename; the temp must not survive it
-    const target = join(dir, 'ro');
-    await mkdir(target, { mode: 0o700 });
-    await writeFile(join(target, 'meta.json'), 'old');
-    await chmod(target, 0o500);
-    try {
-      await expect(
-        realContext().cacheFs.writeFileAtomic(join(target, 'meta.json'), 'new'),
-      ).rejects.toThrow();
-    } finally {
-      await chmod(target, 0o700);
-    }
-    const entries = await readdir(target);
-    expect(entries.filter((name) => name.includes('.tmp'))).toEqual([]);
-  });
+  it.skipIf(!writeDenied)(
+    `leaves no temp file behind when the write fails midway ${REAL_MODE_BITS}`,
+    async () => {
+      // A read-only directory refuses the exclusive temp create (open "wx"
+      // needs write permission on the directory); nothing may survive it. The
+      // injected variants below cover this and the later rename failure.
+      const target = join(dir, 'ro');
+      await mkdir(target, { mode: 0o700 });
+      await writeFile(join(target, 'meta.json'), 'old');
+      await chmod(target, 0o500);
+      try {
+        await expect(
+          realContext().cacheFs.writeFileAtomic(join(target, 'meta.json'), 'new'),
+        ).rejects.toThrow();
+      } finally {
+        await chmod(target, 0o700);
+      }
+      const entries = await readdir(target);
+      expect(entries.filter((name) => name.includes('.tmp'))).toEqual([]);
+    },
+  );
 
   it('repairs the mode of a directory that already exists', async () => {
     // An entry created under a permissive umask by an earlier version must be
@@ -304,13 +368,73 @@ describe('realContext cacheFs', () => {
   });
 });
 
+// Uid-independent twins of the real-mode-bit tests above: the failure is
+// injected at the exact fs call, so these run (and fail closed) as root too.
+// Everything except the one queued failure still hits the real filesystem.
+describe('realContext cacheFs with an injected fs failure', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'openapi-mcp-cachefs-fault-'));
+  });
+
+  afterEach(async () => {
+    // Drop any queued failure a failing test did not consume, so it cannot
+    // leak into the next test; the pass-through implementation is kept
+    vi.mocked(open).mockReset();
+    vi.mocked(rename).mockReset();
+    vi.mocked(stat).mockReset();
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // EACCES is the case real mode bits produce; EIO and ELOOP are the other
+  // non-absence failures isAbsenceError's rationale names
+  it.each(['EACCES', 'EIO', 'ELOOP'])(
+    'pathExists propagates a stat failure with %s instead of reporting false',
+    async (code) => {
+      const file = join(dir, 'meta.json');
+      await writeFile(file, '{}');
+      const failure = injectedFsError(code, 'stat', file);
+      vi.mocked(stat).mockRejectedValueOnce(failure);
+      await expect(realContext().cacheFs.pathExists(file)).rejects.toBe(failure);
+    },
+  );
+
+  it('leaves the target intact and no temp file behind when the temp create fails', async () => {
+    // The failure the real read-only-directory test produces
+    const file = join(dir, 'meta.json');
+    await writeFile(file, 'old');
+    const failure = injectedFsError('EACCES', 'open', file);
+    vi.mocked(open).mockRejectedValueOnce(failure);
+    await expect(realContext().cacheFs.writeFileAtomic(file, 'new')).rejects.toBe(failure);
+    expect(await readFile(file, 'utf8')).toBe('old');
+    expect(await readdir(dir)).toEqual(['meta.json']);
+  });
+
+  it('removes the already-written temp file when the final rename fails', async () => {
+    // The temp exists and is fully written by the time rename runs, so this
+    // is the case where the cleanup actually has something to remove
+    const file = join(dir, 'meta.json');
+    await writeFile(file, 'old');
+    const failure = injectedFsError('EACCES', 'rename', file);
+    vi.mocked(rename).mockRejectedValueOnce(failure);
+    await expect(realContext().cacheFs.writeFileAtomic(file, 'new')).rejects.toBe(failure);
+    expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
+    expect(await readFile(file, 'utf8')).toBe('old');
+    expect(await readdir(dir)).toEqual(['meta.json']);
+  });
+});
+
 describe('realContext cacheFs under a restrictive umask', () => {
   // The umask is PROCESS-WIDE state, so this cannot run inside the shared
   // vitest worker: setting it there would leak into every other test in the
   // file. It also cannot be skipped — this is the exact configuration where
   // the naive recursive-mkdir approach fails, and an in-process test cannot
-  // reach it.
-  it('creates a usable 0700 tree where mkdir({recursive, mode}) fails with EACCES', async () => {
+  // reach it. Not even as root: the defect is the non-searchable 0600
+  // intermediate component, which is created the same way on every uid. Only
+  // its symptom — EACCES on the next component — depends on whether this
+  // process bypasses mode bits, so that one expectation follows the probe.
+  it('creates a usable 0700 tree where mkdir({recursive, mode}) leaves a 0600 parent', async () => {
     const base = await mkdtemp(join(tmpdir(), 'openapi-mcp-umask-'));
     // Mkdtemp is subject to the umask too (probed: 0600 under 0177), so the
     // child repairs its own base before doing anything else
@@ -332,11 +456,12 @@ describe('realContext cacheFs under a restrictive umask', () => {
       "let naive = 'succeeded';",
       "try { await mkdir(join(base, 'naive', 'a', 'b'), { recursive: true, mode: 0o700 }); }",
       'catch (err) { naive = err.code; }',
+      "const naiveParent = await modeOf(join(base, 'naive'));",
       // Then prove mkdirSecure produces a usable tree under the same umask
       "const target = join(base, 'ns', 'objects');",
       'await realContext().cacheFs.mkdirSecure(target);',
       "await writeFile(join(target, 'probe.json'), '{}');",
-      "console.log(JSON.stringify({ naive, leaf: await modeOf(target), parent: await modeOf(join(base, 'ns')) }));",
+      "console.log(JSON.stringify({ naive, naiveParent, leaf: await modeOf(target), parent: await modeOf(join(base, 'ns')) }));",
     ].join('\n');
     const contextUrl = new URL('../src/context.ts', import.meta.url).href;
     const child = spawnSync(
@@ -349,12 +474,17 @@ describe('realContext cacheFs under a restrictive umask', () => {
     expect(child.status).toBe(0);
     const result = JSON.parse(child.stdout.trim()) as {
       naive: string;
+      naiveParent: string;
       leaf: string;
       parent: string;
     };
-    // The defect this decision exists for: the recursive form cannot even
-    // create the tree, so a leaf-only chmod never runs
-    expect(result.naive).toBe('EACCES');
+    // The defect this decision exists for: the recursive form creates its
+    // intermediate component 0600 — no search bit — on every uid...
+    expect(result.naiveParent).toBe('600');
+    // ...so wherever mode bits apply it cannot even create the tree, and a
+    // leaf-only chmod never runs (as root it succeeds, but leaves a tree no
+    // non-root owner could traverse)
+    expect(result.naive).toBe(writeDenied ? 'EACCES' : 'succeeded');
     // And the per-component form yields a usable, correctly permissioned tree
     expect(result.leaf).toBe('700');
     expect(result.parent).toBe('700');
