@@ -684,3 +684,89 @@ describe('buildLayout — path template consistency', () => {
     ).toBe(true);
   });
 });
+
+// #54 / decision D5: every JSON media-type variant is accepted (`+json`
+// suffix, parameters), the DECLARED media type is what gets sent, and the
+// choice among several variants is deterministic.
+describe('buildLayout — JSON media-type variants (#54, D5)', () => {
+  const objectSchema = { type: 'object', properties: { name: { type: 'string' } } };
+  const withContent = (content: Record<string, unknown>) =>
+    buildLayout(bodyOp({ required: true, content }), new Set());
+
+  it.each([
+    'application/json; charset=utf-8',
+    'application/merge-patch+json',
+    'application/vnd.api+json',
+    'application/json; profile="https://example.com/p"',
+    'Application/JSON',
+  ])('exposes a body declared as %s and keeps the declared media type', (key) => {
+    const l = layout(withContent({ [key]: { schema: objectSchema } }));
+    expect(l.mapper.bodyMode).toBe('flattened');
+    expect(l.mapper.bodyContentType).toBe(key);
+  });
+
+  it('routes an array-root application/json-patch+json body to the single body field', () => {
+    const l = layout(
+      withContent({
+        'application/json-patch+json': {
+          schema: {
+            type: 'array',
+            items: { type: 'object', properties: { op: { type: 'string' } } },
+          },
+        },
+      }),
+    );
+    expect(l.mapper.bodyMode).toBe('single');
+    expect(l.mapper.bodyContentType).toBe('application/json-patch+json');
+  });
+
+  it('prefers exact application/json over any variant, and the parameterless key among application/json keys', () => {
+    expect(
+      layout(
+        withContent({
+          'application/merge-patch+json': { schema: objectSchema },
+          'application/json': { schema: objectSchema },
+        }),
+      ).mapper.bodyContentType,
+    ).toBe('application/json');
+    expect(
+      layout(
+        withContent({
+          'application/json; charset=utf-8': { schema: objectSchema },
+          'application/json': { schema: objectSchema },
+        }),
+      ).mapper.bodyContentType,
+    ).toBe('application/json');
+  });
+
+  it('picks application/merge-patch+json among the Kubernetes PATCH media types', () => {
+    const patch = { schema: { type: 'object', description: 'Patch' } };
+    const l = layout(
+      withContent({
+        'application/apply-patch+yaml': patch,
+        'application/json-patch+json': patch,
+        'application/merge-patch+json': patch,
+        'application/strategic-merge-patch+json': patch,
+      }),
+    );
+    expect(l.mapper.bodyContentType).toBe('application/merge-patch+json');
+  });
+
+  it('omits when several JSON variants have no deterministic winner', () => {
+    const r = withContent({
+      'application/vnd.a+json': { schema: objectSchema },
+      'application/vnd.b+json': { schema: objectSchema },
+    });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(/several JSON media types/u);
+  });
+
+  it.each([
+    'text/plain',
+    'application/json;',
+    'application/json; charset',
+    'application/json\r\nX-Evil: 1',
+    'application/jsonx',
+  ])('still omits a non-JSON or malformed media type key %j', (key) => {
+    expect('unrepresentable' in withContent({ [key]: { schema: objectSchema } })).toBe(true);
+  });
+});

@@ -954,3 +954,28 @@ describe('buildRequest — body reassembly defensive invariants', () => {
     expect(message).toMatch(/object/iu);
   });
 });
+
+// #54 / D5: the declared media type (with parameters) is what is sent, and
+// every JSON variant is JSON-encoded.
+describe('buildRequest — declared JSON media-type variants (#54)', () => {
+  const mapperFor = (bodyContentType: string): RequestMapper => ({
+    bodyMode: 'flattened',
+    bodyContentType,
+    fields: { name: { destination: 'body', bodyPath: ['name'], required: true } },
+  });
+
+  it.each([
+    'application/merge-patch+json',
+    'application/json; charset=utf-8',
+    'application/vnd.api+json',
+  ])('sends Content-Type %s with a JSON body', (contentType) => {
+    const built = ok(buildRequest(mapperFor(contentType), 'patch', '/x', { name: 'n' }, budgets));
+    expect(built.contentType).toBe(contentType);
+    expect(JSON.parse(new TextDecoder().decode(built.body))).toEqual({ name: 'n' });
+  });
+
+  it('fails closed on a mapper content type that is neither JSON nor form', () => {
+    const result = buildRequest(mapperFor('text/plain'), 'post', '/x', { name: 'n' }, budgets);
+    expect(err(result)).toMatch(/content type/iu);
+  });
+});

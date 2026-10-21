@@ -302,6 +302,37 @@ describe('createExecutor — header assembly', () => {
     expect(calls[0]?.init.body).toBeDefined();
   });
 
+  it('sends the declared JSON variant as Content-Type end to end (#54: merge-patch+json)', async () => {
+    const patchOp: NamedOperation = {
+      toolName: 'patchThing',
+      operation: {
+        method: 'patch',
+        path: '/things',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          content: {
+            'application/merge-patch+json': {
+              schema: { type: 'object', properties: { name: { type: 'string' } } },
+            },
+          },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([patchOp]);
+    const tool = snapshot.toolsByName['patchThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { name: 'widget' }, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['content-type']).toBe('application/merge-patch+json');
+    const body = calls[0]?.init.body as Uint8Array;
+    expect(JSON.parse(new TextDecoder().decode(body))).toEqual({ name: 'widget' });
+  });
+
   it('rejects a tool argument whose header name collides with a reserved header (defensive re-check)', async () => {
     const snapshot = buildToolSnapshot([forcedHeaderOp]);
     const tool = snapshot.toolsByName['forcedHeaderThing'] as SnapshotTool;
