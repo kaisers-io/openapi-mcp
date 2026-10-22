@@ -72,6 +72,14 @@ Notes:
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
+- `--request-timeout` replaces `--timeout` for upstream API calls. **Upgrading:** if you raised
+  `--timeout` to make slow API calls work, set `--request-timeout` instead; `--timeout` now
+  covers only the spec fetch.
+- `Accept` is derived from the operation's declared 2xx media types (JSON first, `*/*;q=0.1`
+  last). A header parameter named `Accept` in the spec is ignored (OpenAPI says so), so an API
+  that needs a vendor media type expressed only there (e.g. a GitHub preview
+  `application/vnd.github.<preview>+json`) gets its default representation. Pass
+  `--header Accept:<media type>` to override.
 - Concurrency and rate limits apply to the whole process (stdio and HTTP alike). A call that
   finds `--max-concurrency` calls already in flight waits for a slot, first come first served.
   At most 4 × `--max-concurrency` calls can wait. The wait and the upstream request share one
