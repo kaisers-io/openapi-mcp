@@ -29,6 +29,7 @@ describe('createExclusive atomic publish', () => {
     openMock.mockResolvedValue({
       writeFile: () => Promise.reject(new Error('EIO')),
       chmod: () => Promise.resolve(),
+      sync: () => Promise.resolve(),
       close: closed,
     });
     linkMock.mockResolvedValue();
@@ -55,6 +56,7 @@ describe('createExclusive atomic publish', () => {
     openMock.mockResolvedValue({
       writeFile: () => Promise.resolve(),
       chmod: () => Promise.resolve(),
+      sync: () => Promise.resolve(),
       close: () => Promise.resolve(),
     });
     linkMock.mockResolvedValue();
@@ -71,6 +73,7 @@ describe('createExclusive atomic publish', () => {
     openMock.mockResolvedValue({
       writeFile: () => Promise.resolve(),
       chmod: () => Promise.resolve(),
+      sync: () => Promise.resolve(),
       close: () => Promise.resolve(),
     });
     linkMock.mockRejectedValue(Object.assign(new Error('exists'), { code: 'EEXIST' }));
@@ -81,6 +84,7 @@ describe('createExclusive atomic publish', () => {
     openMock.mockResolvedValue({
       writeFile: () => Promise.resolve(),
       chmod: () => Promise.resolve(),
+      sync: () => Promise.resolve(),
       close: () => Promise.resolve(),
     });
     linkMock.mockResolvedValue();

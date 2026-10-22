@@ -113,6 +113,62 @@ const rejectUnlessRealDirectory = (path: string, info: Stats): void => {
   }
 };
 
+// Crash durability for the atomic writes below. rename() and link() are
+// atomic with respect to OTHER PROCESSES, but not with respect to a crash:
+// without a barrier the kernel may persist the new directory entry before the
+// file's data blocks (ext4/XFS/btrfs delayed allocation), so after a power
+// loss the target can be zero-length or torn. The cache fails closed on
+// exactly that state (an unparsable meta.json or a hash-mismatched object is
+// `corrupt` and never healed automatically), so a torn write would turn into
+// a permanent exit 3 until a manual `cache clear`. The sequence used here is
+// the standard one (LWN, "Ensuring data reaches disk"): write the temp, fsync
+// it, rename it into place, then fsync the containing directory so the
+// rename itself is durable.
+//
+// Because every writeFileAtomic fsyncs before it resolves, the store's
+// "objects first, meta.json second" commit order is also the order in which
+// they reach the disk: meta.json can never durably name an object whose bytes
+// are not already there.
+//
+// FileHandle.sync() is fsync(2) on Linux. On macOS, plain fsync does not
+// flush the drive's write cache, but libuv's uv_fs_fsync issues
+// fcntl(F_FULLFSYNC) there (falling back to F_BARRIERFSYNC, then fsync), so
+// the same call is a full flush on both supported platforms. The price is
+// macOS-specific: F_FULLFSYNC typically costs several milliseconds, and every
+// writeFileAtomic pays it twice (file, then directory), so a commit of N
+// objects plus meta.json costs 2(N+1) full flushes. Commits are rare (only on
+// a spec change), so this is accepted; it shows up when benchmarking cold
+// starts on macOS.
+//
+// Some filesystems refuse fsync on a directory descriptor (EINVAL on several
+// FUSE and network mounts, ENOTSUP/EOPNOTSUPP elsewhere). That means "this
+// filesystem offers no directory barrier", not "the write failed", so it is
+// tolerated. Every other failure propagates: an fsync error is the kernel
+// reporting that written data may be lost (see PostgreSQL's "fsyncgate"), and
+// it must not be reported as a successful write.
+const isDirectoryBarrierUnsupported = (err: unknown): boolean =>
+  err !== null &&
+  typeof err === 'object' &&
+  'code' in err &&
+  (err.code === 'EINVAL' || err.code === 'ENOTSUP' || err.code === 'EOPNOTSUPP');
+
+const syncDirectory = async (path: string): Promise<void> => {
+  // Imperative on purpose: the handle must be closed on every path, including
+  // a tolerated sync failure, and a close failure on a read-only directory
+  // descriptor carries no information about the data being made durable
+  let handle: FileHandle | undefined;
+  try {
+    handle = await open(path, 'r');
+    await handle.sync();
+  } catch (error) {
+    if (!isDirectoryBarrierUnsupported(error)) {
+      throw error;
+    }
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+};
+
 const realCacheFs = (): CacheFs => ({
   mkdirSecure: async (path) => {
     // Calling mkdir(path, { recursive: true, mode: 0o700 }) does NOT produce
@@ -162,6 +218,17 @@ const realCacheFs = (): CacheFs => ({
       }
       await chmod(component, 0o700);
     }
+    // A freshly created directory is itself a new entry in its parent, and
+    // that entry is only crash-durable once the PARENT is fsynced (the same
+    // rule writeFileAtomic applies to files). Losing a namespace directory
+    // after a crash would silently drop an accepted baseline and re-enter
+    // trust-on-first-use. Best effort: the first parent is a directory we did
+    // not create (it may not even be readable by us, e.g. a 0711 ancestor of
+    // --cache-root), and an unsynced new directory is at worst a clean miss,
+    // never a corrupt entry, so no failure here may fail the mkdir.
+    for (const component of missing) {
+      await syncDirectory(dirname(component)).catch(() => {});
+    }
     if (missing.length === 0) {
       // The directory already existed: repair the mode of the directory we were
       // asked for (an entry created under a bad umask by an earlier version
@@ -190,14 +257,23 @@ const realCacheFs = (): CacheFs => ({
     // open() call, so the cleanup below covers create, write, chmod and
     // rename alike: a failed write or chmod still triggers it, leaving no
     // orphaned temp file behind.
+    //
+    // sync() before rename and syncDirectory() after it make the replace
+    // crash-durable, not only atomic — see syncDirectory above. A failed
+    // file fsync aborts BEFORE the rename, so the previous target survives.
+    // A failed directory fsync comes AFTER it: the call then rejects although
+    // the new content is already visible, with its durability unknown (the
+    // CacheFs contract in core spells out what callers may assume).
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
       handle = await open(tmp, 'wx', 0o600);
       await handle.writeFile(data, 'utf8');
       await handle.chmod(0o600);
+      await handle.sync();
       await handle.close();
       handle = undefined;
       await rename(tmp, path);
+      await syncDirectory(dirname(path));
     } catch (error) {
       if (handle !== undefined) {
         await handle.close().catch(() => {});
@@ -263,6 +339,11 @@ const realCacheFs = (): CacheFs => ({
       try {
         await handle.writeFile(data, 'utf8');
         await handle.chmod(0o600);
+        // The record is fsynced BEFORE it is published, so a lock that
+        // survives a crash is always a complete, parseable record carrying its
+        // acquiredAt (which `cache unlock` can age out), never a zero-length
+        // file that only --force can remove
+        await handle.sync();
       } finally {
         await handle.close();
       }
@@ -279,6 +360,11 @@ const realCacheFs = (): CacheFs => ({
         }
         throw error;
       }
+      // Best effort, and deliberately swallowed: once link() has succeeded the
+      // lock is PUBLISHED, and throwing now would orphan it exactly like a
+      // failing temp cleanup would (see the finally below). The next
+      // writeFileAtomic in this directory fsyncs the directory anyway.
+      await syncDirectory(dirname(path)).catch(() => {});
       return true;
     } finally {
       // The temp is private scratch: a failure to remove it must NEVER turn a
