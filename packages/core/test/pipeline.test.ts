@@ -1118,6 +1118,45 @@ describe('runSpecPipeline — tool budget after filtering (issue #32)', () => {
     expect([...cacheFs.files.keys()].filter((key) => key.endsWith('meta.json'))).toEqual([]);
   });
 
+  it('warns when a recorded candidate would exceed the tool budget under the current filters', async () => {
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
+    // Accepted baseline: 10 GETs, well inside the budget
+    await runSpecPipeline('https://api.example.com/big.json', cachedOpts, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    // The refreshed spec documents 600 GETs: recorded as a candidate, the
+    // baseline keeps serving, and the run says promotion would fail to start
+    const refreshed = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...cachedOpts, nowMs: 3_600_001 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(refreshed.cacheStatus).toBe('candidate');
+    expect(refreshed.namedOperations).toHaveLength(10);
+    expect(refreshed.warnings.join('\n')).toMatch(
+      /candidate spec would expose 600 tools .*512-tool budget.*--allow or --deny/u,
+    );
+  });
+
+  it('does not warn about a candidate that fits the tool budget', async () => {
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
+    await runSpecPipeline('https://api.example.com/big.json', cachedOpts, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    // 600 operations, but --deny leaves 489 exposed: under the budget
+    const refreshed = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...cachedOpts, deny: [parseFilterPattern('GET /r1*')], nowMs: 3_600_001 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(refreshed.cacheStatus).toBe('candidate');
+    expect(refreshed.warnings.join('\n')).not.toContain('tool budget');
+  });
+
   it('applies the same two-level rule when serving a cached spec', async () => {
     const cacheFs = memoryCacheFs();
     const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
