@@ -58,15 +58,28 @@ describe('tools — security scheme hints', () => {
     const { code, lines } = await runTools(['--json']);
     expect(code).toBe(EXIT.OK);
     const envelope = JSON.parse(lines[0]!) as {
-      data: { security: { scheme: string; type: string; toolCount: number; hint: string }[] };
+      data: {
+        security: {
+          scheme: string;
+          type: string;
+          toolCount: number;
+          hint: string;
+          reason?: string;
+        }[];
+      };
     };
     expect(
-      envelope.data.security.map((entry) => [entry.scheme, entry.type, entry.toolCount]),
+      envelope.data.security.map((entry) => [
+        entry.scheme,
+        entry.type,
+        entry.toolCount,
+        entry.reason ?? null,
+      ]),
     ).toEqual([
-      ['apiKeyHeader', 'apiKey', 1],
-      ['apiKeyQuery', 'apiKey', 1],
-      ['bearer', 'http', 1],
-      ['cc', 'oauth2', 1],
+      ['apiKeyHeader', 'apiKey', 1, null],
+      ['apiKeyQuery', 'apiKey', 1, expect.stringContaining('query-string credentials')],
+      ['bearer', 'http', 1, null],
+      ['cc', 'oauth2', 1, null],
     ]);
   });
 });

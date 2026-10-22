@@ -75,11 +75,11 @@ export {
   describeSecurityScheme,
   summarizeSecurity,
   unsatisfiedSecurityWarnings,
-} from './spec/security.ts';
+  unsupportedReason,
+} from './spec/security-hints.ts';
+export type { ConfiguredCredentials, SchemeUsage } from './spec/security-hints.ts';
 export type {
   ClientCredentialsFlow,
-  ConfiguredCredentials,
-  SchemeUsage,
   SecurityRequirement,
   SecurityScheme,
 } from './spec/security.ts';
