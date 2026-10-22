@@ -84,16 +84,28 @@ describe('parseRetryAfter', () => {
     expect(parseRetryAfter('Wed, 21 Oct 2026 11:00:00 GMT', now)).toBe(0);
   });
 
+  it('accepts the obsolete RFC 850 and asctime HTTP-date forms, as UTC', () => {
+    expect(parseRetryAfter('Wednesday, 21-Oct-26 12:00:05 GMT', now)).toBe(5000);
+    expect(parseRetryAfter('Wed Oct 21 12:00:07 2026', now)).toBe(7000);
+    expect(parseRetryAfter('Wed Oct  1 12:00:07 2026', now)).toBe(0);
+  });
+
   it('caps an absurd value at one day', () => {
     expect(parseRetryAfter('99999999', now)).toBe(86_400_000);
   });
 
-  it.each(['-1', '1.5', 'soon', '', '3s', 'Wednesday, 21-Oct-26 12:00:05 GMT', '2026-10-21'])(
-    'rejects %j',
-    (value) => {
-      expect(parseRetryAfter(value, now)).toBeUndefined();
-    },
-  );
+  it.each([
+    '-1',
+    '1.5',
+    'soon',
+    '',
+    '3s',
+    'Wed, 21 Foo 2026 12:00:05 GMT',
+    '2026-10-21',
+    'Wed Oct 21 12:00:07 2026 GMT',
+  ])('rejects %j', (value) => {
+    expect(parseRetryAfter(value, now)).toBeUndefined();
+  });
 });
 
 describe('parseLinkHeader (strict RFC 8288)', () => {

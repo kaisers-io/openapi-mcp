@@ -35,10 +35,12 @@ const isJsonContentType = (contentType: string): boolean =>
 
 const SUCCESS_STATUS_RE = /^2\d\d$/u;
 
-const RESPONSE_HEADERS_SCHEMA: JsonSchemaRecord = {
-  type: 'object',
-  additionalProperties: { type: 'string' },
-};
+// Deliberately minimal: it is repeated in every success branch of every
+// tool, and tools/list size is paid in every session. Declaring it once per
+// tool (top-level property + `true` per branch) costs MORE for the common
+// single-branch tool; typing the values (always strings, produced by this
+// server) adds bytes without helping the caller.
+const RESPONSE_HEADERS_SCHEMA: JsonSchemaRecord = { type: 'object' };
 // A literal OpenAPI 3.1 status-code RANGE key ("2XX"/"2xx"), or the "default"
 // response — either is treated as "might cover a success we cannot bound".
 const WILDCARD_OR_DEFAULT_SUCCESS_RE = /^2xx$/iu;
