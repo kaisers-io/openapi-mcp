@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
+  BOUNDARY_WITHHELD_ERROR_TEXT,
+  BOUNDARY_WITHHELD_SUCCESS_TEXT,
   buildSnapshot,
   buildTools,
   createDispatcher,
@@ -867,8 +869,19 @@ describe('createDispatcher — boundary scan of structuredContent (scan once)', 
       kind: 'outcome',
       outcome: {
         isError: true,
-        content: [{ text: 'tool execution result could not be returned safely' }],
+        content: [{ text: BOUNDARY_WITHHELD_SUCCESS_TEXT }],
       },
+    });
+  });
+
+  it('does not claim success when an ERROR result is withheld', async () => {
+    const redactor = createRedactor([SECRET]);
+    const result = await dispatchWith(redactor, () =>
+      Promise.resolve({ ...textOutcome('failed', true), meta: { note: SECRET } }),
+    );
+    expect(result).toMatchObject({
+      kind: 'outcome',
+      outcome: { isError: true, content: [{ text: BOUNDARY_WITHHELD_ERROR_TEXT }] },
     });
   });
 

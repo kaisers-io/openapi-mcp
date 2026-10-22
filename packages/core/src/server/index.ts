@@ -17,6 +17,7 @@ export type {
   CallTelemetry,
 } from './telemetry.ts';
 export type { RateLimiter, RateLimiterOptions } from './rate-limit.ts';
+export { BOUNDARY_WITHHELD_ERROR_TEXT, BOUNDARY_WITHHELD_SUCCESS_TEXT } from './withheld.ts';
 export {
   createDispatcher,
   createMetaExecutor,

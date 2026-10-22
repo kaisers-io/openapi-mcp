@@ -4,6 +4,7 @@ import { sanitizeDisplayText, sanitizeSpecText } from '../spec/sanitize.ts';
 import { retryableErrorOutcome, textOutcome, wasSecretScanned } from './result.ts';
 import type { DispatchResult, ToolCallOutcome } from './result.ts';
 import { carryOutcomeTag, observeCalls, tagOutcome } from './telemetry.ts';
+import { withheld } from './withheld.ts';
 import type { CallObserver, CallTelemetry } from './telemetry.ts';
 import type { TraceContext } from './trace.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
@@ -121,11 +122,6 @@ const PARSE_THREW_OUTCOME: ToolCallOutcome = tagOutcome(
   'validation_error',
 );
 
-// A single, generic, stable message — never the structured content itself —
-// for the case a secret is found anywhere inside it. Mirrors
-// server/execute/response.ts's own GENERIC_UNSAFE_TEXT wording.
-const BOUNDARY_UNSAFE_TEXT = 'tool execution result could not be returned safely';
-
 // The dispatch-boundary finalizer, the LAST step before ANY outcome leaves
 // createDispatcher.call: every content[].text block is redacted; a secret
 // ANYWHERE in structuredContent (or meta) drops it for a generic isError —
@@ -156,7 +152,7 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
       scanForSecretSafely(redactor, outcome.structuredContent)) ||
     (outcome.meta !== undefined && scanForSecretSafely(redactor, outcome.meta))
   ) {
-    return tagOutcome(textOutcome(BOUNDARY_UNSAFE_TEXT, true), 'secret_withheld');
+    return withheld(outcome);
   }
   const redactedContent = outcome.content.map((block) => ({
     ...block,
@@ -172,7 +168,7 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
   // error as the structuredContent branch above, rather than ever returning
   // text that still matches a registered secret.
   if (redactedContent.some((block) => scanForSecretSafely(redactor, block.text))) {
-    return tagOutcome(textOutcome(BOUNDARY_UNSAFE_TEXT, true), 'secret_withheld');
+    return withheld(outcome);
   }
   return carryOutcomeTag(outcome, {
     ...outcome,
