@@ -5,7 +5,9 @@ import {
   buildTools,
   compileEnvelopeValidator,
   createExecutor,
+  createCallStats,
   createMetaExecutor,
+  formatCallLog,
   createRateLimiter,
   createRedactor,
   createStreamableHttpServer,
@@ -19,6 +21,7 @@ import {
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
 import type {
+  CallObserver,
   EnvelopeValidator,
   ExecutorConfig,
   NormalizedSpec,
@@ -182,6 +185,7 @@ type ServeCmdOpts = SpecCmdOpts &
     http?: boolean;
     port: string;
     httpTokenEnv?: string;
+    log?: string;
   };
 
 export const registerServe: CommandRegistrar = (program, ctx, state) => {
@@ -191,9 +195,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     )
     .option('--http', 'serve over Streamable HTTP (127.0.0.1 only) instead of stdio')
     .option('--port <n>', 'HTTP port', '3044')
+    .option('--http-token-env <ENV>', 'env var holding the bearer token required for HTTP requests')
     .option(
-      '--http-token-env <ENV>',
-      'env var holding the bearer token required for HTTP requests',
+      '--log <format>',
+      'write one structured line per tool call to stderr (only "json"; never arguments, header values or bodies)',
     );
   // Orphaned HTTP-only flags without --http are a usage error, not a
   // silent no-op: `--port` carries a default ('3044'), so a plain value
@@ -253,6 +258,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // matches "validated once at CLI startup" rather than discovering
       // the mistake only after paying for a spec fetch.
       const httpConfig = resolveHttpConfig(cmdOpts);
+      if (cmdOpts.log !== undefined && cmdOpts.log !== 'json') {
+        throw usageError(`invalid --log "${cmdOpts.log}" — the only supported format is "json"`);
+      }
+      const logJson = cmdOpts.log === 'json';
       // Resolved BEFORE buildTools (below): its reservedHeaderNames must be
       // unioned into buildTools' reservedHeaders so a spec header parameter
       // colliding with a configured auth header name is dropped from the
@@ -365,11 +374,23 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // ONE executor instance, shared by the stdio AND HTTP branches below,
       // so the global outbound-concurrency semaphore is genuinely shared.
       const executor = createExecutor(executorConfig, { transport: ctx.transport });
+      // Call counters always feed openapi_mcp_status; the per-call JSON line
+      // is written only with --log json, and only to stderr (stdout is
+      // MCP-JSON-only).
+      const callStats = createCallStats();
+      const onCall: CallObserver = (record) => {
+        callStats.record(record);
+        if (logJson) {
+          const line = formatCallLog(record, redactor, new Date(ctx.now()));
+          ctx.errLine(line);
+        }
+      };
       const dispatcherDeps = {
+        onCall,
         limiter: createRateLimiter(apiConfig.rateLimit),
         now: ctx.now,
         executor,
-        metaExecutor: createMetaExecutor(),
+        metaExecutor: createMetaExecutor({ stats: callStats }),
         redactor,
       };
       // Startup diagnostics — cache staleness, a pending candidate, dead

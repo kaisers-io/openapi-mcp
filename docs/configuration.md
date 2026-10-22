@@ -62,6 +62,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--no-trace-propagation` | no | do not forward a call's W3C trace context (`_meta.traceparent`/`tracestate`) to the upstream API | forwarded |
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
 | `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
+| `--log <format>` | no | write one structured line per tool call to stderr; the only format is `json` | off |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
@@ -116,6 +117,15 @@ Notes:
   same-origin hops only. An invalid value is dropped. Tool arguments can never set these
   headers. `--no-trace-propagation` turns this off, because it shares the client's trace IDs
   with the upstream.
+- Call log (`--log json`, off by default): one JSON line per tool call goes to stderr,
+  never stdout. Each line has `ts`, `event: "tool_call"`, `tool`, `method`, `pathTemplate`,
+  `status`, `outcome`, `latencyMs`, `responseBytes`, `queuedMs` and `upstreamMs`. `outcome`
+  is one of `ok`, `http_error`, `response_error`, `validation_error`, `rate_limited`,
+  `overloaded`, `egress_denied`, `timeout`, `cancelled`, `network_error` or
+  `internal_error`. Arguments, header values, filled URLs and bodies are never logged, and
+  every string is redacted. Whether or not `--log` is set, `openapi_mcp_status` reports
+  process-local counters under `calls`: the total, counts by outcome, and p50/p95 upstream
+  latency over the last 512 calls.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly

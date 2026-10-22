@@ -7,6 +7,15 @@ export type {
   WireTool,
 } from './types.ts';
 export { createRateLimiter, DEFAULT_RATE_LIMIT } from './rate-limit.ts';
+export { createCallStats, formatCallLog, observeCalls } from './telemetry.ts';
+export type {
+  CallObserver,
+  CallOutcomeKind,
+  CallRecord,
+  CallStats,
+  CallSummary,
+  CallTelemetry,
+} from './telemetry.ts';
 export type { RateLimiter, RateLimiterOptions } from './rate-limit.ts';
 export {
   createDispatcher,

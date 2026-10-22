@@ -174,8 +174,10 @@ export {
   constantTimeEquals,
   createDispatcher,
   createExecutor,
+  createCallStats,
   createMetaExecutor,
   createRateLimiter,
+  formatCallLog,
   DEFAULT_RATE_LIMIT,
   evaluateRequest,
   extractBearerToken,
@@ -188,6 +190,8 @@ export {
 } from './server/index.ts';
 export type {
   BearerCheck,
+  CallObserver,
+  CallRecord,
   CallRequest,
   DispatcherDeps,
   DispatchResult,

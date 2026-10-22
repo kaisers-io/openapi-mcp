@@ -2,12 +2,19 @@ import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { createPinnedAgentPool } from '../../http/agent-pool.ts';
 import { pinnedRequest } from '../../http/pinned-dispatcher.ts';
-import type { HopHeaders, PinnedDeps, PinnedRequestOptions } from '../../http/pinned-dispatcher.ts';
+import type {
+  HopHeaders,
+  PinnedDeps,
+  PinnedErrorReason,
+  PinnedOutcome,
+  PinnedRequestOptions,
+} from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
 import { retryableErrorOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
+import type { CallOutcomeKind, CallTelemetry } from '../telemetry.ts';
 import type { TraceContext } from '../trace.ts';
 import type { SnapshotTool } from '../types.ts';
 import { deriveAccept } from './accept.ts';
@@ -79,6 +86,28 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 // library-internal message never meant for a tool-call response.
 const isError = (message: string): ToolCallOutcome =>
   textOutcome(`tool execution failed: ${message}`, true);
+
+// The observability outcome for a call that reached the transport.
+const PINNED_OUTCOME: Readonly<Record<PinnedErrorReason, CallOutcomeKind>> = {
+  timeout: 'timeout',
+  cancelled: 'cancelled',
+  egress: 'egress_denied',
+  network: 'network_error',
+  'too-large': 'response_error',
+  'redirect-loop': 'response_error',
+  'redirect-write-method': 'response_error',
+  'redirect-invalid': 'response_error',
+};
+
+const classifyUpstream = (outcome: PinnedOutcome, mapped: ToolCallOutcome): CallOutcomeKind => {
+  if (outcome.kind === 'error') {
+    return PINNED_OUTCOME[outcome.reason];
+  }
+  if (outcome.status >= 300) {
+    return 'http_error';
+  }
+  return mapped.isError ? 'response_error' : 'ok';
+};
 
 // An overloaded executor cannot know when a slot frees up (that depends on
 // upstream latency), so the refusal suggests a short, fixed back-off.
@@ -228,6 +257,7 @@ const runUpstreamCall = async (
   args: unknown,
   signal: AbortSignal,
   trace: TraceContext | undefined,
+  report: (telemetry: CallTelemetry) => void,
 ): Promise<ToolCallOutcome> => {
   const { generated } = tool;
   if (generated === undefined) {
@@ -346,6 +376,7 @@ const runUpstreamCall = async (
     maxResponseBytes: config.maxResponseBytes,
     signal,
   };
+  const upstreamStarted = retryDeps.now();
   const { outcome } = await withRetries(
     (remainingMs) =>
       pinnedRequest(finalUrl, { ...requestOptions, timeoutMs: remainingMs }, transport),
@@ -356,8 +387,9 @@ const runUpstreamCall = async (
     },
     retryDeps,
   );
+  const upstreamMs = Math.max(0, retryDeps.now() - upstreamStarted);
   const [firstSecretHeader] = config.secretHeaders;
-  return mapResponse({
+  const mapped = mapResponse({
     outcome,
     validator,
     outputSchema: tool.wireTool.outputSchema,
@@ -376,6 +408,16 @@ const runUpstreamCall = async (
             }),
         }),
   });
+  report({
+    outcome: classifyUpstream(outcome, mapped),
+    method,
+    pathTemplate: generated.operation.path,
+    upstreamMs,
+    ...(outcome.kind === 'response'
+      ? { status: outcome.status, responseBytes: outcome.bodyBytes.byteLength }
+      : {}),
+  });
+  return mapped;
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {
@@ -403,8 +445,13 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     now: Date.now,
     ...deps.retry,
   };
-  const execute: ToolExecutor = async (tool, args, signal, trace) => {
+  const execute: ToolExecutor = async (tool, args, signal, trace, report) => {
+    const queuedFrom = retryDeps.now();
     const slot = await slots.acquire(signal, () => deps.transport.timeoutSignal(config.timeoutMs));
+    const queuedMs = Math.max(0, retryDeps.now() - queuedFrom);
+    if (slot !== 'acquired') {
+      report?.({ outcome: slot === 'cancelled' ? 'cancelled' : 'overloaded', queuedMs });
+    }
     if (slot === 'cancelled') {
       return isError('the request was cancelled');
     }
@@ -414,12 +461,34 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     if (slot === 'timeout') {
       return overloaded('timed out waiting for a free upstream request slot');
     }
+    // A call refused before any request was sent (argument mapping, the
+    // cleartext gate, budgets) reports nothing itself: it is recorded as a
+    // validation error.
+    let reported = false;
+    const upstreamReport = (telemetry: CallTelemetry): void => {
+      reported = true;
+      report?.({ ...telemetry, queuedMs });
+    };
     try {
-      return await runUpstreamCall(config, transport, retryDeps, tool, args, signal, trace);
+      const outcome = await runUpstreamCall(
+        config,
+        transport,
+        retryDeps,
+        tool,
+        args,
+        signal,
+        trace,
+        upstreamReport,
+      );
+      if (!reported) {
+        report?.({ outcome: outcome.isError ? 'validation_error' : 'ok', queuedMs });
+      }
+      return outcome;
     } catch {
       // Belt-and-suspenders: the dispatcher also catches, but this module
       // never lets a raw throw (a library-internal message, a stack, a
       // reflected secret) escape its own boundary either.
+      report?.({ outcome: 'internal_error', queuedMs });
       return isError('an unexpected error occurred');
     } finally {
       slots.release();

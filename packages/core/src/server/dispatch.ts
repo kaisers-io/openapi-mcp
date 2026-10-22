@@ -1,13 +1,10 @@
 import type { RateLimiter } from './rate-limit.ts';
 import type { Redactor } from '../redact.ts';
 import { sanitizeDisplayText, sanitizeSpecText } from '../spec/sanitize.ts';
-import {
-  retryableErrorOutcome,
-  structuredOutcome,
-  textOutcome,
-  wasSecretScanned,
-} from './result.ts';
+import { retryableErrorOutcome, textOutcome, wasSecretScanned } from './result.ts';
 import type { DispatchResult, ToolCallOutcome } from './result.ts';
+import { observeCalls } from './telemetry.ts';
+import type { CallObserver, CallTelemetry } from './telemetry.ts';
 import type { TraceContext } from './trace.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
 
@@ -30,6 +27,7 @@ export type ToolExecutor = (
   args: unknown,
   signal: AbortSignal,
   trace?: TraceContext,
+  report?: (telemetry: CallTelemetry) => void,
 ) => Promise<ToolCallOutcome>;
 
 export type MetaExecutor = (
@@ -48,6 +46,8 @@ export type DispatcherDeps = {
   // executor and any future executor get the same defense, not just the
   // built-in upstream one.
   redactor: Redactor;
+  // Receives one record per tools/call (opt-in logging and counters).
+  onCall?: CallObserver;
 };
 
 export type CallRequest = {
@@ -56,6 +56,8 @@ export type CallRequest = {
   signal: AbortSignal;
   // Validated W3C trace context from the request's `_meta` (server/trace.ts).
   trace?: TraceContext;
+  // Set by observeCalls (server/telemetry.ts) when call logging is on.
+  report?: (telemetry: CallTelemetry) => void;
 };
 
 type ZodIssueLike = {
@@ -203,12 +205,12 @@ const runRoutedExecutor = async (
   deps: DispatcherDeps,
   tool: SnapshotTool,
   data: unknown,
-  { signal, trace }: CallRequest,
+  { signal, trace, report }: CallRequest,
 ): Promise<ToolCallOutcome> => {
   try {
     return tool.kind === 'meta'
       ? await deps.metaExecutor(deps.snapshot, signal)
-      : await deps.executor(tool, data, signal, trace);
+      : await deps.executor(tool, data, signal, trace, report);
   } catch {
     // Never surface the raw error — it may carry an upstream secret,
     // internal path, or stack detail. A generic, stable message only.
@@ -216,7 +218,7 @@ const runRoutedExecutor = async (
   }
 };
 
-export const createDispatcher = (
+const createUnobservedDispatcher = (
   deps: DispatcherDeps,
 ): { call: (request: CallRequest) => Promise<DispatchResult> } => ({
   call: async (request: CallRequest): Promise<DispatchResult> => {
@@ -283,17 +285,11 @@ export const createDispatcher = (
   },
 });
 
-export const createMetaExecutor = (): MetaExecutor => (snapshot) => {
-  const { meta } = snapshot;
-  const payload = {
-    specTitle: meta.specTitle,
-    specVersion: meta.specVersion,
-    displaySource: meta.displaySource,
-    toolCount: meta.toolCount,
-    omittedCount: meta.omittedCount,
-    omittedReasons: meta.omittedReasons,
-    acceptedContentHash: meta.acceptedContentHash,
-    deadPatternCount: meta.deadPatternCount,
-  };
-  return Promise.resolve(structuredOutcome(JSON.stringify(payload), payload));
+export const createDispatcher = (
+  deps: DispatcherDeps,
+): { call: (request: CallRequest) => Promise<DispatchResult> } => {
+  const { call } = createUnobservedDispatcher(deps);
+  return { call: deps.onCall === undefined ? call : observeCalls(call, deps.onCall, deps.now) };
 };
+
+export { createMetaExecutor } from './meta.ts';

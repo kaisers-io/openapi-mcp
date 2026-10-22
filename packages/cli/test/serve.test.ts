@@ -880,3 +880,97 @@ describe('serve — upstream client behaviour (stdio subprocess)', () => {
     expect(elapsed).toBeLessThan(5000);
   }, 15_000);
 });
+
+describe('serve --log json (stdio subprocess)', () => {
+  let child: ReturnType<typeof spawn> | undefined;
+  let tempHome: string | undefined;
+
+  afterEach(async () => {
+    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        child?.once('exit', () => resolve());
+      });
+      child.kill('SIGKILL');
+      await exited;
+    }
+    child = undefined;
+    if (tempHome !== undefined) {
+      await rm(tempHome, { recursive: true, force: true });
+      tempHome = undefined;
+    }
+  });
+
+  const runOneCall = async (extraArgs: readonly string[]) => {
+    const upstream = await startUpstream();
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        bin,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        `http://127.0.0.1:${String(upstream.port)}`,
+        '--trust-spec-updates',
+        ...extraArgs,
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    const collected = collectLines(child);
+    sendModern(child, 1, 'tools/call', { name: 'listPets', arguments: {} });
+    await waitFor(() => collected.stdoutLines.length > 0, 8000);
+    child.stdin?.end();
+    await new Promise<void>((resolve) => {
+      child?.once('exit', () => resolve());
+    });
+    await upstream.close();
+    return collected;
+  };
+
+  it('writes exactly one JSON tool_call line to stderr, and stdout stays pure JSON-RPC', async () => {
+    const { stdoutLines, stderrLines, rawStdout } = await runOneCall(['--log', 'json']);
+    const logLines = stderrLines.filter((line) => line.includes('"tool_call"'));
+    expect(logLines).toHaveLength(1);
+    expect(JSON.parse(logLines[0] as string)).toMatchObject({
+      event: 'tool_call',
+      tool: 'listPets',
+      method: 'GET',
+      pathTemplate: '/pets',
+      status: 200,
+      outcome: 'ok',
+    });
+    expect(stdoutLines).toHaveLength(1);
+    expect(rawStdout()).not.toContain('tool_call');
+    expect((JSON.parse(stdoutLines[0] as string) as JsonRpcMessage).jsonrpc).toBe('2.0');
+  }, 15_000);
+
+  it('writes no call log without --log', async () => {
+    const { stderrLines } = await runOneCall([]);
+    expect(stderrLines.some((line) => line.includes('tool_call'))).toBe(false);
+  }, 15_000);
+
+  it('rejects an unsupported --log format at startup', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        bin,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        'http://127.0.0.1:1',
+        '--log',
+        'text',
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    const { stderrLines } = collectLines(child);
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(2);
+    expect(stderrLines.join('\n')).toContain('--log');
+  }, 15_000);
+});

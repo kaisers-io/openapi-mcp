@@ -57,6 +57,26 @@ const META_OUTPUT_SCHEMA: Record<string, unknown> = {
     },
     acceptedContentHash: { type: 'string' },
     deadPatternCount: { type: 'integer' },
+    // Process-local call counters (server/telemetry.ts), when collected.
+    calls: {
+      type: 'object',
+      properties: {
+        total: { type: 'integer' },
+        byOutcome: { type: 'object', additionalProperties: { type: 'integer' } },
+        upstreamLatencyMs: {
+          type: 'object',
+          properties: {
+            samples: { type: 'integer' },
+            p50: { type: 'number' },
+            p95: { type: 'number' },
+          },
+          required: ['samples'],
+          additionalProperties: false,
+        },
+      },
+      required: ['total', 'byOutcome', 'upstreamLatencyMs'],
+      additionalProperties: false,
+    },
   },
   required: [
     'specTitle',
