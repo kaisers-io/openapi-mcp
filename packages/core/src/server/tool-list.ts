@@ -1,13 +1,14 @@
-// `tools/list` pagination (MCP pagination utility): a fixed page size and
-// an opaque cursor. A server with at most one page of tools answers exactly
-// as before — every tool, no `nextCursor` — so small specs see no change.
+// `tools/list` pagination (MCP pagination utility): an operator-chosen page
+// size (`serve --tools-page-size`) and an opaque cursor. OFF by default:
+// several MCP hosts call tools/list once and never follow `nextCursor`, so
+// paging would silently hide every tool past the first page. The tool count
+// is already bounded by the spec budget. With paging off, or with at most
+// one page of tools, the answer is every tool and no `nextCursor`.
 //
 // The cursor encodes the next offset bound to the snapshot's accepted
 // content hash, so a cursor minted for one spec cannot page through
 // another; anything that does not decode to a valid position is rejected
 // (the spec: an invalid cursor is an Invalid Params error).
-
-export const TOOLS_PAGE_SIZE = 100;
 
 const HASH_PREFIX_LENGTH = 16;
 
@@ -37,13 +38,14 @@ export const pageTools = <T>(
   tools: readonly T[],
   cursor: string | undefined,
   contentHash: string,
-  pageSize = TOOLS_PAGE_SIZE,
+  // Omitted = no paging (every tool in one response).
+  pageSize?: number,
 ): ToolPage<T> => {
   const offset = cursor === undefined ? 0 : decodeCursor(cursor, contentHash, tools.length);
   if (offset === undefined) {
     return { invalidCursor: true };
   }
-  const end = offset + pageSize;
+  const end = pageSize === undefined ? tools.length : offset + pageSize;
   return {
     tools: tools.slice(offset, end),
     ...(end < tools.length ? { nextCursor: encodeCursor(contentHash, end) } : {}),

@@ -16,6 +16,7 @@ import {
   parseSpecSource,
   runSpecPipeline,
   serveStdioSession,
+  SPEC_BUDGETS,
   SYSTEM_HEADERS,
   usageError,
   validationError,
@@ -186,7 +187,24 @@ type ServeCmdOpts = SpecCmdOpts &
     port: string;
     httpTokenEnv?: string;
     log?: string;
+    toolsPageSize?: string;
   };
+
+// Upper bound for --tools-page-size: the spec budget's tool cap, so a larger
+// value could never page anyway.
+const MAX_TOOLS_PAGE_SIZE = SPEC_BUDGETS.maxToolCount;
+
+const parseToolsPageSize = (raw: string | undefined): number | undefined => {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!/^[1-9]\d*$/u.test(raw) || Number(raw) > MAX_TOOLS_PAGE_SIZE) {
+    throw usageError(
+      `invalid --tools-page-size "${raw}" — expected an integer from 1 to ${MAX_TOOLS_PAGE_SIZE}`,
+    );
+  }
+  return Number(raw);
+};
 
 export const registerServe: CommandRegistrar = (program, ctx, state) => {
   const command = registerApiOptions(registerSpecOptions(program.command('serve')))
@@ -199,6 +217,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     .option(
       '--log <format>',
       'write one structured line per tool call to stderr (only "json"; never arguments, header values or bodies)',
+    )
+    .option(
+      '--tools-page-size <n>',
+      'page tools/list with n tools per page (only for MCP hosts that follow nextCursor); default: all tools in one response',
     );
   // Orphaned HTTP-only flags without --http are a usage error, not a
   // silent no-op: `--port` carries a default ('3044'), so a plain value
@@ -251,6 +273,11 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     // STDOUT, and stdout is MCP-JSON-only for the entire life of this
     // process. Startup failures always render as plain text on stderr.
     const errorOpts = { json: false, verbose: false };
+    // Set once the executor exists. Closed in `finally` so a throw anywhere
+    // after the first upstream call (e.g. httpServer.close()) still releases
+    // pooled keep-alive sockets and retiring agents instead of leaving them
+    // to process exit.
+    let closeExecutor: (() => Promise<void>) | undefined;
     try {
       // HTTP-specific options are validated FIRST — BEFORE any spec/cache/
       // network processing — so a bad --port or --http-token-env fails
@@ -262,6 +289,8 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         throw usageError(`invalid --log "${cmdOpts.log}" — the only supported format is "json"`);
       }
       const logJson = cmdOpts.log === 'json';
+      const toolsPageSize = parseToolsPageSize(cmdOpts.toolsPageSize);
+      const paging = toolsPageSize === undefined ? {} : { toolsPageSize };
       // Resolved BEFORE buildTools (below): its reservedHeaderNames must be
       // unioned into buildTools' reservedHeaders so a spec header parameter
       // colliding with a configured auth header name is dropped from the
@@ -374,6 +403,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // ONE executor instance, shared by the stdio AND HTTP branches below,
       // so the global outbound-concurrency semaphore is genuinely shared.
       const executor = createExecutor(executorConfig, { transport: ctx.transport });
+      closeExecutor = () => executor.close();
       // Call counters always feed openapi_mcp_status; the per-call JSON line
       // is written only with --log json, and only to stderr (stdout is
       // MCP-JSON-only).
@@ -405,7 +435,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       ]);
       if (httpConfig === undefined) {
         const session = serveStdioSession(
-          { name: 'openapi-mcp', version: pkg.version, snapshot, dispatcherDeps },
+          { name: 'openapi-mcp', version: pkg.version, snapshot, dispatcherDeps, ...paging },
           {
             // Out-of-band transport errors carry no JSON-RPC reply — route
             // them through the SAME sanitizing stderr path the startup
@@ -447,6 +477,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           version: pkg.version,
           snapshot,
           dispatcherDeps,
+          ...paging,
           guard,
           port: httpConfig.port,
           // Same reasoning — and the same bounded route — as the stdio
@@ -473,13 +504,15 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         process.removeListener('SIGTERM', onShutdownSignal);
         await httpServer.close();
       }
-      // After the transport is gone: no further call can borrow a pooled
-      // upstream connection, and an idle keep-alive socket must not hold the
-      // process open past stdin EOF or a shutdown signal.
-      await executor.close();
       state.exitCode = EXIT.OK;
     } catch (error) {
       state.exitCode = emitError(ctx, errorOpts, error);
+    } finally {
+      // After the transport is gone (or failed): no further call can borrow a
+      // pooled upstream connection, and an idle keep-alive socket must not
+      // hold the process open past stdin EOF, a shutdown signal or an error.
+      // Best effort — a close failure must not mask the exit code above.
+      await closeExecutor?.().catch(() => {});
     }
   });
 };

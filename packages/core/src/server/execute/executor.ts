@@ -22,9 +22,15 @@ import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
 import { mapResponse } from './response.ts';
 import type { EnvelopeValidator, PageInput } from './response.ts';
-import { nextPageHint } from '../../toolgen/pagination.ts';
+import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
 import type { PaginationPlan } from '../../toolgen/pagination.ts';
-import { isRetryableMethod, MAX_RETRIES, realSleep, withRetries } from './retry.ts';
+import {
+  isRetryableMethod,
+  MAX_RETRIES,
+  realSleep,
+  retriesConnectionErrors,
+  withRetries,
+} from './retry.ts';
 import type { RetryDeps } from './retry.ts';
 import { createSlotQueue } from './slots.ts';
 
@@ -73,6 +79,9 @@ export type ExecutorDeps = {
   transport: PinnedDeps;
   // Retry clock/sleep/jitter, injectable for tests.
   retry?: Partial<RetryDeps>;
+  // Clock (ms) used to charge the queue wait against the call's time
+  // budget and to time the queue; defaults to the retry clock.
+  now?: () => number;
 };
 
 const textEncoder = new TextEncoder();
@@ -258,6 +267,8 @@ const runUpstreamCall = async (
   signal: AbortSignal,
   trace: TraceContext | undefined,
   report: (telemetry: CallTelemetry) => void,
+  // What is left of the call's time budget after any queue wait.
+  timeoutMs: number,
 ): Promise<ToolCallOutcome> => {
   const { generated } = tool;
   if (generated === undefined) {
@@ -357,12 +368,14 @@ const runUpstreamCall = async (
     (mapping) =>
       mapping.destination === 'header' && mapping.wireName.toLowerCase() === 'idempotency-key',
   );
-  if (retries > 0 && idempotencyKeyField && (method === 'POST' || method === 'PATCH')) {
+  const keyed = retries > 0 && idempotencyKeyField && (method === 'POST' || method === 'PATCH');
+  if (keyed) {
     // ONE key per tool call, identical on every attempt — the caller's own
     // value when it passed one, else a fresh UUID — so the upstream can
     // deduplicate a retried write. Added before the final budget check.
     headers.sameOriginHeaders['idempotency-key'] ??= randomUUID();
   }
+  const idempotencyKey = keyed ? headers.sameOriginHeaders['idempotency-key'] : undefined;
   if (overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)) {
     return isError('the final request exceeds the outbound resource budget');
   }
@@ -372,7 +385,7 @@ const runUpstreamCall = async (
     ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
     baseTrusted: config.baseTrusted,
     allowPrivateNetwork: config.allowPrivateNetwork,
-    timeoutMs: config.timeoutMs,
+    timeoutMs,
     maxResponseBytes: config.maxResponseBytes,
     signal,
   };
@@ -382,7 +395,8 @@ const runUpstreamCall = async (
       pinnedRequest(finalUrl, { ...requestOptions, timeoutMs: remainingMs }, transport),
     {
       retries: isRetryableMethod(method, idempotencyKeyField) ? retries : 0,
-      timeoutMs: config.timeoutMs,
+      timeoutMs,
+      connectionErrors: retriesConnectionErrors(method),
       signal,
     },
     retryDeps,
@@ -400,12 +414,19 @@ const runUpstreamCall = async (
     ...(generated.pagination === undefined
       ? {}
       : {
-          paginate: (page: PageInput) =>
-            nextPageHint(generated.pagination as PaginationPlan, {
+          paginate: (page: PageInput) => {
+            const hint = nextPageHint(generated.pagination as PaginationPlan, {
               ...page,
               requestUrl: finalUrl.href,
               args: data,
-            }),
+            });
+            // A hint is only worth giving if the next call can actually be
+            // made with it: one the tool's own input schema would reject
+            // becomes "no next page known" rather than a dead end.
+            return hint.next !== NO_NEXT_PAGE && !generated.inputSchema.safeParse(hint.next).success
+              ? { next: NO_NEXT_PAGE }
+              : hint;
+          },
         }),
   });
   report({
@@ -417,7 +438,12 @@ const runUpstreamCall = async (
       ? { status: outcome.status, responseBytes: outcome.bodyBytes.byteLength }
       : {}),
   });
-  return mapped;
+  // The key the write was sent with, so a caller whose call still failed
+  // (e.g. a timeout after a retry) can repeat it with the SAME key and let
+  // the upstream deduplicate, instead of a fresh call getting a new key.
+  return idempotencyKey === undefined
+    ? mapped
+    : { ...mapped, meta: { ...mapped.meta, 'openapi-mcp/idempotencyKey': idempotencyKey } };
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {
@@ -425,7 +451,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
   // caller constructs exactly one createExecutor and shares it between the
   // stdio and HTTP transports, so this one queue bounds concurrency across
   // BOTH. Calls past maxConcurrent wait in FIFO order (bounded by maxQueued
-  // and by the call timeout) instead of failing straight away.
+  // and by half the call timeout) instead of failing straight away.
   const slots = createSlotQueue(config.maxConcurrent, config.maxQueued ?? 4 * config.maxConcurrent);
   // Long-lived pinned Agents, pooled per (origin, trust policy) for the
   // executor's lifetime, so consecutive calls reuse upstream connections.
@@ -445,10 +471,18 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     now: Date.now,
     ...deps.retry,
   };
+  // One clock for the queue wait, the call budget and the timings.
+  const now = deps.now ?? retryDeps.now;
+  // ONE time budget per call, shared by the queue wait and the upstream
+  // request, so a queued call cannot take queue wait + a full timeout
+  // (~2x the timeout end-to-end, past many hosts' own tools/call limit).
+  // The wait is capped at half the budget, so a call that does get a slot
+  // still has at least the other half for the upstream request.
+  const maxQueueWaitMs = Math.ceil(config.timeoutMs / 2);
   const execute: ToolExecutor = async (tool, args, signal, trace, report) => {
-    const queuedFrom = retryDeps.now();
-    const slot = await slots.acquire(signal, () => deps.transport.timeoutSignal(config.timeoutMs));
-    const queuedMs = Math.max(0, retryDeps.now() - queuedFrom);
+    const queuedAt = now();
+    const slot = await slots.acquire(signal, () => deps.transport.timeoutSignal(maxQueueWaitMs));
+    const queuedMs = Math.max(0, now() - queuedAt);
     if (slot !== 'acquired') {
       report?.({ outcome: slot === 'cancelled' ? 'cancelled' : 'overloaded', queuedMs });
     }
@@ -470,6 +504,10 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
       report?.({ ...telemetry, queuedMs });
     };
     try {
+      const remainingMs = Math.max(
+        Math.floor(config.timeoutMs - Math.min(queuedMs, maxQueueWaitMs)),
+        1,
+      );
       const outcome = await runUpstreamCall(
         config,
         transport,
@@ -479,6 +517,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
         signal,
         trace,
         upstreamReport,
+        remainingMs,
       );
       if (!reported) {
         report?.({ outcome: outcome.isError ? 'validation_error' : 'ok', queuedMs });

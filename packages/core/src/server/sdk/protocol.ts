@@ -37,7 +37,8 @@ export type ProtocolSessionOptions = {
   // Interval between progress notifications for a call that asked for them
   // (`_meta.progressToken`); injectable for tests.
   progressIntervalMs?: number;
-  // Page size for tools/list; injectable for tests.
+  // Page size for tools/list (serve --tools-page-size); undefined = every
+  // tool in one response, no paging.
   toolsPageSize?: number;
 };
 
