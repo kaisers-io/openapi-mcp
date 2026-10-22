@@ -68,7 +68,14 @@ export type SpecPipelineResult = {
   deadPatterns: readonly DeadPattern[];
   warnings: readonly string[];
   cacheStatus: CacheStatus;
+  // Set when this run could not record its revalidation because another
+  // process holds the cache entry's writer lock (#65): "held" while a live
+  // writer is busy, "stale" when the holder looks gone, which will not clear
+  // by itself (an operator runs "openapi-mcp cache unlock")
+  cacheLock?: CacheLockState | undefined;
 };
+
+export type CacheLockState = 'held' | 'stale';
 
 type ProcessedSpec = {
   spec: NormalizedSpec;
@@ -114,7 +121,26 @@ const processCachedDocument = (
   return spec;
 };
 
-export const runSpecPipeline = async (
+// A strict cache write (first use, a candidate, an accepted update) waits for
+// a busy writer lock for as long as the operator allowed the spec fetch to
+// take (--timeout), not just the built-in ~2 s: a concurrent first use of a
+// large spec can hold the lock longer than that (#65)
+const withLockWait = (cacheFs: CacheFs, timeoutMs: number): CacheFs =>
+  cacheFs.runtime === undefined
+    ? cacheFs
+    : { ...cacheFs, runtime: { ...cacheFs.runtime, lockWaitMs: timeoutMs } };
+
+export const runSpecPipeline = (
+  rawSource: string,
+  opts: SpecPipelineOptions,
+  deps: SpecPipelineDeps,
+): Promise<SpecPipelineResult> =>
+  runSpecPipelineOnce(rawSource, opts, {
+    ...deps,
+    cacheFs: withLockWait(deps.cacheFs, opts.timeoutMs),
+  });
+
+const runSpecPipelineOnce = async (
   rawSource: string,
   opts: SpecPipelineOptions,
   deps: SpecPipelineDeps,
@@ -331,30 +357,67 @@ export const runSpecPipeline = async (
   if (cached === undefined) {
     throw validationError('the spec source reported no change but nothing is cached');
   }
-  if (layout !== undefined) {
-    // Calling writeAccepted here would rewrite the accepted entry and CLEAR
-    // the candidate, silently destroying a candidate awaiting promotion
-    // without ever approving it. touchRevalidated updates the timestamp and
-    // validators and preserves both slots.
-    //
-    // Typed, like every other cache mutation, so a raw fs failure here
-    // cannot surface as an unexpected exit 1. A typed OpenapiMcpError from
-    // the store (notably a lock conflict, exit 5) is passed through
-    // unchanged.
-    await touchRevalidated(layout, deps.cacheFs, opts.nowMs, {
-      ...(notModifiedValidators.etag === undefined ? {} : { etag: notModifiedValidators.etag }),
-      ...(notModifiedValidators.lastModified === undefined
-        ? {}
-        : { lastModified: notModifiedValidators.lastModified }),
-    });
-  }
+  // Calling writeAccepted here would rewrite the accepted entry and CLEAR
+  // the candidate, silently destroying a candidate awaiting promotion
+  // without ever approving it. touchRevalidated updates the timestamp and
+  // validators and preserves both slots.
+  //
+  // Typed, like every other cache mutation, so a raw fs failure here
+  // cannot surface as an unexpected exit 1.
+  //
+  // Best effort (#65): the entry being served was read and hash-verified
+  // in this run and the source confirmed it unchanged, so the write only
+  // records fetchedAt and validators. A lock held by another process
+  // (servers starting together, or a crashed writer) must not fail the
+  // start-up over that; the verified baseline is served with a warning.
+  const cacheLock =
+    layout === undefined
+      ? undefined
+      : await touchBestEffort(
+          layout,
+          deps.cacheFs,
+          opts.nowMs,
+          {
+            ...(notModifiedValidators.etag === undefined
+              ? {}
+              : { etag: notModifiedValidators.etag }),
+            ...(notModifiedValidators.lastModified === undefined
+              ? {}
+              : { lastModified: notModifiedValidators.lastModified }),
+          },
+          false,
+          warnings,
+        );
   const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
   return finish(spec, opts, warnings, {
     contentHash: cached.meta.sourceContentHash,
     displaySource: cached.meta.displaySource,
     cacheStatus: 'revalidated',
     cached,
+    cacheLock,
   });
+};
+
+// Shared by both best-effort bookkeeping paths (304, unchanged 200): records
+// the revalidation if the writer lock is free, otherwise adds the warning and
+// reports what kind of lock was in the way
+const touchBestEffort = async (
+  layout: CacheLayout,
+  cacheFs: CacheFs,
+  nowMs: number,
+  validators: { etag?: string; lastModified?: string },
+  replaceValidators: boolean,
+  warnings: string[],
+): Promise<CacheLockState | undefined> => {
+  const touched = await touchRevalidated(layout, cacheFs, nowMs, validators, {
+    replaceValidators,
+    bestEffort: true,
+  });
+  if (touched.recorded) {
+    return undefined;
+  }
+  warnings.push(`cache metadata not updated, serving the verified baseline: ${touched.reason}`);
+  return touched.lockStale ? 'stale' : 'held';
 };
 
 type FinishInput = {
@@ -362,6 +425,7 @@ type FinishInput = {
   candidateContentHash?: string | undefined;
   displaySource: string;
   cacheStatus: CacheStatus;
+  cacheLock?: CacheLockState | undefined;
   // The entry being served, when one is. A candidate recorded in it must
   // surface on EVERY such result, not only on the run that created it.
   cached?: CacheEntry | undefined;
@@ -400,6 +464,7 @@ const finish = (
     deadPatterns: filtered.deadPatterns,
     warnings: allWarnings,
     cacheStatus: input.cacheStatus,
+    ...(input.cacheLock === undefined ? {} : { cacheLock: input.cacheLock }),
   };
 };
 
@@ -478,8 +543,11 @@ const commitRefresh = async (
   // A waiting candidate still takes the full write below: the source has
   // reverted to the accepted content, and that write is what clears it.
   const bookkeepingOnly = cached !== undefined && unchanged && cached.meta.candidate === undefined;
+  // Imperative on purpose: only the bookkeeping branch can meet a held lock
+  let cacheLock: CacheLockState | undefined;
   if (layout !== undefined && bookkeepingOnly && sourceKind === 'url') {
-    await touchRevalidated(
+    // Best effort for the same reason as the 304 path (#65)
+    cacheLock = await touchBestEffort(
       layout,
       deps.cacheFs,
       opts.nowMs,
@@ -487,7 +555,8 @@ const commitRefresh = async (
         ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
         ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
       },
-      { replaceValidators: true },
+      true,
+      warnings,
     );
   } else if (layout !== undefined && !bookkeepingOnly) {
     await writeAccepted(layout, deps.cacheFs, {
@@ -509,5 +578,6 @@ const commitRefresh = async (
     contentHash: refreshed.loaded.contentHash,
     displaySource: refreshed.loaded.displaySource,
     cacheStatus,
+    cacheLock,
   });
 };

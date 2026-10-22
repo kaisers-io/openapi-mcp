@@ -31,4 +31,24 @@ export type CacheFs = {
   createExclusive: (path: string, data: string) => Promise<boolean>;
   // Tolerates a missing path — removing an already-absent file is not an error
   removeFile: (path: string) => Promise<void>;
+  // The running process, for the writer lock (#65). Optional so a fake
+  // filesystem needs none of it: without it the lock record carries no
+  // pid/hostname and a held lock is reported after a single attempt.
+  runtime?: CacheRuntime;
+};
+
+// Core takes no process globals: the lock's view of "this process" is
+// injected here by the CLI's realContext, like the filesystem itself.
+export type CacheRuntime = {
+  pid: number;
+  hostname: string;
+  // Whether `pid` names a live process on THIS host (process.kill(pid, 0)).
+  // Only meaningful for a record whose hostname matches ours.
+  isProcessAlive: (pid: number) => boolean;
+  // Backoff between lock acquisition attempts
+  sleep: (ms: number) => Promise<void>;
+  // How long a strict write may wait for the writer lock before reporting a
+  // conflict; never less than the built-in ~2 s schedule (lockRetrySchedule).
+  // The spec pipeline sets it from --timeout.
+  lockWaitMs?: number;
 };

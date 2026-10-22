@@ -13,7 +13,7 @@ import { hashContent } from '../spec/load.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import type { CacheFs } from './fs.ts';
-import { withNamespaceLock } from './lock.ts';
+import { tryWithNamespaceLock, withNamespaceLock } from './lock.ts';
 import {
   CACHE_MAX_PERSISTED_BYTES,
   CACHE_META_MAX_BYTES,
@@ -849,7 +849,7 @@ const writeCandidateImpl = async (
 // discard a candidate awaiting promotion without ever approving it. This
 // updates the timestamp and the validators and touches nothing else: no
 // object is written, and both slots survive verbatim.
-const touchRevalidatedImpl = (
+const touchRevalidatedImpl = async (
   layout: CacheLayout,
   fs: CacheFs,
   nowMs: number,
@@ -859,9 +859,16 @@ const touchRevalidatedImpl = (
   // the validators belong to the representation just received, exactly as
   // writeCandidate treats them, so a 200 without an ETag must not leave the
   // previous one behind.
-  opts: { replaceValidators?: boolean } = {},
-): Promise<void> =>
-  withNamespaceLock(layout, fs, nowMs, async () => {
+  //
+  // `bestEffort` (#65): this write is only bookkeeping on an entry the caller
+  // has already read and verified, so a lock held by another process is not
+  // worth failing the command over. One attempt; when the lock is held the
+  // result says so (with the operator message) and nothing is written. The
+  // checks below still run whenever the lock IS obtained, so a corrupt entry
+  // still fails closed.
+  opts: { replaceValidators?: boolean; bestEffort?: boolean } = {},
+): Promise<{ recorded: true } | { recorded: false; reason: string; lockStale: boolean }> => {
+  const touch = async (): Promise<void> => {
     const existing = await readMetaFile(layout, fs);
     if (existing.kind === 'miss') {
       throw validationError(`cache entry ${layout.namespace} has no baseline to revalidate`);
@@ -894,7 +901,16 @@ const touchRevalidatedImpl = (
     };
     await prepareDirs(layout, fs);
     await fs.writeFileAtomic(layout.metaPath, serializeMeta(meta));
-  });
+  };
+  if (opts.bestEffort === true) {
+    const attempt = await tryWithNamespaceLock(layout, fs, nowMs, touch);
+    return attempt.acquired
+      ? { recorded: true }
+      : { recorded: false, reason: attempt.message, lockStale: attempt.stale };
+  }
+  await withNamespaceLock(layout, fs, nowMs, touch);
+  return { recorded: true };
+};
 
 // ---------------------------------------------------------------------------
 // The public reader. The transactional write invariants are stated in terms

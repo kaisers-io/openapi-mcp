@@ -194,6 +194,19 @@ Remove a stale writer lock left behind by a process that died. Stop other `opena
 processes on this entry first — removing a lock a live writer still holds re-admits a second
 writer.
 
+The lock records the owning process id and hostname. The conflict message and `cache unlock`
+report them, and for an owner on the same host whether that process is still running. A lock
+younger than 60 seconds still needs `--force`, even when its owner looks dead: a process in
+another PID namespace (a container sharing the cache directory) can look dead from here.
+
+A held lock only fails commands that change what is accepted (first use, a new candidate,
+`--trust-spec-updates`, `cache promote`, `cache clear`), and only after retrying: for as long as
+`--timeout` allows when a spec is loaded (at least about two seconds), about two seconds for
+`cache promote` and `cache clear`. A start whose spec is unchanged serves the verified baseline
+with a warning instead, and `serve` reports it in the `openapi_mcp_status` tool as
+`cacheLock: "held"` (another process is writing) or `cacheLock: "stale"` (the owner looks gone:
+run `cache unlock`).
+
 | Flag | Meaning | Default |
 |---|---|---|
 | `--spec <url\|file>` | unlock the namespace for this spec source | none |

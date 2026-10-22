@@ -78,12 +78,13 @@ export type {
 } from './spec/normalize.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
 export type {
+  CacheLockState,
   CacheStatus,
   SpecPipelineDeps,
   SpecPipelineOptions,
   SpecPipelineResult,
 } from './spec/pipeline.ts';
-export type { CacheFs } from './cache/fs.ts';
+export type { CacheFs, CacheRuntime } from './cache/fs.ts';
 export {
   CACHE_KEY_MAX_LENGTH,
   CACHE_MAX_PERSISTED_BYTES,
@@ -99,7 +100,15 @@ export {
   resolveCachePolicy,
 } from './cache/paths.ts';
 export type { CacheLayout, CachePolicy } from './cache/paths.ts';
-export { LOCK_STALE_MS, unlockNamespace, withNamespaceLock } from './cache/lock.ts';
+export {
+  LOCK_RETRY_DELAYS_MS,
+  LOCK_STALE_MS,
+  lockRetrySchedule,
+  tryWithNamespaceLock,
+  unlockNamespace,
+  withNamespaceLock,
+} from './cache/lock.ts';
+export { describeLockHolder } from './cache/lock-holder.ts';
 export {
   CACHE_META_SCHEMA_VERSION,
   CACHE_TEXT_MAX,
