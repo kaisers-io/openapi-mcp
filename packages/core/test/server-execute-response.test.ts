@@ -634,6 +634,34 @@ describe('mapResponse — outputSchema present (validator defined)', () => {
   });
 });
 
+describe('mapResponse — 3xx statuses the transport does not follow', () => {
+  it.each([
+    [300, 'text/html', '<html>choices</html>'],
+    [304, undefined, ''],
+    [305, undefined, ''],
+    [399, 'application/json', '{}'],
+  ])('maps a %i to a tool error, never to success', (status, contentType, body) => {
+    const opts = defaultOpts({ outcome: response(status, contentType, body) });
+    const text = isError(mapResponse(opts));
+    expect(text).toBe(
+      `tool execution failed: the upstream server returned status ${status}, which is not supported`,
+    );
+  });
+
+  it('applies to a tool with an output schema too', () => {
+    const outputSchema = sampleOutputSchema();
+    const validator = compileEnvelopeValidator(outputSchema);
+    const outcome = response(304, undefined, '');
+    const text = isError(mapResponse(defaultOpts({ outcome, outputSchema, validator })));
+    expect(text).toContain('status 304');
+  });
+
+  it('leaves 2xx untouched (the boundary is exactly 300)', () => {
+    const result = mapResponse(defaultOpts({ outcome: response(299, 'text/plain', 'ok') }));
+    expect(result.isError).toBe(false);
+  });
+});
+
 // #33: end-to-end through the real generated outputSchema — an upstream that
 // adds an undocumented response field must still yield structured output.
 describe('mapResponse — generated outputSchema with an undocumented field (#33)', () => {

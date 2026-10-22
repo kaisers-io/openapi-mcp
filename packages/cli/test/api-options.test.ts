@@ -483,3 +483,17 @@ describe('--max-concurrency and --rate-limit', () => {
     expect(() => parseApiCmdOpts(['--rate-limit'])).toThrow(/argument missing/u);
   });
 });
+
+describe('--request-timeout', () => {
+  it('defaults to 30s, independent of the spec fetch --timeout', () => {
+    expect(resolve([]).requestTimeoutMs).toBe(30_000);
+  });
+
+  it('parses a duration', () => {
+    expect(resolve(['--request-timeout', '2m']).requestTimeoutMs).toBe(120_000);
+  });
+
+  it.each(['0s', '10', '1.5s', 'fast', '30d'])('rejects %j', (raw) => {
+    expectUsageError(() => resolve(['--request-timeout', raw]), '--request-timeout');
+  });
+});

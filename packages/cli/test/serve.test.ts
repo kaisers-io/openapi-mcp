@@ -774,3 +774,110 @@ describe('serve — parallel tool calls and configurable limits (stdio subproces
     expect(meta?.['openapi-mcp/retryAfterMs']).toBeLessThanOrEqual(60_000);
   }, 15_000);
 });
+
+// The upstream HTTP client end to end through a real `serve` subprocess
+// against a private, trusted --base-url (the internal-API case).
+describe('serve — upstream client behaviour (stdio subprocess)', () => {
+  let child: ReturnType<typeof spawn> | undefined;
+  let tempHome: string | undefined;
+  let upstream: Server | undefined;
+  const seenAccept: (string | undefined)[] = [];
+
+  afterEach(async () => {
+    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        child?.once('exit', () => resolve());
+      });
+      child.kill('SIGKILL');
+      await exited;
+    }
+    child = undefined;
+    if (upstream !== undefined) {
+      const server = upstream;
+      upstream = undefined;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+    if (tempHome !== undefined) {
+      await rm(tempHome, { recursive: true, force: true });
+      tempHome = undefined;
+    }
+    seenAccept.length = 0;
+  });
+
+  // GET /pets redirects within the same origin (to /pets/), which answers
+  // JSON; GET /slow never answers in time.
+  const start = async (): Promise<number> => {
+    const server = createServer((req, res) => {
+      seenAccept.push(req.headers.accept);
+      if (req.url === '/pets') {
+        res.writeHead(301, { location: '/pets/' });
+        res.end();
+        return;
+      }
+      if (req.url === '/pets/') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify([{ id: 1, name: 'Rex' }]));
+      }
+      // Anything else hangs past the request timeout.
+    });
+    upstream = server;
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    return (server.address() as AddressInfo).port;
+  };
+
+  const spawnServe = async (baseUrl: string, extraArgs: readonly string[]) => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        bin,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        baseUrl,
+        '--trust-spec-updates',
+        ...extraArgs,
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    return { proc: child, ...collectLines(child) };
+  };
+
+  it('follows a same-origin redirect on a private --base-url and sends a JSON-first Accept', async () => {
+    const port = await start();
+    const { proc, stdoutLines } = await spawnServe(`http://127.0.0.1:${String(port)}`, []);
+    sendModern(proc, 1, 'tools/call', { name: 'listPets', arguments: {} });
+    await waitFor(() => stdoutLines.length > 0, 8000);
+    const response = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(response.result?.['isError']).not.toBe(true);
+    expect((response.result?.['structuredContent'] as { data: unknown } | undefined)?.data).toEqual(
+      [{ id: 1, name: 'Rex' }],
+    );
+    expect(seenAccept).toEqual(['application/json, */*;q=0.1', 'application/json, */*;q=0.1']);
+  }, 15_000);
+
+  it('--request-timeout bounds an upstream call independently of --timeout', async () => {
+    const port = await start();
+    // The base path makes listPets hit /slow/pets, which never answers.
+    const { proc, stdoutLines } = await spawnServe(`http://127.0.0.1:${String(port)}/slow`, [
+      '--timeout',
+      '30s',
+      '--request-timeout',
+      '1s',
+    ]);
+    const started = Date.now();
+    sendModern(proc, 1, 'tools/call', { name: 'listPets', arguments: {} });
+    await waitFor(() => stdoutLines.length > 0, 8000);
+    const elapsed = Date.now() - started;
+    const response = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(response.result?.['isError']).toBe(true);
+    expect(JSON.stringify(response.result?.['content'])).toContain('timed out');
+    expect(elapsed).toBeLessThan(5000);
+  }, 15_000);
+});

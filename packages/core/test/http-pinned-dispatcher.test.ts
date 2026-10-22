@@ -1245,3 +1245,227 @@ describe('validateHopUrlSync', () => {
     expect(validateHopUrlSync(new URL('http://example.test/'), untrusted)).toBeUndefined();
   });
 });
+
+// Redirect trust and 303 handling. Every fixture uses a TRUSTED loopback
+// base with allowPrivateNetwork OFF, i.e. `--base-url http://127.0.0.1:...`
+// for an internal API: only the trusted origin itself may resolve to a
+// private address.
+describe('pinnedRequest — same-origin redirects and 303 See Other', () => {
+  // A permissive pinned Agent (every hostname -> 127.0.0.1, any address
+  // allowed) for the recording pools below.
+  const loopbackAgent = (): Agent =>
+    createPinnedAgent({ trusted: true, allowPrivateNetwork: true }, () =>
+      Promise.resolve(['127.0.0.1']),
+    );
+
+  const trustedPrivate = (overrides: Partial<PinnedRequestOptions> = {}): PinnedRequestOptions =>
+    buildOpts({ baseTrusted: true, allowPrivateNetwork: false, ...overrides });
+
+  it('follows a same-origin redirect on a private trusted base (e.g. /v1 -> /v1/)', async () => {
+    const server = await startFlexServer((req, res) => {
+      if (req.url === '/v1') {
+        res.writeHead(301, { location: '/v1/' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/v1`),
+        trustedPrivate(),
+        buildDeps(),
+      );
+      expect(outcome).toMatchObject({ kind: 'response', status: 200 });
+      expect(server.requests.map((req) => req.url)).toEqual(['/v1', '/v1/']);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('still denies a redirect to ANOTHER private origin (a different port is a different origin)', async () => {
+    const other = await startFlexServer((_req, res) => {
+      res.writeHead(200);
+      res.end('should never be hit');
+    });
+    const origin = await startFlexServer((_req, res) => {
+      res.writeHead(302, { location: `http://origin.test:${other.port}/` });
+      res.end();
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${origin.port}/start`),
+        trustedPrivate(),
+        buildDeps(),
+      );
+      expect(outcome).toMatchObject({ kind: 'error', reason: 'egress' });
+      expect(other.requests).toHaveLength(0);
+    } finally {
+      await origin.close();
+      await other.close();
+    }
+  });
+
+  it('trusts only the base origin until the chain leaves it: original -> foreign -> original', async () => {
+    // A recording pool hands out permissive Agents so every hop can connect
+    // to loopback; what is asserted is the trust policy each hop
+    // ASKED for — the pool key that decides which DNS policy applies.
+    const policies: { origin: string; trusted: boolean }[] = [];
+    const agents = {
+      acquire: (origin: string, policy: PinnedPolicy) => {
+        policies.push({ origin, trusted: policy.trusted });
+        return loopbackAgent();
+      },
+      size: () => 0,
+      close: () => Promise.resolve(),
+    };
+    let originPort = 0;
+    const foreign = await startFlexServer((_req, res) => {
+      res.writeHead(302, { location: `http://origin.test:${originPort}/back` });
+      res.end();
+    });
+    const origin = await startFlexServer((req, res) => {
+      if (req.url === '/v1') {
+        res.writeHead(301, { location: '/v1/' });
+      } else if (req.url === '/v1/') {
+        res.writeHead(302, { location: `http://foreign.test:${foreign.port}/` });
+      } else {
+        res.writeHead(200);
+      }
+      res.end();
+    });
+    originPort = origin.port;
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${origin.port}/v1`),
+        trustedPrivate(),
+        buildDeps({ agents }),
+      );
+      expect(outcome).toMatchObject({ kind: 'response', status: 200 });
+      expect(policies.map((entry) => entry.trusted)).toEqual([true, true, false, false]);
+      // Credentials were stripped from the return hop as well.
+      expect(origin.requests.map((req) => req.url)).toEqual(['/v1', '/v1/', '/back']);
+      expect(origin.requests[2]?.headers['authorization']).toBeUndefined();
+    } finally {
+      await origin.close();
+      await foreign.close();
+    }
+  });
+
+  it('never trusts a redirect hop when the base itself is untrusted', async () => {
+    const server = await startFlexServer((req, res) => {
+      if (req.url === '/v1') {
+        res.writeHead(301, { location: '/v1/' });
+        res.end();
+        return;
+      }
+      res.writeHead(200);
+      res.end();
+    });
+    const policies: boolean[] = [];
+    const agents = {
+      acquire: (_origin: string, policy: PinnedPolicy) => {
+        policies.push(policy.trusted);
+        return loopbackAgent();
+      },
+      size: () => 0,
+      close: () => Promise.resolve(),
+    };
+    try {
+      await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/v1`),
+        buildOpts({ baseTrusted: false, allowPrivateNetwork: false }),
+        buildDeps({ agents }),
+      );
+      expect(policies).toEqual([false, false]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.each(['POST', 'PUT', 'PATCH', 'DELETE'])(
+    'follows a 303 after %s as a GET with no body and no content-type',
+    async (method) => {
+      const server = await startFlexServer((req, res) => {
+        if (req.url === '/things') {
+          res.writeHead(303, { location: '/things/1' });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"id":1}');
+      });
+      try {
+        const outcome = await pinnedRequest(
+          new URL(`http://origin.test:${server.port}/things`),
+          trustedPrivate({
+            method,
+            body: new TextEncoder().encode('{"name":"x"}'),
+            headers: buildHeaders({
+              sameOriginHeaders: {
+                authorization: 'Bearer secret-token',
+                'content-type': 'application/json',
+              },
+            }),
+          }),
+          buildDeps(),
+        );
+        expect(outcome).toMatchObject({ kind: 'response', status: 200 });
+        expect(server.requests.map((req) => [req.method, req.url])).toEqual([
+          [method, '/things'],
+          ['GET', '/things/1'],
+        ]);
+        const [, followUp] = server.requests;
+        expect(followUp?.headers['content-type']).toBeUndefined();
+        expect(followUp?.headers['content-length']).toBeUndefined();
+        // Same origin: credentials still go along on the GET.
+        expect(followUp?.headers['authorization']).toBe('Bearer secret-token');
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  it.each([301, 302, 307, 308])('still refuses a %i after a POST', async (status) => {
+    const server = await startFlexServer((_req, res) => {
+      res.writeHead(status, { location: '/elsewhere' });
+      res.end();
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/things`),
+        trustedPrivate({ method: 'POST', body: new TextEncoder().encode('{}') }),
+        buildDeps(),
+      );
+      expect(outcome).toEqual({ kind: 'error', reason: 'redirect-write-method' });
+      expect(server.requests).toHaveLength(1);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('keeps a POST after a 303 -> 307 chain a GET (the method change sticks)', async () => {
+    const server = await startFlexServer((req, res) => {
+      if (req.url === '/a') {
+        res.writeHead(303, { location: '/b' });
+      } else if (req.url === '/b') {
+        res.writeHead(307, { location: '/c' });
+      } else {
+        res.writeHead(200);
+      }
+      res.end();
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/a`),
+        trustedPrivate({ method: 'POST', body: new TextEncoder().encode('{}') }),
+        buildDeps(),
+      );
+      expect(outcome).toMatchObject({ kind: 'response', status: 200 });
+      expect(server.requests.map((req) => req.method)).toEqual(['POST', 'GET', 'GET']);
+    } finally {
+      await server.close();
+    }
+  });
+});

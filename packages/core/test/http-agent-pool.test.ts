@@ -225,10 +225,16 @@ describe('createPinnedAgentPool — the DNS pin still holds for every new socket
 });
 
 describe('createPinnedAgentPool — redirects keep the untrusted policy', () => {
-  it('a same-origin redirect hop does NOT reuse the trusted hop-0 agent (private answer rejected)', async () => {
+  it('a same-origin redirect stays on the trusted agent; a different origin gets a separate untrusted one', async () => {
+    const other = await startServer();
     const server = await startServer((req, res) => {
       if (req.url === '/start') {
         res.writeHead(302, { location: '/final' });
+        res.end();
+        return;
+      }
+      if (req.url === '/final') {
+        res.writeHead(302, { location: `http://api.test:${other.port}/x` });
         res.end();
         return;
       }
@@ -242,14 +248,17 @@ describe('createPinnedAgentPool — redirects keep the untrusted policy', () => 
         buildOpts(),
         withPool(pool),
       );
-      // Hop 1 goes to the very same origin, but redirect hops are never
-      // trusted, so its (separate) agent rejects the loopback answer.
+      // Hop 1 stays on the trusted base origin and reuses its agent; hop 2
+      // leaves it, so its (separate, untrusted) agent rejects the loopback
+      // answer.
       expect(outcome).toMatchObject({ kind: 'error', reason: 'egress' });
-      expect(server.requests.map((req) => req.url)).toEqual(['/start']);
+      expect(server.requests.map((req) => req.url)).toEqual(['/start', '/final']);
+      expect(other.requests).toHaveLength(0);
       expect(pool.size()).toBe(2);
     } finally {
       await pool.close();
       await server.close();
+      await other.close();
     }
   });
 

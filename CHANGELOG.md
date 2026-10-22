@@ -20,3 +20,12 @@
   and the upstream request share one time budget: the wait takes at most half of it. A
   refused call (`overloaded`, or over the new `--rate-limit`, default `120/1m`) is a tool
   error whose `_meta` carries `openapi-mcp/error` and `openapi-mcp/retryAfterMs`.
+
+- **New `--request-timeout` for upstream API calls (#68).** `--timeout` now covers only the
+  spec fetch. **Upgrading:** if you raised `--timeout` to make slow API calls work, set
+  `--request-timeout` instead (default `30s`); it is the per-call budget, queue wait included.
+- **HTTP client fixes (#68).** `Accept` is derived from the operation's declared 2xx media
+  types (a spec `Accept` header parameter is ignored, per OpenAPI; `--header Accept:`
+  overrides). A redirect that stays on the trusted `--base-url` origin keeps its trust. A
+  303 after a write is followed as a GET without a body. An unfollowed 3xx is a tool error,
+  not a success.

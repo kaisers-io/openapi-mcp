@@ -407,6 +407,17 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
   if (status >= 400) {
     return mapHttpError(status, contentType, bodyBytes, opts.redactor, opts.envVarHint);
   }
+  // A 3xx reaching here is one the transport does not follow (300 Multiple
+  // Choices, 304 Not Modified, 305/306, or an unknown 3xx): none of them is
+  // the operation's result, so it must not map to success. 304 in
+  // particular only answers a conditional request, which this client never
+  // sends. The status is a number from the parsed status line, never text.
+  if (status >= 300) {
+    return textOutcome(
+      `tool execution failed: the upstream server returned status ${status}, which is not supported`,
+      true,
+    );
+  }
   if (opts.validator === undefined) {
     return mapNoSchemaSuccess(status, contentType, bodyBytes, opts.redactor, opts.maxTextBytes);
   }
