@@ -60,9 +60,10 @@ const deniedByModeBits = async (
 const searchDenied = await deniedByModeBits(0o000, (dir) => stat(join(dir, 'file')));
 // Create inside a 0o500 directory (bypassed only by CAP_DAC_OVERRIDE)
 const writeDenied = await deniedByModeBits(0o500, (dir) => mkdir(join(dir, 'sub')));
-// Appended to the name of each real-mode-bit test so a skip says why in the
-// reporter output, not only in this file
-const REAL_MODE_BITS = '[real mode bits; skipped when this process bypasses them, e.g. root]';
+// Appended to the name of a real-mode-bit test only when it is skipped, so a
+// skip says why in the reporter output, not only in this file
+const skipNote = (denied: boolean): string =>
+  denied ? '' : ' [skipped: this process bypasses real mode bits, e.g. root]';
 
 const injectedFsError = (code: string, syscall: string, path: string): NodeJS.ErrnoException =>
   Object.assign(new Error(`${code}: injected ${syscall} failure, '${path}'`), {
@@ -175,7 +176,7 @@ describe('realContext cacheFs', () => {
   });
 
   it.skipIf(!searchDenied)(
-    `propagates a non-absence stat failure from pathExists instead of reporting false ${REAL_MODE_BITS}`,
+    `propagates a non-absence stat failure from pathExists instead of reporting false${skipNote(searchDenied)}`,
     async () => {
       // An unreadable parent must never be reported as "nothing cached here":
       // a miss is the one outcome that may become trust-on-first-use. The
@@ -203,7 +204,7 @@ describe('realContext cacheFs', () => {
   });
 
   it.skipIf(!writeDenied)(
-    `leaves no temp file behind when the write fails midway ${REAL_MODE_BITS}`,
+    `leaves no temp file behind when the write fails midway${skipNote(writeDenied)}`,
     async () => {
       // A read-only directory refuses the exclusive temp create (open "wx"
       // needs write permission on the directory); nothing may survive it. The
@@ -483,7 +484,12 @@ describe('realContext cacheFs under a restrictive umask', () => {
     expect(result.naiveParent).toBe('600');
     // ...so wherever mode bits apply it cannot even create the tree, and a
     // leaf-only chmod never runs (as root it succeeds, but leaves a tree no
-    // non-root owner could traverse)
+    // non-root owner could traverse). Gated on writeDenied, not searchDenied:
+    // creating naive/a is a write to the 0600 naive/ that also needs its
+    // missing search bit, and Linux lets CAP_DAC_READ_SEARCH skip a directory
+    // check only when the access does not include write, so only
+    // CAP_DAC_OVERRIDE lets it through (verified with
+    // `setpriv --bounding-set -dac_override` as root: EACCES)
     expect(result.naive).toBe(writeDenied ? 'EACCES' : 'succeeded');
     // And the per-component form yields a usable, correctly permissioned tree
     expect(result.leaf).toBe('700');
