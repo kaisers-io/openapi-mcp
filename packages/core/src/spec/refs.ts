@@ -56,6 +56,16 @@ export const assertInternal = (ref: string): void => {
   }
 };
 
+// Queues a container's children one by one. A variadic push(...children)
+// passes every element as a call argument, which throws a RangeError past
+// V8's argument limit (~120k) — well inside the spec budgets, so a wide but
+// valid array or object would otherwise crash the walk.
+const pushChildren = (pending: unknown[], children: readonly unknown[]): void => {
+  for (const child of children) {
+    pending.push(child);
+  }
+};
+
 // Validates every $ref in the document WITHOUT expanding anything: each must
 // be an internal JSON pointer that resolves. Dereferencing itself is deferred
 // until the operations to expose are known (issue #89, decision D2), but a
@@ -69,7 +79,7 @@ export const checkRefs = (document: Record<string, unknown>): void => {
   while (pending.length > 0) {
     const node = pending.pop();
     if (Array.isArray(node)) {
-      pending.push(...node);
+      pushChildren(pending, node);
     } else if (isRecord(node)) {
       const ref = node['$ref'];
       if (typeof ref === 'string' && !checked.has(ref)) {
@@ -77,7 +87,7 @@ export const checkRefs = (document: Record<string, unknown>): void => {
         resolvePointer(document, ref);
         checked.add(ref);
       }
-      pending.push(...Object.values(node));
+      pushChildren(pending, Object.values(node));
     }
   }
 };
@@ -114,13 +124,13 @@ const refsUnder = (root: unknown): string[] => {
   while (pending.length > 0) {
     const node = pending.pop();
     if (Array.isArray(node)) {
-      pending.push(...node);
+      pushChildren(pending, node);
     } else if (isRecord(node)) {
       const ref = node['$ref'];
       if (typeof ref === 'string') {
         found.push(ref);
       }
-      pending.push(...Object.values(node));
+      pushChildren(pending, Object.values(node));
     }
   }
   return found;

@@ -1126,6 +1126,45 @@ describe('runSpecPipeline — tool budget after filtering (issue #32)', () => {
     expect([...cacheFs.files.keys()].filter((key) => key.endsWith('meta.json'))).toEqual([]);
   });
 
+  it('warns when a recorded candidate would exceed the tool budget under the current filters', async () => {
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
+    // Accepted baseline: 10 GETs, well inside the budget
+    await runSpecPipeline('https://api.example.com/big.json', cachedOpts, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    // The refreshed spec documents 600 GETs: recorded as a candidate, the
+    // baseline keeps serving, and the run says promotion would fail to start
+    const refreshed = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...cachedOpts, nowMs: 3_600_001 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(refreshed.cacheStatus).toBe('candidate');
+    expect(refreshed.namedOperations).toHaveLength(10);
+    expect(refreshed.warnings.join('\n')).toMatch(
+      /candidate spec would expose 600 tools .*512-tool budget.*--allow or --deny/u,
+    );
+  });
+
+  it('does not warn about a candidate that fits the tool budget', async () => {
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
+    await runSpecPipeline('https://api.example.com/big.json', cachedOpts, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    // 600 operations, but --deny leaves 489 exposed: under the budget
+    const refreshed = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...cachedOpts, deny: [parseFilterPattern('GET /r1*')], nowMs: 3_600_001 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(refreshed.cacheStatus).toBe('candidate');
+    expect(refreshed.warnings.join('\n')).not.toContain('tool budget');
+  });
+
   it('applies the same two-level rule when serving a cached spec', async () => {
     const cacheFs = memoryCacheFs();
     const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
@@ -1401,6 +1440,60 @@ describe('runSpecPipeline — filter before dereference, raw-document cache (iss
   });
 });
 
+describe('runSpecPipeline — wide containers (issue #89 review)', () => {
+  // 130,000 elements is far inside every spec budget, but well past V8's
+  // argument-count limit for a variadic call such as push(...array)
+  const WIDE = 130_000;
+  const wideObject = (): Record<string, number> =>
+    Object.fromEntries(Array.from({ length: WIDE }, (_, index) => [`k${index}`, 0]));
+  const post = (schema: unknown): Record<string, unknown> => ({
+    post: {
+      operationId: 'create',
+      requestBody: { content: { 'application/json': { schema } } },
+      responses: { '200': { description: 'ok' } },
+    },
+  });
+  const run = (document: Record<string, unknown>) =>
+    runSpecPipeline(
+      'https://api.example.com/wide.json',
+      { ...baseOpts, ...allowAll },
+      {
+        ...fileDeps,
+        fetcher: (() => Promise.resolve(Response.json(document))) as unknown as SpecFetcher,
+      },
+    );
+
+  it('accepts a wide array and a wide object in an unrelated extension', async () => {
+    const result = await run({
+      openapi: '3.1.0',
+      info: { title: 'wide', version: '1' },
+      'x-wide': Array.from({ length: WIDE }, () => 0),
+      'x-wide-object': wideObject(),
+      paths: { '/things': post({ type: 'object' }) },
+    });
+    expect(result.namedOperations.map((named) => named.toolName)).toEqual(['create']);
+  });
+
+  it('accepts a wide container inside a $ref target an exposed operation uses', async () => {
+    const result = await run({
+      openapi: '3.1.0',
+      info: { title: 'wide', version: '1' },
+      paths: { '/things': post({ $ref: '#/components/schemas/Thing' }) },
+      components: {
+        schemas: {
+          Thing: {
+            type: 'object',
+            properties: { next: { $ref: '#/components/schemas/Thing' } },
+            'x-wide': Array.from({ length: WIDE }, () => 0),
+            'x-wide-object': wideObject(),
+          },
+        },
+      },
+    });
+    expect(result.namedOperations.map((named) => named.toolName)).toEqual(['create']);
+  });
+});
+
 describe('runSpecPipeline — densely cyclic models (issue #89)', () => {
   it('serves a spec whose cyclic models used to exhaust the node budget, failing closed per schema', async () => {
     // Ten mutually referencing schemas, like a SaaS model where customer,
@@ -1455,5 +1548,118 @@ describe('runSpecPipeline — densely cyclic models (issue #89)', () => {
     const byName = new Map(built.tools.map((tool) => [tool.toolName, tool]));
     expect(byName.get('getCyclic')?.outputSchema).toBeUndefined();
     expect(byName.get('getPlain')?.outputSchema).toBeDefined();
+  });
+});
+
+describe('runSpecPipeline — collapseCycles differential (issue #89 review)', () => {
+  // Mulberry32: a tiny seeded PRNG so a failure names a reproducible seed
+  const prng = (seed: number): (() => number) => {
+    let state = seed >>> 0;
+    return () => {
+      state = (state + 0x6d_2b_79_f5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4_294_967_296;
+    };
+  };
+
+  // A random schema graph: `size` component schemas whose properties, array
+  // items and allOf members reference each other at random (self, mutual and
+  // pass-through cycles, shared acyclic targets), used by request bodies,
+  // responses and parameters of a few operations
+  const randomSpec = (seed: number): string => {
+    const random = prng(seed);
+    const pick = (count: number): number => Math.floor(random() * count);
+    const size = 2 + pick(5);
+    const ref = (): Record<string, string> => ({ $ref: `#/components/schemas/S${pick(size)}` });
+    const leaves = [{ type: 'string' }, { type: 'integer', minimum: 0 }, { type: 'boolean' }];
+    const member = (): Record<string, unknown> => {
+      const roll = random();
+      if (roll < 0.35) {
+        return ref();
+      }
+      if (roll < 0.5) {
+        return { type: 'array', items: ref() };
+      }
+      return leaves[pick(leaves.length)] ?? { type: 'string' };
+    };
+    const schemas: Record<string, unknown> = {};
+    for (let index = 0; index < size; index += 1) {
+      const roll = random();
+      if (roll < 0.15) {
+        // A bare indirection: pass-through cycles and chains
+        schemas[`S${index}`] = ref();
+      } else if (roll < 0.3) {
+        schemas[`S${index}`] = { allOf: [member(), { type: 'object' }] };
+      } else {
+        const properties: Record<string, unknown> = {};
+        const count = 1 + pick(3);
+        for (let property = 0; property < count; property += 1) {
+          properties[`p${property}`] = member();
+        }
+        schemas[`S${index}`] = { type: 'object', properties };
+      }
+    }
+    const paths: Record<string, unknown> = {};
+    for (let index = 0; index < 4; index += 1) {
+      const body = member();
+      paths[`/r${index}`] = {
+        post: {
+          operationId: `op${index}`,
+          parameters: random() < 0.3 ? [{ name: 'q', in: 'query', schema: member() }] : [],
+          requestBody: { content: { 'application/json': { schema: body } } },
+          responses: {
+            '200': { description: 'ok', content: { 'application/json': { schema: member() } } },
+          },
+        },
+      };
+    }
+    return JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'random', version: '1' },
+      paths,
+      components: { schemas },
+    });
+  };
+
+  it('exposes exactly the tools a full expansion exposes, over random cyclic graphs', async () => {
+    const opts = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' as const };
+    const wire = (built: ReturnType<typeof buildTools>): string =>
+      JSON.stringify(
+        built.tools.map((tool) => [tool.toolName, tool.wireSchema, tool.outputSchema]),
+      );
+    const omittedOps = (built: ReturnType<typeof buildTools>): string[] =>
+      built.omitted.map((entry) => `${entry.method} ${entry.path}`);
+    let compared = 0;
+    for (let seed = 1; seed <= 300; seed += 1) {
+      const text = randomSpec(seed);
+      const validated = validateOpenApiDocument(parseSpecText(text));
+      let reference: ReturnType<typeof buildTools> | undefined;
+      try {
+        const full = normalizeSpec(dereference(validated.document), validated.version);
+        reference = buildTools(assignToolNames(full.operations), opts);
+      } catch {
+        // A graph whose full expansion exceeds a budget has no reference
+        reference = undefined;
+      }
+      if (reference !== undefined) {
+        // oxlint-disable-next-line no-await-in-loop -- sequential on purpose: one seed at a time
+        const result = await runSpecPipeline(
+          'https://api.example.com/random.json',
+          { ...baseOpts, ...allowAll },
+          {
+            ...fileDeps,
+            fetcher: (() => Promise.resolve(new Response(text))) as unknown as SpecFetcher,
+          },
+        );
+        const collapsed = buildTools(result.namedOperations, opts);
+        expect(wire(collapsed), `seed ${seed}`).toBe(wire(reference));
+        expect(omittedOps(collapsed), `seed ${seed}`).toEqual(omittedOps(reference));
+        compared += 1;
+      }
+    }
+    // Most graphs must actually be compared, not skipped
+    expect(compared).toBeGreaterThan(250);
   });
 });
