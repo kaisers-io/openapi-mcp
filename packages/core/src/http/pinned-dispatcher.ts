@@ -181,7 +181,15 @@ export type PinnedResponse = {
 
 export type PinnedOutcome =
   | PinnedResponse
-  | { kind: 'error'; reason: PinnedErrorReason; detail?: string };
+  | {
+      kind: 'error';
+      reason: PinnedErrorReason;
+      detail?: string;
+      // True only when the failure happened before any response (status
+      // line) arrived — the request may not have reached the upstream at
+      // all, so an idempotent retry cannot observe a partial response.
+      beforeResponse?: true;
+    };
 
 export type HopHeaders = {
   // Sent only while still on the original origin (auth + tool + content).
@@ -535,7 +543,12 @@ export const pinnedRequest = async (
       if (signal.aborted) {
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
-      return { kind: 'error', reason: classifyFetchError(error), detail: describeCause(error) };
+      return {
+        kind: 'error',
+        reason: classifyFetchError(error),
+        detail: describeCause(error),
+        beforeResponse: true,
+      };
     }
     // Threaded through the try/catch/finally below on purpose: the finally
     // block chooses destroy() vs close() based on whether the try body

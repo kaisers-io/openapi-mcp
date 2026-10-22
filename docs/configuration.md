@@ -59,6 +59,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body **and** the outgoing request body (see below) | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--request-timeout <duration>` | no | time budget for each upstream tool call, queue wait included (independent of `--timeout`, which covers the spec fetch) | `30s` |
+| `--retries <n>` | no | retry a transient upstream failure up to `n` times (0–3), only for retry-safe requests (see below) | `0` |
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
 | `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
@@ -128,6 +129,19 @@ Notes:
   `starting_after`. A body cursor needs a structured result (an output schema), so a
   text-only result gets only the `Link` hint. A hint the tool's own input schema would reject
   becomes `null`. The hint never contains a raw URL.
+- Retries (`--retries`, off by default): a failed upstream call is retried only for
+  `GET`, `HEAD`, `PUT` and `DELETE` requests. A `POST` or `PATCH` is retried only when its
+  operation declares an `Idempotency-Key` header. The server then sends one key, the
+  caller's value or a generated UUID, on every attempt, and returns it as
+  `_meta["openapi-mcp/idempotencyKey"]`: if the call still fails, repeat it with that key so
+  the upstream can deduplicate. Only `429`, `502`, `503`, `504`, and connection errors that
+  happen before any response arrived are retried. A `DELETE` is not retried after such a
+  connection error: the upstream may already have deleted the resource, and the retry would
+  then report `404`. Backoff is exponential with full jitter (250 ms base, 5 s cap), or the
+  upstream's `Retry-After` on a `429` or `503`. Retries stay within `--request-timeout`, the
+  call's concurrency slot and its single rate-limit charge. The slot is held during backoff,
+  so under an upstream `Retry-After` storm queued calls wait (and may time out waiting for a
+  slot) rather than add load.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly

@@ -128,6 +128,9 @@ export type ResolvedApiConfig = {
   // Deadline for one upstream API call (--request-timeout), independent of
   // the spec fetch's --timeout.
   requestTimeoutMs: number;
+  // Extra attempts for transient failures of retry-safe requests
+  // (--retries; 0 = off).
+  retries: number;
 };
 
 export type ApiCmdOpts = {
@@ -144,6 +147,7 @@ export type ApiCmdOpts = {
   maxConcurrency: string;
   rateLimit: string;
   requestTimeout: string;
+  retries: string;
 };
 
 // The --base-url/--header-env/--header/--max-response-bytes/
@@ -183,6 +187,11 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
       '--request-timeout <duration>',
       'deadline for each upstream API request (<int><s|m|h|d>); --timeout covers the spec fetch',
       '30s',
+    )
+    .option(
+      '--retries <n>',
+      'retry a transient upstream failure (429/502/503/504, connection error) up to n times (0-3) for GET/HEAD/PUT/DELETE, and for POST/PATCH only with an Idempotency-Key header',
+      '0',
     );
 
 // Shared by both header groups so the name/value size checks are defined
@@ -380,6 +389,16 @@ const parseRateLimit = (raw: string): { maxCalls: number; windowMs: number } => 
   }
 };
 
+const MAX_RETRIES_FLAG = 3;
+const parseRetries = (raw: string): number => {
+  if (!/^\d$/u.test(raw) || Number(raw) > MAX_RETRIES_FLAG) {
+    throw usageError(
+      `invalid --retries "${raw}" — expected an integer from 0 to ${MAX_RETRIES_FLAG}`,
+    );
+  }
+  return Number(raw);
+};
+
 const parseRequestTimeout = (raw: string): number => {
   try {
     return parseDuration(raw);
@@ -423,5 +442,6 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
     maxConcurrency: parseMaxConcurrency(cmdOpts.maxConcurrency),
     rateLimit: parseRateLimit(cmdOpts.rateLimit),
     requestTimeoutMs: parseRequestTimeout(cmdOpts.requestTimeout),
+    retries: parseRetries(cmdOpts.retries),
   };
 };

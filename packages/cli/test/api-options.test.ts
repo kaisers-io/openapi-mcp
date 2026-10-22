@@ -497,3 +497,17 @@ describe('--request-timeout', () => {
     expectUsageError(() => resolve(['--request-timeout', raw]), '--request-timeout');
   });
 });
+
+describe('--retries', () => {
+  it('defaults to 0 (off)', () => {
+    expect(resolve([]).retries).toBe(0);
+  });
+
+  it('accepts 0 to 3', () => {
+    expect(resolve(['--retries', '3']).retries).toBe(3);
+  });
+
+  it.each(['4', '-1', '1.5', 'x', '', '01'])('rejects %j', (raw) => {
+    expectUsageError(() => resolve(['--retries', raw]), '--retries');
+  });
+});

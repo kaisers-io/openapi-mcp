@@ -471,6 +471,7 @@ describe('createPinnedAgentPool — bounds', () => {
       kind: 'error',
       reason: 'network',
       detail: expect.any(String) as string,
+      beforeResponse: true,
     });
     await server.close();
   });

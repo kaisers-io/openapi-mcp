@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
 import { createPinnedAgentPool } from '../../http/agent-pool.ts';
 import { pinnedRequest } from '../../http/pinned-dispatcher.ts';
@@ -16,6 +17,14 @@ import { mapResponse } from './response.ts';
 import type { EnvelopeValidator, PageInput } from './response.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
 import type { PaginationPlan } from '../../toolgen/pagination.ts';
+import {
+  isRetryableMethod,
+  MAX_RETRIES,
+  realSleep,
+  retriesConnectionErrors,
+  withRetries,
+} from './retry.ts';
+import type { RetryDeps } from './retry.ts';
 import { createSlotQueue } from './slots.ts';
 
 // The integration point wiring request-building, the pinned transport,
@@ -46,6 +55,9 @@ export type ExecutorConfig = {
   // Calls allowed to WAIT for a slot once maxConcurrent are in flight
   // (default 4 x maxConcurrent); a call beyond that is refused at once.
   maxQueued?: number;
+  // Extra attempts for a transient failure of a retry-safe request
+  // (--retries; default 0 = never retry; see retry.ts).
+  retries?: number;
   // By tool name; compiled eagerly once at server startup — this module only
   // looks the map up per call.
   validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
@@ -54,6 +66,8 @@ export type ExecutorConfig = {
 export type ExecutorDeps = {
   // { fetch, resolve, timeoutSignal } — the narrow project-owned interface.
   transport: PinnedDeps;
+  // Retry clock/sleep/jitter, injectable for tests.
+  retry?: Partial<RetryDeps>;
   // Monotonic clock (ms) used to charge the queue wait against the call's
   // time budget; defaults to performance.now().
   now?: () => number;
@@ -214,6 +228,7 @@ export type UpstreamExecutor = ToolExecutor & { close: () => Promise<void> };
 const runUpstreamCall = async (
   config: ExecutorConfig,
   transport: PinnedDeps,
+  retryDeps: RetryDeps,
   tool: SnapshotTool,
   args: unknown,
   signal: AbortSignal,
@@ -304,6 +319,19 @@ const runUpstreamCall = async (
     built.ok.contentType,
     built.ok.headers,
   );
+  const retries = Math.min(config.retries ?? 0, MAX_RETRIES);
+  const idempotencyKeyField = Object.values(generated.mapper.fields).some(
+    (mapping) =>
+      mapping.destination === 'header' && mapping.wireName.toLowerCase() === 'idempotency-key',
+  );
+  const keyed = retries > 0 && idempotencyKeyField && (method === 'POST' || method === 'PATCH');
+  if (keyed) {
+    // ONE key per tool call, identical on every attempt — the caller's own
+    // value when it passed one, else a fresh UUID — so the upstream can
+    // deduplicate a retried write. Added before the final budget check.
+    headers.sameOriginHeaders['idempotency-key'] ??= randomUUID();
+  }
+  const idempotencyKey = keyed ? headers.sameOriginHeaders['idempotency-key'] : undefined;
   if (overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)) {
     return isError('the final request exceeds the outbound resource budget');
   }
@@ -317,9 +345,19 @@ const runUpstreamCall = async (
     maxResponseBytes: config.maxResponseBytes,
     signal,
   };
-  const outcome = await pinnedRequest(finalUrl, requestOptions, transport);
+  const { outcome } = await withRetries(
+    (remainingMs) =>
+      pinnedRequest(finalUrl, { ...requestOptions, timeoutMs: remainingMs }, transport),
+    {
+      retries: isRetryableMethod(method, idempotencyKeyField) ? retries : 0,
+      timeoutMs,
+      connectionErrors: retriesConnectionErrors(method),
+      signal,
+    },
+    retryDeps,
+  );
   const [firstSecretHeader] = config.secretHeaders;
-  return mapResponse({
+  const result = mapResponse({
     outcome,
     validator,
     outputSchema: tool.wireTool.outputSchema,
@@ -348,6 +386,12 @@ const runUpstreamCall = async (
           },
         }),
   });
+  // The key the write was sent with, so a caller whose call still failed
+  // (e.g. a timeout after a retry) can repeat it with the SAME key and let
+  // the upstream deduplicate, instead of a fresh call getting a new key.
+  return idempotencyKey === undefined
+    ? result
+    : { ...result, meta: { ...result.meta, 'openapi-mcp/idempotencyKey': idempotencyKey } };
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {
@@ -369,6 +413,12 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     connections: config.maxConcurrent,
   });
   const transport: PinnedDeps = { ...deps.transport, agents };
+  const retryDeps: RetryDeps = {
+    sleep: realSleep,
+    random: Math.random,
+    now: Date.now,
+    ...deps.retry,
+  };
   const now = deps.now ?? (() => performance.now());
   // ONE time budget per call, shared by the queue wait and the upstream
   // request, so a queued call cannot take queue wait + a full timeout
@@ -391,7 +441,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     try {
       const waitedMs = Math.min(Math.max(now() - queuedAt, 0), maxQueueWaitMs);
       const remainingMs = Math.max(Math.floor(config.timeoutMs - waitedMs), 1);
-      return await runUpstreamCall(config, transport, tool, args, signal, remainingMs);
+      return await runUpstreamCall(config, transport, retryDeps, tool, args, signal, remainingMs);
     } catch {
       // Belt-and-suspenders: the dispatcher also catches, but this module
       // never lets a raw throw (a library-internal message, a stack, a
