@@ -19,7 +19,8 @@ npm i -g @kaisers-io/openapi-mcp
 ```
 
 Requirements: Node.js `>=24.11`, macOS or Linux. Windows is not supported natively (the cache relies on POSIX file
-permissions and rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/).
+permissions and rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/). Other POSIX systems
+(e.g. FreeBSD) are refused because they are untested, not because they are known to be unsafe.
 
 ## Quick start
 

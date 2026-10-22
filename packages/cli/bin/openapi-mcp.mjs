@@ -9,13 +9,17 @@
 // Platform first: no Node upgrade fixes it. The cache's trust model rests on POSIX semantics
 // that Windows does not provide (0700/0600 modes are not enforced there, and rename() over a
 // file another process holds open fails instead of replacing it), so an unsupported platform
-// stops here, before any of that code loads. PLATFORMS must equal `os` in package.json, which
-// makes npm refuse the install there too; test/bin.test.ts holds the two together.
+// stops here, before any of that code loads. Other POSIX systems (FreeBSD, OpenBSD, illumos,
+// AIX, Android) likely provide those semantics but are refused because nothing tests them.
+// PLATFORMS must equal `os` in package.json, which makes npm refuse the install there too;
+// test/bin.test.ts holds the two together.
 const PLATFORMS = ['darwin', 'linux'];
 if (!PLATFORMS.includes(process.platform)) {
   console.error(
     `openapi-mcp supports macOS and Linux only (found ${process.platform}). ` +
-      'On Windows, run it inside WSL.',
+      (process.platform === 'win32'
+        ? 'On Windows, run it inside WSL.'
+        : 'Other platforms are untested and therefore refused.'),
   );
   process.exit(1);
 }
