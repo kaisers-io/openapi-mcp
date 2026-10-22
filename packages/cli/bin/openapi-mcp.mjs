@@ -10,6 +10,21 @@ if (found[0] < REQUIRED[0] || (found[0] === REQUIRED[0] && found[1] < REQUIRED[1
   process.exit(1);
 }
 const { existsSync } = await import('node:fs');
+// V8 compile cache (issue #76): later starts reuse the compiled bundle instead of compiling
+// its source again. In a directory of this user's own (next to the spec cache), not the shared
+// OS temp default another local account could pre-create. NODE_DISABLE_COMPILE_CACHE=1 turns
+// it off; any failure only means no cache.
+try {
+  const { enableCompileCache } = await import('node:module');
+  const { homedir } = await import('node:os');
+  const { join } = await import('node:path');
+  const home = homedir();
+  if (home !== '') {
+    enableCompileCache?.(join(home, '.kaisers-io', 'openapi-mcp', 'compile-cache'));
+  }
+} catch {
+  // No home directory or no compile cache support: start without it
+}
 const dist = new URL('../dist/openapi-mcp.mjs', import.meta.url);
 // Dynamic import makes `import.meta.main` false in the target module (it is only true for
 // the file Node was invoked on directly), so the entry's self-execution guard never fires
