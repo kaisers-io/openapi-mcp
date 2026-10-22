@@ -186,18 +186,27 @@ const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | und
   return fromNextUrl(plan, input, link?.target);
 };
 
+// A JSON:API link is a URI-reference string or a link object whose `href`
+// is one (JSON:API 1.1, "Links"); null means the link does not exist.
+const jsonApiHref = (link: unknown): string | undefined => {
+  if (typeof link === 'string') {
+    return link;
+  }
+  const href = isRecord(link) ? link['href'] : undefined;
+  return typeof href === 'string' ? href : undefined;
+};
+
 // From a JSON:API document's top-level `links.next` (declared JSON:API
-// responses only). A `links` object is the document's verdict: a string
-// `next` is mapped like a Link target, and anything else (null on the last
-// page, absent, not a string) is "no next page". Undefined when the body
-// has no `links` object, so the body cursors still get their turn.
+// responses only). A `links` object is the document's verdict: a next link
+// is mapped like a Link target, and anything else (null on the last page,
+// absent, malformed) is "no next page". Undefined when the body has no
+// `links` object, so the body cursors still get their turn.
 const fromJsonApiLinks = (plan: PaginationPlan, input: HintInput): { next?: Args } | undefined => {
   const { data } = input;
   if (plan.jsonApiLinks !== true || !isRecord(data) || !isRecord(data['links'])) {
     return undefined;
   }
-  const { next } = data['links'];
-  return fromNextUrl(plan, input, typeof next === 'string' ? next : undefined);
+  return fromNextUrl(plan, input, jsonApiHref(data['links']['next']));
 };
 
 const withArg = (args: Args, field: PaginationField, raw: unknown): Args | undefined => {

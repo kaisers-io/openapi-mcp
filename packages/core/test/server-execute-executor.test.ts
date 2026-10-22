@@ -1881,6 +1881,16 @@ describe('createExecutor — pagination hints', () => {
     expect(acceptedAsInput(tool, next)).toBe(true);
   });
 
+  it('reads a JSON:API 1.1 link object (links.next.href)', async () => {
+    const { outcome, valid } = await call(
+      jsonApiDocOp(numbered),
+      jsonApiDoc({ next: { href: `${BASE}?page[number]=3`, meta: { count: 2 } } }),
+      {},
+    );
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toEqual({ page: { number: 3 } });
+  });
+
   it('reads links.next from an application/json response whose schema declares it', async () => {
     const schema = {
       type: 'object',
@@ -1920,7 +1930,8 @@ describe('createExecutor — pagination hints', () => {
     ['links.next null (last page)', { self: `${BASE}?page[number]=13`, next: null }],
     ['no links.next', { self: `${BASE}?page[number]=13` }],
     ['no links object', undefined],
-    ['a non-string links.next', { next: { href: `${BASE}?page[number]=3` } }],
+    ['a non-string links.next', { next: 3 }],
+    ['a link object without href', { next: { meta: { count: 3 } } }],
     ['another origin', { next: 'https://evil.example/articles?page[number]=3' }],
     ['another path', { next: 'https://api.example.test/admin?page[number]=3' }],
     ['an unmapped parameter', { next: `${BASE}?page[number]=3&token=x` }],

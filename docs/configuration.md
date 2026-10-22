@@ -156,7 +156,8 @@ Notes:
   deep, each once; a name that could be either a literal parameter or a `deepObject` key
   gives `null`. Without a `Link` header, a JSON:API response (media type
   `application/vnd.api+json`, or a response schema that declares `links.next`) uses its
-  top-level `links.next` URL under the same rules; `links.next: null` means the last page.
+  top-level `links.next` (a URL or a link object's `href`) under the same rules;
+  `links.next: null` means the last page.
   Otherwise a body cursor is used:
   `next_cursor`/`nextCursor` maps to `cursor`, `next_page_token` to `page_token`,
   `nextPageToken` to `pageToken`, and Stripe-style `has_more` with the last item's `id` maps to
