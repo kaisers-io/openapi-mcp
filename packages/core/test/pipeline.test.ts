@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { HTTP_METHODS, hashContent, parseFilterPattern, runSpecPipeline } from '../src/index.ts';
+import {
+  HTTP_METHODS,
+  hashContent,
+  parseFilterPattern,
+  runSpecPipeline,
+  SPEC_BUDGETS,
+} from '../src/index.ts';
 import type { CacheFs, CacheMeta, SpecPipelineDeps } from '../src/index.ts';
 
 // SpecPipelineDeps.fetcher is now typed via undici's own fetch (see
@@ -62,6 +68,22 @@ const baseOpts = {
 // restores the full inventory regardless of fixture.
 const allowAll = {
   allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
+};
+
+// A URL-sourced spec with `count` trivial operations op0..op<count-1>, one per
+// path /r0../r<count-1>
+const bigDeps = (count: number, method: 'get' | 'post' = 'get'): typeof fileDeps => {
+  const paths: Record<string, unknown> = {};
+  for (let index = 0; index < count; index += 1) {
+    paths[`/r${index}`] = {
+      [method]: { operationId: `op${index}`, responses: { '200': { description: 'ok' } } },
+    };
+  }
+  const text = JSON.stringify({ openapi: '3.1.0', info: { title: 'Big', version: '1' }, paths });
+  return {
+    ...fileDeps,
+    fetcher: (() => Promise.resolve(new Response(text))) as unknown as SpecFetcher,
+  };
 };
 
 const suffix = (method: string, path: string): string =>
@@ -1013,20 +1035,180 @@ describe('runSpecPipeline — filters', () => {
     expect(result.deadPatterns).toEqual([]);
   });
 
-  it('enforces the tool-count budget on the unfiltered inventory', async () => {
-    const paths: Record<string, unknown> = {};
-    for (let index = 0; index < 513; index += 1) {
-      paths[`/p${index}`] = { post: { responses: { '200': { description: 'ok' } } } };
-    }
-    const big = JSON.stringify({ openapi: '3.1.0', info: { title: 'Big', version: '1' }, paths });
-    const deps = {
-      ...fileDeps,
-      fetcher: (() => Promise.resolve(new Response(big))) as unknown as SpecFetcher,
-    };
-    // Every operation is a POST the read-only default would drop: the budget
-    // still fires, because filters must never smuggle an oversized spec past the budget
+  it('does not count operations the filters drop against the tool budget', async () => {
+    // 513 POSTs the read-only default drops: nothing is exposed, so the
+    // exposed-set budget (issue #32) has nothing to refuse. The raw cap below
+    // still bounds the unfiltered document.
+    const result = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      baseOpts,
+      bigDeps(513, 'post'),
+    );
+    expect(result.namedOperations).toEqual([]);
+  });
+});
+
+describe('runSpecPipeline — tool budget after filtering (issue #32)', () => {
+  it('lets a narrow --allow carve one tool out of a spec with more operations than the budget', async () => {
+    const result = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...baseOpts, allow: [parseFilterPattern('op1')] },
+      bigDeps(600),
+    );
+    expect(result.namedOperations.map((named) => named.toolName)).toEqual(['op1']);
+    expect(result.spec.operations).toHaveLength(600);
+  });
+
+  it('enforces the tool budget on the exposed set and names the filters as the remedy', async () => {
+    // The read-only default exposes all 600 GETs
     await expect(
-      runSpecPipeline('https://api.example.com/big.json', baseOpts, deps),
+      runSpecPipeline('https://api.example.com/big.json', baseOpts, bigDeps(600)),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringMatching(/600 tools .*512-tool budget.*--allow.*--deny/u) as string,
+    });
+  });
+
+  it('counts only what survives --deny against the tool budget', async () => {
+    const result = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...baseOpts, deny: [parseFilterPattern('GET /r1*')] },
+      bigDeps(600),
+    );
+    // 600 minus /r1, /r10-/r19 and /r100-/r199
+    expect(result.namedOperations).toHaveLength(489);
+  });
+
+  it('still refuses a spec above the raw operation cap, whatever the filters', async () => {
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...baseOpts, allow: [parseFilterPattern('op1')] },
+        bigDeps(SPEC_BUDGETS.maxOperationCount + 1),
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining(
+        `${String(SPEC_BUDGETS.maxOperationCount + 1)} operations`,
+      ) as string,
+    });
+  });
+
+  it('refuses a spec above the raw cap before anything is written to the cache', async () => {
+    const cacheFs = memoryCacheFs();
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...baseOpts, cacheRoot: '/cache', allow: [parseFilterPattern('op1')] },
+        { ...bigDeps(SPEC_BUDGETS.maxOperationCount + 1), cacheFs },
+      ),
     ).rejects.toMatchObject({ code: 'validation' });
+    expect(cacheFs.files.size).toBe(0);
+  });
+
+  it('writes no accepted baseline when the run refuses to serve an over-budget exposed set', async () => {
+    const cacheFs = memoryCacheFs();
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...baseOpts, cacheRoot: '/cache' },
+        { ...bigDeps(600), cacheFs },
+      ),
+    ).rejects.toMatchObject({ code: 'validation' });
+    expect([...cacheFs.files.keys()].filter((key) => key.endsWith('meta.json'))).toEqual([]);
+  });
+
+  it('warns when a recorded candidate would exceed the tool budget under the current filters', async () => {
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
+    // Accepted baseline: 10 GETs, well inside the budget
+    await runSpecPipeline('https://api.example.com/big.json', cachedOpts, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    // The refreshed spec documents 600 GETs: recorded as a candidate, the
+    // baseline keeps serving, and the run says promotion would fail to start
+    const refreshed = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...cachedOpts, nowMs: 3_600_001 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(refreshed.cacheStatus).toBe('candidate');
+    expect(refreshed.namedOperations).toHaveLength(10);
+    expect(refreshed.warnings.join('\n')).toMatch(
+      /candidate spec would expose 600 tools .*512-tool budget.*--allow or --deny/u,
+    );
+  });
+
+  it('does not warn about a candidate that fits the tool budget', async () => {
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
+    await runSpecPipeline('https://api.example.com/big.json', cachedOpts, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    // 600 operations, but --deny leaves 489 exposed: under the budget
+    const refreshed = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...cachedOpts, deny: [parseFilterPattern('GET /r1*')], nowMs: 3_600_001 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(refreshed.cacheStatus).toBe('candidate');
+    expect(refreshed.warnings.join('\n')).not.toContain('tool budget');
+  });
+
+  it('refuses an over-budget exposed set on an unchanged 200 before any bookkeeping touch', async () => {
+    // The unchanged-200 path only touches meta.json (#106); that touch must
+    // not happen for a run the tool budget refuses (#32)
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
+    await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...cachedOpts, allow: [parseFilterPattern('op1')] },
+      { ...bigDeps(600), cacheFs },
+    );
+    const before = metaOf(cacheFs);
+    // Past the TTL, same bytes, but without the narrowing filter
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...cachedOpts, nowMs: 3_600_001 },
+        { ...bigDeps(600), cacheFs },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('512-tool budget') as string,
+    });
+    expect(metaOf(cacheFs)).toEqual(before);
+  });
+
+  it('applies the same two-level rule when serving a cached spec', async () => {
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
+    const narrow = { ...cachedOpts, allow: [parseFilterPattern('op1')] };
+    const first = await runSpecPipeline('https://api.example.com/big.json', narrow, {
+      ...bigDeps(600),
+      cacheFs,
+    });
+    expect(first.cacheStatus).toBe('accepted-first');
+    // Inside the TTL: served from the cache, filtered the same way
+    const hit = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...narrow, nowMs: 60_000 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(hit.cacheStatus).toBe('fresh');
+    expect(hit.namedOperations.map((named) => named.toolName)).toEqual(['op1']);
+    // The same cached spec without the filter would expose all 600
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...cachedOpts, nowMs: 60_000 },
+        { ...bigDeps(600), cacheFs },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('512-tool budget') as string,
+    });
   });
 });

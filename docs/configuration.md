@@ -74,6 +74,12 @@ Notes:
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
+- Size limits: a spec may document at most 4096 operations (a hard stop before anything is
+  cached, whatever the filters), and at most 512 tools may be exposed after `--allow`/`--deny`
+  filtering. A larger API can be served by narrowing the exposed set with `--allow`/`--deny`;
+  a spec above 4096 operations has to be split. When a refreshed spec is stored as a
+  candidate that would expose more than 512 tools under the current filters, the run warns,
+  since the server would refuse to start after `cache promote`.
 
 Example:
 

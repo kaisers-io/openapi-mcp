@@ -90,23 +90,35 @@ type ProcessedSpec = {
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-const enforceToolBudget = (spec: NormalizedSpec): void => {
-  if (spec.operations.length > SPEC_BUDGETS.maxToolCount) {
+// Two levels (issue #32). The raw cap bounds the unfiltered document and runs
+// before anything is cached; the tool budget bounds what is exposed and runs
+// after filtering (see finish), so --allow can carve a small tool set out of
+// an API that documents more operations than the budget.
+const enforceOperationBudget = (spec: NormalizedSpec): void => {
+  if (spec.operations.length > SPEC_BUDGETS.maxOperationCount) {
     throw validationError(
-      `spec defines ${spec.operations.length} operations — exceeds the ${SPEC_BUDGETS.maxToolCount}-tool budget`,
+      `spec defines ${spec.operations.length} operations — exceeds the ${SPEC_BUDGETS.maxOperationCount}-operation limit`,
     );
   }
 };
 
-// Parse, validate, dereference, normalize, and enforce the tool budget. Every
-// cache write happens downstream of this function, so an unvalidated or
-// over-budget spec can never reach the disk.
+const enforceToolBudget = (exposedCount: number): void => {
+  if (exposedCount > SPEC_BUDGETS.maxToolCount) {
+    throw validationError(
+      `${exposedCount} tools would be exposed after filtering — exceeds the ${SPEC_BUDGETS.maxToolCount}-tool budget; narrow the set with --allow or --deny`,
+    );
+  }
+};
+
+// Parse, validate, dereference, normalize, and enforce the raw operation cap.
+// Every cache write happens downstream of this function, so an unvalidated or
+// over-limit spec can never reach the disk.
 const processSpecText = (text: string): ProcessedSpec => {
   const parsed = parseSpecText(text);
   const validated = validateOpenApiDocument(parsed);
   const dereferenced = dereference(validated.document);
   const spec = normalizeSpec(dereferenced, validated.version);
-  enforceToolBudget(spec);
+  enforceOperationBudget(spec);
   return { spec, document: dereferenced };
 };
 
@@ -121,9 +133,9 @@ const processCachedDocument = (
   openapiVersion: OpenapiVersion,
 ): NormalizedSpec => {
   const spec = normalizeSpec(document, openapiVersion);
-  // Re-enforced per run: this bounds what will be exposed now, which is not
-  // what the write-path check established
-  enforceToolBudget(spec);
+  // Re-enforced per run: an entry written under an older, larger limit must
+  // not bypass the current one. The exposed-set budget runs in finish.
+  enforceOperationBudget(spec);
   return spec;
 };
 
@@ -477,6 +489,9 @@ const finish = (
   const named = assignToolNames(spec.operations);
   // One budget for the whole filtering pass
   const filtered = applyFilters(named, opts.allow, opts.deny);
+  // Every result, fresh or cached, passes through here: this is the one place
+  // the exposed set is known, so the tool budget is enforced on it here
+  enforceToolBudget(filtered.exposed.length);
   // Reporting the candidate only on the `candidate` status would mean a
   // later start inside the TTL returns `fresh` with no candidate hash and no
   // warning — the candidate would be on disk, gating the update, and
@@ -529,6 +544,28 @@ const acceptedCacheStatus = (
   return unchanged ? 'revalidated' : 'accepted-update';
 };
 
+// The exposed-set budget depends on this run's filters, which `cache promote`
+// does not know, so a candidate that is over it under the current filters
+// would only surface as a failed start after promotion. Checked when the
+// candidate is recorded (the only run that holds its document) and reported
+// as a warning: the accepted baseline keeps serving either way.
+const candidateBudgetWarning = (
+  candidate: NormalizedSpec,
+  opts: SpecPipelineOptions,
+): string | undefined => {
+  let exposedCount: number;
+  try {
+    exposedCount = applyFilters(assignToolNames(candidate.operations), opts.allow, opts.deny)
+      .exposed.length;
+  } catch (error) {
+    return `the candidate spec could not be checked against the ${SPEC_BUDGETS.maxToolCount}-tool budget (${describeCause(error)}); after "openapi-mcp cache promote" this server may refuse to start with the current filters`;
+  }
+  if (exposedCount <= SPEC_BUDGETS.maxToolCount) {
+    return undefined;
+  }
+  return `the candidate spec would expose ${exposedCount} tools under the current filters — over the ${SPEC_BUDGETS.maxToolCount}-tool budget; after "openapi-mcp cache promote" this server will refuse to start unless --allow or --deny narrows the set`;
+};
+
 // Decides what a successfully fetched-and-validated spec becomes: the accepted
 // baseline (first use, unchanged content, or --trust-spec-updates), or a gated
 // candidate while the accepted baseline keeps serving.
@@ -563,6 +600,10 @@ const commitRefresh = async (
     warnings.push(
       'the spec source changed; the refreshed spec is stored as a candidate awaiting "openapi-mcp cache promote"',
     );
+    const overBudget = candidateBudgetWarning(processed.spec, opts);
+    if (overBudget !== undefined) {
+      warnings.push(overBudget);
+    }
     const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
     return finish(spec, opts, warnings, {
       contentHash: cached.meta.sourceContentHash,
@@ -574,6 +615,15 @@ const commitRefresh = async (
       candidateOperationKeys: operationKeysOf(processed.document),
     });
   }
+  // Filtered (and the exposed-set tool budget enforced) BEFORE the accepted
+  // write and before the bookkeeping touch below: a run that refuses to serve
+  // must not leave a trust-on-first-use baseline or bookkeeping behind as a
+  // side effect (#32)
+  const result = finish(processed.spec, opts, warnings, {
+    contentHash: refreshed.loaded.contentHash,
+    displaySource: refreshed.loaded.displaySource,
+    cacheStatus: acceptedCacheStatus(layout, cached, unchanged),
+  });
   // Nothing to persist when the source is byte-identical to the accepted one
   // and no candidate is waiting (#75). `cached` was read and hash-verified
   // earlier in this run, so rewriting it would only re-serialize the
@@ -587,11 +637,12 @@ const commitRefresh = async (
   // A waiting candidate still takes the full write below: the source has
   // reverted to the accepted content, and that write is what clears it.
   const bookkeepingOnly = cached !== undefined && unchanged && cached.meta.candidate === undefined;
-  // Imperative on purpose: only the bookkeeping branch can meet a held lock
-  let cacheLock: CacheLockState | undefined;
   if (layout !== undefined && bookkeepingOnly && sourceKind === 'url') {
-    // Best effort for the same reason as the 304 path (#65)
-    cacheLock = await touchBestEffort(
+    // Best effort for the same reason as the 304 path (#65). `result` was
+    // built above, so the touch's warning and lock state are added to it
+    // here rather than to `warnings`, which finish() has already copied
+    const touchWarnings: string[] = [];
+    const cacheLock = await touchBestEffort(
       layout,
       deps.cacheFs,
       opts.nowMs,
@@ -600,9 +651,15 @@ const commitRefresh = async (
         ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
       },
       { replaceValidators: true, expected: { meta: cached?.meta } },
-      warnings,
+      touchWarnings,
     );
-  } else if (layout !== undefined && !bookkeepingOnly) {
+    return {
+      ...result,
+      warnings: [...result.warnings, ...touchWarnings],
+      ...(cacheLock === undefined ? {} : { cacheLock }),
+    };
+  }
+  if (layout !== undefined && !bookkeepingOnly) {
     await writeAccepted(layout, deps.cacheFs, {
       document: processed.document,
       sourceContentHash: refreshed.loaded.contentHash,
@@ -619,11 +676,5 @@ const commitRefresh = async (
       expected: { meta: cached?.meta },
     });
   }
-  const cacheStatus = acceptedCacheStatus(layout, cached, unchanged);
-  return finish(processed.spec, opts, warnings, {
-    contentHash: refreshed.loaded.contentHash,
-    displaySource: refreshed.loaded.displaySource,
-    cacheStatus,
-    cacheLock,
-  });
+  return result;
 };
