@@ -91,9 +91,13 @@ generated API request:
 - Every secret value registered at startup is passed through a central redactor applied
   recursively to every output channel: tool errors, logs, `doctor`, the status tool, and both
   text and structured tool results. Redaction covers the raw value and, for secrets of 8+
-  characters, common encoded variants (standard Base64, URL-safe Base64, percent-encoded) —
-  shorter values are excluded from variant redaction to avoid common-substring false
-  positives. Empty secrets are rejected at startup rather than silently redacting nothing.
+  characters, common encoded variants (standard Base64, URL-safe Base64, percent-encoded with
+  upper- or lowercase hex, form-encoded, JSON-string-escaped including `\/`) — shorter values
+  are excluded from variant redaction to avoid common-substring false positives. For a value
+  shaped like an `Authorization` credential (`<scheme> <credential>`, e.g. `Bearer …`), the
+  bare credential is redacted too, and for `Basic` also the decoded `user:password` and the
+  password alone (each only when 8+ characters; the user name alone is not treated as
+  secret). Empty secrets are rejected at startup rather than silently redacting nothing.
 - There is no "show env/config/debug request" tool — nothing exposes the resolved secret
   values back through MCP.
 - For safe terminal testing, see the README's [Secrets](../README.md#secrets) section
