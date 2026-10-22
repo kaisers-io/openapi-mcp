@@ -69,12 +69,28 @@ describe('dereference — resolution', () => {
     expect(dereference(doc)['a']).toBe('one');
   });
 
-  it('drops sibling keys next to $ref (documented v1 simplification)', () => {
+  it('drops sibling keys next to $ref under OpenAPI 3.0 (and without a version)', () => {
     const doc = {
       a: { $ref: '#/target', description: 'sibling that is dropped' },
       target: { kept: true },
     };
     expect(dereference(doc)['a']).toEqual({ kept: true });
+    expect(dereference(doc, '3.0')['a']).toEqual({ kept: true });
+  });
+
+  it('applies sibling keys next to $ref under OpenAPI 3.1 (issue #63)', () => {
+    const doc = {
+      components: { schemas: { Name: { type: 'string', description: 'shared' } } },
+      a: { schema: { $ref: '#/components/schemas/Name', maxLength: 5, description: 'own' } },
+      b: { $ref: '#/target', description: 'override', required: true },
+      target: { name: 'x', in: 'query', description: 'shared' },
+    };
+    const out = dereference(doc, '3.1') as Record<string, Record<string, unknown>>;
+    expect(out['a']?.['schema']).toEqual({ type: 'string', maxLength: 5, description: 'own' });
+    // A Reference Object outside schemas: only summary/description apply
+    expect(out['b']).toEqual({ name: 'x', in: 'query', description: 'override' });
+    // The shared target itself is untouched
+    expect(out['components']).toEqual(doc.components);
   });
 
   it('treats a non-string $ref as a plain key', () => {

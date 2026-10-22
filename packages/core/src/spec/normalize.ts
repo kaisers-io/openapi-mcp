@@ -1,5 +1,5 @@
 import { SPEC_BUDGETS } from './budgets.ts';
-import { resolveShallow } from './refs.ts';
+import { isRecord, resolveShallowOrSelf } from './refs.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import type { OpenapiVersion } from './validate.ts';
 
@@ -45,36 +45,42 @@ export type NormalizedSpec = {
   serverUrlIsRelative?: boolean;
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
 // Normalization reads the document BEFORE it is dereferenced (issue #89): a
-// path item or parameter may still be a `{ $ref }`, which is followed only as
-// far as needed to read it. Their contents (schemas, examples) stay raw until
-// the operation is exposed and dereferenced in the pipeline.
+// path item or parameter `{ $ref }` is followed only as far as needed to read
+// it; contents stay raw until the pipeline dereferences exposed operations.
 type Resolve = (node: unknown) => unknown;
 
 const mergeParameters = (
   pathLevel: readonly unknown[],
   opLevel: readonly unknown[],
   resolve: Resolve,
-): { parameters: Record<string, unknown>[]; unresolvable: boolean } => {
-  const merged = new Map<string, Record<string, unknown>>();
+): { parameters: Record<string, unknown>[]; unresolvable: boolean; cookie: boolean } => {
+  // Keyed by the RESOLVED name/in, but the parameter is kept as written (a
+  // `{ $ref }` stays one): keywords next to the $ref are applied when the
+  // operation is dereferenced (OpenAPI 3.1, issue #63), which resolving it
+  // here would lose
+  const merged = new Map<string, { written: Record<string, unknown>; inValue: string }>();
   for (const source of [pathLevel, opLevel]) {
-    for (const reference of source) {
-      const param = resolve(reference);
+    for (const written of source) {
+      const param = resolve(written);
       if (
+        !isRecord(written) ||
         !isRecord(param) ||
         typeof param['name'] !== 'string' ||
         typeof param['in'] !== 'string'
       ) {
         // Covers cyclic { $ref } markers and malformed parameter shapes
-        return { parameters: [], unresolvable: true };
+        return { parameters: [], unresolvable: true, cookie: false };
       }
-      merged.set(`${param['in']} ${param['name']}`, param);
+      merged.set(`${param['in']} ${param['name']}`, { written, inValue: param['in'] });
     }
   }
-  return { parameters: [...merged.values()], unresolvable: false };
+  const entries = [...merged.values()];
+  return {
+    parameters: entries.map((entry) => entry.written),
+    unresolvable: false,
+    cookie: entries.some((entry) => entry.inValue === 'cookie'),
+  };
 };
 
 const buildOperation = (
@@ -92,7 +98,11 @@ const buildOperation = (
     return { method: upper, path, reason: 'callbacks are not supported' };
   }
   const opParameters = Array.isArray(op['parameters']) ? op['parameters'] : [];
-  const { parameters, unresolvable } = mergeParameters(pathParameters, opParameters, resolve);
+  const { parameters, unresolvable, cookie } = mergeParameters(
+    pathParameters,
+    opParameters,
+    resolve,
+  );
   if (unresolvable) {
     return {
       method: upper,
@@ -100,7 +110,7 @@ const buildOperation = (
       reason: 'a parameter could not be resolved (unsupported shape or cyclic $ref)',
     };
   }
-  if (parameters.some((param) => param['in'] === 'cookie')) {
+  if (cookie) {
     return { method: upper, path, reason: 'cookie parameters are not supported' };
   }
   const tags = Array.isArray(op['tags'])
@@ -263,17 +273,7 @@ export const normalizeSpec = (
   const paths = isRecord(document['paths']) ? document['paths'] : {};
   // One buildPathEntries call per path, in Object.entries order — matches the
   // original outer for-of's iteration order exactly.
-  // A reference that does not resolve is left as the `{ $ref }` it is, which
-  // the callers already omit as unresolvable. The pipeline rejects dangling
-  // references before normalizing (checkRefs); this only keeps a hand-built
-  // or already-dereferenced document (cycle markers) from throwing.
-  const resolve: Resolve = (node) => {
-    try {
-      return resolveShallow(document, node);
-    } catch {
-      return node;
-    }
-  };
+  const resolve: Resolve = (node) => resolveShallowOrSelf(document, node);
   const perPath = Object.entries(paths).map(([path, item]) =>
     buildPathEntries(path, resolve(item), resolve),
   );
