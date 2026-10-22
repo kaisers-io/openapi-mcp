@@ -75,13 +75,39 @@ export const createMatcher = (
   }
   return (value, firstOnly) => {
     const spans: Span[] = [];
+    // Within one scan, hits arrive in increasing start order, so a hit that
+    // starts inside the current run only extends it (the same merge
+    // replaceSpans does). This keeps the span list bounded by the number of
+    // separate runs: a self-overlapping needle ("abababab") repeated through
+    // a large body would otherwise add one span per character offset.
+    let runStart = -1;
+    let runEnd = -1;
+    const add = (start: number, end: number): void => {
+      if (start < runEnd) {
+        runEnd = Math.max(runEnd, end);
+        return;
+      }
+      if (runStart !== -1) {
+        spans.push([runStart, runEnd]);
+      }
+      runStart = start;
+      runEnd = end;
+    };
+    const closeRun = (): void => {
+      if (runStart !== -1) {
+        spans.push([runStart, runEnd]);
+      }
+      runStart = -1;
+      runEnd = -1;
+    };
     for (const needle of scannedNeedles) {
       for (let at = value.indexOf(needle); at !== -1; at = value.indexOf(needle, at + 1)) {
-        spans.push([at, at + needle.length]);
         if (firstOnly) {
-          return spans;
+          return [[at, at + needle.length]];
         }
+        add(at, at + needle.length);
       }
+      closeRun();
     }
     if (buckets.size === 0) {
       return spans;
@@ -94,13 +120,14 @@ export const createMatcher = (
         const start = index - PREFIX_LENGTH + 1;
         const hit = buckets.get(hash)?.find((needle) => value.startsWith(needle, start));
         if (hit !== undefined) {
-          spans.push([start, start + hit.length]);
           if (firstOnly) {
-            return spans;
+            return [[start, start + hit.length]];
           }
+          add(start, start + hit.length);
         }
       }
     }
+    closeRun();
     return spans;
   };
 };
