@@ -791,10 +791,17 @@ type BuildScope = {
   jsonSchemas: WeakMap<z.ZodType, Record<string, unknown> | undefined>;
 };
 
+// The key must cover EVERY input that changes a conversion's result: today
+// node, version and (via height) depth. A new conversion parameter (for
+// example a request/response schema mode) has to join the key, or the first
+// conversion of a shared node would decide the result for every later use.
+//
 // Imperative on purpose: the scope and the deepest depth reached are ambient
 // state of the current synchronous conversion, threaded implicitly so the
 // recursive converters keep their signatures. Both are only ever set inside
-// withConvertMemo / convertSchema and restored before they return.
+// withConvertMemo / convertSchema and restored before they return. That is
+// sound only because conversion never awaits: convertSchema and everything
+// it calls must stay synchronous, or another build could observe the scope.
 let activeScope: BuildScope | undefined;
 let deepestDepth = 0;
 
