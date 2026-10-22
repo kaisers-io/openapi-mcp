@@ -14,6 +14,28 @@ const EDGE_INVALID_RE = /^[^A-Za-z0-9_-]+|[^A-Za-z0-9_-]+$/gu;
 const COMBINING_MARK_RE = /\p{M}/gu;
 const HAS_ALPHANUMERIC_RE = /[A-Za-z0-9]/u;
 
+// Latin letters NFKD does not decompose: without this map they would be
+// dropped at the edges and become `_` inside (`łódź` -> `odz`,
+// `Straße` -> `Stra_e`). Common romanizations; uppercase digraphs are
+// title-cased so camelCase operationIds stay readable (`Þór` -> `Thor`).
+const TRANSLITERATIONS: ReadonlyMap<string, string> = new Map([
+  ['ß', 'ss'],
+  ['ẞ', 'SS'],
+  ['ø', 'o'],
+  ['Ø', 'O'],
+  ['ł', 'l'],
+  ['Ł', 'L'],
+  ['æ', 'ae'],
+  ['Æ', 'Ae'],
+  ['œ', 'oe'],
+  ['Œ', 'Oe'],
+  ['đ', 'd'],
+  ['Đ', 'D'],
+  ['þ', 'th'],
+  ['Þ', 'Th'],
+]);
+const TRANSLITERATE_RE = new RegExp(`[${[...TRANSLITERATIONS.keys()].join('')}]`, 'gu');
+
 // NFKD splits accented letters into base letter + combining mark and folds
 // compatibility forms (full-width `ｇ` to `g`), so dropping the marks keeps
 // `Ünïcödé` readable as `Unicode` instead of `_n_c_d_`. What is still outside
@@ -23,6 +45,7 @@ const HAS_ALPHANUMERIC_RE = /[A-Za-z0-9]/u;
 // model, so it is reported as empty and the caller falls back to method+path.
 const cleanPiece = (raw: string): string =>
   raw
+    .replaceAll(TRANSLITERATE_RE, (letter) => TRANSLITERATIONS.get(letter) ?? letter)
     .normalize('NFKD')
     .replaceAll(COMBINING_MARK_RE, '')
     .replaceAll(EDGE_INVALID_RE, '')
@@ -85,7 +108,9 @@ export const assignToolNames = (
   const entries = operations.map((operation) => {
     const fromId = operation.operationId === undefined ? '' : sanitizeName(operation.operationId);
     const base = fromId === '' ? methodPathName(operation.method, operation.path) : fromId;
-    return { operation, base, toolName: base };
+    // An operationId that already IS a valid tool name, used unchanged
+    const verbatim = fromId !== '' && fromId === operation.operationId;
+    return { operation, base, verbatim, toolName: base };
   });
   // Imperative on purpose: this is a two-pass fixed-point rename (try an
   // 8-char suffix, escalate to 16 only if collisions remain) with an early
@@ -99,13 +124,26 @@ export const assignToolNames = (
   // Collisions get a stable content-hash suffix derived from METHOD + path, so
   // names never change when the spec is reordered. The second,
   // longer pass covers operationIds crafted to mimic a suffixed name.
+  // A verbatim operationId keeps its name when it is the only one in its
+  // collision group: a sanitized (`repos.get`) or method+path name that lands
+  // on it is what gets the suffix, so an author's valid name, and the host
+  // permissions pinned to it, survives. Two verbatim ids (duplicate
+  // operationIds) are both suffixed, as before.
   for (const suffixLength of [8, 16]) {
     const counts = collisionCounts(entries);
     if (![...counts.values()].some((count) => count > 1)) {
       break;
     }
+    const keepers = new Map<string, number>();
     for (const entry of entries) {
-      if ((counts.get(entry.toolName) ?? 0) > 1) {
+      if (entry.verbatim && entry.toolName === entry.base) {
+        keepers.set(entry.toolName, (keepers.get(entry.toolName) ?? 0) + 1);
+      }
+    }
+    for (const entry of entries) {
+      const keeps =
+        entry.verbatim && entry.toolName === entry.base && keepers.get(entry.toolName) === 1;
+      if ((counts.get(entry.toolName) ?? 0) > 1 && !keeps) {
         entry.toolName = withSuffix(entry.base, hashSuffix(entry.operation, suffixLength));
       }
     }

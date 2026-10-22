@@ -138,6 +138,33 @@ describe('normalizeSpec — extraction', () => {
     expect(omitted[0]?.reason).toContain('duplicate header parameter');
   });
 
+  it('still omits an operation whose PATH level declares a header twice, even when the operation overrides one', () => {
+    const spec = normalizeSpec(
+      doc({
+        '/x': {
+          parameters: [
+            { name: 'X-A', in: 'header', schema: { type: 'string' } },
+            { name: 'x-a', in: 'header', schema: { type: 'string' } },
+          ],
+          get: {
+            parameters: [{ name: 'X-a', in: 'header', schema: { type: 'string' } }],
+            responses: okResponses,
+          },
+        },
+      }),
+      '3.1',
+    );
+    // The override takes the first variant's slot; the second path-level
+    // variant stays, so the path level's own duplicate is not hidden
+    expect(spec.operations[0]?.parameters.map((param) => param['name'])).toEqual(['X-a', 'x-a']);
+    const { tools, omitted } = buildTools(assignToolNames(spec.operations), {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    expect(tools).toEqual([]);
+    expect(omitted[0]?.reason).toContain('duplicate header parameter');
+  });
+
   it('keeps query and path parameters case-sensitive when merging', () => {
     const spec = normalizeSpec(
       doc({

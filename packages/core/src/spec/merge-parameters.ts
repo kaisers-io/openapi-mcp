@@ -27,8 +27,9 @@ const overrideKey = (param: Parameter): string =>
 // headers that match is case-insensitive, so a path-level `X-Req-Id` is
 // replaced by an operation-level `x-req-id` instead of surviving next to it,
 // which made buildLayout omit the whole operation as a duplicate header.
-// Within ONE level, two headers differing only in case are both kept, so
-// buildLayout's case-insensitive check still rejects them fail-closed.
+// Within ONE level, two headers differing only in case are both kept (at the
+// path level also when the operation overrides one of them), so buildLayout's
+// case-insensitive check still rejects them fail-closed.
 export const mergeParameters = (
   pathLevel: readonly unknown[],
   opLevel: readonly unknown[],
@@ -50,8 +51,11 @@ export const mergeParameters = (
     if (override === undefined) {
       return [param];
     }
+    // A second path-level case variant of the same header: kept, so the
+    // path level's own duplicate is still rejected by buildLayout instead of
+    // being resolved silently by the override
     if (placed.has(override)) {
-      return [];
+      return [param];
     }
     placed.add(override);
     return [override];

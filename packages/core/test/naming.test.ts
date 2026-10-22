@@ -83,8 +83,45 @@ describe('assignToolNames — collisions', () => {
       record('post', '/x', 'get_users_by_id'),
       record('get', '/users/{id}'),
     ]);
-    expect(new Set(colliding.map((entry) => entry.toolName)).size).toBe(2);
-    expect(colliding[0]?.toolName).toBe(`get_users_by_id_${suffix('POST', '/x', 8)}`);
+    // The operationId is a valid name as written, so it keeps it; the
+    // derived method+path name is the one suffixed
+    expect(colliding.map((entry) => entry.toolName)).toEqual([
+      'get_users_by_id',
+      `get_users_by_id_${suffix('GET', '/users/{id}', 8)}`,
+    ]);
+  });
+
+  it('keeps an already-valid operationId when a sanitized one lands on it (repos.get + repos_get)', () => {
+    const named = assignToolNames([
+      record('get', '/a', 'repos.get'),
+      record('get', '/b', 'repos_get'),
+    ]);
+    expect(named.map((entry) => entry.toolName)).toEqual([
+      `repos_get_${suffix('GET', '/a', 8)}`,
+      'repos_get',
+    ]);
+    // Order-independent
+    const reversed = assignToolNames([
+      record('get', '/b', 'repos_get'),
+      record('get', '/a', 'repos.get'),
+    ]);
+    expect(reversed.map((entry) => entry.toolName)).toEqual([
+      'repos_get',
+      `repos_get_${suffix('GET', '/a', 8)}`,
+    ]);
+  });
+
+  it('still suffixes every entry when two operationIds are identical as written', () => {
+    const named = assignToolNames([
+      record('get', '/a', 'dup'),
+      record('get', '/b', 'dup'),
+      record('get', '/c', 'dup!'),
+    ]);
+    expect(named.map((entry) => entry.toolName)).toEqual([
+      `dup_${suffix('GET', '/a', 8)}`,
+      `dup_${suffix('GET', '/b', 8)}`,
+      `dup_${suffix('GET', '/c', 8)}`,
+    ]);
   });
 
   it('defuses an operationId that mimics a suffixed name with a longer suffix', () => {
@@ -115,6 +152,19 @@ describe('assignToolNames — non-ASCII, mixed segments and the provider charset
   it('strips diacritics instead of turning each accented letter into an underscore', () => {
     expect(nameOf('get', '/x', 'Ünïcödé')).toBe('Unicode');
     expect(nameOf('get', '/x', 'créerUtilisateur')).toBe('creerUtilisateur');
+  });
+
+  it('transliterates Latin letters that NFKD does not decompose instead of dropping them', () => {
+    expect(nameOf('get', '/x', 'Øresund.søk')).toBe('Oresund_sok');
+    expect(nameOf('get', '/x', 'łódź')).toBe('lodz');
+    expect(nameOf('get', '/x', 'Straße')).toBe('Strasse');
+    expect(nameOf('get', '/x', 'GROẞ')).toBe('GROSS');
+    expect(nameOf('get', '/x', 'Łaskaæœ')).toBe('Laskaaeoe');
+    expect(nameOf('get', '/x', 'ÆsirŒuvre')).toBe('AesirOeuvre');
+    expect(nameOf('get', '/x', 'đĐ')).toBe('dD');
+    expect(nameOf('get', '/x', 'Þórþ')).toBe('Thorth');
+    // In paths too (the method+path fallback)
+    expect(nameOf('get', '/straße/{łid}')).toBe('get_strasse_by_lid');
   });
 
   it('folds compatibility forms (full-width letters) to ASCII', () => {
@@ -154,7 +204,8 @@ describe('assignToolNames — non-ASCII, mixed segments and the provider charset
     ]);
     expect(named.map((entry) => entry.toolName)).toEqual([
       `Unicode_${suffix('GET', '/a', 8)}`,
-      `Unicode_${suffix('GET', '/b', 8)}`,
+      // Valid as written: keeps its name, the transliterated one is suffixed
+      'Unicode',
       'e'.repeat(TOOL_NAME_MAX_LENGTH),
     ]);
     for (const entry of named) {
