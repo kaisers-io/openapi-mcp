@@ -4,6 +4,7 @@ import {
   LOCK_STALE_MS,
   cacheLayout,
   describeLockHolder,
+  lockRetrySchedule,
   tryWithNamespaceLock,
   unlockNamespace,
   withNamespaceLock,
@@ -102,6 +103,45 @@ describe('strict acquisition: bounded retry with jittered backoff', () => {
     expect(JSON.parse(fs.files.get(LAYOUT.lockPath) ?? '')).toMatchObject({ owner: 'other' });
   });
 
+  it('waits up to the caller-supplied budget (--timeout) before giving up', async () => {
+    const runtime = fakeRuntime({ lockWaitMs: 10_000 });
+    const fs = withRuntime(runtime);
+    await plantLock(fs, { owner: 'other', acquiredAt: 1000 });
+    await expect(
+      withNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve('ran')),
+    ).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
+    const schedule = lockRetrySchedule(10_000);
+    expect(runtime.slept).toHaveLength(schedule.length);
+    const nominal = schedule.reduce((sum, delay) => sum + delay, 0);
+    expect(nominal).toBeGreaterThanOrEqual(10_000);
+    expect(nominal).toBeLessThan(10_000 + 600);
+    // Never shorter than the built-in schedule
+    expect(lockRetrySchedule(1)).toStrictEqual(LOCK_RETRY_DELAYS_MS);
+    expect(lockRetrySchedule(LOCK_RETRY_DELAYS_MS.length)).toStrictEqual(LOCK_RETRY_DELAYS_MS);
+  });
+
+  it('records acquiredAt after the backoff, not the time the wait began', async () => {
+    const runtime = fakeRuntime();
+    const fs = withRuntime(runtime);
+    await plantLock(fs, { owner: 'other', acquiredAt: 1000 });
+    const originalCreate = fs.createExclusive.bind(fs);
+    let attempts = 0;
+    fs.createExclusive = async (path, data) => {
+      attempts += 1;
+      if (attempts === 3) {
+        await fs.removeFile(LAYOUT.lockPath);
+      }
+      return originalCreate(path, data);
+    };
+    await withNamespaceLock(LAYOUT, fs, 1000, () => {
+      const record = JSON.parse(fs.files.get(LAYOUT.lockPath) ?? '') as { acquiredAt: number };
+      const slept = runtime.slept.reduce((sum, ms) => sum + ms, 0);
+      expect(slept).toBeGreaterThan(0);
+      expect(record.acquiredAt).toBe(1000 + slept);
+      return Promise.resolve();
+    });
+  });
+
   it('never takes over a stale lock, however old, even with a dead owner on this host', async () => {
     const runtime = fakeRuntime({ isProcessAlive: () => false });
     const fs = withRuntime(runtime);
@@ -132,6 +172,8 @@ describe('the recovery hint matches what cache unlock accepts', () => {
     const result = await tryWithNamespaceLock(LAYOUT, fs, 1000, () => Promise.resolve());
     expect(result.acquired).toBe(false);
     expect(result.acquired ? '' : result.message.endsWith(tail)).toBe(true);
+    // `stale` (surfaced as cacheLock:"stale") exactly when a recovery hint is given
+    expect(result.acquired ? undefined : result.stale).toBe(tail !== ' — retry once it finishes');
   });
 });
 
@@ -149,6 +191,7 @@ describe('best-effort acquisition (tryWithNamespaceLock)', () => {
     expect(runtime.slept).toStrictEqual([]);
     expect(result).toStrictEqual({
       acquired: false,
+      stale: true,
       message: `cache entry ${LAYOUT.namespace} is locked by another openapi-mcp process (held by pid 7 on this host, process running, held for 3600s) — retry once it finishes, or run "openapi-mcp cache unlock" if the owning process is gone`,
     });
   });
@@ -166,12 +209,18 @@ describe('describeLockHolder', () => {
 
   it.each([
     [{}, undefined],
-    [{ pid: 5 }, 'held by pid 5'],
-    [{ pid: 5, hostname: 'elsewhere' }, 'held by pid 5 on host elsewhere'],
-    [{ pid: 1, hostname: 'build-host' }, 'held by pid 1 on this host, process running'],
-    [{ pid: 5, hostname: 'build-host' }, 'held by pid 5 on this host, process not running'],
-  ])('%o -> %s', (holder, expected) => {
-    expect(describeLockHolder(holder, runtime)).toBe(expected);
+    [{ pid: 5 }, { text: 'held by pid 5' }],
+    [{ pid: 5, hostname: 'elsewhere' }, { text: 'held by pid 5 on host elsewhere' }],
+    [
+      { pid: 1, hostname: 'build-host' },
+      { text: 'held by pid 1 on this host, process running', alive: true },
+    ],
+    [
+      { pid: 5, hostname: 'build-host' },
+      { text: 'held by pid 5 on this host, process not running', alive: false },
+    ],
+  ])('%o -> %o', (holder, expected) => {
+    expect(describeLockHolder(holder, runtime)).toStrictEqual(expected);
   });
 
   it('never consults the process table for a pid recorded on another host', () => {
@@ -182,9 +231,9 @@ describe('describeLockHolder', () => {
         return false;
       },
     });
-    expect(describeLockHolder({ pid: 5, hostname: 'other' }, probe)).toBe(
-      'held by pid 5 on host other',
-    );
+    expect(describeLockHolder({ pid: 5, hostname: 'other' }, probe)).toStrictEqual({
+      text: 'held by pid 5 on host other',
+    });
     expect(probed).toBe(false);
   });
 

@@ -863,7 +863,7 @@ const touchRevalidatedImpl = async (
   // checks below still run whenever the lock IS obtained, so a corrupt entry
   // still fails closed.
   opts: { replaceValidators?: boolean; bestEffort?: boolean } = {},
-): Promise<{ recorded: true } | { recorded: false; reason: string }> => {
+): Promise<{ recorded: true } | { recorded: false; reason: string; lockStale: boolean }> => {
   const touch = async (): Promise<void> => {
     const existing = await readMetaFile(layout, fs);
     if (existing.kind === 'miss') {
@@ -900,7 +900,9 @@ const touchRevalidatedImpl = async (
   };
   if (opts.bestEffort === true) {
     const attempt = await tryWithNamespaceLock(layout, fs, nowMs, touch);
-    return attempt.acquired ? { recorded: true } : { recorded: false, reason: attempt.message };
+    return attempt.acquired
+      ? { recorded: true }
+      : { recorded: false, reason: attempt.message, lockStale: attempt.stale };
   }
   await withNamespaceLock(layout, fs, nowMs, touch);
   return { recorded: true };
