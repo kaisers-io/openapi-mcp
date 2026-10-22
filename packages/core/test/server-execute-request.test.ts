@@ -94,7 +94,12 @@ describe('buildRequest — path/simple', () => {
     'rejects a mixed-encoded dot segment (double-decodes to . or ..): %s',
     (petId) => {
       const message = err(buildRequest(pathMapper(), 'get', '/pets/{petId}', { petId }, budgets));
-      expect(message).toMatch(/petId/u);
+      // Names the encoded dot, so a caller with a legitimate value (the
+      // deliberate a.%2eb false positive) can tell why it was refused, and
+      // says that nothing reached the upstream
+      expect(message).toBe(
+        'path parameter "petId" was refused: it contains a path separator or dot-segment (/, \\, . or .., or an encoded slash or dot such as %2F, %5C or %2E). No request was sent; pass the value without them',
+      );
     },
   );
 
@@ -292,7 +297,7 @@ describe('buildRequest — header/simple', () => {
         buildRequest(headerMapper(false), 'get', '/x', { 'x-trace': value }, budgets),
       );
       expect(message).toBe(
-        'header parameter "X-Trace" contains characters that cannot be sent in an HTTP header',
+        'header parameter "X-Trace" was refused: it contains a character above U+00FF, which an HTTP header cannot carry. No request was sent; use Latin-1 text only (ASCII is safest)',
       );
     },
   );
