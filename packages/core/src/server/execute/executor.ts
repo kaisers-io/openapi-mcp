@@ -14,6 +14,7 @@ import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
 import { retryableErrorOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
+import { DEFAULT_RESPONSE_IS_ERROR_FLAG } from '../../toolgen/output-schema.ts';
 import type { CallOutcomeKind, CallTelemetry } from '../telemetry.ts';
 import type { TraceContext } from '../trace.ts';
 import type { SnapshotTool } from '../types.ts';
@@ -421,6 +422,9 @@ const runUpstreamCall = async (
     outputSchema: tool.wireTool.outputSchema,
     redactor: config.redactor,
     ...(firstSecretHeader === undefined ? {} : { envVarHint: firstSecretHeader.envVar }),
+    ...(tool.generated?.outputSchemaAssumesDefaultIsError === true
+      ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
+      : {}),
     maxTextBytes: DISPLAY_TEXT_MAX,
     baseUrl: config.baseUrl,
     // `_fields` was validated by the tool's input schema (toolgen/projection.ts)

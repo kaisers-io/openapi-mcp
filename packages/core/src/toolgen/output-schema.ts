@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import { PAGINATION_SCHEMA } from './pagination.ts';
-import { convertSchema } from './schema.ts';
+import { convertSchema, memoizedJsonSchema, UNSAFE_PATTERN_REASON } from './schema.ts';
 
 export type JsonSchemaRecord = Record<string, unknown>;
 
@@ -17,7 +17,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 //   - a wildcard/range status key (a literal "2XX") or a "default" response
 //     is documented at all: either MAY cover an undocumented success status
 //     this function has no way to enumerate, so the envelope could describe
-//     less than the tool can actually return;
+//     less than the tool can actually return (the operator may opt out for
+//     `default` only — see OutputSchemaOptions);
 //   - a 2xx response has no `content` at all (e.g. 204): nothing to encode;
 //   - a 2xx response's content map has ANY non-JSON sibling media type
 //     (e.g. both application/json AND text/plain): content negotiation could
@@ -31,17 +32,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 // A partial envelope that silently drops one of these cases would let
 // `structuredContent` violate the tool's own advertised outputSchema at
 // runtime — omitting entirely is the only sound fallback.
-// The ONE JSON media-type test of the response side: output-schema
-// derivation, response mapping (server/execute/response.ts) and tool
-// selection for `_fields` (build.ts) all use it, so they cannot disagree.
-// `application/json` or any `+json` structured-syntax suffix (RFC 6839).
-const JSON_ESSENCE_RE = /^application\/(?:[\w.+-]+\+)?json$/u;
-export const isJsonContentType = (contentType: string): boolean =>
-  JSON_ESSENCE_RE.test(contentType);
-
-// The lowercased `type/subtype` of a media type, parameters dropped.
-export const mediaEssence = (contentType: string): string =>
-  (contentType.split(';')[0] ?? '').trim().toLowerCase();
+const isJsonContentType = (contentType: string): boolean =>
+  /^application\/(?:[\w.+-]+\+)?json$/u.test(contentType);
 
 const SUCCESS_STATUS_RE = /^2\d\d$/u;
 
@@ -53,11 +45,48 @@ const SUCCESS_STATUS_RE = /^2\d\d$/u;
 const RESPONSE_HEADERS_SCHEMA: JsonSchemaRecord = { type: 'object' };
 // A literal OpenAPI 3.1 status-code RANGE key ("2XX"/"2xx"), or the "default"
 // response — either is treated as "might cover a success we cannot bound".
+// With `defaultResponseIsError` (an explicit operator opt-in, #72) the
+// `default` key is assumed to document error statuses only and no longer
+// counts; a "2XX" range key always does — it is a success range by definition.
 const WILDCARD_OR_DEFAULT_SUCCESS_RE = /^2xx$/iu;
-const hasUnboundedSuccess = (responses: Record<string, unknown>): boolean =>
+const hasUnboundedSuccess = (
+  responses: Record<string, unknown>,
+  defaultResponseIsError: boolean,
+): boolean =>
   Object.keys(responses).some(
-    (key) => key === 'default' || WILDCARD_OR_DEFAULT_SUCCESS_RE.test(key),
+    (key) =>
+      (key === 'default' && !defaultResponseIsError) || WILDCARD_OR_DEFAULT_SUCCESS_RE.test(key),
   );
+
+// The CLI flag that sets `defaultResponseIsError`, named in the runtime
+// error for an undocumented 2xx so the operator can find the assumption.
+export const DEFAULT_RESPONSE_IS_ERROR_FLAG = '--default-response-is-error';
+
+export type OutputSchemaOptions = {
+  // Treat an operation's `default` response as covering error statuses only,
+  // so it no longer suppresses the outputSchema. OAS 3.1.1 §4.8.16.1: `default`
+  // is "the documentation of responses other than the ones declared for
+  // specific HTTP response codes" — it MAY cover an undocumented success, which
+  // is why this is opt-in. At runtime such an undocumented 2xx still fails
+  // closed (`isError`), never a nonconforming structuredContent.
+  defaultResponseIsError?: boolean;
+  // A paginated tool's envelope also declares the `pagination` hint.
+  pagination?: boolean;
+  // A projectable tool (`_fields`) also gets ONE `projection` branch.
+  projection?: boolean;
+};
+
+// Minimal on purpose: the projected values come from `data` that already
+// passed the strict branch, so this branch only has to tell the two shapes
+// apart (`projection` required here, `data` required and extra keys refused
+// there) — exactly one branch matches either shape. ONE branch for every
+// success status/content type: it only has to validate, not discriminate,
+// and tools/list size is paid in every session.
+const PROJECTION_BRANCH: JsonSchemaRecord = {
+  type: 'object',
+  properties: { projection: { type: 'object' } },
+  required: ['status', 'contentType', 'projection'],
+};
 
 // Isolates the one throwing step (z.toJSONSchema) behind an Option-shaped
 // result so the caller never needs a `let` to survive the try/catch.
@@ -71,29 +100,29 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
   }
 };
 
-// Minimal on purpose: the projected values come from `data` that already
-// passed the strict branch, so this branch only has to tell the two shapes
-// apart (`projection` required here, `data` required and extra keys refused
-// there) — exactly one branch matches either shape.
-const PROJECTION_BRANCH: JsonSchemaRecord = {
-  type: 'object',
-  properties: { projection: { type: 'object' } },
-  required: ['status', 'contentType', 'projection'],
+// Why an operation has no output schema, when that is worth telling the
+// agent. Only the #39 regex policy is reported: the other omissions (no JSON
+// success, a `default` response, ...) are ordinary and need no explanation.
+export const OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN =
+  'No output schema: a response regex "pattern" has nested quantifiers (unbounded matching cost), so results are returned as text only.';
+
+export type OutputSchemaDerivation = {
+  outputSchema?: JsonSchemaRecord;
+  // Agent-facing sentence explaining a withheld output schema (see above).
+  withheld?: string;
 };
 
-export const deriveOutputSchema = (
+export const explainOutputSchema = (
   operation: OperationRecord,
   version: OpenapiVersion,
-  // A paginated tool's envelope also declares the `pagination` hint; a
-  // projectable tool also gets ONE `projection` branch.
-  options: { pagination?: boolean; projection?: boolean } = {},
-): JsonSchemaRecord | undefined => {
-  if (hasUnboundedSuccess(operation.responses)) {
-    return undefined;
+  options: OutputSchemaOptions = {},
+): OutputSchemaDerivation => {
+  if (hasUnboundedSuccess(operation.responses, options.defaultResponseIsError === true)) {
+    return {};
   }
   const successKeys = Object.keys(operation.responses).filter((key) => SUCCESS_STATUS_RE.test(key));
   if (successKeys.length === 0) {
-    return undefined;
+    return {};
   }
   const branches: JsonSchemaRecord[] = [];
   // Imperative on purpose: ANY single malformed/unbounded response branch
@@ -106,12 +135,12 @@ export const deriveOutputSchema = (
   for (const key of successKeys) {
     const response = operation.responses[key];
     if (!isRecord(response)) {
-      return undefined;
+      return {};
     }
     const content = isRecord(response['content']) ? response['content'] : undefined;
     if (content === undefined) {
       // No content at all (e.g. 204) — nothing to encode for this branch.
-      return undefined;
+      return {};
     }
     const contentKeys = Object.keys(content);
     const jsonKeys = contentKeys.filter((type) => isJsonContentType(type));
@@ -130,19 +159,26 @@ export const deriveOutputSchema = (
       jsonKeys.length !== 1 ||
       jsonKeys.length !== contentKeys.length
     ) {
-      return undefined;
+      return {};
     }
     const entry = content[contentType];
     if (!isRecord(entry)) {
-      return undefined;
+      return {};
     }
-    const converted = convertSchema(entry['schema'] ?? {}, version);
+    // Response mode: undeclared fields stay allowed unless the spec says
+    // `additionalProperties: false`, and writeOnly properties are optional —
+    // see SchemaMode in schema.ts.
+    const converted = convertSchema(entry['schema'] ?? {}, version, 0, 'response');
     if (!('ok' in converted)) {
-      return undefined;
+      return converted.unrepresentable.includes(UNSAFE_PATTERN_REASON)
+        ? { withheld: OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN }
+        : {};
     }
-    const dataSchema = toDataSchema(converted.ok);
+    // The same response schema (one shared node, one memoized Zod schema) is
+    // emitted once per build, not once per operation that returns it
+    const dataSchema = memoizedJsonSchema(converted.ok, toDataSchema);
     if (dataSchema === undefined) {
-      return undefined;
+      return {};
     }
     branches.push({
       type: 'object',
@@ -161,14 +197,16 @@ export const deriveOutputSchema = (
       additionalProperties: false,
     });
   }
-  // A projected result (`_fields`) carries `projection` INSTEAD of `data`:
-  // subtrees of data already validated against the strict branch above, so
-  // their values are unconstrained here. `data` is required on the strict
-  // branches and absent here, so exactly one branch matches either shape.
-  // ONE branch for every success status/content type: it only has to
-  // validate, not discriminate, and tools/list size is paid in every session.
   return {
-    type: 'object',
-    oneOf: options.projection === true ? [...branches, PROJECTION_BRANCH] : branches,
+    outputSchema: {
+      type: 'object',
+      oneOf: options.projection === true ? [...branches, PROJECTION_BRANCH] : branches,
+    },
   };
 };
+
+export const deriveOutputSchema = (
+  operation: OperationRecord,
+  version: OpenapiVersion,
+  options: OutputSchemaOptions = {},
+): JsonSchemaRecord | undefined => explainOutputSchema(operation, version, options).outputSchema;

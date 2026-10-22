@@ -32,22 +32,35 @@ const getOp = (toolName: string, path: string, summary?: string): NamedOperation
   },
 });
 
-const snapshotOf = (ops: readonly NamedOperation[], contentHash = 'hash-1') =>
-  buildSnapshot(buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' }), {
-    spec: { title: 't', specVersion: '1', omitted: [] },
-    contentHash,
-    displaySource: 's',
-    deadPatterns: [],
-  });
+const snapshotOf = (
+  ops: readonly NamedOperation[],
+  contentHash = 'hash-1',
+  toolMode: 'per-operation' | 'discover' = 'per-operation',
+) =>
+  buildSnapshot(
+    buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' }),
+    {
+      spec: { title: 't', specVersion: '1', omitted: [] },
+      contentHash,
+      displaySource: 's',
+      deadPatterns: [],
+    },
+    { toolMode },
+  );
 
 const connect = async (
   ops: readonly NamedOperation[],
-  options: { executor?: ToolExecutor; progressIntervalMs?: number; toolsPageSize?: number } = {},
+  options: {
+    executor?: ToolExecutor;
+    progressIntervalMs?: number;
+    toolsPageSize?: number;
+    discover?: boolean;
+  } = {},
 ) => {
   const server = createProtocolSession({
     name: 'test-server',
     version: '1.0.0',
-    snapshot: snapshotOf(ops),
+    snapshot: snapshotOf(ops, 'hash-1', options.discover === true ? 'discover' : 'per-operation'),
     dispatcherDeps: {
       limiter: { consume: () => true, retryAfterMs: () => 0 },
       now: () => 0,
@@ -245,5 +258,65 @@ describe('tools/call — W3C trace context', () => {
     ).toEqual({ traceparent: PARENT });
     expect(traceContextFromMeta({ tracestate: 'a=b' })).toEqual({});
     expect(traceContextFromMeta(null)).toEqual({});
+  });
+});
+
+// #144's discover mode routes an upstream call through call_operation: the
+// protocol features above must reach the upstream executor on that path too.
+describe('discover mode (call_operation)', () => {
+  const PARENT = '00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01';
+
+  it('hands the trace context from _meta to the executor through call_operation', async () => {
+    const executor = vi.fn<ToolExecutor>(() =>
+      Promise.resolve({ isError: false, content: [] as const }),
+    );
+    const client = await connect([getOp('traced', '/t')], { executor, discover: true });
+    await client.callTool({
+      name: 'call_operation',
+      arguments: { name: 'traced', arguments: {} },
+      _meta: { traceparent: PARENT },
+    });
+    expect(executor.mock.calls[0]?.[0].name).toBe('traced');
+    expect(executor.mock.calls[0]?.[3]).toEqual({ traceparent: PARENT });
+  });
+
+  it('sends progress for a slow call made through call_operation', async () => {
+    let release: () => void = () => {};
+    const executor: ToolExecutor = async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { isError: false, content: [{ type: 'text', text: 'done' }] };
+    };
+    const client = await connect([getOp('slow', '/s')], {
+      executor,
+      progressIntervalMs: 20,
+      discover: true,
+    });
+    const progress: number[] = [];
+    const pending = client.callTool(
+      { name: 'call_operation', arguments: { name: 'slow', arguments: {} } },
+      { onprogress: (update) => progress.push(update.progress) },
+    );
+    await vi.waitFor(() => {
+      expect(progress.length).toBeGreaterThanOrEqual(2);
+    });
+    release();
+    await expect(pending).resolves.toMatchObject({ isError: false });
+  });
+
+  it('pages the discover tool list like any other (opt-in) and lists it whole by default', async () => {
+    const ops = [getOp('alpha', '/a'), getOp('beta', '/b')];
+    const unpaged = await connect(ops, { discover: true });
+    const whole = await unpaged.request({ method: 'tools/list', params: {} });
+    const names = whole.tools.map((tool) => tool.name);
+    expect(names).toHaveLength(4);
+    expect(whole.nextCursor).toBeUndefined();
+    const client = await connect(ops, { discover: true, toolsPageSize: 3 });
+    const first = await client.request({ method: 'tools/list', params: {} });
+    expect(first.tools).toHaveLength(3);
+    const second = await client.listTools({ cursor: first.nextCursor });
+    expect([...first.tools, ...second.tools].map((tool) => tool.name)).toEqual(names);
+    expect(second.nextCursor).toBeUndefined();
   });
 });

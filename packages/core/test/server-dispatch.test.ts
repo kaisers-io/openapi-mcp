@@ -268,7 +268,14 @@ const buildTransformSnapshot = (): ServerSnapshot => {
     acceptedContentHash: 'h',
     deadPatternCount: 0,
   };
-  return { tools: [tool], toolsByName, meta };
+  return {
+    toolMode: 'per-operation',
+    tools: [tool],
+    toolsByName,
+    operations: [],
+    operationsByName: Object.create(null) as Record<string, SnapshotTool | undefined>,
+    meta,
+  };
 };
 
 describe('createDispatcher', () => {

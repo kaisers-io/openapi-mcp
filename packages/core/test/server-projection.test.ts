@@ -64,7 +64,10 @@ const listItems = (withSchema: boolean): NamedOperation => ({
   },
 });
 
-const snapshotOf = (ops: readonly NamedOperation[]): ServerSnapshot =>
+const snapshotOf = (
+  ops: readonly NamedOperation[],
+  toolMode: 'per-operation' | 'discover' = 'per-operation',
+): ServerSnapshot =>
   buildSnapshot(
     buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1', projection: true }),
     {
@@ -73,6 +76,7 @@ const snapshotOf = (ops: readonly NamedOperation[]): ServerSnapshot =>
       displaySource: 's',
       deadPatterns: [],
     },
+    { toolMode },
   );
 
 const wide = (count: number, blob = 'x'.repeat(1024)) => ({
@@ -80,10 +84,19 @@ const wide = (count: number, blob = 'x'.repeat(1024)) => ({
   items: Array.from({ length: count }, (_unused, index) => ({ id: `item-${index}`, blob })),
 });
 
-const callWith = async (op: NamedOperation, body: unknown, args: Record<string, unknown>) => {
-  const snapshot = snapshotOf([op]);
+const callWith = async (
+  op: NamedOperation,
+  body: unknown,
+  args: Record<string, unknown>,
+  // Through #144's call_operation instead of a direct call.
+  discover = false,
+) => {
+  const snapshot = snapshotOf([op], discover ? 'discover' : 'per-operation');
   const validators = new Map(
-    snapshot.tools.map((tool) => [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)]),
+    snapshot.operations.map((tool) => [
+      tool.name,
+      compileEnvelopeValidator(tool.wireTool.outputSchema),
+    ]),
   );
   const config: ExecutorConfig = {
     baseUrl: 'https://api.example.test',
@@ -122,14 +135,14 @@ const callWith = async (op: NamedOperation, body: unknown, args: Record<string, 
     redactor: createRedactor([SECRET]),
   });
   const result = await dispatcher.call({
-    name: 'listItems',
-    arguments: args,
+    name: discover ? 'call_operation' : 'listItems',
+    arguments: discover ? { name: 'listItems', arguments: args } : args,
     signal: new AbortController().signal,
   });
   if (result.kind !== 'outcome') {
     throw new Error('unexpected unknown-tool');
   }
-  const tool = snapshot.toolsByName['listItems'];
+  const tool = snapshot.operationsByName['listItems'];
   const validate = compileEnvelopeValidator(tool?.wireTool.outputSchema);
   return { outcome: result.outcome, tool, validate };
 };
@@ -340,5 +353,25 @@ describe('_fields cost (D14)', () => {
     const oneOf = built.tools[0]?.outputSchema?.['oneOf'] as Record<string, unknown>[];
     expect(oneOf).toHaveLength(3);
     expect(oneOf.filter((branch) => JSON.stringify(branch).includes('projection'))).toHaveLength(1);
+  });
+});
+
+describe('_fields through call_operation (discover mode)', () => {
+  it('projects the response of an operation called through call_operation', async () => {
+    const { outcome, validate } = await callWith(
+      listItems(true),
+      wide(1000),
+      { _fields: ['/next_cursor'] },
+      true,
+    );
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent?.['projection']).toEqual({ '/next_cursor': 'c-2' });
+    expect(validate?.(outcome.structuredContent)).toBe(true);
+  });
+
+  it('rejects an invalid pointer in call_operation arguments like a direct call', async () => {
+    const { outcome } = await callWith(listItems(true), wide(1), { _fields: ['no-slash'] }, true);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toMatch(/^invalid tool arguments:/u);
   });
 });

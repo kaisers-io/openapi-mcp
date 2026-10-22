@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import type { OperationRecord } from '../spec/normalize.ts';
+import { isJsonEssence, parseMediaType } from './media-type.ts';
 
 // Per-call response projection: an optional reserved `_fields` argument,
 // a list of RFC 6901 JSON Pointers, selects the parts of a JSON response the
@@ -90,3 +92,18 @@ export const PROJECTION_HINT_TEXT =
   '(the response text above was truncated; call again with _fields (JSON Pointers) to get only the fields you need)';
 export const PROJECTION_HINT_STRUCTURED =
   '(only this text copy is truncated; structuredContent has the complete result. To receive less, call again with _fields)';
+
+// Projection applies to JSON bodies only: a tool gets `_fields` when any of
+// its success responses declares a JSON media type, by the shared media-type
+// classifier (media-type.ts) — parameters allowed, malformed keys ignored.
+export const declaresJsonSuccess = (operation: OperationRecord): boolean =>
+  Object.entries(operation.responses).some(
+    ([status, response]) =>
+      /^2(?:\d\d|xx)$/iu.test(status) &&
+      isRecord(response) &&
+      isRecord(response['content']) &&
+      Object.keys(response['content']).some((type) => {
+        const parsed = parseMediaType(type);
+        return parsed !== undefined && isJsonEssence(parsed.essence);
+      }),
+  );

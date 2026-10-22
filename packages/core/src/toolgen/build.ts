@@ -7,10 +7,11 @@ import { composeDescription } from './description.ts';
 import { buildLayout } from './layout.ts';
 import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
-import { deriveOutputSchema, isJsonContentType, mediaEssence } from './output-schema.ts';
+import { explainOutputSchema } from './output-schema.ts';
 import type { JsonSchemaRecord } from './output-schema.ts';
 import { detectPagination } from './pagination.ts';
 import type { PaginationPlan } from './pagination.ts';
+import { withConvertMemo } from './schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
 
@@ -23,6 +24,15 @@ export type GeneratedTool = {
   description: string;
   annotations: ToolAnnotations;
   outputSchema?: JsonSchemaRecord;
+  // Set when the outputSchema exists ONLY because the operator opted into
+  // `defaultResponseIsError` (the operation documents a `default` response).
+  // Surfaced by `tools`, and used at runtime to name the flag when an
+  // undocumented 2xx arrives.
+  outputSchemaAssumesDefaultIsError?: true;
+  // Why the tool has no outputSchema, when the agent should know (#39: a
+  // response `pattern` with nested quantifiers). Also folded into the
+  // description.
+  outputSchemaWithheld?: string;
   // Present only for a paginated GET (see toolgen/pagination.ts).
   pagination?: PaginationPlan;
   // True when the tool takes the optional `_fields` projection argument
@@ -68,21 +78,6 @@ export const SYSTEM_HEADERS: ReadonlySet<string> = new Set([
   'expect',
 ]);
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
-// Projection applies to JSON bodies only: a tool gets `_fields` when any of
-// its success responses declares a JSON media type — by the same classifier
-// the response side uses (output-schema.ts), parameters ignored.
-const declaresJsonSuccess = (operation: OperationRecord): boolean =>
-  Object.entries(operation.responses).some(
-    ([status, response]) =>
-      /^2(?:\d\d|xx)$/iu.test(status) &&
-      isRecord(response) &&
-      isRecord(response['content']) &&
-      Object.keys(response['content']).some((type) => isJsonContentType(mediaEssence(type))),
-  );
-
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 // Isolates the one throwing step (z.toJSONSchema) behind a pure result type so
@@ -105,15 +100,11 @@ const buildToolEntry = (
   named: NamedOperation,
   reservedHeaders: ReadonlySet<string>,
   openapiVersion: OpenapiVersion,
+  defaultResponseIsError: boolean,
   projection: boolean,
 ): GeneratedTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
-  const layout = buildLayout(
-    named.operation,
-    reservedHeaders,
-    openapiVersion,
-    projection && declaresJsonSuccess(named.operation),
-  );
+  const layout = buildLayout(named.operation, reservedHeaders, openapiVersion, projection);
   if (!('ok' in layout)) {
     return { method, path: named.operation.path, reason: layout.unrepresentable };
   }
@@ -125,17 +116,22 @@ const buildToolEntry = (
       reason: `input schema cannot be represented as JSON Schema: ${wireResult.error}`,
     };
   }
-  const description = composeDescription(named.operation);
-  const annotations = deriveAnnotations(named.operation.method);
   const pagination = detectPagination(
     named.operation,
     layout.ok.mapper,
     wireResult.ok as Record<string, unknown>,
   );
-  const outputSchema = deriveOutputSchema(named.operation, openapiVersion, {
+  const { outputSchema, withheld } = explainOutputSchema(named.operation, openapiVersion, {
+    defaultResponseIsError,
     pagination: pagination !== undefined,
     projection: layout.ok.projection,
   });
+  const description = composeDescription(named.operation, withheld);
+  const annotations = deriveAnnotations(named.operation.method);
+  const assumesDefaultIsError =
+    defaultResponseIsError &&
+    outputSchema !== undefined &&
+    Object.hasOwn(named.operation.responses, 'default');
   return {
     toolName: named.toolName,
     operation: named.operation,
@@ -145,6 +141,8 @@ const buildToolEntry = (
     description,
     annotations,
     ...(outputSchema === undefined ? {} : { outputSchema }),
+    ...(assumesDefaultIsError ? { outputSchemaAssumesDefaultIsError: true as const } : {}),
+    ...(withheld === undefined ? {} : { outputSchemaWithheld: withheld }),
     ...(pagination === undefined ? {} : { pagination }),
     ...(layout.ok.projection ? { projection: true } : {}),
   };
@@ -155,12 +153,14 @@ export const buildTools = (
   // `openapiVersion` is required (no default): the caller threads the spec's
   // version so a 3.0 `nullable: true` is honoured only under 3.0. buildLayout and
   // its convertSchema descendants receive it explicitly.
-  // `projection`: offer the optional `_fields` argument on JSON tools (serve
-  // --response-projection). Off by default: it grows tools/list by about a
-  // third, paid in every session.
+  // `defaultResponseIsError`: see OutputSchemaOptions (opt-in, default off).
   opts: {
     reservedHeaders: ReadonlySet<string>;
     openapiVersion: OpenapiVersion;
+    defaultResponseIsError?: boolean;
+    // Offer the optional `_fields` argument on JSON tools (serve
+    // --response-projection). Off by default: it grows tools/list by about
+    // a third, paid in every session.
     projection?: boolean;
   },
 ): BuildToolsResult => {
@@ -174,8 +174,17 @@ export const buildTools = (
   const reservedHeaders = new Set([...opts.reservedHeaders].map((name) => name.toLowerCase()));
   // One buildToolEntry call per operation, in namedOperations order — matches
   // the original for-of's iteration (and thus toolName/omission) order exactly.
-  const entries = namedOperations.map((named) =>
-    buildToolEntry(named, reservedHeaders, opts.openapiVersion, opts.projection === true),
+  // One memo scope per build: shared schema nodes convert once (issue #90)
+  const entries = withConvertMemo(() =>
+    namedOperations.map((named) =>
+      buildToolEntry(
+        named,
+        reservedHeaders,
+        opts.openapiVersion,
+        opts.defaultResponseIsError === true,
+        opts.projection === true,
+      ),
+    ),
   );
   return {
     tools: entries.filter((entry): entry is GeneratedTool => !('reason' in entry)),

@@ -4,14 +4,19 @@ import type { DeadPattern } from '../filter/engine.ts';
 import type { OmittedOperation } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { BuildToolsResult, GeneratedTool } from '../toolgen/build.ts';
-import type { MetaSummary, ServerSnapshot, SnapshotTool, WireTool } from './types.ts';
+import {
+  byToolName,
+  META_INPUT_SCHEMA,
+  META_TOOL_NAME,
+  metaWireTool,
+  OMITTED_REASONS_CAP,
+  titleOf,
+} from './wire-tools.ts';
+import { buildDiscoveryTools } from './discovery.ts';
+import { buildSearchIndex } from './search-index.ts';
+import type { MetaSummary, ServerSnapshot, SnapshotTool, ToolMode, WireTool } from './types.ts';
 
-export const META_TOOL_NAME = 'openapi_mcp_status';
-
-// Bounds the omitted-reason list carried in the meta summary — the omitted
-// COUNT is always exact; the reason list is a diagnostic sample, capped so a
-// pathological spec cannot inflate the in-memory snapshot.
-const OMITTED_REASONS_CAP = 50;
+export { META_TOOL_NAME } from './wire-tools.ts';
 
 // Same display-string bound the `tools` CLI command uses for a spec-derived
 // path/reason (packages/cli/src/commands/tools.ts's PATH_DISPLAY_MAX) — kept
@@ -30,98 +35,6 @@ const sanitizeOmission = (omission: OmittedOperation): OmittedOperation => ({
   path: sanitizeSpecText(omission.path, PATH_DISPLAY_MAX),
   reason: sanitizeSpecText(omission.reason, PATH_DISPLAY_MAX),
 });
-
-const META_INPUT_SCHEMA = z.strictObject({});
-
-const META_OUTPUT_SCHEMA: Record<string, unknown> = {
-  type: 'object',
-  properties: {
-    specTitle: { type: 'string' },
-    specVersion: { type: 'string' },
-    displaySource: { type: 'string' },
-    toolCount: { type: 'integer' },
-    omittedCount: { type: 'integer' },
-    omittedReasons: {
-      type: 'array',
-      maxItems: OMITTED_REASONS_CAP,
-      items: {
-        type: 'object',
-        properties: {
-          method: { type: 'string' },
-          path: { type: 'string' },
-          reason: { type: 'string' },
-        },
-        required: ['method', 'path', 'reason'],
-        additionalProperties: false,
-      },
-    },
-    acceptedContentHash: { type: 'string' },
-    deadPatternCount: { type: 'integer' },
-    // Process-local call counters (server/telemetry.ts), when collected.
-    calls: {
-      type: 'object',
-      properties: {
-        total: { type: 'integer' },
-        byOutcome: { type: 'object', additionalProperties: { type: 'integer' } },
-        upstreamLatencyMs: {
-          type: 'object',
-          properties: {
-            samples: { type: 'integer' },
-            p50: { type: 'number' },
-            p95: { type: 'number' },
-          },
-          required: ['samples'],
-          additionalProperties: false,
-        },
-      },
-      required: ['total', 'byOutcome', 'upstreamLatencyMs'],
-      additionalProperties: false,
-    },
-  },
-  required: [
-    'specTitle',
-    'specVersion',
-    'displaySource',
-    'toolCount',
-    'omittedCount',
-    'omittedReasons',
-    'acceptedContentHash',
-    'deadPatternCount',
-  ],
-  additionalProperties: false,
-};
-
-const metaWireTool = (): WireTool => ({
-  name: META_TOOL_NAME,
-  title: 'Server status',
-  description:
-    "Report this server's accepted spec, tool inventory, and omissions. Read-only, package-authored — never spec-derived.",
-  inputSchema: z.toJSONSchema(META_INPUT_SCHEMA) as Record<string, unknown>,
-  outputSchema: META_OUTPUT_SCHEMA,
-  // Not the OpenAPI-method heuristic (this is our own tool, not a wrapped
-  // operation): explicitly read-only and NOT open-world — it only reads local
-  // process state, it never talks to an external system.
-  annotations: { readOnlyHint: true, openWorldHint: false },
-});
-
-// Clients show `title` in tool pickers and approval prompts, so it is kept
-// short. `summary` already went through normalizeSpec's sanitizeSpecText;
-// it is re-capped here for display.
-const TITLE_MAX = 80;
-const titleOf = (generated: GeneratedTool): string | undefined => {
-  const { summary } = generated.operation;
-  const title = summary === undefined ? '' : sanitizeSpecText(summary, TITLE_MAX);
-  return title === '' ? undefined : title;
-};
-
-// Code-point order (never locale-dependent): `<` on strings compares UTF-16
-// code units, identical everywhere.
-const byName = (first: SnapshotTool, second: SnapshotTool): number => {
-  if (first.name === second.name) {
-    return 0;
-  }
-  return first.name < second.name ? -1 : 1;
-};
 
 const wireToolOf = (generated: GeneratedTool): WireTool => {
   const title = titleOf(generated);
@@ -163,6 +76,11 @@ export type SnapshotPipelineInput = {
   contentHash: string;
   displaySource: string;
   deadPatterns: readonly DeadPattern[];
+  // Accepted operations withheld because the pending candidate removed them
+  // (#60). They are reported with the other omissions, each with its reason,
+  // so the meta tool shows exactly why a baseline operation is not a tool.
+  withheldOperations?: readonly OmittedOperation[] | undefined;
+  cacheLock?: 'held' | 'stale' | undefined;
 };
 
 // Recursively freezes a snapshot subgraph so the exposed ServerSnapshot is
@@ -217,10 +135,37 @@ const deepFreeze = <T>(value: T, seen = new WeakSet<object>()): T => {
   return Object.freeze(value);
 };
 
+// Null-prototype: tool names are sanitized identifiers already, but a null
+// prototype is the safe default regardless — `__proto__`/`constructor` are
+// just ordinary own keys here, never a prototype-pollution vector, and
+// `Object.hasOwn` never needs to distinguish an own key from an inherited one.
+// Imperative on purpose: this is validate-then-write, not a plain
+// accumulation — `Object.fromEntries`/`reduce` would either silently let a
+// later duplicate name overwrite an earlier tool (losing the throw entirely)
+// or need the same hasOwn-then-throw check re-embedded in a reducer callback
+// for no readability gain over the loop below.
+const indexByName = (tools: readonly SnapshotTool[]): Record<string, SnapshotTool | undefined> => {
+  const byName = Object.create(null) as Record<string, SnapshotTool | undefined>;
+  for (const tool of tools) {
+    if (Object.hasOwn(byName, tool.name)) {
+      throw validationError(`duplicate tool name "${tool.name}" in the server snapshot`);
+    }
+    byName[tool.name] = tool;
+  }
+  return byName;
+};
+
+export type SnapshotOptions = {
+  // Omitted means `per-operation`, whose snapshot is unchanged by this option.
+  toolMode?: ToolMode;
+};
+
 export const buildSnapshot = (
   built: BuildToolsResult,
   pipeline: SnapshotPipelineInput,
+  options: SnapshotOptions = {},
 ): ServerSnapshot => {
+  const toolMode = options.toolMode ?? 'per-operation';
   const upstreamTools: SnapshotTool[] = built.tools.map((generated) => ({
     kind: 'upstream',
     name: generated.toolName,
@@ -238,29 +183,19 @@ export const buildSnapshot = (
   // order (and therefore its bytes, which clients and prompt caches key on)
   // depends only on WHICH operations exist, never on the order of keys in
   // the spec document — a YAML-to-JSON round trip or a registry that
-  // re-serializes the spec cannot reorder the list.
-  const all = [metaTool, ...upstreamTools.toSorted(byName)];
-  // Null-prototype: tool names are sanitized identifiers already, but a null
-  // prototype is the safe default regardless — `__proto__`/`constructor` are
-  // just ordinary own keys here, never a prototype-pollution vector, and
-  // `Object.hasOwn` below never needs to distinguish an own key from an
-  // inherited one.
-  const toolsByName: Record<string, SnapshotTool | undefined> = Object.create(null) as Record<
-    string,
-    SnapshotTool | undefined
-  >;
-  // Imperative on purpose: this is validate-then-write, not a plain
-  // accumulation — `Object.fromEntries`/`reduce` would either silently let a
-  // later duplicate name overwrite an earlier tool (losing the throw
-  // entirely) or need the same hasOwn-then-throw check re-embedded in a
-  // reducer callback for no readability gain over the loop below.
-  for (const tool of all) {
-    if (Object.hasOwn(toolsByName, tool.name)) {
-      throw validationError(`duplicate tool name "${tool.name}" in the server snapshot`);
-    }
-    toolsByName[tool.name] = tool;
-  }
-  for (const tool of all) {
+  // re-serializes the spec cannot reorder the list. Under `discover` the
+  // operations leave tools/list; the three discovery tools take their place.
+  const sorted = upstreamTools.toSorted(byToolName);
+  const all =
+    toolMode === 'discover' ? [metaTool, ...buildDiscoveryTools(sorted)] : [metaTool, ...sorted];
+  // Two separate namespaces under `discover`: an operation that happens to
+  // be named `call_operation` is reached as call_operation's `name` argument
+  // and never collides with the listed tool of that name.
+  const toolsByName = indexByName(all);
+  const operationsByName = indexByName(sorted);
+  // Every operation's schemas stay checked under `discover` too: they reach
+  // the client through describe_operation instead of tools/list.
+  for (const tool of toolMode === 'discover' ? [...all, ...sorted] : all) {
     assertObjectRoot(tool.name, 'inputSchema', tool.wireTool.inputSchema);
     if (tool.wireTool.outputSchema !== undefined) {
       assertObjectRoot(tool.name, 'outputSchema', tool.wireTool.outputSchema);
@@ -269,7 +204,11 @@ export const buildSnapshot = (
   // Merge BOTH omission sources (normalization-level + toolgen-level) before
   // capping/sanitizing — the COUNT below is the exact TOTAL across both; the
   // REASONS list is a capped, sanitized diagnostic sample of that total.
-  const mergedOmitted: OmittedOperation[] = [...pipeline.spec.omitted, ...built.omitted];
+  const mergedOmitted: OmittedOperation[] = [
+    ...pipeline.spec.omitted,
+    ...built.omitted,
+    ...(pipeline.withheldOperations ?? []),
+  ];
   const meta: MetaSummary = {
     specTitle: pipeline.spec.title,
     specVersion: pipeline.spec.specVersion,
@@ -281,6 +220,15 @@ export const buildSnapshot = (
       .map((omission) => sanitizeOmission(omission)),
     acceptedContentHash: pipeline.contentHash,
     deadPatternCount: pipeline.deadPatterns.length,
+    ...(pipeline.cacheLock === undefined ? {} : { cacheLock: pipeline.cacheLock }),
   };
-  return deepFreeze({ tools: all, toolsByName, meta });
+  return deepFreeze({
+    toolMode,
+    tools: all,
+    toolsByName,
+    operations: upstreamTools,
+    operationsByName,
+    ...(toolMode === 'discover' ? { searchIndex: buildSearchIndex(upstreamTools) } : {}),
+    meta,
+  });
 };

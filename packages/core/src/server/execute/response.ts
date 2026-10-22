@@ -2,7 +2,7 @@ import Ajv2020Module from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
 import type { Options, ValidateFunction } from 'ajv';
 import type { PinnedErrorReason, PinnedOutcome } from '../../http/pinned-dispatcher.ts';
-import { isJsonContentType } from '../../toolgen/output-schema.ts';
+import { isJsonEssence } from '../../toolgen/media-type.ts';
 import {
   project,
   PROJECTION_HINT_STRUCTURED,
@@ -83,6 +83,11 @@ export type MapResponseOptions = {
   baseUrl?: string;
   // Clock for an HTTP-date Retry-After; Date.now by default.
   now?: () => number;
+  // Set (to the CLI flag name) when this tool's outputSchema exists only
+  // because the operator assumed `default` documents errors (#72): an
+  // undocumented 2xx then names that assumption, so the operator can tell a
+  // spec gap from a server bug.
+  undeclaredSuccessHint?: string;
   // For a paginated tool: computes the `pagination` hint for a successful
   // response from its parsed Link header and (structured path only) its
   // parsed data. The hint is secret-checked here before it is used.
@@ -266,7 +271,7 @@ const mapHttpError = (
   // through to the string-redacted excerpt below, which could still echo
   // the escaped form verbatim).
   const essence = mediaEssence(contentType);
-  if (essence !== undefined && isJsonContentType(essence)) {
+  if (essence !== undefined && isJsonEssence(essence)) {
     const attempt = tryParseJson(decoded.ok);
     if (attempt.ok && scanSafely(redactor, attempt.value)) {
       return textOutcome(`upstream request failed with status ${status}`, true);
@@ -294,7 +299,7 @@ const mapNoSchemaSuccess = (
     return textOutcome('', false);
   }
   const essence = mediaEssence(contentType);
-  if (essence !== undefined && !isJsonContentType(essence) && !isTextEssence(essence)) {
+  if (essence !== undefined && !isJsonEssence(essence) && !isTextEssence(essence)) {
     // `essence` is upstream-controlled (the raw Content-Type header) — a
     // hostile upstream can echo a registered secret through it, so it must
     // be redacted, not merely sanitize-truncated, before it reaches this
@@ -323,7 +328,7 @@ const mapNoSchemaSuccess = (
   // so this catches what string-only redaction structurally cannot. A body
   // whose Content-Type claims JSON but does not parse falls through to the
   // existing text handling below, unchanged.
-  if (essence !== undefined && isJsonContentType(essence)) {
+  if (essence !== undefined && isJsonEssence(essence)) {
     const attempt = tryParseJson(decoded.ok);
     if (attempt.ok && scanSafely(redactor, attempt.value)) {
       // Never emit a body that contains the secret in escaped form: no
@@ -414,20 +419,45 @@ const mapNoSchemaProjection = (
   return textOutcome(truncateUtf8(JSON.stringify(projection), maxTextBytes), false);
 };
 
-const mapSchemaSuccess = (
-  status: number,
-  contentType: string | undefined,
-  bodyBytes: Uint8Array,
-  outputSchema: Record<string, unknown>,
-  validator: EnvelopeValidator,
-  redactor: Redactor,
-  maxTextBytes: number,
-  forwarded: Readonly<Record<string, string>>,
-  page: ((data?: unknown) => PageHint) | undefined,
-  fields: readonly string[] | undefined,
-): ToolCallOutcome => {
+// The mapSchemaSuccess helper takes one options object (the caller's MapResponseOptions
+// plus the narrowed response fields) rather than positional parameters, so
+// options added later cannot be passed in the wrong slot.
+type SchemaSuccessOptions = Omit<MapResponseOptions, 'outcome' | 'outputSchema' | 'validator'> & {
+  status: number;
+  contentType: string | undefined;
+  bodyBytes: Uint8Array;
+  outputSchema: Record<string, unknown>;
+  validator: EnvelopeValidator;
+  // Allowlisted upstream response headers, already secret-checked.
+  forwarded: Readonly<Record<string, string>>;
+  // The pagination hint for this response (paginated tools only).
+  page: ((data?: unknown) => PageHint) | undefined;
+};
+
+const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
+  const { status, contentType, bodyBytes, outputSchema, validator, redactor } = opts;
+  const { undeclaredSuccessHint, maxTextBytes, forwarded, page, fields } = opts;
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
+  if (
+    branch === undefined &&
+    undeclaredSuccessHint !== undefined &&
+    !branchesOf(outputSchema).some((candidate) => candidate.status === status)
+  ) {
+    // An undocumented success STATUS under the operator's "default = errors
+    // only" assumption: still fail closed (the declared outputSchema must
+    // never be violated), but say why, naming the flag. Decision D13: the
+    // upstream REPORTED SUCCESS, so the message must not read like a plain
+    // failure — an agent that retries a POST here could apply it twice. The
+    // hint is operator-supplied CLI text, never upstream data.
+    return textOutcome(
+      `the upstream reported success (status ${status}), so the request was likely applied; ` +
+        'do not retry it blindly. No structured result is returned: this status is not documented ' +
+        `for the operation, and its output schema assumes the spec's "default" response covers ` +
+        `errors only (${undeclaredSuccessHint})`,
+      true,
+    );
+  }
   if (branch === undefined) {
     // Same upstream-controlled-essence redaction as mapNoSchemaSuccess's
     // unsupported-media-type message above.
@@ -525,18 +555,16 @@ const mapBody = (
       true,
     );
   }
-  return mapSchemaSuccess(
+  return mapSchemaSuccess({
+    ...opts,
     status,
     contentType,
     bodyBytes,
-    opts.outputSchema,
-    opts.validator,
-    opts.redactor,
-    opts.maxTextBytes,
+    outputSchema: opts.outputSchema,
+    validator: opts.validator,
     forwarded,
     page,
-    opts.fields,
-  );
+  });
 };
 
 export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {

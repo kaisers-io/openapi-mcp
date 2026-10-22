@@ -1,9 +1,27 @@
-export { buildSnapshot, META_TOOL_NAME, type SnapshotPipelineInput } from './snapshot.ts';
+export {
+  buildSnapshot,
+  META_TOOL_NAME,
+  type SnapshotOptions,
+  type SnapshotPipelineInput,
+} from './snapshot.ts';
+export {
+  AUTO_DISCOVER_THRESHOLD,
+  CALL_TOOL_NAME,
+  DESCRIBE_TOOL_NAME,
+  discoverApprovalWarning,
+  resolveToolMode,
+  SEARCH_TOOL_NAME,
+  TOOL_MODES,
+  type DiscoveryToolName,
+  type RequestedToolMode,
+} from './discovery.ts';
+export type { SearchIndex } from './search-index.ts';
 export type {
   MetaSummary,
   ServerSnapshot,
   SnapshotTool,
   SnapshotToolKind,
+  ToolMode,
   WireTool,
 } from './types.ts';
 export { createRateLimiter, DEFAULT_RATE_LIMIT } from './rate-limit.ts';

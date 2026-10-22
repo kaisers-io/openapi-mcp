@@ -153,7 +153,7 @@ const registerRefresh: CommandRegistrar = (program, ctx, state) => {
           cmdOpts.spec,
           {
             specHeaders,
-            timeoutMs: parseDuration(cmdOpts.timeout),
+            timeoutMs: parseDuration(cmdOpts.timeout, '--timeout'),
             cwd: ctx.cwd(),
             allowPrivateNetwork: cmdOpts.allowPrivateNetwork === true,
             allow: [],
@@ -261,14 +261,16 @@ const registerUnlock: CommandRegistrar = (program, ctx, state) => {
           cmdOpts.id === undefined
             ? layoutForSpec(ctx, cmdOpts.spec!, cmdOpts.cacheKey)
             : layoutForId(ctx, cmdOpts.id);
-        const { heldForMs } = await unlockNamespace(layout, ctx.cacheFs, ctx.now(), {
+        const { heldForMs, holder } = await unlockNamespace(layout, ctx.cacheFs, ctx.now(), {
           force: cmdOpts.force === true,
         });
         const heldForSeconds = Math.floor(heldForMs / 1000);
         return {
-          data: { id: layout.namespace, heldForMs },
+          data: { id: layout.namespace, heldForMs, ...(holder === undefined ? {} : { holder }) },
           humanLines: [
-            `removed the writer lock on cache entry ${layout.namespace} (held for ${String(heldForSeconds)}s)`,
+            `removed the writer lock on cache entry ${layout.namespace} (held for ${String(heldForSeconds)}s${
+              holder === undefined ? '' : `, ${holder}`
+            })`,
           ],
         };
       });
