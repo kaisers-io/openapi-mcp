@@ -9,7 +9,12 @@ import { summarize } from './stats.ts';
 import type { Upstream } from './upstream.ts';
 
 export const SEQUENTIAL_CALLS = 20;
-export const PARALLEL_CALLS = 20;
+// Equal to serve's concurrency cap (MAX_CONCURRENT_UPSTREAM_CALLS = 16), so the
+// parallel batch measures concurrent throughput. With more calls than the cap,
+// the excess is refused immediately and the wall time mostly measured those
+// rejections, so a server that queued instead of refusing would have looked
+// slower. parallelErrors still gates any refusal at this load. Keep in sync.
+export const PARALLEL_CALLS = 16;
 const SESSION_TIMEOUT_MS = 120_000;
 // The 2025 handshake: every released version answers it, so the harness can
 // measure an older base build the same way
@@ -53,7 +58,16 @@ const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild 
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
     for (const line of lines.filter((candidate) => candidate !== '')) {
-      const { id } = JSON.parse(line) as JsonRpcResponse;
+      let id: number | undefined;
+      try {
+        ({ id } = JSON.parse(line) as JsonRpcResponse);
+      } catch {
+        // Stdout carries JSON-RPC only: a stray line (a log in some build) fails
+        // this session as a finding instead of crashing the harness
+        stderr += `non-JSON line on stdout: ${line.slice(0, 200)}\n`;
+        child.kill('SIGKILL');
+        return;
+      }
       if (id !== undefined) {
         pending.get(id)?.resolve(line);
         pending.delete(id);

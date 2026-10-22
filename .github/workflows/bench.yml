@@ -2,6 +2,8 @@ name: bench
 on:
   push: { branches: [main] }
   pull_request:
+    # Docs-only changes cannot move a benchmark; skip the 45-minute job for them
+    paths-ignore: ['**/*.md', 'docs/**', 'LICENSE']
 # PR-controlled code runs here (install/build/benchmark) — keep the ambient token read-only.
 permissions:
   contents: read

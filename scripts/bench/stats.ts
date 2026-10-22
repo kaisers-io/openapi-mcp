@@ -10,11 +10,11 @@
 // requiring BOTH the median and the minimum to regress by more than the
 // relative threshold AND by more than an absolute floor.
 //
-// Machine-independent metrics (tools/list bytes) have no noise at all, so they
-// get a tight threshold — but they are gated against the committed
-// baseline.json only, never against the base build: a pull request that
-// changes them on purpose updates the baseline in the same commit (the
-// explicit, reviewable step), and the base comparison merely reports it.
+// Machine-independent metrics (tools/list bytes) have no noise, so they are
+// gated against the committed baseline.json only, and EXACTLY: any difference
+// fails (`outdated`) until the pull request updates baseline.json (the
+// explicit, reviewable step). A ratio threshold would let many small steps
+// drift past it unaccepted. Against the base build they are only reported.
 
 export type Summary = {
   median: number;
@@ -131,7 +131,8 @@ export const CLI_RULES: Record<keyof CliMetrics, Rule> = {
   toolsMs: { kind: 'timed', maxRatio: 1.25, minDelta: 25 },
 };
 
-export type Verdict = 'ok' | 'regressed' | 'improved' | 'changed' | 'missing';
+// `outdated`: an exact metric differs from the committed baseline (see header)
+export type Verdict = 'ok' | 'regressed' | 'improved' | 'changed' | 'missing' | 'outdated';
 
 export type Finding = {
   scope: string;
@@ -233,11 +234,15 @@ const compareRecords = <Metrics extends object>(
       const referenceValue = (reference as Record<string, Summary | number | undefined>)[metric];
       const judged = judge(rule, headValue, referenceValue);
       const { ratio } = judged;
-      // See the header: exact metrics only gate against the committed baseline
+      // Exact metrics gate only against the baseline, on any difference (header)
+      const exactAgainstBaseline =
+        rule.kind === 'exact' && against === 'baseline' && judged.verdict !== 'ok'
+          ? 'outdated'
+          : judged.verdict;
       const verdict =
         rule.kind === 'exact' && against === 'base' && judged.verdict === 'regressed'
           ? 'changed'
-          : judged.verdict;
+          : exactAgainstBaseline;
       return {
         scope,
         metric,
@@ -292,4 +297,4 @@ export const compareResults = (
 ];
 
 export const hasRegression = (findings: readonly Finding[]): boolean =>
-  findings.some((finding) => finding.verdict === 'regressed');
+  findings.some((finding) => finding.verdict === 'regressed' || finding.verdict === 'outdated');

@@ -87,14 +87,34 @@ describe('compareResults', () => {
     const inflated = result({ ...healthy, toolsListBytes: 1120 });
     const againstBaseline = compareResults(inflated, result(healthy), 'baseline');
     expect(againstBaseline.find((finding) => finding.metric === 'toolsListBytes')?.verdict).toBe(
-      'regressed',
+      'outdated',
     );
+    expect(hasRegression(againstBaseline)).toBe(true);
     // Against the base build the change is reported, not gated: an intended
     // change is accepted by updating baseline.json in the same pull request
     const againstBase = compareResults(inflated, result(healthy), 'base');
     expect(againstBase.find((finding) => finding.metric === 'toolsListBytes')?.verdict).toBe(
       'changed',
     );
+  });
+
+  it('fails on ANY tools/list byte change from the baseline, so small steps cannot drift past it', () => {
+    // +4% three times stays under a 5% ratio each time; the gate must not
+    // let any of them through without a baseline update
+    for (const bytes of [1001, 1040, 999, 900]) {
+      const findings = compareResults(
+        result({ ...healthy, toolsListBytes: bytes }),
+        result(healthy),
+        'baseline',
+      );
+      expect(findings.find((finding) => finding.metric === 'toolsListBytes')?.verdict).toBe(
+        'outdated',
+      );
+      expect(hasRegression(findings)).toBe(true);
+    }
+    // Updating baseline.json to the new value passes again
+    const updated = result({ ...healthy, toolsListBytes: 1040 });
+    expect(hasRegression(compareResults(updated, updated, 'baseline'))).toBe(false);
   });
 
   it('fails when a fixture that used to start now errors, and reports the reverse as improved', () => {

@@ -24,6 +24,7 @@ const VERDICT_LABEL: Record<Finding['verdict'], string> = {
   improved: 'improved',
   changed: 'changed',
   missing: 'missing',
+  outdated: '**BASELINE OUTDATED**',
 };
 
 const renderTable = (title: string, findings: readonly Finding[]): string => {
@@ -96,7 +97,7 @@ const main = async (): Promise<void> => {
   const regressed = hasRegression(findings);
   sections.push(
     regressed
-      ? 'Result: **regression detected**. If it is intended, explain it in the pull request; for tools/list bytes, update scripts/bench/baseline.json (`pnpm bench:baseline`).'
+      ? 'Result: **regression detected**. If it is intended, explain it in the pull request. For tools/list bytes, any change from the committed baseline fails until scripts/bench/baseline.json is updated in the same pull request (`pnpm bench:baseline`).'
       : 'Result: no regression beyond the thresholds.',
   );
   const markdown = `${sections.join('\n')}\n`;

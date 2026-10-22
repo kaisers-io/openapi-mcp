@@ -87,13 +87,21 @@ never appear literally in the committed file:
     "petstore": {
       "command": "npx",
       "args": [
-        "-y", "@kaisers-io/openapi-mcp@0.3.1", "serve",
-        "--spec", "https://api.example.com/openapi.json",
-        "--spec-header-env", "Authorization=SPEC_TOKEN",
-        "--header-env", "Authorization=API_TOKEN",
-        "--allow", "read*",
-        "--cache-key", "petstore",
-        "--ttl", "1h"
+        "-y",
+        "@kaisers-io/openapi-mcp@0.3.1",
+        "serve",
+        "--spec",
+        "https://api.example.com/openapi.json",
+        "--spec-header-env",
+        "Authorization=SPEC_TOKEN",
+        "--header-env",
+        "Authorization=API_TOKEN",
+        "--allow",
+        "read*",
+        "--cache-key",
+        "petstore",
+        "--ttl",
+        "1h"
       ],
       "env": {
         "SPEC_TOKEN": "${SPEC_TOKEN}",
@@ -115,13 +123,21 @@ own environment:
 [mcp_servers.petstore]
 command = "npx"
 args = [
-  "-y", "@kaisers-io/openapi-mcp@0.3.1", "serve",
-  "--spec", "https://api.example.com/openapi.json",
-  "--spec-header-env", "Authorization=SPEC_TOKEN",
-  "--header-env", "Authorization=API_TOKEN",
-  "--allow", "read*",
-  "--cache-key", "petstore",
-  "--ttl", "1h",
+  "-y",
+  "@kaisers-io/openapi-mcp@0.3.1",
+  "serve",
+  "--spec",
+  "https://api.example.com/openapi.json",
+  "--spec-header-env",
+  "Authorization=SPEC_TOKEN",
+  "--header-env",
+  "Authorization=API_TOKEN",
+  "--allow",
+  "read*",
+  "--cache-key",
+  "petstore",
+  "--ttl",
+  "1h",
 ]
 env_vars = ["SPEC_TOKEN", "API_TOKEN"]
 ```
@@ -295,9 +311,12 @@ The `bench` CI workflow builds the pull request's base in the same job and runs 
 interleaved on that one runner. A timing or RSS metric fails the job only when both its median and
 its minimum regress by more than the threshold in `scripts/bench/stats.ts` (25% for time, 15% for
 RSS) and by more than a small absolute floor. `tools/list` bytes are machine-independent, so they
-are gated against the committed `scripts/bench/baseline.json` instead (more than 5% growth fails).
-When such a change is intended, update the baseline in the same pull request with
-`pnpm bench:baseline` and say why in the description.
+are gated against the committed `scripts/bench/baseline.json` instead, exactly: any difference,
+up or down, fails until the baseline is updated. A percentage threshold would let a series of pull
+requests each add a little without anyone accepting the total. When such a change is intended,
+update the baseline in the same pull request with `pnpm bench:baseline` and say why in the
+description. The parallel batch sends as many calls as `serve` admits at once (16), so it measures
+concurrent throughput; any refused call fails the gate (`parallelErrors`).
 
 ## Documentation
 
