@@ -1188,4 +1188,47 @@ describe('buildRequest — multipart/form-data body (#71)', () => {
     const second = ok(buildRequest(mapper, 'post', '/upload', { file: 'AA==' }, budgets));
     expect(first.contentType).not.toBe(second.contentType);
   });
+
+  it('sends a file part with its declared contentMediaType', async () => {
+    const typed: RequestMapper = {
+      ...mapper,
+      fields: {
+        file: {
+          destination: 'body',
+          bodyPath: ['file'],
+          required: true,
+          binary: true,
+          partContentType: 'image/png',
+        },
+      },
+    };
+    const built = ok(buildRequest(typed, 'post', '/upload', { file: 'AAEC/w==' }, budgets));
+    const form = await parse(built);
+    const file = form.get('file') as File;
+    expect(file.type).toBe('image/png');
+  });
+
+  it('refuses a required body with zero parts (RFC 2046 needs at least one)', () => {
+    const optionalParts: RequestMapper = {
+      ...mapper,
+      fields: {
+        note: { destination: 'body', bodyPath: ['note'], required: false },
+        count: { destination: 'body', bodyPath: ['count'], required: false },
+      },
+    };
+    expect(err(buildRequest(optionalParts, 'post', '/upload', {}, budgets))).toMatch(
+      /at least one part \(RFC 2046\); provide at least one of: note, count/u,
+    );
+  });
+
+  it('sends a multi-MiB file part (inherits the #114 base64 check)', async () => {
+    const bytes = Buffer.alloc(5 * 1024 * 1024, 1);
+    const large = { ...budgets, maxBodyBytes: 10 * 1024 * 1024 };
+    const built = ok(
+      buildRequest(mapper, 'post', '/upload', { file: bytes.toString('base64') }, large),
+    );
+    const form = await parse(built);
+    const file = form.get('file') as File;
+    expect(file.size).toBe(bytes.byteLength);
+  });
 });

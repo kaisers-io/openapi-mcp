@@ -556,7 +556,8 @@ const binaryBody = (payload: unknown): { ok: Uint8Array } | { error: string } =>
 // the delimiter fails closed rather than producing an ambiguous body.
 const multipartBody = (
   payload: Record<string, unknown>,
-  binaryKeys: ReadonlySet<string>,
+  // File part name -> its Content-Type.
+  binaryParts: ReadonlyMap<string, string>,
 ): { ok: Uint8Array; boundary: string } | { error: string } => {
   const boundary = `openapi-mcp-${randomBytes(24).toString('hex')}`;
   const delimiter = Buffer.from(`--${boundary}`);
@@ -569,13 +570,14 @@ const multipartBody = (
     }
     let content: Buffer;
     let headers = `Content-Disposition: form-data; name="${name}"`;
-    if (binaryKeys.has(name)) {
+    const partType = binaryParts.get(name);
+    if (partType !== undefined) {
       const decoded = binaryBody(value);
       if ('error' in decoded) {
         return { error: `multipart part "${name}" must be a valid base64 string` };
       }
       content = Buffer.from(decoded.ok);
-      headers += `; filename="${name}"\r\nContent-Type: application/octet-stream`;
+      headers += `; filename="${name}"\r\nContent-Type: ${partType}`;
     } else if (isPrimitive(value)) {
       content = Buffer.from(String(value), 'utf8');
     } else {
@@ -654,14 +656,23 @@ const serializeBody = (
     if (!isPlainObject(payload)) {
       return { error: 'a multipart/form-data body must be an object' };
     }
-    const binaryKeys = new Set(
+    // RFC 2046 §5.1.1 requires at least one body part; a required body whose
+    // parts are all optional and absent would be just the close delimiter,
+    // which strict parsers (busboy/multer setups, some Java servers) reject.
+    if (Object.keys(payload).length === 0) {
+      const names = bodyFieldEntries.map(([name]) => name).join(', ');
+      return {
+        error: `the multipart/form-data request body needs at least one part (RFC 2046); provide at least one of: ${names}`,
+      };
+    }
+    const binaryParts = new Map(
       bodyFieldEntries.flatMap(([, mapping]) =>
         mapping.binary === true && mapping.bodyPath.length === 1
-          ? [mapping.bodyPath[0] as string]
+          ? [[mapping.bodyPath[0] as string, mapping.partContentType ?? OCTET_STREAM] as const]
           : [],
       ),
     );
-    const encoded = multipartBody(payload, binaryKeys);
+    const encoded = multipartBody(payload, binaryParts);
     if ('error' in encoded) {
       return encoded;
     }

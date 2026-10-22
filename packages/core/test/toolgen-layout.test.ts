@@ -1044,6 +1044,69 @@ describe('buildLayout — multipart/form-data bodies (#71)', () => {
     expect('unrepresentable' in multipart(schema, extra)).toBe(true);
   });
 
+  const withPart = (part: unknown) => ({
+    type: 'object',
+    required: ['file'],
+    properties: { file: { type: 'string', format: 'binary' }, extra: part },
+  });
+
+  it.each([
+    ['an array of strings', { type: 'array', items: { type: 'string' } }],
+    ['an object', { type: 'object', properties: { a: { type: 'string' } } }],
+    ['a 3.1 nullable string', { type: ['string', 'null'] }],
+    ['a 3.0 nullable string', { type: 'string', nullable: true }],
+    ['a typeless schema', {}],
+    ['an enum with null', { enum: ['a', null] }],
+    ['multiple files', { type: 'array', items: { type: 'string', format: 'binary' } }],
+  ])('omits a multipart part that is %s (the serializer only writes scalars)', (_label, part) => {
+    const r = multipart(withPart(part));
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(/multipart part "extra"/u);
+  });
+
+  it.each([
+    ['maxLength', { type: 'string', format: 'binary', maxLength: 1024 }],
+    ['nullable', { type: 'string', format: 'binary', nullable: true }],
+    ['an enum', { type: 'string', contentMediaType: 'image/png', enum: ['a'] }],
+  ])('omits a declared file part with %s instead of sending it as text', (_label, part) => {
+    const r = multipart({ type: 'object', properties: { file: part } });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(/file part "file"/u);
+  });
+
+  it('keeps a writeOnly file part binary', () => {
+    const l = layout(
+      multipart({
+        type: 'object',
+        properties: { file: { type: 'string', format: 'binary', writeOnly: true } },
+      }),
+    );
+    expect(l.mapper.fields['file']).toMatchObject({ binary: true });
+  });
+
+  it('uses a concrete declared contentMediaType as the part type, not a range', () => {
+    const png = layout(
+      multipart({
+        type: 'object',
+        properties: { file: { type: 'string', contentMediaType: 'image/png' } },
+      }),
+    );
+    expect(png.mapper.fields['file']).toMatchObject({ binary: true, partContentType: 'image/png' });
+    const range = layout(
+      multipart({
+        type: 'object',
+        properties: { file: { type: 'string', contentMediaType: 'image/*' } },
+      }),
+    );
+    expect(range.mapper.fields['file']).not.toHaveProperty('partContentType');
+  });
+
+  it('omits a required multipart body that declares no parts', () => {
+    const r = multipart({
+      type: 'object',
+      properties: { id: { type: 'string', readOnly: true } },
+    });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(/declares no parts/u);
+  });
+
   it('omits a declared multipart key that carries parameters (the boundary is generated)', () => {
     const r = buildLayout(
       bodyOp({
