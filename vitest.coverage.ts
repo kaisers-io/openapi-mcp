@@ -4,6 +4,7 @@ import type { Profiler } from 'node:inspector';
 import v8Module from '@vitest/coverage-v8';
 import { V8CoverageProvider } from '@vitest/coverage-v8/dist/provider.js';
 import type { CoverageProviderModule, ReportContext, Vitest } from 'vitest/node';
+import { mergeFileCoverageByIdentity } from './vitest.coverage-merge.ts';
 
 // The v8 coverage provider, extended so lines that run only inside spawned
 // `openapi-mcp` processes count (issue #86). The subprocess suites start the
@@ -18,8 +19,9 @@ import type { CoverageProviderModule, ReportContext, Vitest } from 'vitest/node'
 // Node's type-stripped original, so the offsets do not line up and the
 // merged result is wrong: with it enabled, serve.ts dropped from 71.6% to
 // 66.1% lines instead of rising. Here each child file is converted on its
-// own, as Node-executed code, and only the resulting Istanbul maps are
-// merged, which is a per-statement sum and therefore safe.
+// own, as Node-executed code, and the resulting Istanbul data is merged into
+// the worker's by source start position (vitest.coverage-merge.ts), so a
+// function both ran is one entry with the summed count.
 //
 // This relies on V8CoverageProvider's private `convertCoverage`, so it is
 // tied to the exactly pinned @vitest/coverage-v8 version.
@@ -86,11 +88,30 @@ class SubprocessCoverageProvider extends V8CoverageProvider {
 
   override async generateCoverage(context: ReportContext): Promise<CoverageMap> {
     const coverageMap = await super.generateCoverage(context);
-    const converter = this as unknown as Converter;
+    const converter = this as unknown as Partial<Converter>;
+    // Private API (see the header): fail with a pointer here instead of a bare
+    // TypeError when a @vitest/coverage-v8 bump renames or removes it
+    if (typeof converter.convertCoverage !== 'function') {
+      throw new TypeError(
+        'V8CoverageProvider#convertCoverage is gone: vitest.coverage.ts relies on this private ' +
+          'method of the exactly pinned @vitest/coverage-v8; adapt it before bumping that package',
+      );
+    }
     for (const scripts of await readChildScripts(this.childCoverageDir)) {
       // Sequential on purpose: one child's scripts at a time bounds memory;
       // convertCoverage already parallelises across the files within it.
-      coverageMap.merge(await converter.convertCoverage({ result: scripts }));
+      const childMap = await converter.convertCoverage({ result: scripts });
+      // Not coverageMap.merge: that keys entries by their full range, and the
+      // worker's and the child's ranges differ in their end columns, so every
+      // function both ran would be counted twice (vitest.coverage-merge.ts)
+      for (const file of childMap.files()) {
+        const childData = childMap.fileCoverageFor(file).data;
+        if (coverageMap.files().includes(file)) {
+          mergeFileCoverageByIdentity(coverageMap.fileCoverageFor(file).data, childData);
+        } else {
+          coverageMap.addFileCoverage(childData);
+        }
+      }
     }
     return coverageMap;
   }

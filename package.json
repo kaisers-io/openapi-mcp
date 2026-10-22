@@ -9,8 +9,8 @@
   },
   "scripts": {
     "lint": "oxlint",
-    "fmt": "oxfmt packages vitest.config.ts vitest.shared.ts vitest.coverage.ts",
-    "fmt:check": "oxfmt --check packages vitest.config.ts vitest.shared.ts vitest.coverage.ts",
+    "fmt": "oxfmt packages vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
+    "fmt:check": "oxfmt --check packages vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
     "typecheck": "pnpm -r run typecheck",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

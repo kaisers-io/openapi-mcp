@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -555,6 +555,84 @@ describe('serve — stdio subprocess E2E', () => {
       child?.once('exit', (exitCode) => resolve(exitCode));
     });
     expect(code).toBe(0);
+  });
+
+  it('--strict-filters turns a dead pattern into a startup failure on stderr, before anything is served', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        CLI_ENTRY,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        'http://127.0.0.1:1',
+        '--strict-filters',
+        '--deny',
+        'noSuchOperation',
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    const { stderrLines, rawStdout } = collectLines(child);
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(3);
+    expect(rawStdout()).toBe('');
+    expect(stderrLines.join('\n')).toContain('noSuchOperation');
+  });
+
+  it('serves a URL spec fetched with --spec-header-env, sending that header to the spec host', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    const spec = await readFile(join(fixturesDir, 'petstore.json'), 'utf8');
+    let specAuth: string | undefined;
+    const specServer = createServer((req, res) => {
+      specAuth = req.headers['x-spec-key'] as string | undefined;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(spec);
+    });
+    await new Promise<void>((resolve) => {
+      specServer.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      const { port } = specServer.address() as AddressInfo;
+      child = spawn(
+        process.execPath,
+        [
+          CLI_ENTRY,
+          'serve',
+          '--spec',
+          `http://127.0.0.1:${String(port)}/openapi.json`,
+          '--spec-header-env',
+          'X-Spec-Key=SPEC_KEY',
+          '--cache-key',
+          'e2e',
+          '--allow-private-network',
+          '--base-url',
+          'http://127.0.0.1:1',
+        ],
+        {
+          cwd: fixturesDir,
+          env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, SPEC_KEY: 'spec-secret' },
+        },
+      );
+      const { stdoutLines, stderrLines } = collectLines(child);
+      sendModern(child, 1, 'server/discover');
+      await waitFor(() => stdoutLines.length > 0);
+      expect(specAuth).toBe('spec-secret');
+      // The spec header value is registered for redaction like every secret
+      expect(stderrLines.join('\n')).not.toContain('spec-secret');
+      child.stdin?.end();
+      const code = await new Promise<number | null>((resolve) => {
+        child?.once('exit', (exitCode) => resolve(exitCode));
+      });
+      expect(code).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => {
+        specServer.close(() => resolve());
+      });
+    }
   });
 
   // The executor's cleartext gate (executor.ts's

@@ -22,6 +22,7 @@ export const SUBPROCESS_TEST_TIMEOUT_MS = 30_000;
 // so each file is in exactly one of the two projects.
 export const SUBPROCESS_E2E_FILES = [
   'test/cache-concurrency.test.ts',
+  'test/coverage-subprocess.test.ts',
   'test/serve.test.ts',
   'test/serve-http.test.ts',
 ];
