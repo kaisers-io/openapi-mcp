@@ -3,7 +3,7 @@ import type { Redactor } from '../redact.ts';
 import { sanitizeDisplayText, sanitizeSpecText } from '../spec/sanitize.ts';
 import { retryableErrorOutcome, textOutcome, wasSecretScanned } from './result.ts';
 import type { DispatchResult, ToolCallOutcome } from './result.ts';
-import { observeCalls } from './telemetry.ts';
+import { carryOutcomeTag, observeCalls, tagOutcome } from './telemetry.ts';
 import type { CallObserver, CallTelemetry } from './telemetry.ts';
 import type { TraceContext } from './trace.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
@@ -101,7 +101,10 @@ const redactedValidationOutcome = (issues: readonly ZodIssueLike[]): ToolCallOut
   // one line (see `caps a validation failure at 20 rendered issues total`).
   const suffix = issues.length > capped.length ? `\n(+${issues.length - capped.length} more)` : '';
   const rendered = `invalid tool arguments:\n${lines.join('\n')}${suffix}`;
-  return textOutcome(sanitizeDisplayText(rendered, MAX_RENDERED_LENGTH), true);
+  return tagOutcome(
+    textOutcome(sanitizeDisplayText(rendered, MAX_RENDERED_LENGTH), true),
+    'validation_error',
+  );
 };
 
 // `safeParseAsync` does not only RESOLVE with `{ success: false }` on a bad shape —
@@ -113,9 +116,9 @@ const redactedValidationOutcome = (issues: readonly ZodIssueLike[]): ToolCallOut
 // fixed, generic outcome (no per-issue detail is available, since parsing never
 // completed), matching the same redacted "invalid tool arguments" isError shape the
 // ordinary validation-failure path returns.
-const PARSE_THREW_OUTCOME: ToolCallOutcome = textOutcome(
-  'invalid tool arguments: unable to validate the request',
-  true,
+const PARSE_THREW_OUTCOME: ToolCallOutcome = tagOutcome(
+  textOutcome('invalid tool arguments: unable to validate the request', true),
+  'validation_error',
 );
 
 // A single, generic, stable message — never the structured content itself —
@@ -153,7 +156,7 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
       scanForSecretSafely(redactor, outcome.structuredContent)) ||
     (outcome.meta !== undefined && scanForSecretSafely(redactor, outcome.meta))
   ) {
-    return textOutcome(BOUNDARY_UNSAFE_TEXT, true);
+    return tagOutcome(textOutcome(BOUNDARY_UNSAFE_TEXT, true), 'secret_withheld');
   }
   const redactedContent = outcome.content.map((block) => ({
     ...block,
@@ -169,12 +172,12 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
   // error as the structuredContent branch above, rather than ever returning
   // text that still matches a registered secret.
   if (redactedContent.some((block) => scanForSecretSafely(redactor, block.text))) {
-    return textOutcome(BOUNDARY_UNSAFE_TEXT, true);
+    return tagOutcome(textOutcome(BOUNDARY_UNSAFE_TEXT, true), 'secret_withheld');
   }
-  return {
+  return carryOutcomeTag(outcome, {
     ...outcome,
     content: redactedContent,
-  };
+  });
 };
 
 // Wraps `safeParseAsync`'s own throw case (see `PARSE_THREW_OUTCOME` above):

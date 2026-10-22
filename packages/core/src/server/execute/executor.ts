@@ -276,6 +276,7 @@ const runUpstreamCall = async (
     // defensive, unreachable in the real wiring (the caller constructs
     // exactly one createExecutor and passes it only as the upstream
     // ToolExecutor).
+    report({ outcome: 'internal_error' });
     return isError('this tool has no upstream operation to execute');
   }
   // Validators FAIL-CLOSED, mandatory: a missing map entry is a wiring bug
@@ -283,6 +284,7 @@ const runUpstreamCall = async (
   // genuine no-outputSchema tool) — never fall through to a silent
   // unvalidated text path.
   if (!config.validators.has(tool.name)) {
+    report({ outcome: 'internal_error' });
     return isError('no response validator is registered for this tool');
   }
   const validator = config.validators.get(tool.name);
@@ -297,9 +299,16 @@ const runUpstreamCall = async (
     base = new URL(config.baseUrl);
   } catch {
     // Defensive: baseUrl is resolved and validated before this point.
+    report({ outcome: 'internal_error' });
     return isError('the configured base URL is invalid');
   }
   if (cleartextBlocked(config, base)) {
+    // Operator policy, not a bad argument: counted as `refused`.
+    report({
+      outcome: 'refused',
+      method: generated.operation.method.toUpperCase(),
+      pathTemplate: generated.operation.path,
+    });
     return isError(
       'refusing to send a secret header in cleartext over a non-loopback http:// origin (pass --allow-insecure-http to override)',
     );
@@ -377,6 +386,7 @@ const runUpstreamCall = async (
   }
   const idempotencyKey = keyed ? headers.sameOriginHeaders['idempotency-key'] : undefined;
   if (overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)) {
+    report({ outcome: 'refused', method, pathTemplate: generated.operation.path });
     return isError('the final request exceeds the outbound resource budget');
   }
   const requestOptions: PinnedRequestOptions = {
@@ -390,7 +400,7 @@ const runUpstreamCall = async (
     signal,
   };
   const upstreamStarted = retryDeps.now();
-  const { outcome } = await withRetries(
+  const { outcome, attempts } = await withRetries(
     (remainingMs) =>
       pinnedRequest(finalUrl, { ...requestOptions, timeoutMs: remainingMs }, transport),
     {
@@ -434,6 +444,7 @@ const runUpstreamCall = async (
     method,
     pathTemplate: generated.operation.path,
     upstreamMs,
+    attempts,
     ...(outcome.kind === 'response'
       ? { status: outcome.status, responseBytes: outcome.bodyBytes.byteLength }
       : {}),
@@ -495,9 +506,10 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     if (slot === 'timeout') {
       return overloaded('timed out waiting for a free upstream request slot');
     }
-    // A call refused before any request was sent (argument mapping, the
-    // cleartext gate, budgets) reports nothing itself: it is recorded as a
-    // validation error.
+    // A call stopped by its arguments before any request was sent (argument
+    // mapping, a reserved-header collision, a URL that escapes the base)
+    // reports nothing itself: it is recorded as a validation error. Policy
+    // refusals (cleartext gate, budgets) report `refused`.
     let reported = false;
     const upstreamReport = (telemetry: CallTelemetry): void => {
       reported = true;

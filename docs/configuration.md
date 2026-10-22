@@ -149,13 +149,19 @@ Notes:
   served spec; a cursor from another spec version is rejected with Invalid Params.
 - Call log (`--log json`, off by default): one JSON line per tool call goes to stderr,
   never stdout. Each line has `ts`, `event: "tool_call"`, `tool`, `method`, `pathTemplate`,
-  `status`, `outcome`, `latencyMs`, `responseBytes`, `queuedMs` and `upstreamMs`. `outcome`
-  is one of `ok`, `http_error`, `response_error`, `validation_error`, `rate_limited`,
-  `overloaded`, `egress_denied`, `timeout`, `cancelled`, `network_error` or
-  `internal_error`. Arguments, header values, filled URLs and bodies are never logged, and
-  every string is redacted. Whether or not `--log` is set, `openapi_mcp_status` reports
-  process-local counters under `calls`: the total, counts by outcome, and p50/p95 upstream
-  latency over the last 512 calls.
+  `status`, `outcome`, `latencyMs`, `responseBytes`, `queuedMs`, `upstreamMs` and `attempts`.
+  `outcome` is one of `ok`, `http_error`, `response_error`, `secret_withheld` (the upstream
+  answered, but the result contained a configured secret and the client got an error),
+  `validation_error` (bad arguments), `refused` (local policy: the cleartext credential gate
+  or the outbound size budget), `rate_limited`, `overloaded`, `egress_denied`, `timeout`,
+  `cancelled`, `network_error` or `internal_error`. `upstreamMs` runs from the first request
+  to the final outcome, so with `--retries` it includes every attempt and the backoff or
+  `Retry-After` waits between them; `attempts` says how many requests were sent. Arguments,
+  header values, filled URLs and bodies are never logged, and every string is redacted.
+  Whether or not `--log` is set, `openapi_mcp_status` reports process-local counters under
+  `calls`: the total, counts by outcome, and p50/p95 of `upstreamMs` over the last 512 calls.
+  These counters are visible to every client of the server: over `--http` with several
+  clients, each one sees the aggregate counts of all of them (counts only, no content).
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly
