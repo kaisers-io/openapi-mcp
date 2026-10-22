@@ -87,4 +87,52 @@ describe('detectPagination (via buildTools)', () => {
     expect(plain).not.toContain('pagination');
     expect(paged).toContain('"pagination"');
   });
+
+  // JSON:API body `links.next` is read only where the spec declares that
+  // shape: the JSON:API media type, or a schema with `links.next`.
+  const withContent = (content: Record<string, unknown>): NamedOperation => {
+    const base = op('get', [{ name: 'page' }]);
+    return {
+      ...base,
+      operation: { ...base.operation, responses: { '200': { description: 'ok', content } } },
+    };
+  };
+
+  it.each([
+    ['the JSON:API media type', { 'application/vnd.api+json': { schema: { type: 'object' } } }],
+    [
+      'the JSON:API media type with parameters',
+      { 'application/vnd.api+json; ext="https://jsonapi.org/ext/atomic"': {} },
+    ],
+    [
+      'a schema declaring links.next',
+      {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: { links: { type: 'object', properties: { next: { type: 'string' } } } },
+          },
+        },
+      },
+    ],
+  ])('reads JSON:API links.next for %s', (_label, content) => {
+    expect(planOf(withContent(content))?.jsonApiLinks).toBe(true);
+  });
+
+  it.each([
+    ['plain JSON', { 'application/json': { schema: { type: 'object' } } }],
+    [
+      'a links object without next',
+      {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: { links: { type: 'object', properties: { self: { type: 'string' } } } },
+          },
+        },
+      },
+    ],
+  ])('does not read links.next for %s', (_label, content) => {
+    expect(planOf(withContent(content))?.jsonApiLinks).toBeUndefined();
+  });
 });

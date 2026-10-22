@@ -1,7 +1,8 @@
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { RequestMapper } from './layout.ts';
-import { deepObjectValue, fieldOf, hintValue, linkValue } from './pagination-values.ts';
-import type { HintScalar, PaginationField } from './pagination-values.ts';
+import { declaresJsonApiLinks, queryArgs } from './pagination-links.ts';
+import { fieldOf, hintValue } from './pagination-values.ts';
+import type { PaginationField } from './pagination-values.ts';
 
 export type { PaginationField } from './pagination-values.ts';
 
@@ -46,6 +47,9 @@ export type PaginationPlan = {
   bodyCursors: readonly { property: string; field: PaginationField }[];
   // Stripe-style `has_more` + last item id -> `starting_after`.
   startingAfter?: PaginationField;
+  // The success response is declared JSON:API-shaped, so its top-level
+  // `links.next` URL is read like a Link header's (present only when true).
+  jsonApiLinks?: true;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -92,6 +96,7 @@ export const detectPagination = (
     carried,
     bodyCursors,
     ...(startingAfter === undefined ? {} : { startingAfter }),
+    ...(declaresJsonApiLinks(operation.responses) ? { jsonApiLinks: true as const } : {}),
   };
 };
 
@@ -144,59 +149,19 @@ const parseUrl = (raw: string, base?: string): URL | undefined => {
   }
 };
 
-// A deepObject parameter on the wire: `name[key]`, exactly one level, with
-// neither part empty nor containing a bracket (the serializer refuses
-// bracketed keys as ambiguous with nesting, #108). Brackets may arrive
-// percent-encoded (`%5B`/`%5D`); URLSearchParams has decoded them by now.
-const DEEP_OBJECT_KEY_RE = /^(?<name>[^[\]]+)\[(?<key>[^[\]]+)\]$/u;
-
-// One next-link query parameter mapped onto the tool's fields: a form or
-// delimited field by its wire name, or one property of a deepObject field
-// by `name[key]`. A name both could claim (a parameter literally declared
-// as `page[number]` next to a deepObject `page`) is ambiguous: no mapping.
-type LinkParam =
-  | { field: PaginationField; value: HintScalar | HintScalar[] }
-  | { field: PaginationField; key: string; value: HintScalar };
-
-// The tool field for a query wire name: own entries only, so a link
-// parameter named `constructor` or `__proto__` never resolves to
-// Object.prototype's members.
-const queryField = (plan: PaginationPlan, name: string): PaginationField | undefined =>
-  Object.hasOwn(plan.query, name) ? plan.query[name] : undefined;
-
-const linkParam = (
+// A next-page URL (from a Link header or a JSON:API `links.next`) turned
+// into arguments: only a target with the SAME origin and path as the
+// request is accepted, and every one of its query parameters must map onto
+// one of the tool's own query fields (a deepObject field's properties
+// included) — otherwise no hint. A hostile upstream therefore cannot steer
+// the next call to another host, path or parameter. A relative target is
+// resolved against the response URL.
+const fromNextUrl = (
   plan: PaginationPlan,
-  name: string,
-  raws: readonly string[],
-): LinkParam | undefined => {
-  const direct = queryField(plan, name);
-  const { name: owned, key } = DEEP_OBJECT_KEY_RE.exec(name)?.groups ?? {};
-  const owner = owned === undefined ? undefined : queryField(plan, owned);
-  const deep = owner?.kind === 'object' ? owner : undefined;
-  if (direct !== undefined && deep !== undefined) {
-    return undefined;
-  }
-  if (deep !== undefined && key !== undefined) {
-    const value = deepObjectValue(raws, deep, key);
-    return value === undefined ? undefined : { field: deep, key, value };
-  }
-  const value = direct === undefined ? undefined : linkValue(raws, direct);
-  return direct === undefined || value === undefined ? undefined : { field: direct, value };
-};
-
-// From `Link: <...>; rel="next"`: only a target with the SAME origin and
-// path as the request is accepted, and every one of its query parameters
-// must map onto one of the tool's own query fields (a deepObject field's
-// properties included) — otherwise no hint. A hostile upstream therefore
-// cannot steer the next call to another host, path or parameter. Returns
-// `{ next }` whenever a Link header was sent (its verdict is final),
-// undefined when there was none.
-const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | undefined => {
-  if (input.links === undefined) {
-    return undefined;
-  }
-  const link = input.links.find((candidate) => candidate.rels.includes('next'));
-  const target = link === undefined ? undefined : parseUrl(link.target, input.responseUrl);
+  input: HintInput,
+  raw: string | undefined,
+): { next?: Args } => {
+  const target = raw === undefined ? undefined : parseUrl(raw, input.responseUrl);
   const request = parseUrl(input.requestUrl);
   if (
     target === undefined ||
@@ -206,27 +171,33 @@ const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | und
   ) {
     return {};
   }
-  const mapped: Args = carriedArgs(plan, input.args);
-  // The deepObject properties, collected per field and assembled at the end
-  // with Object.fromEntries (own data properties, whatever the key).
-  const objects = new Map<string, [string, HintScalar][]>();
-  for (const name of new Set(target.searchParams.keys())) {
-    const param = linkParam(plan, name, target.searchParams.getAll(name));
-    if (param === undefined) {
-      return {};
-    }
-    if ('key' in param) {
-      const entries = objects.get(param.field.field) ?? [];
-      entries.push([param.key, param.value]);
-      objects.set(param.field.field, entries);
-    } else {
-      mapped[param.field.field] = param.value;
-    }
+  const next = queryArgs(plan.query, target.searchParams, carriedArgs(plan, input.args));
+  return next === undefined ? {} : { next };
+};
+
+// From `Link: <...>; rel="next"`. Returns `{ next }` whenever a Link header
+// was sent (its verdict is final, even "no next"), undefined when there was
+// none.
+const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | undefined => {
+  if (input.links === undefined) {
+    return undefined;
   }
-  for (const [field, entries] of objects) {
-    mapped[field] = Object.fromEntries(entries);
+  const link = input.links.find((candidate) => candidate.rels.includes('next'));
+  return fromNextUrl(plan, input, link?.target);
+};
+
+// From a JSON:API document's top-level `links.next` (declared JSON:API
+// responses only). A `links` object is the document's verdict: a string
+// `next` is mapped like a Link target, and anything else (null on the last
+// page, absent, not a string) is "no next page". Undefined when the body
+// has no `links` object, so the body cursors still get their turn.
+const fromJsonApiLinks = (plan: PaginationPlan, input: HintInput): { next?: Args } | undefined => {
+  const { data } = input;
+  if (plan.jsonApiLinks !== true || !isRecord(data) || !isRecord(data['links'])) {
+    return undefined;
   }
-  return { next: mapped };
+  const { next } = data['links'];
+  return fromNextUrl(plan, input, typeof next === 'string' ? next : undefined);
 };
 
 const withArg = (args: Args, field: PaginationField, raw: unknown): Args | undefined => {
@@ -252,9 +223,10 @@ const fromBody = (plan: PaginationPlan, input: HintInput): Args | undefined => {
 };
 
 // `next` for a paginated tool's result: a `Link` header decides when the
-// upstream sent one (even "no next"); otherwise a recognized body cursor.
+// upstream sent one (even "no next"); then a JSON:API `links` object; then
+// a recognized body cursor.
 export const nextPageHint = (plan: PaginationPlan, input: HintInput): PageHint => {
-  const linked = fromLink(plan, input);
+  const linked = fromLink(plan, input) ?? fromJsonApiLinks(plan, input);
   const next = linked === undefined ? fromBody(plan, input) : linked.next;
   return { next: next ?? NO_NEXT_PAGE };
 };

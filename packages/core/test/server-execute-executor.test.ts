@@ -1793,6 +1793,147 @@ describe('createExecutor — pagination hints', () => {
     expect(acceptedAsInput(tool, next)).toBe(true);
   });
 
+  // JSON:API puts pagination links in the BODY, in the top-level `links`
+  // object (https://jsonapi.org/format/#fetching-pagination), not in a Link
+  // header. A realistic `application/vnd.api+json` collection document.
+  const JSON_API = 'application/vnd.api+json';
+  const jsonApiDocOp = (
+    pageProperties: Record<string, unknown>,
+    mediaType = JSON_API,
+    schema?: Record<string, unknown>,
+  ): NamedOperation => ({
+    toolName: 'listArticles',
+    operation: {
+      method: 'get',
+      path: '/articles',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        {
+          name: 'page',
+          in: 'query',
+          style: 'deepObject',
+          explode: true,
+          schema: { type: 'object', properties: pageProperties },
+        },
+        jsonApiParams[1] as Record<string, unknown>,
+        { name: 'sort', in: 'query', schema: { type: 'string' } },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          content: { [mediaType]: { schema: schema ?? { type: 'object' } } },
+        },
+      },
+    },
+  });
+  const numbered = { number: { type: 'integer' }, size: { type: 'integer' } };
+  const cursored = { after: { type: 'string' }, size: { type: 'integer' } };
+  const jsonApiDoc =
+    (links: Record<string, unknown> | undefined, link?: string, mediaType = JSON_API) =>
+    () =>
+      Response.json(
+        {
+          data: [
+            { type: 'articles', id: '1', attributes: { title: 'JSON:API paints my bikeshed!' } },
+            { type: 'articles', id: '2', attributes: { title: 'Rails is Omakase' } },
+          ],
+          ...(links === undefined ? {} : { links }),
+          meta: { totalPages: 13 },
+        },
+        {
+          status: 200,
+          headers: { 'content-type': mediaType, ...(link === undefined ? {} : { link }) },
+        },
+      );
+  const BASE = 'https://api.example.test/articles';
+
+  it('maps a JSON:API body links.next (page[number]/page[size] + filter[x]) onto the arguments', async () => {
+    const { outcome, valid, tool } = await call(
+      jsonApiDocOp(numbered),
+      jsonApiDoc({
+        self: `${BASE}?page%5Bnumber%5D=2&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+        first: `${BASE}?page%5Bnumber%5D=1&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+        prev: `${BASE}?page%5Bnumber%5D=1&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+        next: `${BASE}?page%5Bnumber%5D=3&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+        last: `${BASE}?page%5Bnumber%5D=13&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+      }),
+      { page: { number: 2, size: 2 }, filter: { status: 'published' } },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ page: { number: 3, size: 2 }, filter: { status: 'published' } });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+    // Still arguments, never the URL (D4).
+    expect(JSON.stringify(outcome.structuredContent?.['pagination'])).not.toContain('https://');
+  });
+
+  it('maps a JSON:API cursor links.next (page[after]), resolving a relative link', async () => {
+    const { outcome, valid, tool } = await call(
+      jsonApiDocOp(cursored),
+      jsonApiDoc({ next: '/articles?page[size]=2&page[after]=eyJpZCI6Mn0' }),
+      { page: { size: 2 } },
+    );
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ page: { size: 2, after: 'eyJpZCI6Mn0' } });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it('reads links.next from an application/json response whose schema declares it', async () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        data: { type: 'array' },
+        links: { type: 'object', properties: { next: { type: ['string', 'null'] } } },
+      },
+    };
+    const { outcome, valid } = await call(
+      jsonApiDocOp(numbered, 'application/json', schema),
+      jsonApiDoc({ next: `${BASE}?page[number]=2` }, undefined, 'application/json'),
+      {},
+    );
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toEqual({ page: { number: 2 } });
+  });
+
+  it('never reads links.next where the response is not declared JSON:API-shaped', async () => {
+    const { outcome } = await call(
+      jsonApiDocOp(numbered, 'application/json'),
+      jsonApiDoc({ next: `${BASE}?page[number]=2` }, undefined, 'application/json'),
+      {},
+    );
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('prefers the Link header over the body links.next', async () => {
+    const { outcome } = await call(
+      jsonApiDocOp(numbered),
+      jsonApiDoc({ next: `${BASE}?page[number]=3` }, `<${BASE}?page[number]=5>; rel="next"`),
+      {},
+    );
+    expect(nextOf(outcome)).toEqual({ page: { number: 5 } });
+  });
+
+  it.each([
+    ['links.next null (last page)', { self: `${BASE}?page[number]=13`, next: null }],
+    ['no links.next', { self: `${BASE}?page[number]=13` }],
+    ['no links object', undefined],
+    ['a non-string links.next', { next: { href: `${BASE}?page[number]=3` } }],
+    ['another origin', { next: 'https://evil.example/articles?page[number]=3' }],
+    ['another path', { next: 'https://api.example.test/admin?page[number]=3' }],
+    ['an unmapped parameter', { next: `${BASE}?page[number]=3&token=x` }],
+    ['an undeclared page key', { next: `${BASE}?page[number]=3&page[cursor]=x` }],
+    ['a nested bracket key', { next: `${BASE}?page[number]=3&filter[author][name]=x` }],
+    ['an unparsable URL', { next: 'http://[::1' }],
+  ])('yields next: null for a JSON:API body with %s', async (_label, links) => {
+    const { outcome, valid } = await call(jsonApiDocOp(numbered), jsonApiDoc(links), {});
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
   it.each([
     ['a non-boolean value for a boolean field', 'archived=maybe'],
     ['a repeated key for an explode=false array', 'labels=a&labels=b'],
