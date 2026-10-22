@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SPEC_BUDGETS } from '../spec/budgets.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import { hasNestedQuantifier } from './pattern-safety.ts';
 
 // Structural nesting guard, tied to the existing parse-depth budget — not a new
 // budget. The document is already dereferenced (cycle-safe) upstream, so this
@@ -9,6 +10,12 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 export const MAX_CONVERT_DEPTH = SPEC_BUDGETS.maxParseDepth;
 
 export type SchemaResult = { ok: z.ZodType } | { unrepresentable: string };
+
+// The unrepresentable reason for a response `pattern` with nested quantifiers
+// (#39). Output-schema derivation looks for it to tell the agent why a tool
+// has no output schema.
+export const UNSAFE_PATTERN_REASON =
+  'a "pattern" with nested quantifiers (unbounded regex matching cost)';
 
 // Which side of the HTTP exchange a schema describes. The same Schema Object
 // is routinely shared between a request body and a response (`User` with a
@@ -27,7 +34,8 @@ export type SchemaResult = { ok: z.ZodType } | { unrepresentable: string };
 //     provider adding a field does not break the tool; only an EXPLICIT
 //     `additionalProperties: false` closes the object. A `writeOnly: true`
 //     property is never required (it "MAY be sent as part of a request but
-//     SHOULD NOT be sent as part of the response", OAS 3.0.3 §4.7.24.2).
+//     SHOULD NOT be sent as part of the response", OAS 3.0.3 §4.7.24.2), and
+//     an open object leaves it out of the shape entirely.
 export type SchemaMode = 'request' | 'response';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -235,7 +243,10 @@ const valueMatchesType = (value: unknown, type: string): boolean => {
   }
 };
 
-const conflictingCombination = (node: Record<string, unknown>): string | undefined => {
+const conflictingCombination = (
+  node: Record<string, unknown>,
+  version: OpenapiVersion,
+): string | undefined => {
   const determiners = SHAPE_DETERMINERS.filter((keyword) => node[keyword] !== undefined);
   if (determiners.length > 1) {
     return `multiple shape-determining keywords (${determiners.join(', ')})`;
@@ -270,9 +281,13 @@ const conflictingCombination = (node: Record<string, unknown>): string | undefin
     ) {
       return `"${determiner}" combined with a malformed "type"`;
     }
+    // A 3.0 `nullable: true` adds null to the sibling type, so the
+    // OAS 3.0.3-blessed nullable enum `{type:'string', nullable:true,
+    // enum:['a', null]}` is consistent, not a conflict.
+    const admitted = version === '3.0' && node['nullable'] === true ? [...types, 'null'] : types;
     const enumValues = Array.isArray(node['enum']) ? node['enum'] : [];
     const values: readonly unknown[] = determiner === 'enum' ? enumValues : [node['const']];
-    return values.every((value) => types.some((name) => valueMatchesType(value, name as string)))
+    return values.every((value) => admitted.some((name) => valueMatchesType(value, name as string)))
       ? undefined
       : `"${determiner}" values incompatible with the sibling type ${JSON.stringify(type)}`;
   }
@@ -587,6 +602,16 @@ const objectSchema = (
   // short-circuit into forced recursive conversion work for every property
   // on hostile input, even past the first failure.
   const droppedReadOnly = new Set<string>();
+  // A writeOnly property SHOULD NOT appear in a response (OAS 3.0.3 §4.7.24.2),
+  // so in response mode it is left out of the advertised shape — the model is
+  // never shown a field the upstream does not return (FastMCP's
+  // `remove_write_only`). Only an OPEN object drops it: an undeclared key is
+  // still allowed there, so a server that does echo it stays valid. A closed
+  // object (`additionalProperties: false` or a schema) keeps it as optional,
+  // or an echo would fail output validation.
+  const ap = node['additionalProperties'];
+  const dropsWriteOnly = mode === 'response' && (ap === undefined || ap === true);
+  const droppedWriteOnly = new Set<string>();
   for (const [key, child] of Object.entries(properties)) {
     if (isDangerousKey(key)) {
       return { unrepresentable: `a property named "${key}"` };
@@ -600,13 +625,16 @@ const objectSchema = (
       droppedReadOnly.add(key);
       continue;
     }
+    if (dropsWriteOnly && isAccessOnly(child, 'writeOnly')) {
+      droppedWriteOnly.add(key);
+      continue;
+    }
     const conv = convertSchema(child, version, depth + 1, mode);
     if (!('ok' in conv)) {
       return { unrepresentable: `property "${key}": ${conv.unrepresentable}` };
     }
-    // A writeOnly property SHOULD NOT appear in a response, so `required` on it
-    // applies to requests only; in response mode it is optional (still
-    // validated by its schema if a server does echo it).
+    // In a closed response object a writeOnly property is kept but never
+    // required: `required` on it applies to requests only.
     const requiredHere =
       required.has(key) && !(mode === 'response' && isAccessOnly(child, 'writeOnly'));
     shape[key] = requiredHere ? conv.ok : conv.ok.optional();
@@ -615,11 +643,10 @@ const objectSchema = (
   // schema for it) — omit rather than silently accept its absence. Object.hasOwn,
   // not `in`, so an inherited name like `toString` is not treated as declared.
   for (const name of required) {
-    if (!Object.hasOwn(shape, name) && !droppedReadOnly.has(name)) {
+    if (!Object.hasOwn(shape, name) && !droppedReadOnly.has(name) && !droppedWriteOnly.has(name)) {
       return { unrepresentable: `the required property "${name}" is not declared in properties` };
     }
   }
-  const ap = node['additionalProperties'];
   if (ap === false) {
     return { ok: z.strictObject(shape) };
   }
@@ -632,7 +659,8 @@ const objectSchema = (
     // than the spec states. An empty `properties: {}` declares nothing, the
     // same rule mergeAllOf/buildTyped apply ("empty properties is not object
     // evidence"). `droppedReadOnly` counts as declared: an object whose
-    // properties are all readOnly accepts only `{}` in a request.
+    // properties are all readOnly accepts only `{}` in a request. (A response
+    // object is open here regardless, so a dropped writeOnly changes nothing.)
     const declaresProperties = Object.keys(properties).length > 0;
     return mode === 'request' && declaresProperties
       ? { ok: z.strictObject(shape) }
@@ -873,25 +901,38 @@ const isAllOfWrapper = (
   node['allOf'].length === 1 &&
   Object.keys(node).every((key) => key.startsWith('x-') || ALLOF_WRAPPER_SIBLINGS.has(key));
 
+// Admits null next to a determiner's own values (see build).
+const withNull = (result: SchemaResult, admitNull: boolean): SchemaResult =>
+  admitNull && 'ok' in result ? { ok: result.ok.nullable() } : result;
+
 const build = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
   mode: SchemaMode,
 ): SchemaResult => {
-  // Determiners carry their own nullability through the enumerated values or
-  // members — a `.nullable()` wrapper would admit null they exclude (OAS 3.0:
-  // other constraints may disallow null). const/enum therefore IGNORE a sibling
-  // `nullable` (null is allowed only if it is itself an enumerated value).
-  // They are handled BEFORE type normalization: the value list alone fixes the
-  // value set, and conflictingCombination has already checked every value
-  // against a sibling `type` — including a 3.1 type array like
+  // const/enum are handled BEFORE type normalization: the value list alone
+  // fixes the value set, and conflictingCombination has already checked every
+  // value against a sibling `type` — including a 3.1 type array like
   // `['string','integer']` that normalizeType would reject as multi-type.
+  //
+  // Nullability (#41, decision D9): wherever the spec marks a value nullable,
+  // null is admitted in BOTH directions. A 3.0 `nullable: true` next to an
+  // enum/const that does not list null (`{type:'string', nullable:true,
+  // enum:['a']}`, as older Swashbuckle/NSwag emit) admits null too. OAS 3.0.3
+  // §4.7.24.2 says such an enum "may disallow" null, but the author's intent
+  // is plain, a PATCH needs it to clear a field, and a response carrying null
+  // must not fail the call. The 3.1 dialect has no `nullable`: there an enum
+  // admits null only if it lists it.
+  const nullable30 = version === '3.0' && node['nullable'] === true;
   if ('const' in node && node['const'] !== undefined) {
-    return constSchema(node['const']);
+    return withNull(constSchema(node['const']), nullable30 && node['const'] !== null);
   }
   if (Array.isArray(node['enum'])) {
-    return enumSchema(node['enum']);
+    return withNull(
+      enumSchema(node['enum']),
+      nullable30 && !node['enum'].some((value) => value === null),
+    );
   }
   const normalized = normalizeType(node['type'], version, node['nullable'] === true);
   if ('ok' in normalized || 'unrepresentable' in normalized) {
@@ -910,18 +951,14 @@ const build = (
       return composed;
     }
     // A 3.0 `nullable: true` beside a composition (the NSwag / Swashbuckle /
-    // drf-spectacular idiom for a nullable $ref, #41). OAS 3.0.3 §4.7.24.2:
-    // nullable "only if `type` is explicitly defined within the same Schema
-    // Object", and "Other Schema Object constraints retain their defined
-    // behavior, and therefore may disallow the use of null" — the members of
-    // the composition still exclude null. So, per direction:
-    //   - request: follow the spec — null stays rejected (the narrower,
-    //     fail-closed reading); the operation is no longer omitted.
-    //   - response: admit null — what every generator emitting this idiom
-    //     means, and rejecting a real `null` would fail the call for a field
-    //     the server documents as nullable (the #33 rationale: the output
-    //     schema describes, it must not reject benign data).
-    return mode === 'response' ? { ok: composed.ok.nullable() } : composed;
+    // drf-spectacular idiom for a nullable $ref, #41). OAS 3.0.3 §4.7.24.2
+    // reads nullable strictly ("only if `type` is explicitly defined", and the
+    // members "may disallow" null), but every generator emitting this idiom
+    // means "this reference may be null". Decision D9: admit null in BOTH
+    // directions — a request can clear the field (`"manager": null` in a
+    // PATCH), and a response carrying null does not fail the call. Every
+    // non-null value is still checked against the composition.
+    return { ok: composed.ok.nullable() };
   }
   const base = buildTyped(typeValue, node, depth, version, mode);
   if (!('ok' in base)) {
@@ -937,7 +974,8 @@ export const convertSchema = (
   // The direction the converted schema validates. `'request'` (the default:
   // tool inputs, parameters, request bodies) stays strict and drops readOnly
   // properties; `'response'` (output schemas) leaves undeclared properties
-  // open and makes writeOnly properties optional. Propagated unchanged to
+  // open and drops (open object) or relaxes (closed object) writeOnly
+  // properties. Propagated unchanged to
   // every nested schema. See SchemaMode.
   mode: SchemaMode = 'request',
 ): SchemaResult => {
@@ -955,7 +993,19 @@ export const convertSchema = (
   if (malformed !== undefined) {
     return { unrepresentable: `a malformed "${malformed}" value` };
   }
-  const conflict = conflictingCombination(node);
+  // #39: a response schema is compiled by Ajv, which RUNS `pattern` on
+  // upstream data synchronously. A pattern with nested quantifiers can
+  // backtrack catastrophically, so it makes the output schema unrepresentable
+  // (fail-closed; the tool falls back to text). Request mode only advertises
+  // `pattern` and never executes it, so it is unaffected. See pattern-safety.ts.
+  if (
+    mode === 'response' &&
+    typeof node['pattern'] === 'string' &&
+    hasNestedQuantifier(node['pattern'])
+  ) {
+    return { unrepresentable: UNSAFE_PATTERN_REASON };
+  }
+  const conflict = conflictingCombination(node, version);
   if (conflict !== undefined) {
     return { unrepresentable: conflict };
   }
@@ -965,9 +1015,11 @@ export const convertSchema = (
   }
   // Advertise `pattern` and `format` uniformly: attach them as wire metadata on
   // whatever the branch produced — string, enum, const, composite, or a
-  // typeless z.unknown() — so z.toJSONSchema emits the keywords WITHOUT
-  // enforcing them (no live RegExp; no divergent format validator). The model
-  // sees them; validation never runs them.
+  // typeless z.unknown() — so z.toJSONSchema emits the keywords WITHOUT Zod
+  // enforcing them (no live RegExp; no divergent format validator). For a
+  // request the model sees them and nothing runs them. For a response the
+  // output schema IS compiled by Ajv, which runs `pattern` on upstream data —
+  // hence the nested-quantifier gate above (#39).
   const meta: Record<string, unknown> = {};
   if (typeof node['pattern'] === 'string') {
     meta['pattern'] = node['pattern'];
