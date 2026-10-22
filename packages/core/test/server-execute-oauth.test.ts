@@ -9,6 +9,7 @@ import {
   SYSTEM_HEADERS,
 } from '../src/index.ts';
 import type {
+  CallTelemetry,
   ExecutorConfig,
   NamedOperation,
   PinnedDeps,
@@ -115,6 +116,7 @@ const run = async (
   overrides: Partial<ExecutorConfig> = {},
 ) => {
   const seen: Seen[] = [];
+  const reports: CallTelemetry[] = [];
   const fetch: PinnedDeps['fetch'] = (_input, init) => {
     const headers = (init?.headers ?? {}) as Record<string, string>;
     const raw = init?.body as Uint8Array | undefined;
@@ -154,10 +156,18 @@ const run = async (
         resolve: () => Promise.reject(new Error('no DNS')),
         timeoutSignal: () => new AbortController().signal,
       },
+      // No real backoff waits; a frozen clock keeps the whole budget.
+      retry: { sleep: () => Promise.resolve(), random: () => 0, now: () => 0 },
     },
   );
-  const outcome = await executor(tool(name), args, new AbortController().signal);
-  return { outcome, seen };
+  const outcome = await executor(
+    tool(name),
+    args,
+    new AbortController().signal,
+    undefined,
+    (telemetry) => reports.push(telemetry),
+  );
+  return { outcome, seen, reports };
 };
 
 describe('createExecutor — OAuth2 client credentials', () => {
@@ -233,6 +243,55 @@ describe('createExecutor — OAuth2 client credentials', () => {
     expect(JSON.stringify(outcome)).toContain('refusing to send a secret header in cleartext');
     expect(seen).toHaveLength(0);
     expect(tokens.fetched()).toBe(0);
+  });
+
+  // The 401 replay (token refresh) and --retries (transient failures) are
+  // separate budgets: neither one uses up the other.
+  it('a retry spent before the 401 does not prevent the replay', async () => {
+    const tokens = fakeTokens();
+    const { outcome, seen, reports } = await run('ping', {}, [503, 401, 204], tokens.source, {
+      retries: 1,
+    });
+    expect(outcome.isError).toBe(false);
+    expect(seen.map((entry) => entry.authorization)).toEqual([
+      'Bearer oauth-access-token-1',
+      'Bearer oauth-access-token-1',
+      'Bearer oauth-access-token-2',
+    ]);
+    expect(reports).toMatchObject([{ outcome: 'ok', status: 204, attempts: 3 }]);
+  });
+
+  it('the replay does not use up a retry', async () => {
+    const tokens = fakeTokens();
+    const { outcome, seen, reports } = await run('ping', {}, [401, 503, 204], tokens.source, {
+      retries: 1,
+    });
+    expect(outcome.isError).toBe(false);
+    expect(seen.map((entry) => entry.authorization)).toEqual([
+      'Bearer oauth-access-token-1',
+      'Bearer oauth-access-token-2',
+      'Bearer oauth-access-token-2',
+    ]);
+    expect(reports).toMatchObject([{ outcome: 'ok', attempts: 3 }]);
+  });
+
+  it('retries are one budget across the replay, and a 401 is never retried as transient', async () => {
+    const tokens = fakeTokens();
+    const { outcome, seen, reports } = await run('ping', {}, [503, 401, 503, 204], tokens.source, {
+      retries: 1,
+    });
+    expect(outcome.isError).toBe(true);
+    expect(seen).toHaveLength(3);
+    expect(tokens.fetched()).toBe(2);
+    expect(reports).toMatchObject([{ outcome: 'http_error', status: 503, attempts: 3 }]);
+  });
+
+  it('a token failure is reported as token_error, not as bad arguments', async () => {
+    const tokens = fakeTokens([{ error: 'could not obtain an OAuth2 access token: boom' }]);
+    const { reports } = await run('ping', {}, [204], tokens.source);
+    expect(reports).toMatchObject([
+      { outcome: 'token_error', method: 'GET', pathTemplate: '/ping' },
+    ]);
   });
 
   it('re-checks the header budget with the token in place', async () => {

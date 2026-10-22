@@ -99,3 +99,13 @@
   operation's `security` requirement (alternatives joined with `OR`, schemes needed together
   with `AND`). Query-string API keys, challenge/response `http` schemes and mutual TLS are
   reported as unsupported. Requests are built as before.
+
+- **Upstream OAuth2 client credentials (#55).** `serve` can obtain the upstream API's access
+  token itself: `--upstream-oauth-client-id-env` and `--upstream-oauth-client-secret-env`
+  (plus optional `--upstream-oauth-scheme`, `--upstream-oauth-scope`,
+  `--upstream-oauth-token-url`, `--upstream-oauth-client-auth`) run the client-credentials
+  grant against the spec's `tokenUrl` through the same egress policy as API calls. Tokens are
+  cached in memory, refreshed before expiry and registered with the redactor as they are
+  issued; the token request is bounded by `--request-timeout`. An upstream `401` replays the
+  request once with a fresh token; that replay is separate from `--retries`. A call whose token
+  could not be obtained is logged with the new outcome `token_error`.
