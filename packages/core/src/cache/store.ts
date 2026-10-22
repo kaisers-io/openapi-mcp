@@ -94,10 +94,17 @@ const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
 //    costs its length plus the two quotes, a key its length plus quotes and
 //    colon, punctuation and numbers exactly. UTF-8 never encodes a UTF-16
 //    code unit in fewer bytes than one, and JSON escaping only lengthens, so
-//    the true byte count is never below this bound — and never above six
-//    times it (a C0 control or a lone surrogate, one unit, becomes the
-//    six-byte escape \uXXXX). A document whose $ref expansion repeats one
-//    large string is therefore still refused WITHOUT ever being built.
+//    the true byte count is never below this bound. The one case where a
+//    unit costs SIX bytes — a C0 control or a lone surrogate, which becomes
+//    the escape \uXXXX — is charged exactly instead: a string or key
+//    containing a control character or lone surrogate is measured with
+//    Buffer.byteLength(JSON.stringify(s)), a per-string allocation bounded
+//    by that one string. Every other unit costs at most THREE bytes (a BMP
+//    character from U+0800 up), and `"`/`\` two, so the string stringify
+//    builds in step 2 is at most 3x the budget before it is refused
+//    (64 MiB cap → at most ~192 MiB transient). A document whose $ref
+//    expansion repeats one large string is refused WITHOUT ever being built
+//    whenever its lower bound passes the budget, i.e. up to that factor.
 // 2. A single native JSON.stringify, then the EXACT check: the byte length of
 //    the string actually produced is compared with the budget. These are the
 //    bytes that get hashed and written, so the cap holds for them by
@@ -131,6 +138,15 @@ const UNSUPPORTED_DOCUMENT_MESSAGE =
 // of the path, so a pathologically deep document stays O(nodes), not
 // O(nodes x depth).
 const SHALLOW_PATH_DEPTH = 64;
+
+// C0 controls and LONE surrogates (with the u flag a well-formed pair is one
+// code point and does not match): the only units whose escaped cost is six
+// bytes rather than at most three, so strings containing them are measured
+// exactly
+// oxlint-disable-next-line no-control-regex -- detecting control characters is this regex's purpose
+const ESCAPE_HEAVY_RE = /[\u0000-\u001F\uD800-\uDFFF]/u;
+const stringCost = (text: string): number =>
+  ESCAPE_HEAVY_RE.test(text) ? Buffer.byteLength(JSON.stringify(text), 'utf8') : text.length + 2;
 
 export const serializeWithinBudget = (value: unknown, budget: number): string | undefined => {
   // Imperative on purpose, for `used`, `path` and `deepPath` alike: this is
@@ -202,7 +218,7 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
   const walk = (node: unknown): void => {
     // Strings first: they are by far the most frequent node in a spec
     if (typeof node === 'string') {
-      charge(node.length + 2);
+      charge(stringCost(node));
       return;
     }
     if (typeof node === 'bigint' || typeof node === 'function' || typeof node === 'symbol') {
@@ -319,7 +335,7 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
           charge(1); // ,
         }
         first = false;
-        charge(key.length + 3); // "key":
+        charge(stringCost(key) + 1); // "key":
         walk(item);
       }
       charge(1); // }
