@@ -184,7 +184,10 @@ type Encoder = (raw: string) => { ok: string } | { error: string };
 // (`?color%5BR%5D=100&color%5BG%5D=200`). Key and value are encoded leaf-wise
 // like every other query leaf, so `&`, `=`, `#` inside them can never start a
 // new parameter. Only an object of scalars is defined; anything else fails
-// closed (a nested value is already rejected by classifyShape).
+// closed (a nested value is already rejected by classifyShape). A key that
+// contains `[` or `]` is rejected as ambiguous: it would encode to `%5B`/`%5D`,
+// the very bytes of the structural brackets, so `{"a][b": v}` would reach a
+// bracket-parsing server (Rails/Rack, PHP, qs) as the NESTED `name[a][b]`.
 const serializeDeepObject = (
   mapping: QueryMapping,
   wireKey: string,
@@ -197,6 +200,11 @@ const serializeDeepObject = (
   // Imperative on purpose: same first-failure rationale as serializeQueryValue.
   const pairs: QueryPair[] = [];
   for (const [key, val] of shape.entries) {
+    if (key.includes('[') || key.includes(']')) {
+      return {
+        error: `query parameter "${mapping.wireName}" (deepObject) has a key containing "[" or "]", which is ambiguous with nesting; use keys without brackets`,
+      };
+    }
     const keyResult = enc(key);
     if ('error' in keyResult) {
       return keyResult;
@@ -239,6 +247,11 @@ const serializeDelimited = (
     shape.kind === 'array'
       ? shape.values.map(String)
       : shape.entries.flatMap(([key, val]) => [key, String(val)]);
+  // An empty array/object sends nothing, like `form` does: `ids=` would read
+  // as "filter by the empty string" on many APIs, not as "no filter".
+  if (leaves.length === 0) {
+    return { ok: [] };
+  }
   // Flattening to raw strings is a cheap O(n) copy; the per-leaf ENCODING
   // below stops at the first failure (same rationale as serializeQueryValue).
   const parts: string[] = [];

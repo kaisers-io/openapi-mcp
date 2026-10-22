@@ -770,6 +770,33 @@ describe('buildLayout — JSON media-type variants (#54, D5)', () => {
   ])('still omits a non-JSON or malformed media type key %j', (key) => {
     expect('unrepresentable' in withContent({ [key]: { schema: objectSchema } })).toBe(true);
   });
+
+  it.each([
+    'application/x-www-form-urlencoded; charset=utf-8',
+    'application/x-www-form-urlencoded;charset="UTF-8"',
+    'Application/X-WWW-Form-Urlencoded',
+  ])('exposes a form body declared as %j and keeps the declared media type', (key) => {
+    const l = layout(withContent({ [key]: { schema: objectSchema } }));
+    expect(l.mapper.bodyMode).toBe('flattened');
+    expect(l.mapper.bodyContentType).toBe(key);
+  });
+
+  it('prefers the bare form key over a parameterised one', () => {
+    const l = layout(
+      withContent({
+        'application/x-www-form-urlencoded; charset=utf-8': { schema: objectSchema },
+        'application/x-www-form-urlencoded': { schema: objectSchema },
+      }),
+    );
+    expect(l.mapper.bodyContentType).toBe('application/x-www-form-urlencoded');
+  });
+
+  it.each([
+    'application/x-www-form-urlencoded; charset=iso-8859-1',
+    'application/x-www-form-urlencoded; charset=utf-8; foo=bar',
+  ])('omits a form key %j whose parameters the UTF-8 encoder cannot honour', (key) => {
+    expect('unrepresentable' in withContent({ [key]: { schema: objectSchema } })).toBe(true);
+  });
 });
 
 // #59: query styles beyond `form` (OAS 3.1.1 §4.8.12.3 Style Values,
@@ -914,6 +941,18 @@ describe('buildLayout — application/octet-stream bodies (#71)', () => {
     expect(l.inputSchema.safeParse({ body: 'aGVsbG8' }).success).toBe(false);
     expect(l.inputSchema.safeParse({ body: 123 }).success).toBe(false);
     expect(l.inputSchema.safeParse({}).success).toBe(false);
+    // Non-canonical trailing bits (RFC 4648 §3.5) and a line break are rejected.
+    expect(l.inputSchema.safeParse({ body: 'QR==' }).success).toBe(false);
+    expect(l.inputSchema.safeParse({ body: 'aGVs\nbG8=' }).success).toBe(false);
+  });
+
+  it('validates a multi-MiB base64 body without throwing', () => {
+    const l = layout(
+      binaryOp({ 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } }),
+    );
+    const large = Buffer.alloc(6 * 1024 * 1024, 7).toString('base64');
+    expect(l.inputSchema.safeParse({ body: large }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ body: `${large.slice(0, -4)}!!!!` }).success).toBe(false);
   });
 
   it('advertises the base64 encoding and the media type on the wire', () => {
