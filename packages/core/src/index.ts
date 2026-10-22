@@ -71,6 +71,18 @@ export type {
   OmittedOperation,
   OperationRecord,
 } from './spec/normalize.ts';
+export {
+  describeSecurityScheme,
+  summarizeSecurity,
+  unsatisfiedSecurityWarnings,
+} from './spec/security.ts';
+export type {
+  ClientCredentialsFlow,
+  ConfiguredCredentials,
+  SchemeUsage,
+  SecurityRequirement,
+  SecurityScheme,
+} from './spec/security.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
 export type {
   CacheStatus,

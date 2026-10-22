@@ -1,5 +1,7 @@
 import { SPEC_BUDGETS } from './budgets.ts';
 import { sanitizeSpecText } from './sanitize.ts';
+import { extractSecuritySchemes, parseSecurityRequirements } from './security.ts';
+import type { SecurityRequirement, SecurityScheme } from './security.ts';
 import type { OpenapiVersion } from './validate.ts';
 
 export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head'] as const;
@@ -21,6 +23,9 @@ export type OperationRecord = {
   parameters: readonly Record<string, unknown>[];
   requestBody?: Record<string, unknown>;
   responses: Record<string, unknown>;
+  // The operation's own `security` (overrides the root one); absent when
+  // not declared or malformed. Read for operator hints only.
+  security?: readonly SecurityRequirement[];
 };
 
 export type OmittedOperation = {
@@ -42,6 +47,10 @@ export type NormalizedSpec = {
   // True when `serverUrl` is a relative reference (no scheme) that still
   // needs a document base to resolve into an absolute URL.
   serverUrlIsRelative?: boolean;
+  // `components.securitySchemes` and the root `security` (see security.ts);
+  // absent when the spec declares none.
+  securitySchemes?: readonly SecurityScheme[];
+  security?: readonly SecurityRequirement[];
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -104,6 +113,7 @@ const buildOperation = (
     typeof op['description'] === 'string'
       ? sanitizeSpecText(op['description'], SPEC_BUDGETS.maxTextLength)
       : undefined;
+  const security = parseSecurityRequirements(op['security']);
   return {
     method,
     path,
@@ -117,6 +127,7 @@ const buildOperation = (
     parameters,
     ...(isRecord(op['requestBody']) ? { requestBody: op['requestBody'] } : {}),
     responses: isRecord(op['responses']) ? op['responses'] : {},
+    ...(security === undefined ? {} : { security }),
   };
 };
 
@@ -265,6 +276,8 @@ export const normalizeSpec = (
       reason: 'webhooks are not supported',
     })),
   ];
+  const securitySchemes = extractSecuritySchemes(document);
+  const security = parseSecurityRequirements(document['security']);
   return {
     title,
     specVersion,
@@ -272,5 +285,7 @@ export const normalizeSpec = (
     operations,
     omitted,
     ...extractServerUrl(document),
+    ...(securitySchemes.length === 0 ? {} : { securitySchemes }),
+    ...(security === undefined ? {} : { security }),
   };
 };

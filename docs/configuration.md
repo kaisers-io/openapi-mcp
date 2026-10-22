@@ -119,6 +119,13 @@ Example:
 openapi-mcp tools --spec https://api.example.com/openapi.json --allow "read*"
 ```
 
+When the exposed operations declare `security` requirements, `tools` prints one `auth:` line
+per referenced `components.securitySchemes` entry naming the credential it expects and the
+flag that supplies it (e.g. `pass --header-env X-API-Key=<ENV>`), and the `--json` envelope
+carries the same list as `data.security`. Query-string API keys, interactive OAuth flows and
+mutual TLS are reported as unsupported. `serve` warns at startup when an exposed operation's
+requirement is satisfied by none of the configured `--header` / `--header-env` headers.
+
 ## `cache`
 
 Inspect and manage the on-disk spec cache (`~/.kaisers-io/openapi-mcp/cache/`). Has no flags
