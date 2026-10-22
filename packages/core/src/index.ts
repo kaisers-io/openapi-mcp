@@ -224,6 +224,7 @@ export {
   extractBearerToken,
   isAuthorized,
   isValidBearerToken,
+  markSecretScanned,
   META_TOOL_NAME,
   resolveToolMode,
   SEARCH_TOOL_NAME,

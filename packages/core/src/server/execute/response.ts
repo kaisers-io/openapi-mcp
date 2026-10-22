@@ -4,7 +4,7 @@ import type { Options, ValidateFunction } from 'ajv';
 import type { PinnedErrorReason, PinnedOutcome } from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText, TRUNCATION_MARKER } from '../../spec/sanitize.ts';
-import { structuredOutcome, textOutcome } from '../result.ts';
+import { markSecretScanned, structuredOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
 
 // The executor is the SOLE enforcer of {status,contentType,data} envelope
@@ -322,6 +322,29 @@ const mapNoSchemaSuccess = (
   return textOutcome(truncated, false);
 };
 
+// One secret check for a parsed JSON body. Without a backslash anywhere in
+// the decoded text, JSON has no escape sequences, so every key and string
+// value appears in the raw text exactly as it does after parsing: one
+// substring scan of the raw text then finds every secret the recursive tree
+// walk would find over `data` (and possibly more — a needle spanning two
+// tokens — which only fails closed). With any backslash present, an escaped
+// secret (`\/`, `\uXXXX`) differs from its parsed form, so the tree walk
+// runs over the whole envelope instead. Every OTHER envelope field (status,
+// contentType, and anything a later layer adds, such as forwarded headers or
+// pagination hints) is always tree-scanned: the raw text only stands in for
+// `data`, so a new field can never silently skip the scan.
+export const envelopeHasSecret = (
+  redactor: Redactor,
+  rawJson: string,
+  envelope: Record<string, unknown>,
+): boolean => {
+  if (rawJson.includes('\\')) {
+    return scanSafely(redactor, envelope);
+  }
+  const { data: _data, ...rest } = envelope;
+  return scanSafely(redactor, rawJson) || scanSafely(redactor, rest);
+};
+
 // The mapSchemaSuccess helper takes one options object (the caller's MapResponseOptions
 // plus the narrowed response fields) rather than positional parameters, so
 // options added later cannot be passed in the wrong slot.
@@ -335,7 +358,7 @@ type SchemaSuccessOptions = Omit<MapResponseOptions, 'outcome' | 'outputSchema' 
 
 const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   const { status, contentType, bodyBytes, outputSchema, validator, redactor } = opts;
-  const { undeclaredSuccessHint } = opts;
+  const { undeclaredSuccessHint, maxTextBytes } = opts;
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
   if (
@@ -384,7 +407,7 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   // isError — never a redacted-but-successful structuredContent. The
   // envelope's DATA is never itself rewritten: either it is secret-free and
   // returned verbatim, or the call is refused outright.
-  if (scanSafely(redactor, envelope)) {
+  if (envelopeHasSecret(redactor, decoded.ok, envelope)) {
     return textOutcome(GENERIC_UNSAFE_TEXT, true);
   }
   if (!validator(envelope)) {
@@ -395,7 +418,13 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
       true,
     );
   }
-  return structuredOutcome(JSON.stringify(envelope), envelope);
+  // The dispatch boundary would otherwise repeat the full tree scan above.
+  markSecretScanned(envelope, redactor);
+  // The text block is the backwards-compatibility serialization (the MCP
+  // spec's SHOULD), not a second full copy of the payload: it is capped at
+  // the same maxTextBytes as an unstructured result, with the truncation
+  // marker, while structuredContent carries the complete data.
+  return structuredOutcome(truncateUtf8(JSON.stringify(envelope), maxTextBytes), envelope);
 };
 
 export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {

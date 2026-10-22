@@ -37,6 +37,7 @@ export {
 export { createExecutor } from './execute/executor.ts';
 export type { ExecutorConfig, ExecutorDeps, UpstreamExecutor } from './execute/executor.ts';
 export {
+  markSecretScanned,
   structuredOutcome,
   textOutcome,
   type DispatchResult,

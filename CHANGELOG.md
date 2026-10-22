@@ -29,3 +29,9 @@
   overrides). A redirect that stays on the trusted `--base-url` origin keeps its trust. A
   303 after a write is followed as a GET without a body. An unfollowed 3xx is a tool error,
   not a success.
+
+- **Large structured results are scanned once and their text copy is capped (#62).** For a
+  tool with an output schema, `content[0].text` is now an 8 KB serialization with a
+  `…[truncated]` marker; `structuredContent` still carries the complete data. A host that
+  forwards only `content[]` to the model sees the first 8 KB, as it already did for
+  unstructured results.

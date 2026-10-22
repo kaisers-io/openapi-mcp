@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
+import { envelopeHasSecret } from '../src/server/execute/response.ts';
 import {
   compileEnvelopeValidator,
   createRedactor,
@@ -659,6 +660,97 @@ describe('mapResponse — 3xx statuses the transport does not follow', () => {
   it('leaves 2xx untouched (the boundary is exactly 300)', () => {
     const result = mapResponse(defaultOpts({ outcome: response(299, 'text/plain', 'ok') }));
     expect(result.isError).toBe(false);
+  });
+});
+
+describe('mapResponse — large structured results: one secret scan, bounded text copy', () => {
+  const SECRET = 'example-token-not-a-secret';
+  const anyDataSchema = (): Record<string, unknown> => ({
+    type: 'object',
+    oneOf: [
+      {
+        type: 'object',
+        properties: {
+          status: { const: 200 },
+          contentType: { const: 'application/json' },
+          data: {},
+        },
+        required: ['status', 'contentType', 'data'],
+      },
+    ],
+  });
+  const structured = (body: string, maxTextBytes = 4096): ToolCallOutcome => {
+    const outputSchema = anyDataSchema();
+    const validator = compileEnvelopeValidator(outputSchema);
+    return mapResponse(
+      defaultOpts({
+        outcome: response(200, 'application/json', body),
+        outputSchema,
+        validator,
+        redactor: createRedactor([SECRET]),
+        maxTextBytes,
+      }),
+    );
+  };
+
+  it('caps the text copy at maxTextBytes while structuredContent keeps the full data', () => {
+    const items = Array.from({ length: 2000 }, (_unused, index) => ({ id: index }));
+    const result = structured(JSON.stringify(items), 1024);
+    expect(result.isError).toBe(false);
+    const text = result.content[0]?.text ?? '';
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(1024);
+    expect(text.endsWith(TRUNCATION_MARKER)).toBe(true);
+    expect(text.startsWith('{"status":200,"contentType":"application/json","data":[{"id":0}')).toBe(
+      true,
+    );
+    expect(result.structuredContent?.['data']).toHaveLength(2000);
+  });
+
+  it('leaves a small result text complete', () => {
+    const result = structured('{"id":1}');
+    expect(result.content[0]?.text).toBe(
+      '{"status":200,"contentType":"application/json","data":{"id":1}}',
+    );
+  });
+
+  it.each([
+    ['in a string value (no escapes: raw-text fast path)', `{"note":"${SECRET}"}`],
+    ['in an object key (no escapes: raw-text fast path)', `{"${SECRET}":1}`],
+    [
+      'next to an escaped \\/ elsewhere (tree-scan fallback)',
+      `{"path":"a\\/b","note":"${SECRET}"}`,
+    ],
+    ['escaped as \\u002d (tree-scan fallback)', `{"note":"${SECRET.replaceAll('-', '\\u002d')}"}`],
+    ['escaped key (tree-scan fallback)', `{"${SECRET.replaceAll('t', '\\u0074')}":1}`],
+  ])('still refuses a body with a secret %s', (_label, body) => {
+    expect(JSON.stringify(JSON.parse(body))).toContain(SECRET);
+    const text = isError(structured(body));
+    expect(text).toBe('the upstream response could not be returned safely');
+  });
+
+  it.each([
+    ['without escapes (raw-text fast path)', '{"id":1}'],
+    ['with escapes (tree-scan fallback)', '{"path":"a\\/b"}'],
+  ])('tree-scans every non-data envelope field %s', (_label, body) => {
+    const redactor = createRedactor([SECRET]);
+    const data: unknown = JSON.parse(body);
+    const clean = { status: 200, contentType: 'application/json', data };
+    expect(envelopeHasSecret(redactor, body, clean)).toBe(false);
+    // A field a later layer adds (forwarded headers, a pagination hint) is
+    // covered without touching the fast path; so is the content type.
+    expect(envelopeHasSecret(redactor, body, { ...clean, headers: { [SECRET]: 'x' } })).toBe(true);
+    expect(envelopeHasSecret(redactor, body, { ...clean, pagination: { next: SECRET } })).toBe(
+      true,
+    );
+    expect(
+      envelopeHasSecret(redactor, body, { ...clean, contentType: `application/${SECRET}` }),
+    ).toBe(true);
+  });
+
+  it('accepts a secret-free body that contains escapes (tree-scan fallback, no false positive)', () => {
+    const result = structured('{"path":"a\\/b","quote":"\\"x\\""}');
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent?.['data']).toEqual({ path: 'a/b', quote: '"x"' });
   });
 });
 
