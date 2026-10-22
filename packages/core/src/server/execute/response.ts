@@ -1,11 +1,25 @@
 import Ajv2020Module from 'ajv/dist/2020.js';
+import type { Options, ValidateFunction } from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
-import type { Options, ValidateFunction } from 'ajv';
 import type { PinnedErrorReason, PinnedOutcome } from '../../http/pinned-dispatcher.ts';
+import { isJsonEssence } from '../../toolgen/media-type.ts';
+import {
+  project,
+  PROJECTION_HINT_STRUCTURED,
+  PROJECTION_HINT_TEXT,
+} from '../../toolgen/projection.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText, TRUNCATION_MARKER } from '../../spec/sanitize.ts';
-import { structuredOutcome, textOutcome } from '../result.ts';
+import {
+  decorateTextOutcome,
+  forwardableHeaders,
+  pageHinter,
+  upstreamRetryAfterMs,
+} from './forwarded-headers.ts';
+import type { PageHint, PageInput } from './forwarded-headers.ts';
+import { markSecretScanned, structuredOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
+import { withheldSuccess } from '../withheld.ts';
 
 // The executor is the SOLE enforcer of {status,contentType,data} envelope
 // conformance — the low-level SDK Server performs no per-tool outputSchema
@@ -64,6 +78,25 @@ export type MapResponseOptions = {
   envVarHint?: string;
   // Text display cap for the no-outputSchema success path, in bytes.
   maxTextBytes: number;
+  // The configured API base URL. When given, allowlisted upstream response
+  // headers are forwarded into the result (see forwarded-headers.ts), with
+  // `Location` kept only when same-origin with it.
+  baseUrl?: string;
+  // Clock for an HTTP-date Retry-After; Date.now by default.
+  now?: () => number;
+  // Set (to the CLI flag name) when this tool's outputSchema exists only
+  // because the operator assumed `default` documents errors (#72): an
+  // undocumented 2xx then names that assumption, so the operator can tell a
+  // spec gap from a server bug.
+  undeclaredSuccessHint?: string;
+  // For a paginated tool: computes the `pagination` hint for a successful
+  // response from its parsed Link header and (structured path only) its
+  // parsed data. The hint is secret-checked here before it is used.
+  paginate?: (input: PageInput) => PageHint;
+  // The call's validated `_fields` JSON Pointers (toolgen/projection.ts).
+  fields?: readonly string[];
+  // The tool accepts `_fields`: a truncated result then says so.
+  projectable?: boolean;
 };
 
 // Fixed, reason-keyed text — never the PinnedOutcome's own `detail` string,
@@ -112,9 +145,6 @@ const mediaEssence = (contentType: string | undefined): string | undefined => {
   return trimmed === '' ? undefined : trimmed;
 };
 
-// Mirrors toolgen/output-schema.ts's isJsonContentType (not exported there —
-// this module needs its own copy of the same essence test).
-const JSON_ESSENCE_RE = /^application\/(?:[\w.+-]+\+)?json$/u;
 const isTextEssence = (essence: string): boolean => essence.startsWith('text/');
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -198,8 +228,6 @@ const truncateUtf8 = (text: string, maxBytes: number): string => {
 // own contract), matching how DISPLAY_TEXT_MAX is consumed everywhere else.
 const ERROR_EXCERPT_MAX = DISPLAY_TEXT_MAX;
 
-const GENERIC_UNSAFE_TEXT = 'the upstream response could not be returned safely';
-
 // Keeps mapResponse locally fail-closed: scanForSecret's contract
 // (redact.ts) explicitly documents that a pathologically deep
 // JSON-compatible input throws rather than looping forever. Every
@@ -242,7 +270,7 @@ const mapHttpError = (
   // through to the string-redacted excerpt below, which could still echo
   // the escaped form verbatim).
   const essence = mediaEssence(contentType);
-  if (essence !== undefined && JSON_ESSENCE_RE.test(essence)) {
+  if (essence !== undefined && isJsonEssence(essence)) {
     const attempt = tryParseJson(decoded.ok);
     if (attempt.ok && scanSafely(redactor, attempt.value)) {
       return textOutcome(`upstream request failed with status ${status}`, true);
@@ -270,7 +298,7 @@ const mapNoSchemaSuccess = (
     return textOutcome('', false);
   }
   const essence = mediaEssence(contentType);
-  if (essence !== undefined && !JSON_ESSENCE_RE.test(essence) && !isTextEssence(essence)) {
+  if (essence !== undefined && !isJsonEssence(essence) && !isTextEssence(essence)) {
     // `essence` is upstream-controlled (the raw Content-Type header) — a
     // hostile upstream can echo a registered secret through it, so it must
     // be redacted, not merely sanitize-truncated, before it reaches this
@@ -299,12 +327,12 @@ const mapNoSchemaSuccess = (
   // so this catches what string-only redaction structurally cannot. A body
   // whose Content-Type claims JSON but does not parse falls through to the
   // existing text handling below, unchanged.
-  if (essence !== undefined && JSON_ESSENCE_RE.test(essence)) {
+  if (essence !== undefined && isJsonEssence(essence)) {
     const attempt = tryParseJson(decoded.ok);
     if (attempt.ok && scanSafely(redactor, attempt.value)) {
       // Never emit a body that contains the secret in escaped form: no
       // string-redacted fallback here, a generic isError with no body.
-      return textOutcome(GENERIC_UNSAFE_TEXT, true);
+      return withheldSuccess();
     }
   }
   // Redact BEFORE truncating, same rationale as mapHttpError above: the
@@ -312,21 +340,123 @@ const mapNoSchemaSuccess = (
   const redacted = redactor.redactString(decoded.ok);
   const truncated = truncateUtf8(redacted, maxTextBytes);
   if (scanSafely(redactor, truncated)) {
-    return textOutcome(GENERIC_UNSAFE_TEXT, true);
+    return withheldSuccess();
   }
   return textOutcome(truncated, false);
 };
 
-const mapSchemaSuccess = (
-  status: number,
-  contentType: string | undefined,
-  bodyBytes: Uint8Array,
-  outputSchema: Record<string, unknown>,
+// One secret check for a parsed JSON body. Without a backslash anywhere in
+// the decoded text, JSON has no escape sequences, so every key and string
+// value appears in the raw text exactly as it does after parsing: one
+// substring scan of the raw text then finds every secret the recursive tree
+// walk would find over `data` (and possibly more — a needle spanning two
+// tokens — which only fails closed). With any backslash present, an escaped
+// secret (`\/`, `\uXXXX`) differs from its parsed form, so the tree walk
+// runs over the whole envelope instead. Every OTHER envelope field (status,
+// contentType, and anything a later layer adds, such as forwarded headers or
+// pagination hints) is always tree-scanned: the raw text only stands in for
+// `data`, so a new field can never silently skip the scan.
+export const envelopeHasSecret = (
+  redactor: Redactor,
+  rawJson: string,
+  envelope: Record<string, unknown>,
+): boolean => {
+  if (rawJson.includes('\\')) {
+    return scanSafely(redactor, envelope);
+  }
+  const { data: _data, ...rest } = envelope;
+  return scanSafely(redactor, rawJson) || scanSafely(redactor, rest);
+};
+
+// `_fields` on a tool with an outputSchema: the FULL envelope is still
+// validated against the strict schema first (upstream data must match the
+// spec whatever is selected), then the selection replaces `data` with
+// `projection` — the package-authored branch the outputSchema declares — and
+// only the projected envelope is secret-scanned, so a secret in a field the
+// caller did not select no longer fails the call while a selected one does.
+const projectEnvelope = (
+  envelope: Record<string, unknown>,
+  data: unknown,
+  fields: readonly string[],
   validator: EnvelopeValidator,
   redactor: Redactor,
+  maxTextBytes: number,
 ): ToolCallOutcome => {
+  const { status } = envelope;
+  if (!validator(envelope)) {
+    return textOutcome(
+      `upstream response for status ${String(status)} did not match the tool's declared output schema`,
+      true,
+    );
+  }
+  const { data: _full, ...rest } = envelope;
+  const projected: Record<string, unknown> = { ...rest, projection: project(data, fields) };
+  if (scanSafely(redactor, projected)) {
+    return withheldSuccess();
+  }
+  markSecretScanned(projected, redactor);
+  return structuredOutcome(truncateUtf8(JSON.stringify(projected), maxTextBytes), projected);
+};
+
+// `_fields` on a tool WITHOUT an outputSchema: a JSON body is projected
+// before the text cap; anything else cannot be projected.
+const mapNoSchemaProjection = (
+  bodyBytes: Uint8Array,
+  fields: readonly string[],
+  redactor: Redactor,
+  maxTextBytes: number,
+): ToolCallOutcome => {
+  const decoded = decodeUtf8(bodyBytes);
+  const parsed = 'error' in decoded ? { ok: false as const } : tryParseJson(decoded.ok);
+  if (!parsed.ok) {
+    return textOutcome('tool execution failed: projection requires a JSON response', true);
+  }
+  const projection = project(parsed.value, fields);
+  if (scanSafely(redactor, projection)) {
+    return withheldSuccess();
+  }
+  return textOutcome(truncateUtf8(JSON.stringify(projection), maxTextBytes), false);
+};
+
+// The mapSchemaSuccess helper takes one options object (the caller's MapResponseOptions
+// plus the narrowed response fields) rather than positional parameters, so
+// options added later cannot be passed in the wrong slot.
+type SchemaSuccessOptions = Omit<MapResponseOptions, 'outcome' | 'outputSchema' | 'validator'> & {
+  status: number;
+  contentType: string | undefined;
+  bodyBytes: Uint8Array;
+  outputSchema: Record<string, unknown>;
+  validator: EnvelopeValidator;
+  // Allowlisted upstream response headers, already secret-checked.
+  forwarded: Readonly<Record<string, string>>;
+  // The pagination hint for this response (paginated tools only).
+  page: ((data?: unknown) => PageHint) | undefined;
+};
+
+const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
+  const { status, contentType, bodyBytes, outputSchema, validator, redactor } = opts;
+  const { undeclaredSuccessHint, maxTextBytes, forwarded, page, fields } = opts;
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
+  if (
+    branch === undefined &&
+    undeclaredSuccessHint !== undefined &&
+    !branchesOf(outputSchema).some((candidate) => candidate.status === status)
+  ) {
+    // An undocumented success STATUS under the operator's "default = errors
+    // only" assumption: still fail closed (the declared outputSchema must
+    // never be violated), but say why, naming the flag. Decision D13: the
+    // upstream REPORTED SUCCESS, so the message must not read like a plain
+    // failure — an agent that retries a POST here could apply it twice. The
+    // hint is operator-supplied CLI text, never upstream data.
+    return textOutcome(
+      `the upstream reported success (status ${status}), so the request was likely applied; ` +
+        'do not retry it blindly. No structured result is returned: this status is not documented ' +
+        `for the operation, and its output schema assumes the spec's "default" response covers ` +
+        `errors only (${undeclaredSuccessHint})`,
+      true,
+    );
+  }
   if (branch === undefined) {
     // Same upstream-controlled-essence redaction as mapNoSchemaSuccess's
     // unsupported-media-type message above.
@@ -345,17 +475,25 @@ const mapSchemaSuccess = (
   if (!parseAttempt.ok) {
     return textOutcome(`upstream response for status ${status} was not valid JSON`, true);
   }
+  // Forwarded headers join the envelope (an optional `headers` property the
+  // generated outputSchema declares), so the validator below covers them.
+  // Each value was already sanitized and secret-checked on its own.
   const envelope: Record<string, unknown> = {
     status,
     contentType: branch.contentType,
     data: parseAttempt.value,
+    ...(Object.keys(forwarded).length === 0 ? {} : { headers: { ...forwarded } }),
+    ...(page === undefined ? {} : { pagination: page(parseAttempt.value) }),
   };
+  if (fields !== undefined) {
+    return projectEnvelope(envelope, parseAttempt.value, fields, validator, redactor, maxTextBytes);
+  }
   // A secret anywhere in the structured data downgrades to a generic
   // isError — never a redacted-but-successful structuredContent. The
   // envelope's DATA is never itself rewritten: either it is secret-free and
   // returned verbatim, or the call is refused outright.
-  if (scanSafely(redactor, envelope)) {
-    return textOutcome(GENERIC_UNSAFE_TEXT, true);
+  if (envelopeHasSecret(redactor, decoded.ok, envelope)) {
+    return withheldSuccess();
   }
   if (!validator(envelope)) {
     // Never forward raw ajv errors — they can embed offending instance
@@ -365,10 +503,20 @@ const mapSchemaSuccess = (
       true,
     );
   }
-  return structuredOutcome(JSON.stringify(envelope), envelope);
+  // The dispatch boundary would otherwise repeat the full tree scan above.
+  markSecretScanned(envelope, redactor);
+  // The text block is the backwards-compatibility serialization (the MCP
+  // spec's SHOULD), not a second full copy of the payload: it is capped at
+  // the same maxTextBytes as an unstructured result, with the truncation
+  // marker, while structuredContent carries the complete data.
+  return structuredOutcome(truncateUtf8(JSON.stringify(envelope), maxTextBytes), envelope);
 };
 
-export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
+const mapBody = (
+  opts: MapResponseOptions,
+  forwarded: Readonly<Record<string, string>>,
+  page?: (data?: unknown) => PageHint,
+): ToolCallOutcome => {
   const { outcome } = opts;
   if (outcome.kind === 'error') {
     return mapPinnedError(outcome.reason);
@@ -377,8 +525,21 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
   if (status >= 400) {
     return mapHttpError(status, contentType, bodyBytes, opts.redactor, opts.envVarHint);
   }
+  // A 3xx reaching here is one the transport does not follow (300 Multiple
+  // Choices, 304 Not Modified, 305/306, or an unknown 3xx): none of them is
+  // the operation's result, so it must not map to success. 304 in
+  // particular only answers a conditional request, which this client never
+  // sends. The status is a number from the parsed status line, never text.
+  if (status >= 300) {
+    return textOutcome(
+      `tool execution failed: the upstream server returned status ${status}, which is not supported`,
+      true,
+    );
+  }
   if (opts.validator === undefined) {
-    return mapNoSchemaSuccess(status, contentType, bodyBytes, opts.redactor, opts.maxTextBytes);
+    return opts.fields === undefined
+      ? mapNoSchemaSuccess(status, contentType, bodyBytes, opts.redactor, opts.maxTextBytes)
+      : mapNoSchemaProjection(bodyBytes, opts.fields, opts.redactor, opts.maxTextBytes);
   }
   if (bodyBytes.byteLength === 0) {
     // No body means no way to form a valid {status,contentType,data}
@@ -393,12 +554,67 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
       true,
     );
   }
-  return mapSchemaSuccess(
+  return mapSchemaSuccess({
+    ...opts,
     status,
     contentType,
     bodyBytes,
-    opts.outputSchema,
-    opts.validator,
-    opts.redactor,
-  );
+    outputSchema: opts.outputSchema,
+    validator: opts.validator,
+    forwarded,
+    page,
+  });
 };
+
+export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
+  const { outcome } = opts;
+  if (outcome.kind === 'error' || opts.baseUrl === undefined) {
+    return withProjectionHint(mapBody(opts, {}), opts);
+  }
+  const forwarded = forwardableHeaders({
+    headers: outcome.headers,
+    responseUrl: outcome.url,
+    baseUrl: opts.baseUrl,
+    redactor: opts.redactor,
+  });
+  const nowMs = (opts.now ?? Date.now)();
+  const page =
+    opts.paginate === undefined
+      ? undefined
+      : pageHinter(opts.paginate, opts.redactor, outcome.headers, outcome.url, outcome.status);
+  const mapped = mapBody(opts, forwarded, page);
+  // A text result (no outputSchema) gets the Link-derived hint as its own
+  // block; a structured one already carries it in the envelope.
+  const textHint =
+    page !== undefined && !mapped.isError && mapped.structuredContent === undefined
+      ? page()
+      : undefined;
+  const decorated = decorateTextOutcome(
+    mapped,
+    forwarded,
+    upstreamRetryAfterMs(outcome.status, outcome.headers, nowMs),
+    textHint,
+  );
+  return withProjectionHint(decorated, opts);
+};
+
+// A truncated result of a projectable tool tells the model how to ask for
+// less, rather than leaving it with a cut-off body.
+const withProjectionHint = (outcome: ToolCallOutcome, opts: MapResponseOptions): ToolCallOutcome =>
+  opts.projectable === true &&
+  opts.fields === undefined &&
+  outcome.content[0]?.text.endsWith(TRUNCATION_MARKER) === true
+    ? {
+        ...outcome,
+        content: [
+          ...outcome.content,
+          {
+            type: 'text',
+            text:
+              outcome.structuredContent === undefined
+                ? PROJECTION_HINT_TEXT
+                : PROJECTION_HINT_STRUCTURED,
+          },
+        ],
+      }
+    : outcome;
