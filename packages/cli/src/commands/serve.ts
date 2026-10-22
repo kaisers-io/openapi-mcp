@@ -1,4 +1,5 @@
 import type { Command } from '@commander-js/extra-typings';
+import { AUTO_DISCOVER_THRESHOLD } from '@kaisers-io/openapi-mcp-core';
 import { registerApiOptions } from '../api-options.ts';
 import { emitError } from '../output.ts';
 import { registerSpecOptions } from '../spec-options.ts';
@@ -18,9 +19,23 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     )
     .option('--http', 'serve over Streamable HTTP (127.0.0.1 only) instead of stdio')
     .option('--port <n>', 'HTTP port', '3044')
+    .option('--http-token-env <ENV>', 'env var holding the bearer token required for HTTP requests')
     .option(
-      '--http-token-env <ENV>',
-      'env var holding the bearer token required for HTTP requests',
+      '--log <format>',
+      'write one structured line per tool call to stderr (only "json"; never arguments, header values or bodies)',
+    )
+    .option(
+      '--response-projection',
+      'offer an optional _fields argument (JSON Pointers) on JSON tools, so a call returns only the selected fields; adds about a third to tools/list',
+    )
+    .option(
+      '--tools-page-size <n>',
+      'page tools/list with n tools per page (only for MCP hosts that follow nextCursor); default: all tools in one response',
+    )
+    .option(
+      '--tool-mode <mode>',
+      `per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above ${String(AUTO_DISCOVER_THRESHOLD)} operations)`,
+      'per-operation',
     );
   // `.option()` chained onto a Command whose Opts type already carries
   // SpecCmdOpts's own index signature does not narrow any further through

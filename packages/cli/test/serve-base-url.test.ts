@@ -81,6 +81,33 @@ describe('resolveBaseUrl', () => {
       /--base-url/u,
     );
   });
+
+  describe('a server URL rejected for size (issue #37)', () => {
+    const rejected: NormalizedSpec = { ...baseSpec, serverUrlRejected: { expandedBytes: 10_000 } };
+
+    it('--base-url still works', () => {
+      expect(
+        resolveBaseUrl('https://operator.example/', rejected, 'https://spec.example/o.json', false),
+      ).toEqual({ url: new URL('https://operator.example/'), trusted: true });
+    });
+
+    it('a URL spec does NOT fall back to the document origin: usage error naming --base-url and the budget', () => {
+      let caught: unknown;
+      try {
+        resolveBaseUrl(undefined, rejected, 'https://spec.example/openapi.json', false);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({ code: 'usage' });
+      expect((caught as Error).message).toMatch(/2048-byte server URL budget.*--base-url/u);
+    });
+
+    it('a file spec is the same usage error', () => {
+      expect(() => resolveBaseUrl(undefined, rejected, './openapi.json', true)).toThrow(
+        /budget\) — pass --base-url/u,
+      );
+    });
+  });
 });
 
 describe('assertBaseUrlShape', () => {

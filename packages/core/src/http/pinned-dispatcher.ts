@@ -2,7 +2,9 @@ import { isIP } from 'node:net';
 import type { LookupFunction } from 'node:net';
 import { Agent } from 'undici';
 import type { fetch as undiciFetchType } from 'undici';
+import type { PinnedAgentPool } from './agent-pool.ts';
 import { classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
+import { captureResponseHeaders } from './response-headers.ts';
 
 // The SSRF connection-pinning core. undici's custom connect.lookup resolves
 // the hostname exactly once via the injected `resolve`, validates EVERY
@@ -26,7 +28,9 @@ export type PinnedPolicy = {
   trusted: boolean;
 };
 
-// Bound to the call's abort signal by the caller (pinnedRequest).
+// Bound to an abort signal by the caller: pinnedRequest binds the call's
+// signal for a per-hop Agent; the agent pool binds a per-lookup timeout,
+// since a long-lived Agent outlives any one call.
 export type Resolve = (hostname: string) => Promise<readonly string[]>;
 
 // Bounds the cost of validating a hostile/misconfigured resolver's answer
@@ -143,8 +147,9 @@ export const createPinnedAgent = (policy: PinnedPolicy, resolve: Resolve): Agent
   new Agent({ connect: { lookup: pinnedLookup(policy, resolve) } });
 
 // The shared, SSRF-safe redirect transport built on top of createPinnedAgent
-// above. Manual redirects capped at MAX_REDIRECTS, a fresh per-hop pinned
-// Agent (never trusted past hop 0), monotonic cross-origin header stripping,
+// above. Manual redirects capped at MAX_REDIRECTS, a per-hop pinned Agent
+// (pooled per origin+policy when the caller supplies a pool; never trusted
+// past hop 0), monotonic cross-origin header stripping,
 // a write-method redirect abort, a merged client+timeout deadline, and a
 // decompressed-byte cap. Never produces a ToolCallOutcome (SDK-neutral) —
 // bytes+status+contentType or a typed error the caller maps.
@@ -166,11 +171,25 @@ export type PinnedResponse = {
   contentType?: string;
   // Decompressed, capped.
   bodyBytes: Uint8Array;
+  // The allowlisted, size-bounded response headers (lowercased names) —
+  // raw upstream values; see http/response-headers.ts.
+  headers: Readonly<Record<string, string>>;
+  // The URL of the hop that produced this response (after redirects), so
+  // a relative `Location`/`Link` target resolves against the right base.
+  url: string;
 };
 
 export type PinnedOutcome =
   | PinnedResponse
-  | { kind: 'error'; reason: PinnedErrorReason; detail?: string };
+  | {
+      kind: 'error';
+      reason: PinnedErrorReason;
+      detail?: string;
+      // True only when the failure happened before any response (status
+      // line) arrived — the request may not have reached the upstream at
+      // all, so an idempotent retry cannot observe a partial response.
+      beforeResponse?: true;
+    };
 
 export type HopHeaders = {
   // Sent only while still on the original origin (auth + tool + content).
@@ -205,6 +224,12 @@ export type PinnedDeps = {
   resolve: (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
   // Default () => AbortSignal.timeout(ms); injectable for tests.
   timeoutSignal: (ms: number) => AbortSignal;
+  // Long-lived pinned Agents keyed by (origin, trust policy), owned by the
+  // caller (the executor). When present, every hop borrows its Agent from
+  // the pool and never closes it, so connections are reused across calls;
+  // when absent, a fresh Agent is built and closed per hop (spec fetch, and
+  // any caller without a lifecycle to own a pool).
+  agents?: PinnedAgentPool;
 };
 
 export const MAX_REDIRECTS = 5;
@@ -326,6 +351,11 @@ export class TooLargeError extends Error {
 }
 
 const isEgressError = (value: unknown): value is EgressError => value instanceof EgressError;
+
+const withoutContentType = (headers: Readonly<Record<string, string>>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(headers).filter(([name]) => name.toLowerCase() !== 'content-type'),
+  );
 
 // Bounds a hostile/cyclical cause chain so classification cannot loop
 // forever. undici wraps a connect-time lookup failure as a generic
@@ -452,26 +482,42 @@ export const pinnedRequest = async (
   // side-effecting hop chain capped at MAX_REDIRECTS.
   let url = initialUrl;
   let crossed = false;
+  // A 303 See Other turns any method into a body-less GET (RFC 9110
+  // §15.4.4); every other redirect keeps the original method.
+  let method = opts.method.toUpperCase();
+  let seeOther = false;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-    // Redirect hops are never trusted — only hop 0 (--base-url) carries the
-    // caller's trust.
-    const trusted = hop === 0 ? opts.baseTrusted : false;
+    // Only the trusted base origin itself carries the caller's trust (from
+    // --base-url): hop 0, and a redirect that stays on exactly that origin
+    // (scheme+host+port) without ever having left it — the same monotonic
+    // rule as the header stripping below. A same-host trailing-slash or
+    // `/v1` -> `/v1/` redirect on a private --base-url therefore works,
+    // while any other origin (and anything after a cross-origin hop) stays
+    // untrusted. The DNS answer for the hop is still validated per socket.
+    const onTrustedOrigin = hop === 0 || (url.origin === originalOrigin && !crossed);
+    const trusted = opts.baseTrusted && onTrustedOrigin;
     const policy: PinnedPolicy = { allowPrivateNetwork: opts.allowPrivateNetwork, trusted };
     // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
     const sync = validateHopUrlSync(url, policy);
     if (sync !== undefined) {
       return { kind: 'error', reason: 'egress', detail: sync };
     }
-    const agent = createPinnedAgent(policy, (hostname) => deps.resolve(hostname, signal));
+    // A pooled Agent is shared with other calls: it is never closed or
+    // destroyed here — an exceptional path aborts only this request (via
+    // `signal`), and undici discards that request's socket on its own.
+    const pooled = deps.agents !== undefined;
+    const agent =
+      deps.agents?.acquire(url.origin, policy) ??
+      createPinnedAgent(policy, (hostname) => deps.resolve(hostname, signal));
     // MONOTONIC: once the chain has left the original origin, it never
     // regains credentials, even bouncing back to the original origin later.
     const onOriginalOrigin = url.origin === originalOrigin && !crossed;
-    const headers = onOriginalOrigin
+    const hopHeaders = onOriginalOrigin
       ? opts.headers.sameOriginHeaders
       : opts.headers.crossOriginHeaders;
-    const { method } = opts;
-    const sendBody =
-      hop === 0 && opts.body !== undefined && !GET_HEAD_METHODS.has(method.toUpperCase());
+    // After a 303 the request has no body, so it carries no content-type.
+    const headers = seeOther ? withoutContentType(hopHeaders) : hopHeaders;
+    const sendBody = hop === 0 && opts.body !== undefined && !GET_HEAD_METHODS.has(method);
     // Declared then assigned inside try/catch (not `.catch()`): a fetch
     // rejection must first destroy() the agent and classify the error
     // (cancelled vs timeout vs egress vs network) before this function can
@@ -491,11 +537,18 @@ export const pinnedRequest = async (
     } catch (error) {
       // Exceptional path: destroy(), never the graceful close() that may
       // await a live response.
-      await agent.destroy().catch(() => {});
+      if (!pooled) {
+        await agent.destroy().catch(() => {});
+      }
       if (signal.aborted) {
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
-      return { kind: 'error', reason: classifyFetchError(error), detail: describeCause(error) };
+      return {
+        kind: 'error',
+        reason: classifyFetchError(error),
+        detail: describeCause(error),
+        beforeResponse: true,
+      };
     }
     // Threaded through the try/catch/finally below on purpose: the finally
     // block chooses destroy() vs close() based on whether the try body
@@ -506,7 +559,15 @@ export const pinnedRequest = async (
     try {
       if (REDIRECT_STATUSES.has(response.status)) {
         await response.body?.cancel().catch(() => {});
-        if (WRITE_METHODS.has(method.toUpperCase())) {
+        // 303 is always safe to follow as a GET: it points at a different
+        // resource describing the outcome (the "created, see here"
+        // pattern), never at a place to resend the write. 301/302/307/308
+        // after a write are still refused — re-sending (307/308) or
+        // silently rewriting (301/302) a write is not this client's call.
+        if (response.status === 303 && method !== 'HEAD') {
+          seeOther ||= method !== 'GET';
+          method = 'GET';
+        } else if (WRITE_METHODS.has(method)) {
           return { kind: 'error', reason: 'redirect-write-method' };
         }
         const location = response.headers.get('location');
@@ -530,6 +591,8 @@ export const pinnedRequest = async (
         status: response.status,
         ...(contentType === null ? {} : { contentType }),
         bodyBytes,
+        headers: captureResponseHeaders(response.headers),
+        url: url.href,
       };
     } catch (error) {
       exceptional = true;
@@ -544,7 +607,9 @@ export const pinnedRequest = async (
       // Every non-exceptional path (a plain 200, or a redirect hop whose
       // body was already cancelled above) closes gracefully; every
       // exceptional path above already destroyed. Runs even on `continue`.
-      await (exceptional ? agent.destroy() : agent.close()).catch(() => {});
+      if (!pooled) {
+        await (exceptional ? agent.destroy() : agent.close()).catch(() => {});
+      }
     }
   }
   return { kind: 'error', reason: 'redirect-loop' };

@@ -86,7 +86,7 @@ const openSession = (onError?: (error: Error) => void, stdin: PassThrough = new 
       version: '1.0.0',
       snapshot,
       dispatcherDeps: {
-        limiter: { consume: () => true },
+        limiter: { consume: () => true, retryAfterMs: () => 0 },
         now: () => 0,
         executor: () => Promise.resolve({ isError: false, content: [] as const }),
         metaExecutor: createMetaExecutor(),

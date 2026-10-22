@@ -9,11 +9,18 @@ import {
   zCacheMeta,
 } from '../schemas/cache.ts';
 import type { CacheMeta } from '../schemas/cache.ts';
-import { hashContent } from '../spec/load.ts';
+import { hashBytes, hashContent } from '../spec/load.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import type { CacheFs } from './fs.ts';
-import { withNamespaceLock } from './lock.ts';
+import { LOCK_STALE_MS, tryWithNamespaceLock, withNamespaceLock } from './lock.ts';
+import {
+  STALE_REVISION_REASON,
+  expectedRevisionOf,
+  sameRevision,
+  staleRevisionError,
+} from './revision.ts';
+import type { RevisionCheck } from './revision.ts';
 import {
   CACHE_MAX_PERSISTED_BYTES,
   CACHE_META_MAX_BYTES,
@@ -86,41 +93,114 @@ const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
 // while staying inside the 500,000-node budget, so the allocation being
 // refused could already have happened, at whatever size the document implied.
 //
-// This walks the document and accumulates the serialized size incrementally,
-// abandoning the walk the moment it exceeds the budget. It computes the same
-// number JSON.stringify would produce for the shapes the cache persists (the
-// validated, dereferenced document: objects, arrays, strings, finite numbers,
-// booleans, null), so a document that passes here serializes to exactly what
-// was measured.
+// Two passes, neither of which can be skipped:
 //
-// Every fragment is measured in UTF-8 BYTES, not UTF-16 code units:
+// 1. A WALK that enforces the domain (below) and accumulates a LOWER BOUND on
+//    the serialized size, abandoning the walk the moment that bound exceeds
+//    the budget. Every token is charged at least its UTF-16 length: a string
+//    costs its length plus the two quotes, a key its length plus quotes and
+//    colon, punctuation and numbers exactly. UTF-8 never encodes a UTF-16
+//    code unit in fewer bytes than one, and JSON escaping only lengthens, so
+//    the true byte count is never below this bound. The one case where a
+//    unit costs SIX bytes — a C0 control or a lone surrogate, which becomes
+//    the escape \uXXXX — is charged exactly instead: a string or key
+//    containing a control character or lone surrogate is measured with
+//    Buffer.byteLength(JSON.stringify(s)), a per-string allocation bounded
+//    by that one string. Every other unit costs at most THREE bytes (a BMP
+//    character from U+0800 up), and `"`/`\` two, so the string stringify
+//    builds in step 2 is at most 3x the budget before it is refused
+//    (64 MiB cap → at most ~192 MiB transient). A document whose $ref
+//    expansion repeats one large string is refused WITHOUT ever being built
+//    whenever its lower bound passes the budget, i.e. up to that factor.
+// 2. A single native JSON.stringify, then the EXACT check: the byte length of
+//    the string actually produced is compared with the budget. These are the
+//    bytes that get hashed and written, so the cap holds for them by
+//    construction, whatever the walk estimated.
+//
+// Every measurement is in UTF-8 BYTES, not UTF-16 code units:
 // `readFileTextCapped` and the stated policy are byte-based, while measuring
 // via `JSON.stringify(...).length` counts UTF-16 code units and undercounts
 // any multibyte character. Probed over a generated corpus: the code-unit
 // version was wrong for 5,053 of 20,000 values and ALWAYS in the understating
 // direction — a multibyte document would pass the writer, be persisted above
-// the cap, and be corrupt on its very first read. That is precisely the
-// invariant this preflight exists to establish: JSON.stringify({x:'é' +
-// EMOJI}) is 11 UTF-16 units but 14 UTF-8 bytes.
+// the cap, and be corrupt on its very first read. JSON.stringify({x:'é' +
+// EMOJI}) is 11 UTF-16 units but 14 UTF-8 bytes. Step 2 is what keeps that
+// invariant now; the lower bound in step 1 only decides when to stop early.
+//
+// An earlier version emitted one fragment per token, called Buffer.byteLength
+// on each and joined them, which was 4-8x slower than JSON.stringify on a
+// multi-megabyte document (#75). Producing the output with the native
+// stringify is equivalent because the domain enforced in step 1 is exactly the
+// set of values whose JSON.stringify output is determined by the own data
+// properties the walk read: accessors, toJSON hooks, non-plain prototypes,
+// holes and undefined array members are refused before stringify ever runs.
+const UNSUPPORTED_DOCUMENT_MESSAGE =
+  'refusing to cache a document containing values JSON cannot round-trip exactly (undefined or sparse array members, a toJSON hook, a bigint, a function, or a cycle)';
+
+// Cycle detection tracks the CURRENT PATH from the root, not every node seen
+// (a DAG may legitimately share a subtree; only an ancestor revisited is a
+// cycle). Up to this depth a linear scan of the path is much cheaper than a
+// Set — hashing every object of a multi-megabyte document dominated the walk
+// — and real specs stay well inside it. Deeper paths switch to a Set mirror
+// of the path, so a pathologically deep document stays O(nodes), not
+// O(nodes x depth).
+const SHALLOW_PATH_DEPTH = 64;
+
+// C0 controls and LONE surrogates (with the u flag a well-formed pair is one
+// code point and does not match): the only units whose escaped cost is six
+// bytes rather than at most three, so strings containing them are measured
+// exactly
+// oxlint-disable-next-line no-control-regex -- detecting control characters is this regex's purpose
+const ESCAPE_HEAVY_RE = /[\u0000-\u001F\uD800-\uDFFF]/u;
+const stringCost = (text: string): number =>
+  ESCAPE_HEAVY_RE.test(text) ? Buffer.byteLength(JSON.stringify(text), 'utf8') : text.length + 2;
+
 export const serializeWithinBudget = (value: unknown, budget: number): string | undefined => {
-  // Imperative on purpose, for `used`, `parts`, and `seen` alike: this is the
-  // accumulate-then-abort shape the design note above requires — a
+  // Imperative on purpose, for `used`, `path` and `deepPath` alike: this is
+  // the accumulate-then-abort shape the design note above requires — a
   // map/filter/reduce pipeline would build the whole string (or the whole
   // membership set) before any abort could happen, which is exactly the
   // unbounded-allocation-before-refusal this preflight exists to prevent.
   let used = 0;
-  const parts: string[] = [];
   const overflow = Symbol('overflow');
   const unsupported = Symbol('unsupported');
-  const seen = new Set<object>();
-  // Emit a fragment and charge its bytes; abort as soon as the running total
+  // Charge a token's lower-bound size; abort as soon as the running total
   // passes the budget so a hostile document never materializes in full.
-  const emit = (fragment: string): void => {
-    used += Buffer.byteLength(fragment, 'utf8');
+  const charge = (bytes: number): void => {
+    used += bytes;
     if (used > budget) {
       throw overflow;
     }
-    parts.push(fragment);
+  };
+  // The current root-to-node path, and (only while it is deeper than
+  // SHALLOW_PATH_DEPTH) a Set holding exactly the same members
+  const path: object[] = [];
+  const deepPath = new Set<object>();
+  const enter = (node: object): void => {
+    if (path.length < SHALLOW_PATH_DEPTH) {
+      if (path.includes(node)) {
+        throw unsupported; // A cycle
+      }
+    } else {
+      if (deepPath.size === 0) {
+        for (const ancestor of path) {
+          deepPath.add(ancestor);
+        }
+      }
+      if (deepPath.has(node)) {
+        throw unsupported; // A cycle
+      }
+      deepPath.add(node);
+    }
+    path.push(node);
+  };
+  const leave = (): void => {
+    const node = path.pop();
+    if (path.length >= SHALLOW_PATH_DEPTH) {
+      deepPath.delete(node as object);
+    } else if (deepPath.size > 0) {
+      deepPath.clear();
+    }
   };
   // The sizer is EXACT only for a JSON-safe, dense, plain-object tree, and the
   // exported writers accept Record<string, unknown>, which admits more than
@@ -143,22 +223,21 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
     throw validationError('refusing to cache a document that is not a JSON object');
   }
   const walk = (node: unknown): void => {
+    // Strings first: they are by far the most frequent node in a spec
+    if (typeof node === 'string') {
+      charge(stringCost(node));
+      return;
+    }
     if (typeof node === 'bigint' || typeof node === 'function' || typeof node === 'symbol') {
       throw unsupported;
     }
     if (node === null || typeof node === 'boolean' || typeof node === 'number') {
-      // Non-finite numbers serialize as null — JSON.stringify(node) ?? 'null'
-      emit(JSON.stringify(node) ?? 'null');
-      return;
-    }
-    if (typeof node === 'string') {
-      emit(JSON.stringify(node));
+      // Non-finite numbers serialize as null — JSON.stringify(node) ?? 'null'.
+      // Always ASCII, so this one is exact
+      charge((JSON.stringify(node) ?? 'null').length);
       return;
     }
     if (Array.isArray(node)) {
-      if (seen.has(node)) {
-        throw unsupported; // A cycle
-      }
       // Arrays get the SAME enforcement as objects. Applying the
       // prototype/descriptor rules to the object branch only would leave an
       // own accessor at an index able to recreate the exact size-vs-bytes
@@ -183,12 +262,12 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       ) {
         throw unsupported;
       }
-      // Imperative on purpose: `seen.add`/`seen.delete` (here and in the
-      // object branch below) track cycle-detection membership shared across
-      // the whole recursive walk — a value read afterward by every nested
-      // `walk` call, not a local accumulation a map/filter could replace.
-      seen.add(node);
-      emit('[');
+      // Imperative on purpose: `enter`/`leave` (here and in the object branch
+      // below) track the cycle-detection path shared across the whole
+      // recursive walk — state read afterward by every nested `walk` call,
+      // not a local accumulation a map/filter could replace.
+      enter(node);
+      charge(1); // [
       // Imperative on purpose: the index is used to fetch
       // `Object.getOwnPropertyDescriptor(node, index)` rather than
       // `node[index]` specifically so an own accessor is never invoked (see
@@ -208,18 +287,15 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
           throw unsupported;
         }
         if (index > 0) {
-          emit(',');
+          charge(1); // ,
         }
         walk(descriptor.value);
       }
-      emit(']');
-      seen.delete(node);
+      charge(1); // ]
+      leave();
       return;
     }
     if (typeof node === 'object') {
-      if (seen.has(node)) {
-        throw unsupported; // A cycle
-      }
       // Reject a toJSON via its own descriptor so a getter is never invoked (a
       // getter could mutate the document mid-serialization and desync the
       // bytes from metadata derived before this pass). A non-function toJSON
@@ -238,8 +314,8 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       if (prototype !== Object.prototype && prototype !== null) {
         throw unsupported;
       }
-      seen.add(node);
-      emit('{');
+      enter(node);
+      charge(1); // {
       // Imperative on purpose: `first` tracks the first member actually
       // EMITTED, not the first key iterated — a skipped member (the
       // `continue` below, for an undefined/function/symbol value) must not
@@ -263,15 +339,14 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
           continue; // JSON.stringify omits the whole member, key included
         }
         if (!first) {
-          emit(',');
+          charge(1); // ,
         }
         first = false;
-        emit(JSON.stringify(key));
-        emit(':');
+        charge(stringCost(key) + 1); // "key":
         walk(item);
       }
-      emit('}');
-      seen.delete(node);
+      charge(1); // }
+      leave();
       // The if-chain above is now exhausted, so control falls out of `walk`
       // normally: an explicit return here would be redundant (no-useless-return)
     }
@@ -283,13 +358,14 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       return undefined;
     }
     if (error === unsupported) {
-      throw validationError(
-        'refusing to cache a document containing values JSON cannot round-trip exactly (undefined or sparse array members, a toJSON hook, a bigint, a function, or a cycle)',
-      );
+      throw validationError(UNSUPPORTED_DOCUMENT_MESSAGE);
     }
     throw error;
   }
-  return parts.join('');
+  // Step 2 of the design note: the exact check, on the bytes that will
+  // actually be hashed and written
+  const text = JSON.stringify(value);
+  return Buffer.byteLength(text, 'utf8') > budget ? undefined : text;
 };
 
 // Kept for existing callers/tests that only need the size.
@@ -320,10 +396,28 @@ const persistableTextOrThrow = (
   const text = serializeWithinBudget(document, CACHE_MAX_PERSISTED_BYTES);
   if (text === undefined) {
     throw validationError(
-      `refusing to cache the ${slot} spec: its dereferenced form exceeds the ${CACHE_MAX_PERSISTED_BYTES}-byte persisted-document budget`,
+      `refusing to cache the ${slot} spec: it exceeds the ${CACHE_MAX_PERSISTED_BYTES}-byte persisted-document budget`,
     );
   }
   return text;
+};
+
+// Every verified object read: the decoded text plus the SHA-256 of the bytes
+// as they are on disk. With a bytes-capable CacheFs the hash is taken over
+// the raw bytes (#88) — one decode and no re-encode, instead of decoding and
+// then re-encoding the whole document just to hash it. Errors (absence,
+// over-budget validationError, I/O) propagate exactly as from
+// readFileTextCapped, so every caller's catch keeps its meaning.
+const readObject = async (fs: CacheFs, path: string): Promise<{ text: string; hash: string }> => {
+  if (fs.readFileBytesCapped === undefined) {
+    const text = await fs.readFileTextCapped(path, CACHE_MAX_PERSISTED_BYTES);
+    return { text, hash: hashContent(text) };
+  }
+  const bytes = await fs.readFileBytesCapped(path, CACHE_MAX_PERSISTED_BYTES);
+  return {
+    text: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8'),
+    hash: hashBytes(bytes),
+  };
 };
 
 // Spec objects are immutable and content-addressed, so writing a generation
@@ -332,16 +426,32 @@ const persistableTextOrThrow = (
 // every write, which would leave old metadata pointing at new bytes both
 // transiently and, after a crash, permanently. meta.json is replaced
 // atomically second, and unreferenced objects are collected only AFTER that
-// commit succeeds, so meta.json is authoritative at every instant.
+// commit succeeds, so meta.json is authoritative at every instant. If the
+// meta.json write rejects, the commit's outcome is unknown, not "not applied":
+// the new meta.json may already be live (see CacheFs.writeFileAtomic). Both
+// outcomes are consistent, because every object either meta.json can name was
+// written and fsynced first, and garbage collection is skipped on rejection.
+//
+// `verifiedHashes` names objects the caller has ALREADY read and hash-checked
+// under the same lock hold (writeAccepted's intact-baseline check,
+// promoteCandidate's candidate check). Re-reading and re-hashing them here
+// would only repeat that work (#75): no other writer can have touched them in
+// between, since every writer holds the lock.
 const commitEntry = async (
   layout: CacheLayout,
   fs: CacheFs,
   objects: readonly { hash: string; text: string }[],
   meta: CacheMeta,
+  // The committing operation's clock, for the age of a stray lock temp
+  nowMs: number,
+  verifiedHashes: ReadonlySet<string> = new Set(),
 ): Promise<void> => {
   const metaJson = serializeMeta(meta);
   await prepareDirs(layout, fs);
   for (const object of objects) {
+    if (verifiedHashes.has(object.hash)) {
+      continue;
+    }
     const path = objectPath(layout, object.hash);
     // An existing file at this name is NOT trusted merely because of its
     // name. Skipping the write whenever the path already exists would let a
@@ -352,8 +462,8 @@ const commitEntry = async (
     // overwrite (overwriting would also be the one mutation this layout
     // exists to avoid, and a lock-free reader may be holding it).
     if (await fs.pathExists(path)) {
-      const existing = await fs.readFileTextCapped(path, CACHE_MAX_PERSISTED_BYTES);
-      if (hashContent(existing) !== object.hash) {
+      const existing = await readObject(fs, path);
+      if (existing.hash !== object.hash) {
         throw validationError(
           `cache entry ${layout.namespace} already holds a spec object whose contents do not match its own name — run "openapi-mcp cache clear" to reset this entry deliberately`,
         );
@@ -363,7 +473,7 @@ const commitEntry = async (
     await fs.writeFileAtomic(path, object.text);
   }
   await fs.writeFileAtomic(layout.metaPath, metaJson);
-  await collectGarbage(layout, fs, meta);
+  await collectGarbage(layout, fs, meta, nowMs);
 };
 
 // Runs strictly after the commit. Anything the newly committed meta.json does
@@ -371,7 +481,64 @@ const commitEntry = async (
 // earlier attempt. A failure here is deliberately swallowed: the commit already
 // succeeded, and leaving a stray object is a wasted inode, not a correctness
 // problem — turning it into an error would fail a write that actually worked.
-const collectGarbage = async (layout: CacheLayout, fs: CacheFs, meta: CacheMeta): Promise<void> => {
+//
+// The entry directory gets the same treatment for the temp files the atomic
+// writers leave behind when killed between write and rename/link (#88) —
+// matched by the exact names the CacheFs adapter generates, so nothing else
+// in the directory is ever touched:
+//  - `.meta.json.<uuid>.tmp`: meta.json is only ever written under the
+//    writer lock, which this commit holds, so no live writer can own one.
+//  - `.lock.<uuid>.tmp`: a lock temp is written BEFORE its writer holds the
+//    lock (it is the record about to be link()ed into place), so a young one
+//    may be in flight; removing it would make that writer's link() fail with
+//    ENOENT. Only one older than LOCK_STALE_MS is collected, and only when
+//    the filesystem can report its age.
+// Object temps (`objects/.<hash>.json.<uuid>.tmp`) need no rule of their own:
+// they do not match `<hash>.json`, so the unreferenced-object sweep in
+// collectGarbage removes them, which is intended.
+//
+// Besides every commit, this also runs after touchRevalidated's write (also
+// under the lock): since #75 an unchanged spec never commits, so a temp left
+// by a writer killed mid-revalidation would otherwise linger indefinitely.
+const META_TEMP_RE = /^\.meta\.json\.[0-9a-f-]{36}\.tmp$/u;
+const LOCK_TEMP_RE = /^\.lock\.[0-9a-f-]{36}\.tmp$/u;
+
+const collectEntryTemps = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  nowMs: number,
+): Promise<void> => {
+  for (const name of await fs.readDirNames(layout.dir)) {
+    const path = join(layout.dir, name);
+    if (META_TEMP_RE.test(name)) {
+      await fs.removeFile(path);
+    } else if (LOCK_TEMP_RE.test(name) && fs.modifiedAtMs !== undefined) {
+      const ageMs = nowMs - (await fs.modifiedAtMs(path));
+      if (ageMs > LOCK_STALE_MS) {
+        await fs.removeFile(path);
+      }
+    }
+  }
+};
+
+const collectEntryTempsBestEffort = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  nowMs: number,
+): Promise<void> => {
+  try {
+    await collectEntryTemps(layout, fs, nowMs);
+  } catch {
+    // Best-effort, like collectGarbage: the write already succeeded
+  }
+};
+
+const collectGarbage = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  meta: CacheMeta,
+  nowMs: number,
+): Promise<void> => {
   const referenced = new Set<string>(
     meta.candidate === undefined
       ? [`${meta.acceptedContentHash}.json`]
@@ -383,6 +550,7 @@ const collectGarbage = async (layout: CacheLayout, fs: CacheFs, meta: CacheMeta)
         await fs.removeFile(join(layout.objectsDir, name));
       }
     }
+    await collectEntryTemps(layout, fs, nowMs);
   } catch {
     // See above: best-effort by design
   }
@@ -535,9 +703,9 @@ type AcceptedObjectVerification =
 const verifyAcceptedObject = (
   layout: CacheLayout,
   meta: CacheMeta,
-  acceptedText: string,
+  accepted: { text: string; hash: string },
 ): AcceptedObjectVerification => {
-  if (hashContent(acceptedText) !== meta.acceptedContentHash) {
+  if (accepted.hash !== meta.acceptedContentHash) {
     // Tampered bytes must never become (or remain) the baseline. No retry
     // here: the object is filed UNDER this hash, so content that does not
     // produce it is damage, not a lost race.
@@ -546,7 +714,7 @@ const verifyAcceptedObject = (
       reason: `the accepted spec for cache entry ${layout.namespace} does not match its recorded content hash`,
     };
   }
-  const document = parseJsonObject(acceptedText);
+  const document = parseJsonObject(accepted.text);
   if (document === undefined) {
     return {
       kind: 'corrupt',
@@ -584,12 +752,9 @@ const assertAcceptedObjectIntact = async (
   meta: CacheMeta,
 ): Promise<void> => {
   // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
-  let acceptedText: string;
+  let accepted: { text: string; hash: string };
   try {
-    acceptedText = await fs.readFileTextCapped(
-      objectPath(layout, meta.acceptedContentHash),
-      CACHE_MAX_PERSISTED_BYTES,
-    );
+    accepted = await readObject(fs, objectPath(layout, meta.acceptedContentHash));
   } catch (error) {
     // Only genuine absence is corruption. Anything else (EACCES, EIO)
     // rethrows unchanged, so withCacheErrors types it at the definition
@@ -600,7 +765,7 @@ const assertAcceptedObjectIntact = async (
     }
     throw corruptEntryError(`the accepted spec for cache entry ${layout.namespace} cannot be read`);
   }
-  const verified = verifyAcceptedObject(layout, meta, acceptedText);
+  const verified = verifyAcceptedObject(layout, meta, accepted);
   if (verified.kind === 'corrupt') {
     throw corruptEntryError(verified.reason);
   }
@@ -619,6 +784,8 @@ const writeAcceptedImpl = async (
     cacheKey?: string | undefined;
     etag?: string | undefined;
     lastModified?: string | undefined;
+    // The revision this decision was made against (#34): see revision.ts
+    expected: RevisionCheck;
   },
 ): Promise<{ acceptedContentHash: string }> => {
   // The openapiVersion is DERIVED here, not supplied by the caller: accepting
@@ -653,25 +820,54 @@ const writeAcceptedImpl = async (
     if (existing.kind === 'ok') {
       await assertAcceptedObjectIntact(layout, fs, existing.meta);
     }
+    const current = existing.kind === 'ok' ? existing.meta : undefined;
+    const expected = expectedRevisionOf(input.expected);
+    if (expected !== undefined && !sameRevision(expected.meta, current)) {
+      // A concurrent writer already committed exactly this outcome (two
+      // first-use loads of the same spec): nothing left to do, and nothing a
+      // second commit could add
+      if (
+        current !== undefined &&
+        current.candidate === undefined &&
+        current.acceptedContentHash === acceptedContentHash &&
+        current.sourceContentHash === input.sourceContentHash
+      ) {
+        return { acceptedContentHash };
+      }
+      // Otherwise this decision (trust-on-first-use, or accept-over-X) was
+      // made against a revision that no longer exists, and committing it
+      // would replace whatever was accepted in the meantime
+      throw staleRevisionError(layout.namespace);
+    }
+    const verifiedHashes = new Set(
+      existing.kind === 'ok' ? [existing.meta.acceptedContentHash] : [],
+    );
     // This deliberately drops any waiting candidate: a new accepted baseline
     // written here supersedes it. That is correct HERE — but it is why the
     // 304 path must NOT route through this function: doing so would silently
     // destroy a candidate awaiting promotion on every revalidation.
-    await commitEntry(layout, fs, [{ hash: acceptedContentHash, text: acceptedText }], {
-      schemaVersion: CACHE_META_SCHEMA_VERSION,
-      displaySource: input.displaySource,
-      ...(input.cacheKey === undefined ? {} : { cacheKey: input.cacheKey }),
-      ...(input.etag === undefined ? {} : { etag: input.etag }),
-      ...(input.lastModified === undefined ? {} : { lastModified: input.lastModified }),
-      fetchedAt: input.fetchedAt,
-      acceptedContentHash,
-      sourceContentHash: input.sourceContentHash,
-      title: input.title,
-      specVersion: input.specVersion,
-      // Persisted so a hit needs no revalidation, and DERIVED above so the
-      // value can never contradict the bytes it describes
-      openapiVersion,
-    });
+    await commitEntry(
+      layout,
+      fs,
+      [{ hash: acceptedContentHash, text: acceptedText }],
+      {
+        schemaVersion: CACHE_META_SCHEMA_VERSION,
+        displaySource: input.displaySource,
+        ...(input.cacheKey === undefined ? {} : { cacheKey: input.cacheKey }),
+        ...(input.etag === undefined ? {} : { etag: input.etag }),
+        ...(input.lastModified === undefined ? {} : { lastModified: input.lastModified }),
+        fetchedAt: input.fetchedAt,
+        acceptedContentHash,
+        sourceContentHash: input.sourceContentHash,
+        title: input.title,
+        specVersion: input.specVersion,
+        // Persisted so a hit needs no revalidation, and DERIVED above so the
+        // value can never contradict the bytes it describes
+        openapiVersion,
+      },
+      input.fetchedAt,
+      verifiedHashes,
+    );
     return { acceptedContentHash };
   });
 };
@@ -687,6 +883,8 @@ const writeCandidateImpl = async (
     fetchedAt: number;
     etag?: string | undefined;
     lastModified?: string | undefined;
+    // The revision this decision was made against (#34): see revision.ts
+    expected: RevisionCheck;
   },
 ): Promise<{ candidateContentHash: string }> => {
   if (input.title.length > CACHE_TEXT_MAX || input.specVersion.length > CACHE_TEXT_MAX) {
@@ -713,6 +911,21 @@ const writeCandidateImpl = async (
     // Meta.json alone is not enough: verify the accepted OBJECT it names is
     // still intact before recording a candidate beside it
     await assertAcceptedObjectIntact(layout, fs, existing.meta);
+    const expected = expectedRevisionOf(input.expected);
+    if (expected !== undefined && !sameRevision(expected.meta, existing.meta)) {
+      // A concurrent run already recorded this very candidate against the
+      // same accepted baseline: the outcome stands, and its newer-or-equal
+      // bookkeeping is kept rather than rewound
+      if (
+        expected.meta?.acceptedContentHash === existing.meta.acceptedContentHash &&
+        existing.meta.candidate?.contentHash === candidateContentHash
+      ) {
+        return { candidateContentHash };
+      }
+      // The candidate was diffed against an accepted baseline (or a waiting
+      // candidate) that has since been replaced
+      throw staleRevisionError(layout.namespace);
+    }
     // The accepted half is copied through untouched: a candidate is stored,
     // never activated, so meta.title/specVersion keep describing what is
     // actually served. The validators recorded are the ones returned WITH the
@@ -747,7 +960,13 @@ const writeCandidateImpl = async (
     };
     // Both objects stay referenced, so the accepted bytes survive untouched and
     // GC reclaims only what the previous generation left behind
-    await commitEntry(layout, fs, [{ hash: candidateContentHash, text: candidateText }], meta);
+    await commitEntry(
+      layout,
+      fs,
+      [{ hash: candidateContentHash, text: candidateText }],
+      meta,
+      input.fetchedAt,
+    );
     return { candidateContentHash };
   });
 };
@@ -757,19 +976,62 @@ const writeCandidateImpl = async (
 // discard a candidate awaiting promotion without ever approving it. This
 // updates the timestamp and the validators and touches nothing else: no
 // object is written, and both slots survive verbatim.
-const touchRevalidatedImpl = (
+// `lockStale` is set only when the writer lock was in the way (best effort);
+// a revision that moved on carries no lock state
+type TouchResult =
+  | { recorded: true }
+  | { recorded: false; reason: string; lockStale?: boolean | undefined };
+
+const touchRevalidatedImpl = async (
   layout: CacheLayout,
   fs: CacheFs,
   nowMs: number,
   validators: { etag?: string | undefined; lastModified?: string | undefined },
-): Promise<void> =>
-  withNamespaceLock(layout, fs, nowMs, async () => {
+  // A 304 (the default) keeps a recorded validator the response omitted. A
+  // 200 whose bytes match the accepted source (#75) REPLACES them instead:
+  // the validators belong to the representation just received, exactly as
+  // writeCandidate treats them, so a 200 without an ETag must not leave the
+  // previous one behind.
+  //
+  // `bestEffort` (#65): this write is only bookkeeping on an entry the caller
+  // has already read and verified, so a lock held by another process is not
+  // worth failing the command over. One attempt; when the lock is held the
+  // result says so (with the operator message) and nothing is written. The
+  // checks below still run whenever the lock IS obtained, so a corrupt entry
+  // still fails closed.
+  //
+  // `expected` (#34): the revision the caller verified and revalidated. If
+  // the accepted object or the waiting candidate changed since, these
+  // validators describe a representation the entry no longer holds, so
+  // nothing is written and the result says why. If only the bookkeeping moved
+  // on (a concurrent run recorded a revalidation at least as recent), the
+  // newer record is kept as it is.
+  opts: {
+    replaceValidators?: boolean;
+    bestEffort?: boolean;
+    expected: RevisionCheck;
+  },
+): Promise<TouchResult> => {
+  const touch = async (): Promise<TouchResult> => {
     const existing = await readMetaFile(layout, fs);
+    if (existing.kind === 'corrupt') {
+      throw corruptEntryError(existing.reason);
+    }
+    const expected = expectedRevisionOf(opts.expected);
+    if (
+      expected !== undefined &&
+      !sameRevision(expected.meta, existing.kind === 'ok' ? existing.meta : undefined)
+    ) {
+      return {
+        recorded: false,
+        reason: `cache entry ${layout.namespace} was not updated: ${STALE_REVISION_REASON}`,
+      };
+    }
     if (existing.kind === 'miss') {
       throw validationError(`cache entry ${layout.namespace} has no baseline to revalidate`);
     }
-    if (existing.kind === 'corrupt') {
-      throw corruptEntryError(existing.reason);
+    if (expected !== undefined && existing.meta.fetchedAt >= nowMs) {
+      return { recorded: true };
     }
     // Meta.json alone is not enough: a 304 confirms the SOURCE is unchanged,
     // it says nothing about whether the locally persisted bytes are still
@@ -777,15 +1039,40 @@ const touchRevalidatedImpl = (
     await assertAcceptedObjectIntact(layout, fs, existing.meta);
     // A 304 answered to a request carrying no validator returns none either, in
     // which case the recorded ones stay as they are rather than being erased
+    const {
+      etag: recordedEtag,
+      lastModified: recordedLastModified,
+      ...withoutValidators
+    } = existing.meta;
     const meta: CacheMeta = {
-      ...existing.meta,
+      ...withoutValidators,
+      ...(opts.replaceValidators === true || recordedEtag === undefined
+        ? {}
+        : { etag: recordedEtag }),
+      ...(opts.replaceValidators === true || recordedLastModified === undefined
+        ? {}
+        : { lastModified: recordedLastModified }),
       fetchedAt: nowMs,
       ...(validators.etag === undefined ? {} : { etag: validators.etag }),
       ...(validators.lastModified === undefined ? {} : { lastModified: validators.lastModified }),
     };
     await prepareDirs(layout, fs);
     await fs.writeFileAtomic(layout.metaPath, serializeMeta(meta));
-  });
+    await collectEntryTempsBestEffort(layout, fs, nowMs);
+    return { recorded: true };
+  };
+  if (opts.bestEffort === true) {
+    const attempt = await tryWithNamespaceLock(layout, fs, nowMs, touch);
+    return attempt.acquired
+      ? attempt.value
+      : { recorded: false, reason: attempt.message, lockStale: attempt.stale };
+  }
+  const result = await withNamespaceLock(layout, fs, nowMs, touch);
+  if (!result.recorded) {
+    throw staleRevisionError(layout.namespace);
+  }
+  return result;
+};
 
 // ---------------------------------------------------------------------------
 // The public reader. The transactional write invariants are stated in terms
@@ -880,12 +1167,9 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
     // `for (;;)` loop to retry against a new generation — a control-flow
     // move `.catch` cannot express and this security module forbids
     // restructuring around.
-    let acceptedText: string;
+    let accepted: { text: string; hash: string };
     try {
-      acceptedText = await fs.readFileTextCapped(
-        objectPath(layout, meta.acceptedContentHash),
-        CACHE_MAX_PERSISTED_BYTES,
-      );
+      accepted = await readObject(fs, objectPath(layout, meta.acceptedContentHash));
     } catch (error) {
       // An over-budget object is genuine corruption, not a lost race.
       if (error instanceof OpenapiMcpError && error.code === 'validation') {
@@ -942,12 +1226,61 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
     // declaredOpenapiVersion): a lock-free reader has no opinion on retries
     // itself, so this call is pure and this loop is entirely responsible for
     // deciding when to retry.
-    const verified = verifyAcceptedObject(layout, meta, acceptedText);
+    const verified = verifyAcceptedObject(layout, meta, accepted);
     if (verified.kind === 'corrupt') {
       return verified;
     }
     return { kind: 'hit', entry: { meta, acceptedDocument: verified.document } };
   }
+};
+
+// The waiting candidate's document, read lock-free beside an entry the
+// caller is serving (#60: operations removed in the candidate are withheld
+// while it waits). The same verification as the accepted object — content
+// hash, JSON-object shape — because the result decides what is NOT exposed:
+// unverifiable bytes must not decide it either way.
+//
+// A missing candidate object is told apart from damage the same way the
+// accepted reader does it: re-read meta.json, and if it no longer names this
+// candidate, a concurrent commit (promote, refresh, clear) replaced it — a
+// lost race, reported as `changed` so the caller can ask for a rerun. If meta
+// still names it, the object is genuinely gone: corrupt.
+export type CandidateReadResult =
+  | { kind: 'ok'; document: Record<string, unknown> }
+  | { kind: 'changed' }
+  | { kind: 'corrupt'; reason: string };
+
+const readCandidateDocumentImpl = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  candidateContentHash: string,
+): Promise<CandidateReadResult> => {
+  const corrupt = (detail: string): CandidateReadResult => ({
+    kind: 'corrupt',
+    reason: `the candidate spec for cache entry ${layout.namespace} ${detail}`,
+  });
+  // Imperative on purpose: the catch returns a result of a different type
+  // from the success value, as in the accepted reader above
+  let read: { text: string; hash: string };
+  try {
+    read = await readObject(fs, objectPath(layout, candidateContentHash));
+  } catch (error) {
+    if (error instanceof OpenapiMcpError && error.code === 'validation') {
+      return corrupt(`exceeds its ${CACHE_MAX_PERSISTED_BYTES}-byte budget`);
+    }
+    if (!isCacheAbsence(error)) {
+      throw error;
+    }
+    const recheck = await readMetaFile(layout, fs);
+    return recheck.kind === 'ok' && recheck.meta.candidate?.contentHash === candidateContentHash
+      ? corrupt('cannot be read')
+      : { kind: 'changed' };
+  }
+  if (read.hash !== candidateContentHash) {
+    return corrupt('does not match its recorded content hash');
+  }
+  const document = parseJsonObject(read.text);
+  return document === undefined ? corrupt('is not a JSON object') : { kind: 'ok', document };
 };
 
 // ---------------------------------------------------------------------------
@@ -1022,12 +1355,9 @@ const promoteCandidateImpl = async (
       );
     }
     // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
-    let candidateText: string;
+    let candidateRead: { text: string; hash: string };
     try {
-      candidateText = await fs.readFileTextCapped(
-        objectPath(layout, candidate.contentHash),
-        CACHE_MAX_PERSISTED_BYTES,
-      );
+      candidateRead = await readObject(fs, objectPath(layout, candidate.contentHash));
     } catch (error) {
       // Only genuine absence means "the candidate is gone, refresh before
       // promoting". Catching EVERY failure here and returning conflict exit 5
@@ -1042,7 +1372,7 @@ const promoteCandidateImpl = async (
         `the candidate spec for cache entry ${layout.namespace} cannot be read — refresh before promoting`,
       );
     }
-    const promotedHash = hashContent(candidateText);
+    const { text: candidateText, hash: promotedHash } = candidateRead;
     if (promotedHash !== candidate.contentHash) {
       throw conflictError(
         `the candidate spec for cache entry ${layout.namespace} does not match its recorded hash — refresh before promoting`,
@@ -1063,21 +1393,30 @@ const promoteCandidateImpl = async (
     // The provenance and display fields come from meta.candidate, which
     // recorded them at write time. There is no fallback to the accepted
     // entry's own source hash: the nested member is all-or-none.
-    await commitEntry(layout, fs, [{ hash: promotedHash, text: candidateText }], {
-      schemaVersion: CACHE_META_SCHEMA_VERSION,
-      displaySource: meta.displaySource,
-      ...(meta.cacheKey === undefined ? {} : { cacheKey: meta.cacheKey }),
-      ...(meta.etag === undefined ? {} : { etag: meta.etag }),
-      ...(meta.lastModified === undefined ? {} : { lastModified: meta.lastModified }),
-      fetchedAt: meta.fetchedAt,
-      acceptedContentHash: promotedHash,
-      sourceContentHash: candidate.sourceContentHash,
-      title: candidate.title,
-      specVersion: candidate.specVersion,
-      // Re-derived from the promoted bytes, not inherited from meta: the
-      // candidate may legitimately have moved between 3.0 and 3.1
-      openapiVersion: promotedOpenapiVersion(document, layout.namespace),
-    });
+    // The candidate object was read and hash-checked just above, under this
+    // same lock hold, so commitEntry need not read it again
+    await commitEntry(
+      layout,
+      fs,
+      [{ hash: promotedHash, text: candidateText }],
+      {
+        schemaVersion: CACHE_META_SCHEMA_VERSION,
+        displaySource: meta.displaySource,
+        ...(meta.cacheKey === undefined ? {} : { cacheKey: meta.cacheKey }),
+        ...(meta.etag === undefined ? {} : { etag: meta.etag }),
+        ...(meta.lastModified === undefined ? {} : { lastModified: meta.lastModified }),
+        fetchedAt: meta.fetchedAt,
+        acceptedContentHash: promotedHash,
+        sourceContentHash: candidate.sourceContentHash,
+        title: candidate.title,
+        specVersion: candidate.specVersion,
+        // Re-derived from the promoted bytes, not inherited from meta: the
+        // candidate may legitimately have moved between 3.0 and 3.1
+        openapiVersion: promotedOpenapiVersion(document, layout.namespace),
+      },
+      nowMs,
+      new Set([promotedHash]),
+    );
     return { promotedHash };
   });
 
@@ -1232,6 +1571,10 @@ const listCacheEntriesImpl = async (
 // ---------------------------------------------------------------------------
 
 export const readCacheEntry = withCacheErrors('read a cache entry', readCacheEntryImpl);
+export const readCandidateDocument = withCacheErrors(
+  'read the candidate spec',
+  readCandidateDocumentImpl,
+);
 export const writeAccepted = withCacheErrors('write the accepted spec', writeAcceptedImpl);
 export const writeCandidate = withCacheErrors('write the candidate spec', writeCandidateImpl);
 export const touchRevalidated = withCacheErrors('record a revalidation', touchRevalidatedImpl);
