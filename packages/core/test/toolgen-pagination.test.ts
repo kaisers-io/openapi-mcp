@@ -33,25 +33,25 @@ const planOf = (named: NamedOperation) =>
     ?.pagination;
 
 describe('detectPagination (via buildTools)', () => {
-  it.each([
-    'cursor',
-    'page_token',
-    'pageToken',
-    'after',
-    'starting_after',
-    'page',
-    'offset',
-    'limit',
-    'per_page',
-    'page_size',
-    'pageSize',
-  ])('treats a GET with a %s query parameter as paginated', (name) => {
-    expect(planOf(op('get', [{ name }]))).toBeDefined();
-  });
+  it.each(['cursor', 'page_token', 'pageToken', 'after', 'starting_after', 'page'])(
+    'treats a GET with a %s query parameter as paginated',
+    (name) => {
+      expect(planOf(op('get', [{ name }]))).toBeDefined();
+    },
+  );
+
+  // Size/position controls alone: no hint could ever be derived (no Link
+  // header, no body cursor), so `next` would always be null.
+  it.each(['limit', 'offset', 'per_page', 'page_size', 'pageSize'])(
+    'does not treat a GET with only a %s query parameter as paginated',
+    (name) => {
+      expect(planOf(op('get', [{ name, type: 'integer' }]))).toBeUndefined();
+    },
+  );
 
   it('treats a GET that declares a Link response header as paginated', () => {
     expect(planOf(op('get', [{ name: 'q' }], { Link: { schema: { type: 'string' } } }))).toEqual({
-      query: { q: { field: 'q', numeric: false } },
+      query: { q: { field: 'q', kind: 'string' } },
       carried: [],
       bodyCursors: [],
     });
@@ -63,17 +63,21 @@ describe('detectPagination (via buildTools)', () => {
     expect(planOf(op('delete', [{ name: 'cursor' }]))).toBeUndefined();
   });
 
-  it('records numeric fields and the applicable body-cursor rules', () => {
+  it('records field kinds and the applicable body-cursor rules', () => {
     const plan = planOf(
       op('get', [
         { name: 'cursor' },
         { name: 'limit', type: 'integer' },
         { name: 'starting_after' },
+        { name: 'archived', type: 'boolean' },
+        { name: 'filter', type: 'object' },
       ]),
     );
-    expect(plan?.query['limit']).toEqual({ field: 'limit', numeric: true });
+    expect(plan?.query['limit']).toEqual({ field: 'limit', kind: 'number' });
+    expect(plan?.query['archived']).toEqual({ field: 'archived', kind: 'boolean' });
+    expect(plan?.query['filter']).toEqual({ field: 'filter', kind: 'unsupported' });
     expect(plan?.bodyCursors.map((rule) => rule.property)).toEqual(['next_cursor', 'nextCursor']);
-    expect(plan?.startingAfter).toEqual({ field: 'starting_after', numeric: false });
+    expect(plan?.startingAfter).toEqual({ field: 'starting_after', kind: 'string' });
   });
 
   it('adds the optional pagination property to the output schema only when asked', () => {
