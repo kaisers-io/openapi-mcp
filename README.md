@@ -209,7 +209,7 @@ loudly. Full flag reference: [`docs/configuration.md`](docs/configuration.md).
 
 Patterns match the spec's raw operationId, path and tags, not the generated tool name. A tool
 name is the operationId reduced to `[A-Za-z0-9_-]` (at most 64 characters; `repos.get` becomes
-`repos_get`, accents are dropped), or method and path when there is no usable operationId
+`repos_get`, accented letters become their base letter), or method and path when there is no usable operationId
 (`GET /users/{id}` becomes `get_users_by_id`). Colliding names get a stable hash suffix.
 
 ### Large APIs: `--tool-mode discover`
@@ -244,7 +244,8 @@ to prompt without echoing, or pull the value from a secret-manager CLI (e.g.
 Outbound requests follow an egress policy: an address that comes from the spec (its `servers`
 URL) or from a redirect is refused when it is private, loopback or a cloud-metadata endpoint.
 `--allow-private-network` permits private and loopback addresses, never cloud metadata. A
-`--spec` or `--base-url` you pass yourself is trusted as your decision.
+`--spec` or `--base-url` you pass yourself may be private or loopback without that flag;
+cloud-metadata addresses are refused everywhere.
 
 See [`docs/security.md`](docs/security.md) for the full threat model.
 
@@ -322,10 +323,11 @@ Each is off unless a default or "on" is stated; details in
 [`docs/configuration.md`](docs/configuration.md).
 
 - `--request-timeout <duration>` (default `30s`): the budget for each upstream call, queue wait
-  included. `--timeout` covers only the spec fetch.
-- `--retries <n>` (default `0`, at most `3`): retry 429/502/503/504 and connection errors for
-  `GET`/`HEAD`/`PUT`/`DELETE`, and for `POST`/`PATCH` only when the operation declares an
-  `Idempotency-Key` header.
+  included. `--timeout` is separate: it bounds the spec fetch and, with `--http-auth oauth`, the
+  authorization-server metadata and JWKS fetches.
+- `--retries <n>` (default `0`, at most `3`): retry 429/502/503/504 for `GET`/`HEAD`/`PUT`/
+  `DELETE`, and connection errors before any response for `GET`/`HEAD`/`PUT` (never `DELETE`).
+  `POST`/`PATCH` are retried only when the operation declares an `Idempotency-Key` header.
 - Trace propagation is **on** by default: a valid W3C `traceparent`/`tracestate` from a call's
   `_meta` is forwarded upstream. Pass `--no-trace-propagation` for APIs you do not operate.
 - `--log json`: one JSON line per tool call on stderr, without arguments, header values or bodies.
@@ -343,7 +345,10 @@ Each is off unless a default or "on" is stated; details in
 
 [Exit codes](docs/configuration.md#exit-codes): `0` success, `1` unexpected error, `2` usage error, `3` validation error (e.g. an
 invalid spec or HTTP token), `4` not found (spec file, cache entry), `5` conflict (cache lock,
-candidate mismatch). With `--json`, an error is `{"ok": false, "error": {"code", "message"}}`.
+candidate mismatch). With `--json`, `tools`, `doctor` and `cache` print an error as
+`{"ok": false, "error": {"code", "message"}}`. `serve` always reports errors as text on stderr
+(stdout is reserved for MCP), and the platform and Node checks print plain text before any
+option is read.
 
 ## Upgrading
 

@@ -59,7 +59,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
-| `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
+| `--allow-private-network` | no | permit private/loopback addresses for spec fetch redirects and for API requests to a spec-derived origin or redirect, and the token URL with `--upstream-oauth-*` (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
@@ -111,8 +111,9 @@ Notes:
   works with such a spec; without it, `serve` stops with the usual "no absolute server URL"
   usage error, also for a spec loaded from a URL (no fallback to the spec's own origin).
 - `--request-timeout` replaces `--timeout` for upstream API calls. **Upgrading:** if you raised
-  `--timeout` to make slow API calls work, set `--request-timeout` instead; `--timeout` now
-  covers only the spec fetch.
+  `--timeout` to make slow API calls work, set `--request-timeout` instead. `--timeout` no
+  longer applies to API calls: it bounds the spec fetch and, with `--http-auth oauth`, each
+  authorization-server metadata and JWKS fetch.
 - `Accept` is derived from the operation's declared 2xx media types (JSON first, `*/*;q=0.1`
   last). A header parameter named `Accept` in the spec is ignored (OpenAPI says so), so an API
   that needs a vendor media type expressed only there (e.g. a GitHub preview
@@ -577,5 +578,8 @@ openapi-mcp --json doctor
 | `4` | not found | unreadable spec file, missing cache entry, `cache unlock` on an entry without a lock |
 | `5` | conflict | cache lock held by another process, `cache promote --hash` mismatch |
 
-With the global `--json` flag, an error is printed as
-`{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`.
+With the global `--json` flag, `tools`, `doctor` and the `cache` commands print an error as
+`{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`. Two exceptions print plain
+text on stderr whatever the flags: `serve`, whose stdout is reserved for MCP traffic (it stays
+empty on an error), and the launcher's platform and Node version checks (exit `1`), which run
+before any option is parsed.
