@@ -150,10 +150,13 @@ export {
   deriveAnnotations,
   DEFAULT_RESPONSE_IS_ERROR_FLAG,
   deriveOutputSchema,
+  explainOutputSchema,
   MAX_CONVERT_DEPTH,
   paramFields,
   SYSTEM_HEADERS,
   TOOL_NAME_MAX_LENGTH,
+  UNSAFE_PATTERN_REASON,
+  hasNestedQuantifier,
 } from './toolgen/index.ts';
 export type {
   BuildToolsResult,
@@ -164,6 +167,7 @@ export type {
   OutputSchemaOptions,
   LayoutResult,
   NamedOperation,
+  OutputSchemaDerivation,
   RequestMapper,
   SchemaMode,
   SchemaResult,

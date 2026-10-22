@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
+import { UNSAFE_PATTERN_REASON, convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
 import type { SchemaResult } from '../src/index.ts';
 
 const ok = (r: SchemaResult): z.ZodType => {
@@ -265,16 +265,34 @@ describe('convertSchema — enum, const, null', () => {
     expect('unrepresentable' in convertSchema({ type: ['string', 'number'] })).toBe(true);
   });
 
-  it('does NOT let a sibling nullable widen an enum that excludes null', () => {
-    // {type:string, nullable:true, enum:['a']} must reject null — the enum is
-    // authoritative; a .nullable() wrapper would silently admit null. Pass '3.0'
-    // so the boolean `nullable` is ACTIVE (under the default '3.1' it is ignored
-    // globally, so the test would pass vacuously and the 7(c) sabotage would not
-    // bind). Under 3.0 nullable is true, and the enum branch must STILL reject
-    // null — proving determiners ignore a sibling nullable rather than wrapping it.
-    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.0'));
+  it('3.0: a sibling nullable admits null next to an enum that does not list it (D9)', () => {
+    // {type:string, nullable:true, enum:['a']} (older Swashbuckle/NSwag): the
+    // author marked the value nullable, so null is admitted in both directions;
+    // every other non-enumerated value is still rejected.
+    for (const mode of ['request', 'response'] as const) {
+      const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.0', 0, mode));
+      expect(s.safeParse('a').success).toBe(true);
+      expect(s.safeParse(null).success).toBe(true);
+      expect(s.safeParse('b').success).toBe(false);
+    }
+  });
+
+  it('3.0: the OAS 3.0.3 nullable enum that lists null is representable', () => {
+    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a', null] }, '3.0'));
+    expect(s.safeParse(null).success).toBe(true);
     expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
+    // Without nullable, null contradicts the sibling type: still omitted.
+    expect('unrepresentable' in convertSchema({ type: 'string', enum: ['a', null] }, '3.0')).toBe(
+      true,
+    );
+  });
+
+  it('3.1: nullable is not a keyword, so an enum without null still rejects null', () => {
+    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.1'));
     expect(s.safeParse(null).success).toBe(false);
+    const arr = ok(convertSchema({ type: ['string', 'null'], enum: ['a'] }, '3.1'));
+    expect(arr.safeParse(null).success).toBe(false);
   });
 
   it('accepts null only when it is an enumerated value', () => {
@@ -284,12 +302,11 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('b').success).toBe(false);
   });
 
-  it('does NOT let a sibling nullable widen a const', () => {
-    // Pass '3.0' so `nullable` is active (see the enum sibling test above); under
-    // 3.0 nullable is true and the const branch must still reject null.
+  it('3.0: a sibling nullable admits null next to a const (D9)', () => {
     const s = ok(convertSchema({ const: 'a', nullable: true }, '3.0'));
     expect(s.safeParse('a').success).toBe(true);
-    expect(s.safeParse(null).success).toBe(false);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
   });
 
   it('maps const: null to z.null()', () => {
@@ -298,16 +315,14 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('a').success).toBe(false);
   });
 
-  it('represents a 3.0 nullable composition without admitting null in a request (#41)', () => {
+  it('represents a 3.0 nullable composition and admits null in a request (#41, D9)', () => {
     // The boolean `nullable` is honoured only under 3.0 (build gates it on
     // version === '3.0'); a 3.1 `[T,'null']`-union combined with oneOf is caught
-    // earlier by the conflict gate. OAS 3.0.3: nullable takes effect only with an
-    // explicit `type`, and the members' constraints still exclude null — so in
-    // request mode null stays rejected; response mode admits it (see the #41
-    // block below).
+    // earlier by the conflict gate.
     const s = ok(convertSchema({ nullable: true, oneOf: [{ type: 'string' }] }, '3.0'));
     expect(s.safeParse('x').success).toBe(true);
-    expect(s.safeParse(null).success).toBe(false);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse(1).success).toBe(false);
   });
 });
 
@@ -945,12 +960,25 @@ describe('convertSchema — request/response mode (#33, #47)', () => {
     expect(s.safeParse({ owner: { id: '1', name: 'x', password: 'p' } }).success).toBe(false);
   });
 
-  it('response mode: a required writeOnly property becomes optional; readOnly stays required', () => {
+  it('response mode: an open object drops a writeOnly property; readOnly stays required', () => {
     const s = ok(convertSchema(user, '3.1', 0, 'response'));
     expect(s.safeParse({ id: 'a', name: 'x' }).success).toBe(true);
     expect(s.safeParse({ name: 'x' }).success).toBe(false);
     // A server that does echo the writeOnly value is still schema-valid.
     expect(s.safeParse({ id: 'a', name: 'x', password: 'p' }).success).toBe(true);
+    const wire = z.toJSONSchema(s) as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(wire.properties)).toEqual(['id', 'name']);
+    expect(wire.required).toEqual(['id', 'name']);
+  });
+
+  it('response mode: a closed object keeps a writeOnly property, optional, so an echo stays valid', () => {
+    const s = ok(convertSchema({ ...user, additionalProperties: false }, '3.1', 0, 'response'));
+    expect(s.safeParse({ id: 'a', name: 'x' }).success).toBe(true);
+    expect(s.safeParse({ id: 'a', name: 'x', password: 'p' }).success).toBe(true);
+    expect(s.safeParse({ id: 'a', name: 'x', password: 1 }).success).toBe(false);
+    const wire = z.toJSONSchema(s) as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(wire.properties)).toEqual(['id', 'name', 'password']);
+    expect(wire.required).toEqual(['id', 'name']);
   });
 
   it('request mode: a readOnly property inside an allOf member is dropped as well', () => {
@@ -975,11 +1003,11 @@ describe('convertSchema — request/response mode (#33, #47)', () => {
 describe('convertSchema — nullable and single-member allOf idioms (#41)', () => {
   const obj = { type: 'object', properties: { a: { type: 'string' } } };
 
-  it('3.0 nullable allOf: request mode follows OAS 3.0.3 (nullable without type has no effect), response mode admits null', () => {
+  it('3.0 nullable allOf: null admitted in both directions (D9: a PATCH can clear the field)', () => {
     const node = { nullable: true, allOf: [obj] };
     const request = ok(convertSchema(node, '3.0'));
     expect(request.safeParse({ a: 'x' }).success).toBe(true);
-    expect(request.safeParse(null).success).toBe(false);
+    expect(request.safeParse(null).success).toBe(true);
     expect(request.safeParse('x').success).toBe(false);
     const response = ok(convertSchema(node, '3.0', 0, 'response'));
     expect(response.safeParse({ a: 'x' }).success).toBe(true);
@@ -987,12 +1015,13 @@ describe('convertSchema — nullable and single-member allOf idioms (#41)', () =
     expect(response.safeParse('x').success).toBe(false);
   });
 
-  it('3.0 nullable oneOf: representable; null admitted in response mode only', () => {
+  it('3.0 nullable oneOf: representable; null admitted in both directions', () => {
     const node = { nullable: true, oneOf: [{ type: 'string' }, { type: 'integer' }] };
     const request = ok(convertSchema(node, '3.0'));
     expect(request.safeParse('x').success).toBe(true);
     expect(request.safeParse(1).success).toBe(true);
-    expect(request.safeParse(null).success).toBe(false);
+    expect(request.safeParse(null).success).toBe(true);
+    expect(request.safeParse(true).success).toBe(false);
     const response = ok(convertSchema(node, '3.0', 0, 'response'));
     expect(response.safeParse(null).success).toBe(true);
     expect(response.safeParse(true).success).toBe(false);
@@ -1057,81 +1086,192 @@ describe('convertSchema — nullable and single-member allOf idioms (#41)', () =
   });
 });
 
-// #43: oneOf requires EXACTLY one matching subschema (JSON Schema Core 2020-12
-// §10.2.1.3); anyOf at least one (§10.2.1.2).
-describe('convertSchema — oneOf exclusivity (#43)', () => {
-  it('rejects a value matching two oneOf branches, accepts one matching exactly one', () => {
-    const s = ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'string', maxLength: 3 }] }));
-    expect(s.safeParse('ab').success).toBe(false);
-    expect(s.safeParse('abcd').success).toBe(true);
+// #43 / decision D12: oneOf requires EXACTLY one matching subschema (JSON
+// Schema Core 2020-12 §10.2.1.3). Exclusivity (z.xor, `oneOf` on the wire) is
+// used only in request mode and only when the branches are disjoint by
+// enforced keywords; otherwise the inclusive union keeps every tool callable.
+describe('convertSchema — oneOf exclusivity (#43, D12)', () => {
+  const wireOf = (schema: z.ZodType): Record<string, unknown> =>
+    z.toJSONSchema(schema) as Record<string, unknown>;
+
+  const card = {
+    type: 'object',
+    required: ['kind', 'number'],
+    properties: { kind: { const: 'card' }, number: { type: 'string' } },
+  };
+  const bank = {
+    type: 'object',
+    required: ['kind', 'iban'],
+    properties: { kind: { const: 'bank' }, iban: { type: 'string' } },
+  };
+
+  it('request: disjoint types use oneOf on the wire', () => {
+    const s = ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] }));
+    expect(s.safeParse('x').success).toBe(true);
+    expect(s.safeParse(3).success).toBe(true);
+    expect(s.safeParse(true).success).toBe(false);
+    const wire = wireOf(s);
+    expect(Array.isArray(wire['oneOf'])).toBe(true);
+    expect(wire['anyOf']).toBeUndefined();
   });
 
-  it('number vs integer: an integer matches both branches and is rejected', () => {
-    const s = ok(convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }));
-    expect(s.safeParse(3).success).toBe(false);
-    expect(s.safeParse(3.5).success).toBe(true);
+  it('request: a const discriminator required in every branch uses oneOf', () => {
+    const s = ok(convertSchema({ oneOf: [card, bank], discriminator: { propertyName: 'kind' } }));
+    expect(s.safeParse({ kind: 'card', number: '4' }).success).toBe(true);
+    expect(s.safeParse({ kind: 'bank', iban: 'DE' }).success).toBe(true);
+    expect(s.safeParse({ kind: 'cash' }).success).toBe(false);
+    expect(Array.isArray(wireOf(s)['oneOf'])).toBe(true);
   });
 
-  it('disjoint branches keep working (distinct types, distinct discriminator values)', () => {
-    const primitive = ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] }));
-    expect(primitive.safeParse('x').success).toBe(true);
-    expect(primitive.safeParse(3).success).toBe(true);
-    expect(primitive.safeParse(true).success).toBe(false);
-    const card = {
-      type: 'object',
-      required: ['kind', 'number'],
-      properties: { kind: { const: 'card' }, number: { type: 'string' } },
-    };
-    const bank = {
-      type: 'object',
-      required: ['kind', 'iban'],
-      properties: { kind: { const: 'bank' }, iban: { type: 'string' } },
-    };
-    const payment = ok(
-      convertSchema({ oneOf: [card, bank], discriminator: { propertyName: 'kind' } }),
+  it('request: distinct enums and disjoint required keys of closed objects use oneOf', () => {
+    const enums = ok(convertSchema({ oneOf: [{ enum: ['a', 'b'] }, { enum: ['c'] }] }));
+    expect(Array.isArray(wireOf(enums)['oneOf'])).toBe(true);
+    const closed = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'object', required: ['a'], properties: { a: { type: 'string' } } },
+          { type: 'object', required: ['b'], properties: { b: { type: 'string' } } },
+        ],
+      }),
     );
-    expect(payment.safeParse({ kind: 'card', number: '4' }).success).toBe(true);
-    expect(payment.safeParse({ kind: 'bank', iban: 'DE' }).success).toBe(true);
-    expect(payment.safeParse({ kind: 'cash' }).success).toBe(false);
+    expect(closed.safeParse({ a: 'x' }).success).toBe(true);
+    expect(closed.safeParse({ b: 'x' }).success).toBe(true);
+    expect(Array.isArray(wireOf(closed)['oneOf'])).toBe(true);
   });
 
-  it('emits oneOf on the wire for a oneOf source, anyOf for an anyOf source', () => {
-    const oneOf = z.toJSONSchema(
-      ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] })),
-    ) as Record<string, unknown>;
-    expect(Array.isArray(oneOf['oneOf'])).toBe(true);
-    expect(oneOf['anyOf']).toBeUndefined();
-    const anyOf = z.toJSONSchema(
-      ok(convertSchema({ anyOf: [{ type: 'string' }, { type: 'string', maxLength: 3 }] })),
-    ) as Record<string, unknown>;
-    expect(anyOf['oneOf']).toBeUndefined();
+  it('request: overlapping branches fall back to the inclusive union (number vs integer)', () => {
+    const s = ok(convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }));
+    expect(s.safeParse(3).success).toBe(true);
+    expect(s.safeParse(3.5).success).toBe(true);
+    expect(s.safeParse('x').success).toBe(false);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+
+  it('request: an "id or slug" parameter whose branches differ only by pattern stays callable', () => {
+    // `pattern` is advertised, never enforced, so z.xor would reject EVERY
+    // value (both branches match any string): an uncallable tool.
+    const s = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'string', pattern: '^[0-9]+$' },
+          { type: 'string', pattern: '^[a-z-]+$' },
+        ],
+      }),
+    );
+    expect(s.safeParse('123').success).toBe(true);
+    expect(s.safeParse('my-repo').success).toBe(true);
+    expect(s.safeParse(1).success).toBe(false);
+  });
+
+  it('request: branches that differ only by format stay callable', () => {
+    const s = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'string', format: 'email' },
+          { type: 'string', format: 'uuid' },
+        ],
+      }),
+    );
+    expect(s.safeParse('a@b.co').success).toBe(true);
+    expect(s.safeParse('123e4567-e89b-12d3-a456-426614174000').success).toBe(true);
+  });
+
+  it('request: a nullable branch that overlaps a null branch is not treated as disjoint', () => {
+    const s = ok(
+      convertSchema(
+        {
+          oneOf: [
+            { type: 'string', nullable: true },
+            { type: 'boolean', nullable: true },
+          ],
+        },
+        '3.0',
+      ),
+    );
+    expect(s.safeParse(null).success).toBe(true);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+
+  it('response: a discriminator-mapping oneOf (no const) accepts a valid payload', () => {
+    // Cat/Dog share `petType` and `name`; only `discriminator.mapping` tells
+    // them apart. Response objects are open (#33), so a Dog matches both.
+    const pet = {
+      oneOf: [
+        {
+          type: 'object',
+          required: ['petType'],
+          properties: {
+            petType: { type: 'string' },
+            name: { type: 'string' },
+            hunts: { type: 'boolean' },
+          },
+        },
+        {
+          type: 'object',
+          required: ['petType'],
+          properties: {
+            petType: { type: 'string' },
+            name: { type: 'string' },
+            bark: { type: 'boolean' },
+          },
+        },
+      ],
+      discriminator: {
+        propertyName: 'petType',
+        mapping: { cat: '#/components/schemas/Cat', dog: '#/components/schemas/Dog' },
+      },
+    };
+    const s = ok(convertSchema(pet, '3.1', 0, 'response'));
+    expect(s.safeParse({ petType: 'dog', name: 'Rex', bark: true }).success).toBe(true);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+
+  it('response: always inclusive, even for disjoint branches', () => {
+    const s = ok(
+      convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }, '3.1', 0, 'response'),
+    );
+    expect(s.safeParse(3).success).toBe(true);
+    const disjoint = ok(convertSchema({ oneOf: [card, bank] }, '3.1', 0, 'response'));
+    expect(wireOf(disjoint)['oneOf']).toBeUndefined();
   });
 
   it('leaves anyOf inclusive', () => {
     const s = ok(convertSchema({ anyOf: [{ type: 'string' }, { type: 'string', maxLength: 3 }] }));
     expect(s.safeParse('ab').success).toBe(true);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+});
+
+// #39 / D11: a response `pattern` with nested quantifiers is unrepresentable.
+describe('convertSchema — response pattern safety (#39)', () => {
+  it('response mode: a nested-quantifier pattern is unrepresentable', () => {
+    const result = convertSchema(
+      { type: 'object', properties: { v: { type: 'string', pattern: '^(a+)+$' } } },
+      '3.1',
+      0,
+      'response',
+    );
+    expect(result).toEqual({
+      unrepresentable: `property "v": ${UNSAFE_PATTERN_REASON}`,
+    });
   });
 
-  it('treats branches that differ only by an advertised-not-enforced keyword as overlapping (fail-closed narrowing)', () => {
-    // `pattern` is advertised, never enforced (ReDoS avoidance), so both
-    // branches match any string and the oneOf rejects it — narrower than the
-    // spec, never wider. Documented limitation.
-    const s = ok(
-      convertSchema({
-        oneOf: [
-          { type: 'string', pattern: '^[0-9]+$' },
-          { type: 'string', pattern: '^[a-z]+$' },
-        ],
-      }),
-    );
-    expect(s.safeParse('123').success).toBe(false);
+  it('request mode keeps advertising the same pattern (never executed there)', () => {
+    const s = ok(convertSchema({ type: 'string', pattern: '^(a+)+$' }));
+    expect((z.toJSONSchema(s) as Record<string, unknown>)['pattern']).toBe('^(a+)+$');
   });
 
-  it('enforces exclusivity in response mode too', () => {
+  it('response mode: an ordinary pattern is still advertised', () => {
     const s = ok(
-      convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }, '3.1', 0, 'response'),
+      convertSchema(
+        { type: 'string', pattern: '^(\\d{1,3}\\.){3}\\d{1,3}$' },
+        '3.1',
+        0,
+        'response',
+      ),
     );
-    expect(s.safeParse(3).success).toBe(false);
-    expect(s.safeParse(3.5).success).toBe(true);
+    expect((z.toJSONSchema(s) as Record<string, unknown>)['pattern']).toBe(
+      '^(\\d{1,3}\\.){3}\\d{1,3}$',
+    );
   });
 });

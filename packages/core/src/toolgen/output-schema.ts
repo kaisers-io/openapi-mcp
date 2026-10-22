@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
-import { convertSchema } from './schema.ts';
+import { convertSchema, UNSAFE_PATTERN_REASON } from './schema.ts';
 
 export type JsonSchemaRecord = Record<string, unknown>;
 
@@ -76,17 +76,29 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
   }
 };
 
-export const deriveOutputSchema = (
+// Why an operation has no output schema, when that is worth telling the
+// agent. Only the #39 regex policy is reported: the other omissions (no JSON
+// success, a `default` response, ...) are ordinary and need no explanation.
+export const OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN =
+  'No output schema: a response regex "pattern" has nested quantifiers (unbounded matching cost), so results are returned as text only.';
+
+export type OutputSchemaDerivation = {
+  outputSchema?: JsonSchemaRecord;
+  // Agent-facing sentence explaining a withheld output schema (see above).
+  withheld?: string;
+};
+
+export const explainOutputSchema = (
   operation: OperationRecord,
   version: OpenapiVersion,
   options: OutputSchemaOptions = {},
-): JsonSchemaRecord | undefined => {
+): OutputSchemaDerivation => {
   if (hasUnboundedSuccess(operation.responses, options.defaultResponseIsError === true)) {
-    return undefined;
+    return {};
   }
   const successKeys = Object.keys(operation.responses).filter((key) => SUCCESS_STATUS_RE.test(key));
   if (successKeys.length === 0) {
-    return undefined;
+    return {};
   }
   const branches: JsonSchemaRecord[] = [];
   // Imperative on purpose: ANY single malformed/unbounded response branch
@@ -99,12 +111,12 @@ export const deriveOutputSchema = (
   for (const key of successKeys) {
     const response = operation.responses[key];
     if (!isRecord(response)) {
-      return undefined;
+      return {};
     }
     const content = isRecord(response['content']) ? response['content'] : undefined;
     if (content === undefined) {
       // No content at all (e.g. 204) — nothing to encode for this branch.
-      return undefined;
+      return {};
     }
     const contentKeys = Object.keys(content);
     const jsonKeys = contentKeys.filter((type) => isJsonContentType(type));
@@ -123,22 +135,24 @@ export const deriveOutputSchema = (
       jsonKeys.length !== 1 ||
       jsonKeys.length !== contentKeys.length
     ) {
-      return undefined;
+      return {};
     }
     const entry = content[contentType];
     if (!isRecord(entry)) {
-      return undefined;
+      return {};
     }
     // Response mode: undeclared fields stay allowed unless the spec says
     // `additionalProperties: false`, and writeOnly properties are optional —
     // see SchemaMode in schema.ts.
     const converted = convertSchema(entry['schema'] ?? {}, version, 0, 'response');
     if (!('ok' in converted)) {
-      return undefined;
+      return converted.unrepresentable.includes(UNSAFE_PATTERN_REASON)
+        ? { withheld: OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN }
+        : {};
     }
     const dataSchema = toDataSchema(converted.ok);
     if (dataSchema === undefined) {
-      return undefined;
+      return {};
     }
     branches.push({
       type: 'object',
@@ -151,5 +165,11 @@ export const deriveOutputSchema = (
       additionalProperties: false,
     });
   }
-  return { type: 'object', oneOf: branches };
+  return { outputSchema: { type: 'object', oneOf: branches } };
 };
+
+export const deriveOutputSchema = (
+  operation: OperationRecord,
+  version: OpenapiVersion,
+  options: OutputSchemaOptions = {},
+): JsonSchemaRecord | undefined => explainOutputSchema(operation, version, options).outputSchema;

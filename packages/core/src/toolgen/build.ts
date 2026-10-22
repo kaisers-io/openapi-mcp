@@ -7,7 +7,7 @@ import { composeDescription } from './description.ts';
 import { buildLayout } from './layout.ts';
 import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
-import { deriveOutputSchema } from './output-schema.ts';
+import { explainOutputSchema } from './output-schema.ts';
 import type { JsonSchemaRecord } from './output-schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
@@ -26,6 +26,10 @@ export type GeneratedTool = {
   // Surfaced by `tools`, and used at runtime to name the flag when an
   // undocumented 2xx arrives.
   outputSchemaAssumesDefaultIsError?: true;
+  // Why the tool has no outputSchema, when the agent should know (#39: a
+  // response `pattern` with nested quantifiers). Also folded into the
+  // description.
+  outputSchemaWithheld?: string;
 };
 
 export type BuildToolsResult = {
@@ -95,11 +99,11 @@ const buildToolEntry = (
       reason: `input schema cannot be represented as JSON Schema: ${wireResult.error}`,
     };
   }
-  const description = composeDescription(named.operation);
-  const annotations = deriveAnnotations(named.operation.method);
-  const outputSchema = deriveOutputSchema(named.operation, openapiVersion, {
+  const { outputSchema, withheld } = explainOutputSchema(named.operation, openapiVersion, {
     defaultResponseIsError,
   });
+  const description = composeDescription(named.operation, withheld);
+  const annotations = deriveAnnotations(named.operation.method);
   const assumesDefaultIsError =
     defaultResponseIsError &&
     outputSchema !== undefined &&
@@ -114,6 +118,7 @@ const buildToolEntry = (
     annotations,
     ...(outputSchema === undefined ? {} : { outputSchema }),
     ...(assumesDefaultIsError ? { outputSchemaAssumesDefaultIsError: true as const } : {}),
+    ...(withheld === undefined ? {} : { outputSchemaWithheld: withheld }),
   };
 };
 
