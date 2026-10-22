@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildTools, deriveOutputSchema, SYSTEM_HEADERS } from '../src/index.ts';
 import type { NamedOperation } from '../src/index.ts';
+import { isJsonApiResponse } from '../src/toolgen/pagination-links.ts';
 
 const op = (
   method: NamedOperation['operation']['method'],
@@ -98,25 +99,80 @@ describe('detectPagination (via buildTools)', () => {
     };
   };
 
+  const JSON_API = 'application/vnd.api+json';
+  const linksNext = { type: 'object', properties: { next: { type: 'string' } } };
+
   it.each([
-    ['the JSON:API media type', { 'application/vnd.api+json': { schema: { type: 'object' } } }],
+    ['the JSON:API media type', { [JSON_API]: { schema: { type: 'object' } } }, JSON_API],
     [
       'the JSON:API media type with parameters',
-      { 'application/vnd.api+json; ext="https://jsonapi.org/ext/atomic"': {} },
+      { [`${JSON_API}; ext="https://jsonapi.org/ext/atomic"`]: {} },
+      JSON_API,
     ],
     [
       'a schema declaring links.next',
       {
         'application/json': {
+          schema: { type: 'object', properties: { links: linksNext } },
+        },
+      },
+      'application/json',
+    ],
+    [
+      'a document composed with allOf',
+      {
+        'application/json': {
           schema: {
-            type: 'object',
-            properties: { links: { type: 'object', properties: { next: { type: 'string' } } } },
+            allOf: [
+              { properties: { data: { type: 'array' } } },
+              { properties: { links: linksNext } },
+            ],
           },
         },
       },
+      'application/json',
     ],
-  ])('reads JSON:API links.next for %s', (_label, content) => {
-    expect(planOf(withContent(content))?.jsonApiLinks).toBe(true);
+    [
+      'a links object composed with allOf',
+      {
+        'application/json': {
+          schema: {
+            properties: {
+              links: { allOf: [{ properties: { self: {} } }, { properties: { next: {} } }] },
+            },
+          },
+        },
+      },
+      'application/json',
+    ],
+  ])('reads JSON:API links.next for %s', (_label, content, essence) => {
+    expect(planOf(withContent(content))?.jsonApiLinks).toEqual({ '200': [essence] });
+  });
+
+  it('records the JSON:API branches per response, not for the whole operation', () => {
+    const base = withContent({ 'application/json': { schema: { type: 'object' } } });
+    const mixed: NamedOperation = {
+      ...base,
+      operation: {
+        ...base.operation,
+        responses: {
+          ...base.operation.responses,
+          '2xx': { description: 'other', content: { [JSON_API]: {} } },
+        },
+      },
+    };
+    const branches = planOf(mixed)?.jsonApiLinks;
+    expect(branches).toEqual({ '200': [], '2XX': [JSON_API] });
+    if (branches === undefined) {
+      return;
+    }
+    // The exact code documents a 200, so its plain JSON is never JSON:API;
+    // a 206 falls under the range.
+    expect(isJsonApiResponse(branches, 200, JSON_API)).toBe(false);
+    expect(isJsonApiResponse(branches, 206, `${JSON_API}; charset=utf-8`)).toBe(true);
+    expect(isJsonApiResponse(branches, 206, 'application/json')).toBe(false);
+    expect(isJsonApiResponse(branches, 206)).toBe(false);
+    expect(isJsonApiResponse(branches, 304, JSON_API)).toBe(false);
   });
 
   it.each([

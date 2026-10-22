@@ -15,28 +15,87 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 // media type (`application/vnd.api+json`), or a JSON schema that declares
 // `links.next`. An arbitrary body that merely happens to carry `links` is
 // never treated as a pagination link.
+//
+// Per RESPONSE, not per operation: an operation can document an ordinary
+// JSON 200 next to a JSON:API 206, and only a response that actually comes
+// back as one of the JSON:API branches (its status and media type) has its
+// `links` read. Otherwise adding an alternate format to a spec would
+// silently override the body cursor of the response that already worked.
 const JSON_API_ESSENCE = 'application/vnd.api+json';
 
-const declaresLinksNext = (schema: unknown): boolean => {
-  if (!isRecord(schema) || !isRecord(schema['properties'])) {
-    return false;
+// Documented 2xx status key (`200`, or a range such as `2XX`) -> the media
+// type essences whose body is JSON:API-shaped (possibly none: the key must
+// still be known, so an exact status is never matched by a range instead).
+export type JsonApiBranches = Readonly<Record<string, readonly string[]>>;
+
+// The `properties` maps of a schema and of its direct `allOf` members (one
+// level, the common way specs compose a JSON:API document from a shared
+// `links` part); deeper or conditional composition is not followed.
+const propertyMaps = (schema: unknown): Record<string, unknown>[] => {
+  if (!isRecord(schema)) {
+    return [];
   }
-  const { links } = schema['properties'];
-  return isRecord(links) && isRecord(links['properties']) && 'next' in links['properties'];
+  const members = Array.isArray(schema['allOf']) ? schema['allOf'] : [];
+  return [schema, ...members].flatMap((node: unknown) =>
+    isRecord(node) && isRecord(node['properties']) ? [node['properties']] : [],
+  );
 };
 
-export const declaresJsonApiLinks = (responses: Readonly<Record<string, unknown>>): boolean =>
-  Object.entries(responses).some(
-    ([status, response]) =>
-      status.startsWith('2') &&
-      isRecord(response) &&
-      isRecord(response['content']) &&
-      Object.entries(response['content']).some(
-        ([type, entry]) =>
-          parseMediaType(type)?.essence === JSON_API_ESSENCE ||
-          (isRecord(entry) && declaresLinksNext(entry['schema'])),
-      ),
+const declaresLinksNext = (schema: unknown): boolean =>
+  propertyMaps(schema).some(
+    (properties) =>
+      Object.hasOwn(properties, 'links') &&
+      propertyMaps(properties['links']).some((links) => Object.hasOwn(links, 'next')),
   );
+
+const jsonApiEssences = (response: unknown): string[] =>
+  isRecord(response) && isRecord(response['content'])
+    ? Object.entries(response['content']).flatMap(([type, entry]) => {
+        const essence = parseMediaType(type)?.essence;
+        return essence !== undefined &&
+          (essence === JSON_API_ESSENCE || (isRecord(entry) && declaresLinksNext(entry['schema'])))
+          ? [essence]
+          : [];
+      })
+    : [];
+
+// The operation's JSON:API branches, or undefined when it has none.
+export const jsonApiBranches = (
+  responses: Readonly<Record<string, unknown>>,
+): JsonApiBranches | undefined => {
+  const branches = Object.entries(responses).flatMap(([status, response]) =>
+    status.startsWith('2') ? [[status.toUpperCase(), jsonApiEssences(response)] as const] : [],
+  );
+  return branches.some(([, essences]) => essences.length > 0)
+    ? Object.fromEntries(branches)
+    : undefined;
+};
+
+// Whether the response actually returned is one of the JSON:API branches:
+// the exact status key documents it if present, else its `nXX` range (OAS
+// 3.1.1 §4.8.16.2: an explicit code takes precedence over a range), and
+// its Content-Type essence must be one of that response's JSON:API types.
+const documentedBranch = (
+  branches: JsonApiBranches,
+  status: number,
+): readonly string[] | undefined => {
+  const exact = String(status);
+  if (Object.hasOwn(branches, exact)) {
+    return branches[exact];
+  }
+  const range = `${exact.charAt(0)}XX`;
+  return Object.hasOwn(branches, range) ? branches[range] : undefined;
+};
+
+export const isJsonApiResponse = (
+  branches: JsonApiBranches,
+  status: number,
+  contentType?: string,
+): boolean => {
+  const documented = documentedBranch(branches, status);
+  const essence = contentType === undefined ? undefined : parseMediaType(contentType)?.essence;
+  return essence !== undefined && documented?.includes(essence) === true;
+};
 
 // Query wire name -> the tool field carrying it.
 type QueryFields = Readonly<Record<string, PaginationField>>;

@@ -1927,6 +1927,28 @@ describe('createExecutor — pagination hints', () => {
   });
 
   it.each([
+    ['only a non-pagination rel', '<https://api.example.test/docs>; rel="describedby"'],
+    ['a deprecation notice', '<https://api.example.test/sunset>; rel="deprecation"'],
+    ['an unparsable value', 'not a link header'],
+  ])('reads the body links.next when the Link header has %s', async (_label, link) => {
+    const { outcome } = await call(
+      jsonApiDocOp(numbered),
+      jsonApiDoc({ next: `${BASE}?page[number]=3` }, link),
+      {},
+    );
+    expect(nextOf(outcome)).toEqual({ page: { number: 3 } });
+  });
+
+  it('keeps a pagination Link header final even without rel=next (last page)', async () => {
+    const { outcome } = await call(
+      jsonApiDocOp(numbered),
+      jsonApiDoc({ next: `${BASE}?page[number]=3` }, `<${BASE}?page[number]=1>; rel="prev"`),
+      {},
+    );
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it.each([
     ['links.next null (last page)', { self: `${BASE}?page[number]=13`, next: null }],
     ['no links.next', { self: `${BASE}?page[number]=13` }],
     ['no links object', undefined],
@@ -1940,6 +1962,64 @@ describe('createExecutor — pagination hints', () => {
     ['an unparsable URL', { next: 'http://[::1' }],
   ])('yields next: null for a JSON:API body with %s', async (_label, links) => {
     const { outcome, valid } = await call(jsonApiDocOp(numbered), jsonApiDoc(links), {});
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  // JSON:API precedence belongs to the response actually returned, not to
+  // the operation: an ordinary JSON 200 next to a JSON:API 206 keeps its
+  // body cursor (review of #149).
+  const mixedOp: NamedOperation = {
+    toolName: 'listThings',
+    operation: {
+      method: 'get',
+      path: '/things',
+      tags: [],
+      deprecated: false,
+      parameters: [{ name: 'cursor', in: 'query', schema: { type: 'string' } }],
+      responses: {
+        '200': {
+          description: 'ok',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  next_cursor: { type: 'string' },
+                  links: { type: 'object', properties: { self: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        },
+        '206': {
+          description: 'partial',
+          content: { [JSON_API]: { schema: { type: 'object' } } },
+        },
+      },
+    },
+  };
+  const mixedBody = {
+    next_cursor: 'page-two',
+    links: { self: 'https://api.example.test/things?cursor=page-one' },
+  };
+  const mixedPage = (status: number, mediaType: string) => () =>
+    Response.json(mixedBody, { status, headers: { 'content-type': mediaType } });
+
+  it('keeps the body cursor of a plain JSON 200 when only another response is JSON:API', async () => {
+    const { outcome, valid } = await call(mixedOp, mixedPage(200, 'application/json'), {
+      cursor: 'page-one',
+    });
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toEqual({ cursor: 'page-two' });
+  });
+
+  it('treats the links object of an actual JSON:API response as final (no next -> null)', async () => {
+    const { outcome, valid } = await call(mixedOp, mixedPage(206, JSON_API), {
+      cursor: 'page-one',
+    });
     expect(outcome.isError).toBe(false);
     expect(valid).toBe(true);
     expect(nextOf(outcome)).toBeNull();
