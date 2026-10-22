@@ -38,9 +38,12 @@ export type NormalizedSpec = {
   omitted: readonly OmittedOperation[];
   // The resolved-or-absolute base-URL candidate from root `document.servers[0]`
   // (variable-default expanded). Undefined when unresolvable — fail-closed.
-  // The one throw is a result over SPEC_BUDGETS.maxServerUrlBytes, which is a
-  // resource-budget violation like the others. See `expandServerUrlTemplate`.
   serverUrl?: string;
+  // Set (with `serverUrl` undefined) when servers[0].url would expand past
+  // SPEC_BUDGETS.maxServerUrlBytes. Unlike a plain undefined, the consumer
+  // must NOT fall back to the document origin: it requires --base-url.
+  // `expandedBytes` feeds the warning (serverUrlRejectedWarning).
+  serverUrlRejected?: { expandedBytes: number };
   // True when `serverUrl` is a relative reference (no scheme) that still
   // needs a document base to resolve into an absolute URL.
   serverUrlIsRelative?: boolean;
@@ -128,11 +131,11 @@ const ABSOLUTE_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/iu;
 // Extracts the base-URL candidate from ROOT `document.servers[0]` only
 // (path/operation-level `servers` overrides stay omitted elsewhere in this
 // module). Fail-closed: any malformed shape yields `{}` rather than
-// throwing, and never affects the generated operation set. The exception is
-// an expansion over the byte budget, which rejects the spec (server-url.ts).
+// throwing, and never affects the generated operation set. An expansion over
+// the byte budget is marked `serverUrlRejected` instead (server-url.ts).
 const extractServerUrl = (
   document: Record<string, unknown>,
-): Pick<NormalizedSpec, 'serverUrl' | 'serverUrlIsRelative'> => {
+): Pick<NormalizedSpec, 'serverUrl' | 'serverUrlIsRelative' | 'serverUrlRejected'> => {
   const { servers } = document;
   if (!Array.isArray(servers) || servers.length === 0) {
     return {};
@@ -142,10 +145,14 @@ const extractServerUrl = (
     return {};
   }
   const variables = isRecord(first['variables']) ? first['variables'] : {};
-  const serverUrl = expandServerUrlTemplate(first['url'], variables);
-  if (serverUrl === undefined) {
+  const expansion = expandServerUrlTemplate(first['url'], variables);
+  if (expansion.kind === 'over-budget') {
+    return { serverUrlRejected: { expandedBytes: expansion.bytes } };
+  }
+  if (expansion.kind === 'unresolvable') {
     return {};
   }
+  const serverUrl = expansion.url;
   return ABSOLUTE_SCHEME_PATTERN.test(serverUrl)
     ? { serverUrl }
     : { serverUrl, serverUrlIsRelative: true };

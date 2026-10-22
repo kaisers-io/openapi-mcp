@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer';
-import { validationError } from '../errors.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -44,13 +43,33 @@ const expandedByteLength = (
   return bytes;
 };
 
+export type ServerUrlExpansion =
+  | { kind: 'expanded'; url: string }
+  // A placeholder without a string default, or a residual brace: no URL
+  | { kind: 'unresolvable' }
+  // The result would exceed SPEC_BUDGETS.maxServerUrlBytes; nothing was built
+  | { kind: 'over-budget'; bytes: number };
+
+// The operator-facing warning for an over-budget server URL. It names only the
+// byte count and the budget: the template and defaults are spec content,
+// possibly huge, and warnings reach stderr and MCP hosts.
+export const serverUrlRejectedWarning = (bytes: number): string =>
+  `servers[0].url expands to ${String(bytes)} bytes after variable substitution, over the ` +
+  `${String(SPEC_BUDGETS.maxServerUrlBytes)}-byte budget for a server URL, so it is ignored; ` +
+  'pass --base-url <url>, or shorten the URL or its variable defaults in the spec';
+
 // Substitute every `{name}` placeholder in a server URL template with
-// `variables[name].default`. Returns undefined (unresolvable) if any
-// placeholder lacks a matching `variables` entry with a string default.
-// Throws a validation error, before building anything, when the result would
-// exceed SPEC_BUDGETS.maxServerUrlBytes. The message names neither the
-// template nor a default: both are spec content, possibly huge, and the error
-// reaches stderr and MCP hosts.
+// `variables[name].default`. Unresolvable if any placeholder lacks a matching
+// `variables` entry with a string default. Over-budget, before anything is
+// built, when the result would exceed SPEC_BUDGETS.maxServerUrlBytes. That is
+// reported, not thrown: the check already bounds the work, and a throw would
+// reject a spec whose only problem is a URL that `--base-url` overrides
+// (normalize.ts marks it `serverUrlRejected`; serve requires --base-url then).
+//
+// No early exit on the running total in expandedByteLength: a placeholder
+// longer than its default shrinks the result, so a running total over the
+// budget can still end under it. The scan is bounded by the template, which
+// the source-byte budget already bounds.
 //
 // Single-pass only: `String.replace` with a global regex scans the ORIGINAL
 // template left-to-right exactly once and never re-scans replacement text.
@@ -61,26 +80,24 @@ const expandedByteLength = (
 // placeholder count each iteration, an exponential (~k*2^k) CPU/memory DoS
 // at spec-normalization time on untrusted spec content. A residual `{`/`}`
 // after the single pass (malformed template, or a default that itself
-// injected a brace) is fail-closed to undefined rather than resolved.
+// injected a brace) is fail-closed to unresolvable rather than resolved.
 export const expandServerUrlTemplate = (
   template: string,
   variables: Record<string, unknown>,
-): string | undefined => {
+): ServerUrlExpansion => {
   const bytes = expandedByteLength(template, variables);
   if (bytes === undefined) {
-    return undefined;
+    return { kind: 'unresolvable' };
   }
   if (bytes > SPEC_BUDGETS.maxServerUrlBytes) {
-    throw validationError(
-      `servers[0].url expands to ${String(bytes)} bytes after variable substitution — ` +
-        `exceeds the ${String(SPEC_BUDGETS.maxServerUrlBytes)}-byte budget for a server URL; ` +
-        'shorten the URL or its variable defaults in the spec',
-    );
+    return { kind: 'over-budget', bytes };
   }
   // Every placeholder has a string default here: expandedByteLength checked it
   const expanded = template.replaceAll(
     PLACEHOLDER_RE,
     (_whole: string, name: string) => defaultOf(variables, name) ?? '',
   );
-  return expanded.includes('{') || expanded.includes('}') ? undefined : expanded;
+  return expanded.includes('{') || expanded.includes('}')
+    ? { kind: 'unresolvable' }
+    : { kind: 'expanded', url: expanded };
 };

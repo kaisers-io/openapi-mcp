@@ -358,6 +358,35 @@ describe('runSpecPipeline — cache', () => {
     expect(result.warnings.join('\n')).toContain('cache');
   });
 
+  it('warns about an over-budget server URL on the first fetch AND when served from the cache (issue #37)', async () => {
+    const parsed = JSON.parse(remoteSpec('Big')) as Record<string, unknown>;
+    const big = JSON.stringify({
+      ...parsed,
+      servers: [
+        {
+          url: `https://a.example/${'{x}'.repeat(2000)}`,
+          variables: { x: { default: 'y'.repeat(5000) } },
+        },
+      ],
+    });
+    const cacheFs = memoryCacheFs();
+    const first = await runSpecPipeline(specUrl, cachedOpts, {
+      ...fileDeps,
+      fetcher: countingFetcher(big).fetcher,
+      cacheFs,
+    });
+    expect(first.spec.serverUrlRejected).toEqual({ expandedBytes: 10_000_018 });
+    expect(first.namedOperations).toHaveLength(1);
+    expect(first.warnings.join('\n')).toContain('2048-byte budget for a server URL');
+    const fresh = await runSpecPipeline(specUrl, cachedOpts, {
+      ...fileDeps,
+      fetcher: countingFetcher(big).fetcher,
+      cacheFs,
+    });
+    expect(fresh.cacheStatus).toBe('fresh');
+    expect(fresh.warnings.join('\n')).toContain('2048-byte budget for a server URL');
+  });
+
   it('writes the accepted baseline on a first-ever fetch (trust-on-first-use)', async () => {
     const cacheFs = memoryCacheFs();
     const { fetcher, calls } = countingFetcher(remoteSpec('Remote'));
