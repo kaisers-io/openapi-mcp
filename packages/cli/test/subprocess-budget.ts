@@ -14,14 +14,28 @@
 // SUBPROCESS_WAIT_MS bounds a single readiness wait inside a test (a port
 // coming up, a line arriving on a pipe). It is above the worst observed stall,
 // so a stall alone never trips it, and below SUBPROCESS_TEST_TIMEOUT_MS, so a
-// real hang still fails on the wait's own, more specific message first.
+// test that hangs in one wait fails on that wait's own, more specific message.
+// A test that chains waits gets no such guarantee: in serve-http.test.ts's
+// port retry, a candidate that neither binds nor exits uses the full 20 s, the
+// respawn on the next port cannot finish in the 10 s left, and the test ends
+// on vitest's generic timeout instead. It still fails, just less specifically.
 export const SUBPROCESS_WAIT_MS = 20_000;
 export const SUBPROCESS_TEST_TIMEOUT_MS = 30_000;
 
 // The files whose tests spawn the CLI. Both cli vitest configs read this list,
-// so each file is in exactly one of the two projects.
+// so each file is in exactly one of the two projects. A new test file that
+// imports node:child_process must be added here or to
+// LIGHT_SUBPROCESS_FILES below; subprocess-budget.test.ts fails otherwise.
 export const SUBPROCESS_E2E_FILES = [
   'test/cache-concurrency.test.ts',
   'test/serve.test.ts',
   'test/serve-http.test.ts',
 ];
+
+// Test files that start a child process but stay in the unit project, each
+// with the reason it fits the 5 s default. Paths are relative to the
+// repository root, so files of any package can be listed.
+export const LIGHT_SUBPROCESS_FILES: Readonly<Record<string, string>> = {
+  'packages/cli/test/context.test.ts':
+    'one spawnSync of `node -e` that loads context.ts only (umask probe), not the CLI',
+};
