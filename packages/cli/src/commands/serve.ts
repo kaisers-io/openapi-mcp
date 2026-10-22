@@ -4,6 +4,7 @@ import {
   buildSnapshot,
   buildTools,
   compileEnvelopeValidator,
+  createClientCredentialsSource,
   createExecutor,
   createMetaExecutor,
   createRateLimiter,
@@ -28,6 +29,7 @@ import type {
 import pkg from '../../package.json' with { type: 'json' };
 import { registerApiOptions, resolveApiConfig } from '../api-options.ts';
 import type { ApiCmdOpts } from '../api-options.ts';
+import { resolveTokenUrl } from '../oauth-options.ts';
 import type { CliContext } from '../context.ts';
 import { emitError, emitWarnings } from '../output.ts';
 import {
@@ -311,6 +313,28 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         );
       }
 
+      // OAuth2 client-credentials: the token URL receives the client
+      // secret, so it is resolved and checked here, at startup — shape and
+      // origin (resolveTokenUrl), then the same bounded egress
+      // classification as an untrusted base (metadata never; private only
+      // with --allow-private-network — even for --oauth-token-url). The
+      // per-request DNS pin remains the runtime control.
+      const { oauth } = apiConfig;
+      const tokenUrl =
+        oauth === undefined ? undefined : resolveTokenUrl(oauth, result.spec, resolvedBase.url);
+      if (tokenUrl !== undefined) {
+        try {
+          await assertAllowedRedirectTarget(
+            tokenUrl,
+            { allowPrivateNetwork },
+            ctx.lookup,
+            AbortSignal.timeout(args.options.timeoutMs),
+          );
+        } catch (error) {
+          throw validationError(`the OAuth token URL is refused: ${describeCause(error)}`);
+        }
+      }
+
       // One redactor for the whole process: every resolved secret this
       // server ever holds — the spec-fetch auth header values, the API
       // --header/--header-env values, and the HTTP bearer token (if any) —
@@ -358,6 +382,29 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         },
         maxConcurrent: MAX_CONCURRENT_UPSTREAM_CALLS,
         validators,
+        ...(oauth === undefined || tokenUrl === undefined
+          ? {}
+          : {
+              oauth: {
+                // Access tokens are registered with `redactor` as they are
+                // issued, so they are scrubbed like any startup secret.
+                tokens: createClientCredentialsSource(
+                  {
+                    tokenUrl,
+                    clientId: oauth.clientId,
+                    clientSecret: oauth.clientSecret,
+                    scopes: oauth.scopes,
+                    clientAuth: oauth.clientAuth,
+                    allowPrivateNetwork,
+                    timeoutMs: args.options.timeoutMs,
+                    redactor,
+                    now: ctx.now,
+                  },
+                  ctx.transport,
+                ),
+                envVarHint: oauth.envVarHint,
+              },
+            }),
       };
       // ONE executor instance, shared by the stdio AND HTTP branches below,
       // so the global outbound-concurrency semaphore is genuinely shared.
@@ -389,7 +436,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...unsatisfiedSecurityWarnings(
           result.spec,
           built.tools.map((tool) => tool.operation),
-          { headerNames: configuredHeaderNames },
+          { headerNames: configuredHeaderNames, oauthClientCredentials: oauth !== undefined },
         ),
       ]);
       if (httpConfig === undefined) {

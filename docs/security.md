@@ -72,7 +72,7 @@ generated API request:
 ## Credential hygiene
 
 - Secrets are read **exclusively** from environment variables named by `--spec-header-env`,
-  `--header-env`, and `--http-token-env`. They are never accepted as literal flag values,
+  `--header-env`, `--oauth-client-id-env`/`--oauth-client-secret-env`, and `--http-token-env`. They are never accepted as literal flag values,
   never written to argv (visible via `ps` on a shared machine), never written to the on-disk
   cache, and never included in logs, tool schemas, or tool results.
 - A referenced env var that is missing or empty at startup is a hard, immediate error naming
@@ -98,6 +98,12 @@ generated API request:
   bare credential is redacted too, and for `Basic` also the decoded `user:password` and the
   password alone (each only when 8+ characters; the user name alone is not treated as
   secret). Empty secrets are rejected at startup rather than silently redacting nothing.
+- OAuth2 access tokens obtained at runtime (`--oauth-*`) are registered with the same
+  redactor before their first use, so they are scrubbed exactly like startup secrets. A token
+  stays registered until it has expired; a token that cannot be registered (or would exceed
+  the bound of 256 unexpired tokens) is never used. Token-endpoint error bodies are never
+  echoed — only the HTTP status and, if it is one of RFC 6749's registered codes, the `error`
+  code.
 - There is no "show env/config/debug request" tool — nothing exposes the resolved secret
   values back through MCP.
 - For safe terminal testing, see the README's [Secrets](../README.md#secrets) section

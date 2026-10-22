@@ -186,7 +186,8 @@ loudly. Full flag reference: [`docs/configuration.md`](docs/configuration.md).
 ## Secrets
 
 Secrets are read **exclusively** from environment variables named by `--spec-header-env`
-(spec fetch), `--header-env` (API requests), and `--http-token-env` (HTTP transport) — never
+(spec fetch), `--header-env` and `--oauth-client-id-env`/`--oauth-client-secret-env` (API
+requests; the latter for OAuth2 client credentials), and `--http-token-env` (HTTP transport) — never
 from argv, config files, or the model context:
 
 - `--spec-header-env Header=ENV` / `--header-env Header=ENV` — **equals** syntax; the value

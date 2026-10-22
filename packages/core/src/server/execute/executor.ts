@@ -1,6 +1,11 @@
 import { isIP } from 'node:net';
 import { pinnedRequest } from '../../http/pinned-dispatcher.ts';
-import type { HopHeaders, PinnedDeps, PinnedRequestOptions } from '../../http/pinned-dispatcher.ts';
+import type {
+  HopHeaders,
+  PinnedDeps,
+  PinnedOutcome,
+  PinnedRequestOptions,
+} from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
@@ -40,6 +45,19 @@ export type ExecutorConfig = {
   // By tool name; compiled eagerly once at server startup — this module only
   // looks the map up per call.
   validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
+  // OAuth2 client-credentials (--oauth-*): every call carries
+  // `Authorization: Bearer <token>` from this source, and an upstream 401
+  // invalidates the token and replays the request ONCE with a fresh one.
+  // `envVarHint` names the client id/secret env vars for error hints.
+  // `tokens` is structurally http/oauth-client-credentials.ts's TokenSource
+  // (spelled out here to keep this module's dependency set unchanged).
+  oauth?: {
+    tokens: {
+      getToken: () => Promise<{ ok: string } | { error: string }>;
+      invalidate: (token: string) => void;
+    };
+    envVarHint: string;
+  };
 };
 
 export type ExecutorDeps = {
@@ -85,7 +103,7 @@ const isLoopbackHost = (hostname: string): boolean => {
 // entirely (no request is ever sent) unless the operator explicitly opted in
 // via --allow-insecure-http.
 const cleartextBlocked = (config: ExecutorConfig, base: URL): boolean =>
-  config.secretHeaders.length > 0 &&
+  (config.secretHeaders.length > 0 || config.oauth !== undefined) &&
   base.protocol === 'http:' &&
   !config.allowInsecureHttp &&
   !isLoopbackHost(base.hostname);
@@ -130,6 +148,7 @@ const assembleHeaders = (
   config: ExecutorConfig,
   contentType: string | undefined,
   toolHeaders: Readonly<Record<string, string>>,
+  bearer: string | undefined,
 ): HopHeaders => {
   // Kept as sequential bracket assignments (not a spread build): the write
   // ORDER is the precedence contract, and bracket assignment on a plain
@@ -150,6 +169,11 @@ const assembleHeaders = (
   }
   for (const header of config.secretHeaders) {
     sameOriginHeaders[header.name.toLowerCase()] = header.value;
+  }
+  // The OAuth2 access token, last of all. --header-env Authorization is a
+  // startup usage error alongside --oauth-*, so nothing is overwritten.
+  if (bearer !== undefined) {
+    sameOriginHeaders['authorization'] = `Bearer ${bearer}`;
   }
   const crossOriginHeaders: Record<string, string> =
     contentType === undefined ? {} : { 'content-type': contentType };
@@ -263,28 +287,63 @@ const runUpstreamCall = async (
   if (finalUrl.origin !== base.origin || !withinBasePath(finalUrl.pathname, base.pathname)) {
     return isError('the final request URL escaped the configured base URL');
   }
-  const headers = assembleHeaders(config, built.ok.contentType, built.ok.headers);
-  if (overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)) {
+  // One wire attempt with the given bearer token (none without --oauth-*).
+  // The final budgets are re-checked per attempt: a refreshed token can
+  // differ in length.
+  const attempt = async (bearer: string | undefined): Promise<PinnedOutcome | undefined> => {
+    const headers = assembleHeaders(config, built.ok.contentType, built.ok.headers, bearer);
+    if (overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)) {
+      return undefined;
+    }
+    const requestOptions: PinnedRequestOptions = {
+      method,
+      headers,
+      ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
+      baseTrusted: config.baseTrusted,
+      allowPrivateNetwork: config.allowPrivateNetwork,
+      timeoutMs: config.timeoutMs,
+      maxResponseBytes: config.maxResponseBytes,
+      signal,
+    };
+    return await pinnedRequest(finalUrl, requestOptions, deps.transport);
+  };
+  const { oauth } = config;
+  // A token failure is a tool error naming the env vars to check; its text
+  // never carries endpoint-supplied prose (see oauth-client-credentials.ts).
+  const tokenError = (error: string): ToolCallOutcome =>
+    isError(`${error} (check the ${oauth?.envVarHint ?? ''} environment variables)`);
+  const first = oauth === undefined ? undefined : await oauth.tokens.getToken();
+  if (first !== undefined && 'error' in first) {
+    return tokenError(first.error);
+  }
+  let outcome = await attempt(first?.ok);
+  // Exactly one replay on 401: the request was not authorized, so it had no
+  // effect — replaying it once (writes included) with a fresh token is safe.
+  // A second 401 is returned like any other.
+  if (
+    oauth !== undefined &&
+    first !== undefined &&
+    outcome?.kind === 'response' &&
+    outcome.status === 401
+  ) {
+    oauth.tokens.invalidate(first.ok);
+    const fresh = await oauth.tokens.getToken();
+    if ('error' in fresh) {
+      return tokenError(fresh.error);
+    }
+    outcome = await attempt(fresh.ok);
+  }
+  if (outcome === undefined) {
     return isError('the final request exceeds the outbound resource budget');
   }
-  const requestOptions: PinnedRequestOptions = {
-    method,
-    headers,
-    ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
-    baseTrusted: config.baseTrusted,
-    allowPrivateNetwork: config.allowPrivateNetwork,
-    timeoutMs: config.timeoutMs,
-    maxResponseBytes: config.maxResponseBytes,
-    signal,
-  };
-  const outcome = await pinnedRequest(finalUrl, requestOptions, deps.transport);
   const [firstSecretHeader] = config.secretHeaders;
+  const envVarHint = oauth?.envVarHint ?? firstSecretHeader?.envVar;
   return mapResponse({
     outcome,
     validator,
     outputSchema: tool.wireTool.outputSchema,
     redactor: config.redactor,
-    ...(firstSecretHeader === undefined ? {} : { envVarHint: firstSecretHeader.envVar }),
+    ...(envVarHint === undefined ? {} : { envVarHint }),
     maxTextBytes: DISPLAY_TEXT_MAX,
   });
 };

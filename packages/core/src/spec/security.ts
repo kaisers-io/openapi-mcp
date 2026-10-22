@@ -1,13 +1,10 @@
 import { DISPLAY_TEXT_MAX, sanitizeSpecText } from './sanitize.ts';
 
-// `components.securitySchemes` and the root/operation `security`
-// requirements (OpenAPI 3.x Security Scheme / Security Requirement Objects).
-// Read for two purposes only: telling the operator which credential a spec
-// expects (`tools` hints, `serve` startup warnings) and locating an OAuth2
-// client-credentials token endpoint. Nothing here changes how a request is
-// built — a credential still only ever comes from an operator-configured
-// env var — so every malformed shape degrades to "no information", never to
-// a startup failure.
+// OpenAPI 3.x `components.securitySchemes` and `security` requirements, read
+// only to tell the operator which credential a spec expects and to locate an
+// OAuth2 client-credentials token endpoint. A credential still only ever
+// comes from an operator-configured env var, so every malformed shape
+// degrades to "no information", never to a startup failure.
 
 export type ClientCredentialsFlow = {
   // Raw spec text: a URL (possibly relative to the server URL, OAS §4.7) that
@@ -125,6 +122,8 @@ export const parseSecurityRequirements = (value: unknown): SecurityRequirement[]
 export type ConfiguredCredentials = {
   // Lowercased names of every --header / --header-env header.
   headerNames: ReadonlySet<string>;
+  // --oauth-*: satisfies any oauth2 scheme with a clientCredentials flow.
+  oauthClientCredentials?: boolean;
 };
 
 const satisfies = (
@@ -136,15 +135,15 @@ const satisfies = (
   }
   switch (scheme.type) {
     case 'apiKey': {
-      if (scheme.in === 'query') {
-        return false;
-      }
-      return configured.headerNames.has(
-        scheme.in === 'cookie' ? 'cookie' : scheme.paramName.toLowerCase(),
-      );
+      const header = scheme.in === 'cookie' ? 'cookie' : scheme.paramName.toLowerCase();
+      return scheme.in !== 'query' && configured.headerNames.has(header);
+    }
+    case 'oauth2': {
+      const ours =
+        configured.oauthClientCredentials === true && scheme.clientCredentials !== undefined;
+      return ours || configured.headerNames.has('authorization');
     }
     case 'http':
-    case 'oauth2':
     case 'openIdConnect': {
       return configured.headerNames.has('authorization');
     }
@@ -185,7 +184,7 @@ export const describeSecurityScheme = (scheme: SecurityScheme): string => {
     }
     case 'oauth2': {
       if (scheme.clientCredentials !== undefined) {
-        return `${label} (oauth2 clientCredentials) — ${authorizationHint('Bearer <token>')}`;
+        return `${label} (oauth2 clientCredentials) — pass --oauth-client-id-env <ENV> and --oauth-client-secret-env <ENV>, or ${authorizationHint('Bearer <token>')}`;
       }
       const flows = scheme.flows.length === 0 ? 'no flows' : scheme.flows.join(', ');
       return `${label} (oauth2 ${flows}) — interactive OAuth flows are not supported; ${authorizationHint('Bearer <token>')} with a token obtained elsewhere`;
@@ -228,10 +227,8 @@ const effectiveRequirements = (
   operation: SecuredOperation,
 ): readonly SecurityRequirement[] => operation.security ?? spec.security ?? [];
 
-// Schemes referenced by the given (exposed) operations, in declaration
-// order, each with its hint. A requirement naming an undeclared scheme is
-// skipped here (it has nothing to describe) but still counts as unsatisfied
-// in `unsatisfiedSecurityWarnings`.
+// Declared schemes the given (exposed) operations reference, each with its
+// hint (an undeclared name has nothing to describe; it is only warned about).
 export const summarizeSecurity = (
   spec: SecuritySpec,
   operations: readonly SecuredOperation[],
@@ -258,9 +255,8 @@ export const summarizeSecurity = (
 const MAX_WARNINGS = 8;
 
 // One warning per distinct unsatisfied requirement list among the given
-// operations: "N exposed operations (e.g. GET /x) require ... — <hints>".
-// An operation is satisfied when ANY alternative has ALL its schemes
-// satisfied (an empty alternative always is).
+// operations. An operation is satisfied when ANY alternative has ALL its
+// schemes satisfied (an empty alternative always is).
 export const unsatisfiedSecurityWarnings = (
   spec: SecuritySpec,
   operations: readonly SecuredOperation[],

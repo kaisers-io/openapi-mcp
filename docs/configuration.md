@@ -57,6 +57,12 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
+| `--oauth-client-id-env <ENV>` | no | OAuth2 client-credentials: env var holding the client id | none |
+| `--oauth-client-secret-env <ENV>` | no | OAuth2 client-credentials: env var holding the client secret (secret) | none |
+| `--oauth-scheme <name>` | no | which oauth2 `securitySchemes` entry to use when several have a `clientCredentials` flow | the only one |
+| `--oauth-scope <scope>` | yes | scope to request | none |
+| `--oauth-token-url <url>` | no | override (or confirm a cross-origin) spec `tokenUrl` | spec `tokenUrl` |
+| `--oauth-client-auth <method>` | no | `client_secret_basic` or `client_secret_post` (RFC 6749 §2.3.1) | `client_secret_basic` |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
@@ -69,6 +75,28 @@ Notes:
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
+
+OAuth2 client credentials (RFC 6749 §4.4): with `--oauth-client-id-env` and
+`--oauth-client-secret-env` (both required together), `serve` obtains the access token itself
+and sends it as `Authorization: Bearer <token>` on every API request.
+
+- The token URL is the selected scheme's `flows.clientCredentials.tokenUrl` (relative URLs
+  resolve against the API base URL), or `--oauth-token-url`. A spec token URL on a different
+  origin than the API base is a startup error unless `--oauth-token-url` names it — the client
+  secret is sent there. It must be `https` (`http` only for loopback), and it goes through the
+  same egress policy as API requests: cloud-metadata addresses are always refused, private and
+  loopback addresses need `--allow-private-network`, DNS is pinned, and a redirect from the
+  token endpoint is never followed.
+- Tokens are cached in memory only and refreshed 60 s (or 10 % of the lifetime, whichever is
+  smaller) before `expires_in`; without `expires_in` a token is reused for at most an hour.
+  Concurrent calls share one token request.
+- An upstream `401` discards the token, fetches a new one and replays the request exactly
+  once (a 401 means the request was not authorized, so this applies to writes too). A second
+  `401` is returned as usual.
+- Scopes are only what `--oauth-scope` lists; they are not inferred from `security`.
+- `--oauth-*` together with `--header-env Authorization=...` is a usage error. The
+  authorization-code, device-code and password flows, mTLS and `private_key_jwt` are not
+  supported.
 
 Example:
 

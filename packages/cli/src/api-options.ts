@@ -9,6 +9,8 @@ import {
 } from '@kaisers-io/openapi-mcp-core';
 import type { HeaderEnvMapping } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
+import { resolveOAuthConfig } from './oauth-options.ts';
+import type { OAuthCmdOpts, ResolvedOAuthConfig } from './oauth-options.ts';
 
 const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,
@@ -109,9 +111,11 @@ export type ResolvedApiConfig = {
   secretValues: string[];
   maxResponseBytes: number;
   allowInsecureHttp: boolean;
+  // Present iff --oauth-* was given (see oauth-options.ts).
+  oauth?: ResolvedOAuthConfig;
 };
 
-export type ApiCmdOpts = {
+export type ApiCmdOpts = OAuthCmdOpts & {
   // Same commander generic-constraint workaround as SpecCmdOpts
   // (spec-options.ts): a plain object literal type is rejected by
   // `Command<[], Opts>`'s `Opts extends OptionValues` constraint without an
@@ -150,6 +154,30 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     .option(
       '--allow-insecure-http',
       'permit an operator credential (--header-env) over cleartext http to a non-loopback origin',
+    )
+    .option(
+      '--oauth-client-id-env <ENV>',
+      'OAuth2 client-credentials: env var holding the client id',
+    )
+    .option(
+      '--oauth-client-secret-env <ENV>',
+      'OAuth2 client-credentials: env var holding the client secret (secret)',
+    )
+    .option(
+      '--oauth-scheme <name>',
+      'which oauth2 securitySchemes entry to use when the spec declares several',
+    )
+    .option(
+      '--oauth-scope <scope>',
+      'scope to request (repeatable; none by default)',
+      collect,
+      [] as readonly string[],
+    )
+    .option('--oauth-token-url <url>', "override the spec's clientCredentials tokenUrl")
+    .option(
+      '--oauth-client-auth <method>',
+      'client authentication: client_secret_basic or client_secret_post',
+      'client_secret_basic',
     );
 
 // Shared by both header groups so the name/value size checks are defined
@@ -335,6 +363,14 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
       .map((header) => header.value)
       .filter((value) => value.length >= MIN_SECRET_REGISTRATION_LENGTH),
   ];
+  const oauth = resolveOAuthConfig(
+    cmdOpts,
+    new Set(secretHeaders.map((header) => header.name.toLowerCase())),
+    ctx.env,
+  );
+  if (oauth !== undefined) {
+    secretValues.push(...oauth.secretValues);
+  }
   const maxResponseBytes = parseMaxResponseBytes(cmdOpts.maxResponseBytes);
   const baseUrlOverride =
     cmdOpts.baseUrl === undefined ? undefined : validateBaseUrl(cmdOpts.baseUrl);
@@ -346,5 +382,6 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
     secretValues,
     maxResponseBytes,
     allowInsecureHttp: cmdOpts.allowInsecureHttp === true,
+    ...(oauth === undefined ? {} : { oauth }),
   };
 };

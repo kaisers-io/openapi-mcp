@@ -10,7 +10,7 @@ export {
 } from './errors.ts';
 export type { ExitCode, RenderedError } from './errors.ts';
 export { createRedactor } from './redact.ts';
-export type { Redactor } from './redact.ts';
+export type { Redactor, RuntimeRedactor } from './redact.ts';
 export {
   MAX_DURATION_MS,
   parseByteSize,
@@ -42,6 +42,16 @@ export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
 export { assertAllowedRedirectTarget, classifyAddress } from './http/egress.ts';
 export type { AddressClass, DnsLookup, EgressPolicyOptions } from './http/egress.ts';
 export { pinnedRequest } from './http/pinned-dispatcher.ts';
+export {
+  clientSecretBasic,
+  createClientCredentialsSource,
+} from './http/oauth-client-credentials.ts';
+export type {
+  ClientAuthMethod,
+  ClientCredentialsConfig,
+  TokenResult,
+  TokenSource,
+} from './http/oauth-client-credentials.ts';
 export type {
   HopHeaders,
   PinnedDeps,
