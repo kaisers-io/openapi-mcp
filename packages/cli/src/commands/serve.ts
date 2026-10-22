@@ -415,6 +415,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           // bearer.
           allowedOrigins: new Set(),
           allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
+          // `http://localhost:<port>/` is how many clients are configured;
+          // the listener is the same loopback socket (IPv4 only, so no
+          // `[::1]` alias).
+          allowedHostAliases: new Set([`localhost:${String(httpConfig.port)}`]),
           bearer: { configuredToken: httpConfig.token },
         };
         const httpServer = createStreamableHttpServer({
