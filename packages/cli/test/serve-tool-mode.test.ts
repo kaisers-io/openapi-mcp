@@ -193,7 +193,7 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
     } finally {
       await upstream.close();
     }
-  }, 20_000);
+  });
 
   it('warns at startup when discover exposes a non-read-only operation through call_operation', async () => {
     const proc = await spawnServe([
@@ -216,7 +216,7 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
       '--tool-mode discover exposes 1 non-read-only operation(s) (createPet) through the single call_operation tool',
     );
     expect(text).toContain('--tool-mode per-operation');
-  }, 20_000);
+  });
 
   it('does not warn about approval under discover when every exposed operation is read-only', async () => {
     const proc = await spawnServe([
@@ -230,7 +230,7 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
     const { request, stderr } = session(proc);
     await request('tools/list');
     expect(stderr.join('')).not.toContain('non-read-only');
-  }, 20_000);
+  });
 
   it('lifts the 512-tool budget for discover only: 600 exposed operations fail per-operation and serve under discover and auto', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'openapi-mcp-big-spec-'));
@@ -287,5 +287,5 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
     });
     expect(await exitOf(proc)).toBe(2);
     expect(stderr).toContain('--tool-mode "dynamic" is not one of per-operation, discover, auto');
-  }, 10_000);
+  });
 });

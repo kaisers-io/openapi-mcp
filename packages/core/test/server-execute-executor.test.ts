@@ -504,6 +504,33 @@ describe('createExecutor — cancellation and redaction', () => {
     expect(outcome.isError).toBe(true);
     expect(outcome.content[0]?.text).not.toContain(secret);
   });
+
+  // Issue #58, end to end: the redactor is built from the header VALUE
+  // exactly as serve.ts registers it (`Bearer <token>`), the header really
+  // goes out, and the upstream echoes only the bare token.
+  it('redacts the bare token of a `Bearer <token>` header echoed in an upstream error body', async () => {
+    const token = 'example-token-not-a-secret';
+    const headerValue = `Bearer ${token}`;
+    const snapshot = buildToolSnapshot([pingOp]);
+    const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() =>
+      textResponse(500, `{"error":"invalid api key ${token}"}`),
+    );
+    const executor = createExecutor(
+      baseConfig({
+        secretHeaders: [{ name: 'Authorization', value: headerValue, envVar: 'API_TOKEN' }],
+        redactor: createRedactor([headerValue]),
+        validators: validatorsFor(snapshot),
+      }),
+      deps,
+    );
+    const outcome = await executor(tool, {}, freshSignal());
+    expect(calls[0]?.init.headers?.['authorization']).toBe(headerValue);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toBe(
+      'upstream request failed with status 500: {"error":"invalid api key [redacted]"}',
+    );
+  });
 });
 
 describe('createExecutor — fail-closed wiring', () => {

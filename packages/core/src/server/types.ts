@@ -63,6 +63,8 @@ export type MetaSummary = {
   readonly omittedReasons: readonly OmittedOperation[];
   readonly acceptedContentHash: string;
   readonly deadPatternCount: number;
+  // See META_OUTPUT_SCHEMA in snapshot.ts
+  readonly cacheLock?: 'held' | 'stale';
 };
 
 export type ServerSnapshot = {

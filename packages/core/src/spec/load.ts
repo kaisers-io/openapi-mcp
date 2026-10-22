@@ -64,6 +64,11 @@ export const parseSpecSource = (raw: string, opts: { cwd: string }): SpecSource 
 export const hashContent = (text: string): string =>
   createHash('sha256').update(text, 'utf8').digest('hex');
 
+// For bytes as read from disk: equal to hashContent(text) whenever the bytes
+// are text's UTF-8 encoding, without decoding and re-encoding them first
+export const hashBytes = (bytes: Uint8Array): string =>
+  createHash('sha256').update(bytes).digest('hex');
+
 export type LoadedSpecText = {
   text: string;
   contentHash: string;

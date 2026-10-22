@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
-import { convertSchema } from './schema.ts';
+import { convertSchema, memoizedJsonSchema } from './schema.ts';
 
 export type JsonSchemaRecord = Record<string, unknown>;
 
@@ -110,7 +110,9 @@ export const deriveOutputSchema = (
     if (!('ok' in converted)) {
       return undefined;
     }
-    const dataSchema = toDataSchema(converted.ok);
+    // The same response schema (one shared node, one memoized Zod schema) is
+    // emitted once per build, not once per operation that returns it
+    const dataSchema = memoizedJsonSchema(converted.ok, toDataSchema);
     if (dataSchema === undefined) {
       return undefined;
     }

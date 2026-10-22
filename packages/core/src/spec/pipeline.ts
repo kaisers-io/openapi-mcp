@@ -3,8 +3,11 @@ import type { CacheFs } from '../cache/fs.ts';
 import { resolveCachePolicy } from '../cache/paths.ts';
 import type { CacheLayout } from '../cache/paths.ts';
 import { readCacheEntry, touchRevalidated, writeAccepted, writeCandidate } from '../cache/store.ts';
+import { isStaleRevisionError } from '../cache/revision.ts';
+import type { ExpectedRevision } from '../cache/revision.ts';
 import type { CacheEntry } from '../cache/store.ts';
 import { evaluateFreshness } from '../cache/ttl.ts';
+import { CACHE_META_SCHEMA_VERSION } from '../schemas/cache.ts';
 import { usageError, validationError } from '../errors.ts';
 import { applyFilters } from '../filter/engine.ts';
 import type { DeadPattern } from '../filter/engine.ts';
@@ -14,14 +17,15 @@ import type { ResolvedHeader } from '../http/headers.ts';
 import { assignToolNames } from '../toolgen/naming.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
-import { dereference } from './dereference.ts';
+import { checkRefs, createDereferencer } from './dereference.ts';
 import { fetchSpecConditional } from './fetch.ts';
 import type { FetchSpecDeps } from './fetch.ts';
 import { loadSpecFromFile, parseSpecSource } from './load.ts';
 import type { LoadedSpecText } from './load.ts';
 import { normalizeSpec } from './normalize.ts';
-import type { NormalizedSpec } from './normalize.ts';
+import type { NormalizedSpec, OmittedOperation, OperationRecord } from './normalize.ts';
 import { parseSpecText } from './parse.ts';
+import { operationKeysOf, pendingCandidateKeys, withholdRemoved } from './pending-candidate.ts';
 import { validateOpenApiDocument } from './validate.ts';
 import type { OpenapiVersion } from './validate.ts';
 
@@ -73,9 +77,26 @@ export type SpecPipelineResult = {
   deadPatterns: readonly DeadPattern[];
   warnings: readonly string[];
   cacheStatus: CacheStatus;
+  // Accepted operations hidden because the pending candidate removed them
+  // (#60); empty when no candidate is waiting
+  withheldOperations: readonly OmittedOperation[];
+  // Set when this run could not record its revalidation because another
+  // process holds the cache entry's writer lock (#65): "held" while a live
+  // writer is busy, "stale" when the holder looks gone, which will not clear
+  // by itself (an operator runs "openapi-mcp cache unlock")
+  cacheLock?: CacheLockState | undefined;
 };
 
+export type CacheLockState = 'held' | 'stale';
+
+// `spec` is normalized from the NOT yet dereferenced `document` (decision D2,
+// issue #89): its operations carry the raw parameters, request body and
+// responses, $refs included. Only the operations that survive filtering are
+// dereferenced, in finish.
 type ProcessedSpec = {
+  // RAW operations (issue #89): parameters, requestBody and responses may
+  // still hold `$ref`s. Only `namedOperations` in the result are dereferenced;
+  // nothing may read schemas from spec.operations.
   spec: NormalizedSpec;
   document: Record<string, unknown>;
 };
@@ -102,36 +123,70 @@ const enforceToolBudget = (exposedCount: number, maxToolCount: number): void => 
   }
 };
 
-// Parse, validate, dereference, normalize, and enforce the raw operation cap.
-// Every cache write happens downstream of this function, so an unvalidated or
-// over-limit spec can never reach the disk.
+// Parse, validate, check every $ref, normalize, and enforce the raw operation
+// cap. Every cache write happens downstream of this function, so an
+// unvalidated, dangling-$ref or over-limit spec can never reach the disk. The
+// validated document itself is what gets cached (decision D1): it is the
+// source's own size, where its dereferenced form was 15-30x larger.
 const processSpecText = (text: string): ProcessedSpec => {
   const parsed = parseSpecText(text);
   const validated = validateOpenApiDocument(parsed);
-  const dereferenced = dereference(validated.document);
-  const spec = normalizeSpec(dereferenced, validated.version);
+  checkRefs(validated.document);
+  const spec = normalizeSpec(validated.document, validated.version);
   enforceOperationBudget(spec);
-  return { spec, document: dereferenced };
+  return { spec, document: validated.document };
 };
 
-// A cached document is already parsed and already dereferenced, so this path
-// skips both. It also does NOT re-validate against the meta-schema: these
+// A cached document is already parsed, so this path skips that. It also does
+// NOT re-validate against the meta-schema: these
 // bytes were validated before they were written and readCacheEntry has
 // already checked their sha256 against meta.acceptedContentHash. The 3.0/3.1
 // discriminator that would otherwise have been the reason to revalidate comes
 // from meta.openapiVersion, which is persisted for exactly this.
+// Entries written before the cache format bump hold the dereferenced document
+// instead of the source one; that is still a valid, $ref-free (up to cycle
+// markers) document and goes through the same path.
 const processCachedDocument = (
   document: Record<string, unknown>,
   openapiVersion: OpenapiVersion,
-): NormalizedSpec => {
+): ProcessedSpec => {
   const spec = normalizeSpec(document, openapiVersion);
   // Re-enforced per run: an entry written under an older, larger limit must
   // not bypass the current one. The exposed-set budget runs in finish.
   enforceOperationBudget(spec);
-  return spec;
+  return { spec, document };
 };
 
-export const runSpecPipeline = async (
+// FAIL CLOSED on a corrupt entry. A silent refetch would re-enter
+// trust-on-first-use and accept whatever the remote says now, which is exactly
+// the rug pull that fail-closed handling of a corrupt entry exists to prevent,
+// and is reachable by anyone who can write into the cache directory. Recovery
+// must be an explicit operator act.
+const unusableEntryError = (reason: string): Error =>
+  validationError(
+    `the spec cache entry is unusable (${reason}); it is the accepted baseline that authorizes this spec, so it is never refetched silently — run "openapi-mcp cache clear" to reset it deliberately`,
+  );
+
+// A strict cache write (first use, a candidate, an accepted update) waits for
+// a busy writer lock for as long as the operator allowed the spec fetch to
+// take (--timeout), not just the built-in ~2 s: a concurrent first use of a
+// large spec can hold the lock longer than that (#65)
+const withLockWait = (cacheFs: CacheFs, timeoutMs: number): CacheFs =>
+  cacheFs.runtime === undefined
+    ? cacheFs
+    : { ...cacheFs, runtime: { ...cacheFs.runtime, lockWaitMs: timeoutMs } };
+
+export const runSpecPipeline = (
+  rawSource: string,
+  opts: SpecPipelineOptions,
+  deps: SpecPipelineDeps,
+): Promise<SpecPipelineResult> =>
+  runSpecPipelineOnce(rawSource, opts, {
+    ...deps,
+    cacheFs: withLockWait(deps.cacheFs, opts.timeoutMs),
+  });
+
+const runSpecPipelineOnce = async (
   rawSource: string,
   opts: SpecPipelineOptions,
   deps: SpecPipelineDeps,
@@ -197,9 +252,7 @@ export const runSpecPipeline = async (
       // that fail-closed handling of a corrupt entry exists to prevent, and is
       // reachable by anyone who can write into the cache directory. Recovery
       // must be an explicit operator act.
-      throw validationError(
-        `the spec cache entry is unusable (${read.reason}); it is the accepted baseline that authorizes this spec, so it is never refetched silently — run "openapi-mcp cache clear" to reset it deliberately`,
-      );
+      throw unusableEntryError(read.reason);
     }
     if (read.kind === 'hit') {
       cached = read.entry;
@@ -208,17 +261,24 @@ export const runSpecPipeline = async (
 
   // File specs are re-read and hash-compared on every run, so
   // the TTL never short-circuits them; only URL sources take the no-network path.
+  // An entry in the pre-#89 format (its document is the dereferenced form) is
+  // refetched WITHOUT validators, so the server sends the bytes rather than a
+  // 304: unchanged bytes are then rewritten as an accepted entry in the
+  // current format, and changed ones go through the usual candidate gate.
   const decision =
-    cached === undefined || source.kind === 'file'
+    cached === undefined ||
+    source.kind === 'file' ||
+    cached.meta.schemaVersion !== CACHE_META_SCHEMA_VERSION
       ? { kind: 'revalidate' as const }
       : evaluateFreshness(cached.meta, opts.nowMs, opts.ttlMs);
 
   if (cached !== undefined && decision.kind === 'fresh') {
-    const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
-    return finish(spec, opts, warnings, {
+    const processed = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
+    return finish(processed, opts, warnings, {
       contentHash: cached.meta.sourceContentHash,
       displaySource: cached.meta.displaySource,
       cacheStatus: 'fresh',
+      candidateOperationKeys: await pendingCandidateKeys(layout, deps.cacheFs, cached),
       // A restart inside the TTL still has to surface a waiting candidate
       cached,
     });
@@ -311,11 +371,12 @@ export const runSpecPipeline = async (
     warnings.push(
       `spec refresh failed, serving the last known good accepted baseline: ${describeCause(error)}`,
     );
-    const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
-    return finish(spec, opts, warnings, {
+    const processed = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
+    return finish(processed, opts, warnings, {
       contentHash: cached.meta.sourceContentHash,
       displaySource: cached.meta.displaySource,
       cacheStatus: 'stale',
+      candidateOperationKeys: await pendingCandidateKeys(layout, deps.cacheFs, cached),
       // A failed refresh does not make a waiting candidate disappear either
       cached,
     });
@@ -332,37 +393,99 @@ export const runSpecPipeline = async (
     // as an unexpected exit 1.
     // A typed store error (notably a lock conflict, exit 5) passes through
     // untouched.
-    return await commitRefresh(processedRefresh, refreshed, cached, layout, opts, deps, warnings);
+    //
+    // One retry on a stale revision (#34): another process changed the entry
+    // between this run's lock-free read and its commit (typically servers
+    // starting together). The fetched and validated bytes are still valid
+    // input, so the entry is read again and the decision re-made against
+    // what is current, without refetching. Only a second conflict exits 5:
+    // a decision is still never committed against a revision it did not see.
+    const commitAgainst = (entry: CacheEntry | undefined): Promise<SpecPipelineResult> =>
+      commitRefresh(processedRefresh, refreshed, entry, layout, opts, deps, warnings, source.kind);
+    try {
+      return await commitAgainst(cached);
+    } catch (error) {
+      if (layout === undefined || !isStaleRevisionError(error)) {
+        throw error;
+      }
+      const reread = await readCacheEntry(layout, deps.cacheFs);
+      if (reread.kind === 'corrupt') {
+        throw unusableEntryError(reread.reason);
+      }
+      return await commitAgainst(reread.kind === 'hit' ? reread.entry : undefined);
+    }
   }
 
   // 304 Not Modified: reuse the accepted baseline, bump only the timestamp
   if (cached === undefined) {
     throw validationError('the spec source reported no change but nothing is cached');
   }
-  if (layout !== undefined) {
-    // Calling writeAccepted here would rewrite the accepted entry and CLEAR
-    // the candidate, silently destroying a candidate awaiting promotion
-    // without ever approving it. touchRevalidated updates the timestamp and
-    // validators and preserves both slots.
-    //
-    // Typed, like every other cache mutation, so a raw fs failure here
-    // cannot surface as an unexpected exit 1. A typed OpenapiMcpError from
-    // the store (notably a lock conflict, exit 5) is passed through
-    // unchanged.
-    await touchRevalidated(layout, deps.cacheFs, opts.nowMs, {
-      ...(notModifiedValidators.etag === undefined ? {} : { etag: notModifiedValidators.etag }),
-      ...(notModifiedValidators.lastModified === undefined
-        ? {}
-        : { lastModified: notModifiedValidators.lastModified }),
-    });
-  }
-  const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
-  return finish(spec, opts, warnings, {
+  // Calling writeAccepted here would rewrite the accepted entry and CLEAR
+  // the candidate, silently destroying a candidate awaiting promotion
+  // without ever approving it. touchRevalidated updates the timestamp and
+  // validators and preserves both slots.
+  //
+  // Typed, like every other cache mutation, so a raw fs failure here
+  // cannot surface as an unexpected exit 1.
+  //
+  // Best effort (#65): the entry being served was read and hash-verified
+  // in this run and the source confirmed it unchanged, so the write only
+  // records fetchedAt and validators. A lock held by another process
+  // (servers starting together, or a crashed writer) must not fail the
+  // start-up over that; the verified baseline is served with a warning.
+  const cacheLock =
+    layout === undefined
+      ? undefined
+      : await touchBestEffort(
+          layout,
+          deps.cacheFs,
+          opts.nowMs,
+          {
+            ...(notModifiedValidators.etag === undefined
+              ? {}
+              : { etag: notModifiedValidators.etag }),
+            ...(notModifiedValidators.lastModified === undefined
+              ? {}
+              : { lastModified: notModifiedValidators.lastModified }),
+          },
+          { replaceValidators: false, expected: { meta: cached.meta } },
+          warnings,
+        );
+  const processed = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
+  return finish(processed, opts, warnings, {
     contentHash: cached.meta.sourceContentHash,
     displaySource: cached.meta.displaySource,
     cacheStatus: 'revalidated',
     cached,
+    candidateOperationKeys: await pendingCandidateKeys(layout, deps.cacheFs, cached),
+    cacheLock,
   });
+};
+
+// Shared by both best-effort bookkeeping paths (304, unchanged 200): records
+// the revalidation if the writer lock is free, otherwise adds the warning and
+// reports what kind of lock was in the way
+const touchBestEffort = async (
+  layout: CacheLayout,
+  cacheFs: CacheFs,
+  nowMs: number,
+  validators: { etag?: string; lastModified?: string },
+  touchOpts: { replaceValidators: boolean; expected: ExpectedRevision },
+  warnings: string[],
+): Promise<CacheLockState | undefined> => {
+  const touched = await touchRevalidated(layout, cacheFs, nowMs, validators, {
+    ...touchOpts,
+    bestEffort: true,
+  });
+  if (touched.recorded) {
+    return undefined;
+  }
+  warnings.push(`cache metadata not updated, serving the verified baseline: ${touched.reason}`);
+  // A revision that moved on (#34) is not a lock problem
+  if (touched.lockStale === undefined) {
+    return undefined;
+  }
+  return touched.lockStale ? 'stale' : 'held';
 };
 
 type FinishInput = {
@@ -370,6 +493,9 @@ type FinishInput = {
   candidateContentHash?: string | undefined;
   displaySource: string;
   cacheStatus: CacheStatus;
+  // The pending candidate's `METHOD path` keys, when one is waiting (#60)
+  candidateOperationKeys?: ReadonlySet<string> | undefined;
+  cacheLock?: CacheLockState | undefined;
   // The entry being served, when one is. A candidate recorded in it must
   // surface on EVERY such result, not only on the run that created it.
   cached?: CacheEntry | undefined;
@@ -378,12 +504,33 @@ type FinishInput = {
 const PENDING_PROMOTION_WARNING =
   'a refreshed spec is waiting as a candidate; the accepted baseline is being served — run "openapi-mcp cache promote" to accept it';
 
+// Dereferences what an exposed operation hands to tool generation. One
+// dereferencer serves every operation of a run, so a $ref target shared by
+// many operations is expanded once and its output object is shared.
+const materialize = (
+  operation: OperationRecord,
+  dereferencer: ReturnType<typeof createDereferencer>,
+): OperationRecord => {
+  const { requestBody } = operation;
+  return {
+    ...operation,
+    parameters: operation.parameters.map(
+      (parameter) => dereferencer.resolve(parameter) as Record<string, unknown>,
+    ),
+    ...(requestBody === undefined
+      ? {}
+      : { requestBody: dereferencer.resolve(requestBody) as Record<string, unknown> }),
+    responses: dereferencer.resolve(operation.responses) as Record<string, unknown>,
+  };
+};
+
 const finish = (
-  spec: NormalizedSpec,
+  processed: ProcessedSpec,
   opts: SpecPipelineOptions,
   warnings: readonly string[],
   input: FinishInput,
 ): SpecPipelineResult => {
+  const { spec } = processed;
   const named = assignToolNames(spec.operations);
   // One budget for the whole filtering pass
   const filtered = applyFilters(named, opts.allow, opts.deny);
@@ -398,19 +545,35 @@ const finish = (
   // that entry is served.
   const pending = input.cached?.meta.candidate;
   const candidateContentHash = input.candidateContentHash ?? pending?.contentHash;
-  const allWarnings =
-    pending === undefined || input.candidateContentHash !== undefined
-      ? warnings
-      : [...warnings, PENDING_PROMOTION_WARNING];
+  const withholding = withholdRemoved(filtered.exposed, input.candidateOperationKeys);
+  const allWarnings = [
+    ...warnings,
+    ...(pending === undefined || input.candidateContentHash !== undefined
+      ? []
+      : [PENDING_PROMOTION_WARNING]),
+    ...(withholding.warning === undefined ? [] : [withholding.warning]),
+  ];
+  // Filter first, then dereference only what is exposed (decision D2): the
+  // node budgets now measure what the model will actually see
+  const dereferencer = createDereferencer(processed.document, {
+    collapseCycles: true,
+    openapiVersion: spec.openapiVersion,
+  });
+  const exposed = withholding.exposed.map((entry) => ({
+    ...entry,
+    operation: materialize(entry.operation, dereferencer),
+  }));
   return {
     spec,
-    namedOperations: filtered.exposed,
+    namedOperations: exposed,
+    withheldOperations: withholding.withheld,
     contentHash: input.contentHash,
     ...(candidateContentHash === undefined ? {} : { candidateContentHash }),
     displaySource: input.displaySource,
     deadPatterns: filtered.deadPatterns,
     warnings: allWarnings,
     cacheStatus: input.cacheStatus,
+    ...(input.cacheLock === undefined ? {} : { cacheLock: input.cacheLock }),
   };
 };
 
@@ -470,6 +633,7 @@ const commitRefresh = async (
   opts: SpecPipelineOptions,
   deps: SpecPipelineDeps,
   warnings: string[],
+  sourceKind: 'file' | 'url',
 ): Promise<SpecPipelineResult> => {
   const unchanged = cached?.meta.sourceContentHash === refreshed.loaded.contentHash;
   const gate = cached !== undefined && !unchanged && !opts.trustSpecUpdates;
@@ -486,6 +650,8 @@ const commitRefresh = async (
       // representation the cache no longer had
       ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
       ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
+      // Compare-and-swap (#34): the revision this decision was made against
+      expected: { meta: cached.meta },
     });
     warnings.push(
       'the spec source changed; the refreshed spec is stored as a candidate awaiting "openapi-mcp cache promote"',
@@ -494,23 +660,69 @@ const commitRefresh = async (
     if (overBudget !== undefined) {
       warnings.push(overBudget);
     }
-    const spec = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
-    return finish(spec, opts, warnings, {
+    const baseline = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
+    return finish(baseline, opts, warnings, {
       contentHash: cached.meta.sourceContentHash,
       candidateContentHash: written.candidateContentHash,
       displaySource: cached.meta.displaySource,
       cacheStatus: 'candidate',
+      // The candidate was just validated in this run: its own document says
+      // which accepted operations it no longer has
+      candidateOperationKeys: operationKeysOf(processed.document),
     });
   }
   // Filtered (and the exposed-set tool budget enforced) BEFORE the accepted
-  // write: a run that refuses to serve must not leave a trust-on-first-use
-  // baseline behind as a side effect
-  const result = finish(processed.spec, opts, warnings, {
+  // write and before the bookkeeping touch below: a run that refuses to serve
+  // must not leave a trust-on-first-use baseline or bookkeeping behind as a
+  // side effect (#32)
+  const result = finish(processed, opts, warnings, {
     contentHash: refreshed.loaded.contentHash,
     displaySource: refreshed.loaded.displaySource,
     cacheStatus: acceptedCacheStatus(layout, cached, unchanged),
   });
-  if (layout !== undefined) {
+  // Nothing to persist when the source is byte-identical to the accepted one
+  // and no candidate is waiting (#75). `cached` was read and hash-verified
+  // earlier in this run, so rewriting it would only re-serialize the
+  // document, re-read and re-hash the accepted object, take the writer lock
+  // and churn meta.json — every run, for bytes that are already on disk.
+  //  - A file source records nothing worth updating: its TTL never
+  //    short-circuits (it is re-read on every run), so `fetchedAt` is unused.
+  //  - A URL source answering 200 with identical bytes only refreshes its
+  //    bookkeeping (fetchedAt, validators) through the metadata-only path a
+  //    304 already uses, with the 200's validators replacing the old ones.
+  // A waiting candidate still takes the full write below: the source has
+  // reverted to the accepted content, and that write is what clears it. So
+  // does an entry in an older cache format (#89): touching it would keep its
+  // old schemaVersion, so it would never migrate, and a URL source would
+  // refetch without validators on every start.
+  const bookkeepingOnly =
+    cached !== undefined &&
+    unchanged &&
+    cached.meta.candidate === undefined &&
+    cached.meta.schemaVersion === CACHE_META_SCHEMA_VERSION;
+  if (layout !== undefined && bookkeepingOnly && sourceKind === 'url') {
+    // Best effort for the same reason as the 304 path (#65). `result` was
+    // built above, so the touch's warning and lock state are added to it
+    // here rather than to `warnings`, which finish() has already copied
+    const touchWarnings: string[] = [];
+    const cacheLock = await touchBestEffort(
+      layout,
+      deps.cacheFs,
+      opts.nowMs,
+      {
+        ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
+        ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
+      },
+      { replaceValidators: true, expected: { meta: cached?.meta } },
+      touchWarnings,
+    );
+    return {
+      ...result,
+      warnings: [...result.warnings, ...touchWarnings],
+      ...(cacheLock === undefined ? {} : { cacheLock }),
+    };
+  }
+  if (layout !== undefined && !bookkeepingOnly) {
     await writeAccepted(layout, deps.cacheFs, {
       document: processed.document,
       sourceContentHash: refreshed.loaded.contentHash,
@@ -523,6 +735,8 @@ const commitRefresh = async (
       ...(opts.cacheKey === undefined ? {} : { cacheKey: opts.cacheKey }),
       ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
       ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
+      // Compare-and-swap (#34): the revision this decision was made against
+      expected: { meta: cached?.meta },
     });
   }
   return result;
