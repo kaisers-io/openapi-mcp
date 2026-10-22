@@ -71,7 +71,14 @@ const malformedKeyword = (
   node: Record<string, unknown>,
   version: OpenapiVersion,
 ): string | undefined => {
-  for (const keyword of ['minLength', 'maxLength', 'minItems', 'maxItems']) {
+  for (const keyword of [
+    'minLength',
+    'maxLength',
+    'minItems',
+    'maxItems',
+    'minProperties',
+    'maxProperties',
+  ]) {
     if (keyword in node && !nonNegInt(node[keyword])) {
       return keyword;
     }
@@ -104,6 +111,9 @@ const malformedKeyword = (
     (!finite(node['multipleOf']) || (node['multipleOf'] as number) <= 0)
   ) {
     return 'multipleOf';
+  }
+  if ('uniqueItems' in node && typeof node['uniqueItems'] !== 'boolean') {
+    return 'uniqueItems';
   }
   if ('pattern' in node && typeof node['pattern'] !== 'string') {
     return 'pattern';
@@ -161,9 +171,12 @@ const KNOWN_KEYWORDS: ReadonlySet<string> = new Set([
   'items',
   'minItems',
   'maxItems',
+  'uniqueItems',
   'properties',
   'required',
   'additionalProperties',
+  'minProperties',
+  'maxProperties',
   // Benign metadata (no validation effect):
   'title',
   'description',
@@ -209,9 +222,12 @@ const ASSERTION_KEYWORDS: ReadonlySet<string> = new Set([
   'items',
   'minItems',
   'maxItems',
+  'uniqueItems',
   'properties',
   'required',
   'additionalProperties',
+  'minProperties',
+  'maxProperties',
 ]);
 
 const valueMatchesType = (value: unknown, type: string): boolean => {
@@ -243,7 +259,10 @@ const valueMatchesType = (value: unknown, type: string): boolean => {
   }
 };
 
-const conflictingCombination = (node: Record<string, unknown>): string | undefined => {
+const conflictingCombination = (
+  node: Record<string, unknown>,
+  version: OpenapiVersion,
+): string | undefined => {
   const determiners = SHAPE_DETERMINERS.filter((keyword) => node[keyword] !== undefined);
   if (determiners.length > 1) {
     return `multiple shape-determining keywords (${determiners.join(', ')})`;
@@ -262,19 +281,34 @@ const conflictingCombination = (node: Record<string, unknown>): string | undefin
   if (type === undefined) {
     return undefined;
   }
+  if (determiner === 'enum' || determiner === 'const') {
+    // enum/const fully determine the value set, so a sibling `type` — a single
+    // type OR a 3.1 type array such as the canonical nullable enum
+    // `{type:['string','null'], enum:['a', null]}` (#41) — only has to admit
+    // every listed value (JSON Schema Validation 2020-12 §6.1.1: an instance
+    // matches a type array if it matches ANY listed type). A malformed type
+    // array (empty, duplicate or non-string entries) still omits.
+    const types = typeof type === 'string' ? [type] : type;
+    if (
+      !Array.isArray(types) ||
+      types.length === 0 ||
+      !types.every((name) => typeof name === 'string') ||
+      new Set(types).size !== types.length
+    ) {
+      return `"${determiner}" combined with a malformed "type"`;
+    }
+    // A 3.0 `nullable: true` adds null to the sibling type, so the
+    // OAS 3.0.3-blessed nullable enum `{type:'string', nullable:true,
+    // enum:['a', null]}` is consistent, not a conflict.
+    const admitted = version === '3.0' && node['nullable'] === true ? [...types, 'null'] : types;
+    const enumValues = Array.isArray(node['enum']) ? node['enum'] : [];
+    const values: readonly unknown[] = determiner === 'enum' ? enumValues : [node['const']];
+    return values.every((value) => admitted.some((name) => valueMatchesType(value, name as string)))
+      ? undefined
+      : `"${determiner}" values incompatible with the sibling type ${JSON.stringify(type)}`;
+  }
   if (typeof type !== 'string') {
     return `"${determiner}" combined with a multi-type "type"`;
-  }
-  if (determiner === 'enum') {
-    const values = Array.isArray(node['enum']) ? node['enum'] : [];
-    return values.every((value) => valueMatchesType(value, type))
-      ? undefined
-      : `"enum" values incompatible with the sibling type "${type}"`;
-  }
-  if (determiner === 'const') {
-    return valueMatchesType(node['const'], type)
-      ? undefined
-      : `"const" incompatible with the sibling type "${type}"`;
   }
   if (determiner === 'allOf') {
     return type === 'object' ? undefined : `"allOf" combined with a non-object type "${type}"`;
@@ -563,7 +597,42 @@ const openObject = (schema: z.ZodType, mode: SchemaMode): z.ZodType =>
         .pipe(schema)
     : schema;
 
+const ownPropertyCount = (value: unknown): number =>
+  Object.keys(value as Record<string, unknown>).length;
+
+// minProperties / maxProperties (JSON Schema Validation 2020-12 §6.5.1-2)
+// count the instance's own properties — exactly, by refinement on the parsed
+// object (absent optional properties are not materialized by Zod, and a
+// strict object has already rejected undeclared ones). Advertised via .meta in
+// convertSchema.
 const objectSchema = (
+  node: Record<string, unknown>,
+  depth: number,
+  version: OpenapiVersion,
+  mode: SchemaMode,
+): SchemaResult => {
+  const base = objectShapeSchema(node, depth, version, mode);
+  if (!('ok' in base)) {
+    return base;
+  }
+  const min = node['minProperties'];
+  const max = node['maxProperties'];
+  const withMin =
+    typeof min === 'number'
+      ? base.ok.refine((value) => ownPropertyCount(value) >= min, {
+          message: `must have at least ${min} propert${min === 1 ? 'y' : 'ies'}`,
+        })
+      : base.ok;
+  const withMax =
+    typeof max === 'number'
+      ? withMin.refine((value) => ownPropertyCount(value) <= max, {
+          message: `must have at most ${max} propert${max === 1 ? 'y' : 'ies'}`,
+        })
+      : withMin;
+  return { ok: withMax };
+};
+
+const objectShapeSchema = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
@@ -658,6 +727,37 @@ const objectSchema = (
   return { ok: openObject(z.object(shape).catchall(apConv.ok), mode) };
 };
 
+// JSON instance equality (JSON Schema Core 2020-12 §4.2.2): object member
+// order is irrelevant and numbers compare mathematically. A canonical
+// encoding with sorted object keys makes equal instances encode identically
+// (JSON.stringify already maps 1 and 1.0 — the same JS number — alike).
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    const members = Object.keys(value)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`);
+    return `{${members.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+};
+
+// O(n) over the encoded items. A pathological input that cannot be encoded
+// (nesting deep enough to overflow the stack) fails validation closed instead
+// of throwing past Zod — with its own message, so the caller is not told
+// about duplicates that may not exist.
+const uniquenessIssue = (items: readonly unknown[]): string | undefined => {
+  try {
+    return new Set(items.map((item) => canonicalJson(item))).size === items.length
+      ? undefined
+      : 'items must be unique';
+  } catch {
+    return 'items are nested too deeply to check that they are unique (uniqueItems); send a flatter value';
+  }
+};
+
 const arraySchema = (
   node: Record<string, unknown>,
   depth: number,
@@ -671,14 +771,193 @@ const arraySchema = (
   const base = z.array(item.ok);
   const withMin = typeof node['minItems'] === 'number' ? base.min(node['minItems']) : base;
   const withMax = typeof node['maxItems'] === 'number' ? withMin.max(node['maxItems']) : withMin;
-  return { ok: withMax };
+  // uniqueItems is enforced exactly (refine, opaque to z.toJSONSchema) and
+  // advertised via .meta in convertSchema.
+  return node['uniqueItems'] === true
+    ? {
+        ok: withMax.superRefine((items, ctx) => {
+          const message = uniquenessIssue(items);
+          if (message !== undefined) {
+            ctx.addIssue({ code: 'custom', message });
+          }
+        }),
+      }
+    : { ok: withMax };
 };
+
+// --- Static disjointness of oneOf branches (decision D12, #43) -------------
+// Every helper is conservative: "unknown" never proves anything. A branch is
+// summarised by what it admits, as far as enforced keywords tell: a finite
+// list of values (const/enum), a set of JSON types, or unknown. `nullable`
+// records a 3.0 `nullable: true`, which admits null as well (D9).
+type BranchShape =
+  | { kind: 'values'; values: readonly unknown[]; nullable: boolean }
+  | { kind: 'types'; types: readonly string[] }
+  | { kind: 'unknown' };
+
+// More branches than this are not compared pairwise (O(n²) on a
+// spec-controlled list); the union stays inclusive.
+const MAX_DISJOINT_BRANCHES = 32;
+
+const propertiesOf = (node: Record<string, unknown>): Record<string, unknown> =>
+  isRecord(node['properties']) ? node['properties'] : {};
+
+const requiredOf = (node: Record<string, unknown>): readonly string[] =>
+  Array.isArray(node['required'])
+    ? node['required'].filter((name): name is string => typeof name === 'string')
+    : [];
+
+const declaredTypes = (node: Record<string, unknown>): readonly string[] | undefined => {
+  const { type } = node;
+  if (typeof type === 'string') {
+    return [type];
+  }
+  if (Array.isArray(type) && type.every((name) => typeof name === 'string')) {
+    return type as string[];
+  }
+  // A typeless node with non-empty properties converts as an object.
+  if (type === undefined && Object.keys(propertiesOf(node)).length > 0) {
+    return ['object'];
+  }
+  return undefined;
+};
+
+const branchShape = (node: unknown, version: OpenapiVersion): BranchShape => {
+  if (!isRecord(node)) {
+    return { kind: 'unknown' };
+  }
+  const nullable = version === '3.0' && node['nullable'] === true;
+  if ('const' in node && node['const'] !== undefined) {
+    return { kind: 'values', values: [node['const']], nullable };
+  }
+  if (Array.isArray(node['enum'])) {
+    return { kind: 'values', values: node['enum'], nullable };
+  }
+  if (['allOf', 'oneOf', 'anyOf'].some((keyword) => node[keyword] !== undefined)) {
+    return { kind: 'unknown' };
+  }
+  const types = declaredTypes(node);
+  if (types === undefined) {
+    return { kind: 'unknown' };
+  }
+  return { kind: 'types', types: nullable ? [...types, 'null'] : types };
+};
+
+// `integer` values are `number` values too.
+const typesOverlap = (left: string, right: string): boolean =>
+  left === right ||
+  (left === 'integer' && right === 'number') ||
+  (left === 'number' && right === 'integer');
+
+const admitsNull = (shape: BranchShape): boolean => {
+  if (shape.kind === 'values') {
+    return shape.nullable || shape.values.some((value) => value === null);
+  }
+  return shape.kind === 'unknown' || shape.types.includes('null');
+};
+
+const admitsValue = (shape: BranchShape, value: unknown): boolean => {
+  if (shape.kind === 'values') {
+    return shape.values.includes(value) || (value === null && shape.nullable);
+  }
+  if (shape.kind === 'types') {
+    return shape.types.some((name) => valueMatchesType(value, name));
+  }
+  return true;
+};
+
+const shapesDisjoint = (left: BranchShape, right: BranchShape): boolean => {
+  if (left.kind === 'unknown' || right.kind === 'unknown') {
+    return false;
+  }
+  if (left.kind === 'values') {
+    // Every value `left` admits (null included when nullable) is refused by `right`.
+    return (
+      left.values.every((value) => !admitsValue(right, value)) &&
+      !(left.nullable && admitsNull(right))
+    );
+  }
+  if (right.kind === 'values') {
+    return shapesDisjoint(right, left);
+  }
+  return left.types.every((name) => !right.types.some((other) => typesOverlap(name, other)));
+};
+
+// A request-mode object that can never carry an undeclared key: explicit
+// `additionalProperties: false`, or declared properties with no
+// `additionalProperties` (the strict-input rule in objectSchema).
+const isClosedRequestObject = (node: Record<string, unknown>): boolean =>
+  node['additionalProperties'] === false ||
+  (node['additionalProperties'] === undefined && Object.keys(propertiesOf(node)).length > 0);
+
+// A property both branches require (and the request still carries — not
+// readOnly) whose enforced value sets are disjoint: a discriminator with a
+// `const`/`enum` per branch.
+const discriminatedBy = (
+  first: Record<string, unknown>,
+  second: Record<string, unknown>,
+  version: OpenapiVersion,
+): boolean => {
+  const secondRequired = new Set(requiredOf(second));
+  return requiredOf(first).some((name) => {
+    const left = propertiesOf(first)[name];
+    const right = propertiesOf(second)[name];
+    return (
+      secondRequired.has(name) &&
+      !isAccessOnly(left, 'readOnly') &&
+      !isAccessOnly(right, 'readOnly') &&
+      shapesDisjoint(branchShape(left, version), branchShape(right, version))
+    );
+  });
+};
+
+// `first` requires a key that the closed object `second` does not declare.
+const requiresKeyClosedTo = (
+  first: Record<string, unknown>,
+  second: Record<string, unknown>,
+): boolean =>
+  isClosedRequestObject(second) &&
+  requiredOf(first).some(
+    (name) =>
+      !Object.hasOwn(propertiesOf(second), name) &&
+      !isAccessOnly(propertiesOf(first)[name], 'readOnly'),
+  );
+
+const isPlainObjectBranch = (
+  node: unknown,
+  version: OpenapiVersion,
+): node is Record<string, unknown> => {
+  const shape = branchShape(node, version);
+  return shape.kind === 'types' && shape.types.length === 1 && shape.types[0] === 'object';
+};
+
+const pairDisjoint = (first: unknown, second: unknown, version: OpenapiVersion): boolean => {
+  if (shapesDisjoint(branchShape(first, version), branchShape(second, version))) {
+    return true;
+  }
+  if (!isPlainObjectBranch(first, version) || !isPlainObjectBranch(second, version)) {
+    return false;
+  }
+  return (
+    discriminatedBy(first, second, version) ||
+    requiresKeyClosedTo(first, second) ||
+    requiresKeyClosedTo(second, first)
+  );
+};
+
+const branchesDisjoint = (variants: readonly unknown[], version: OpenapiVersion): boolean =>
+  variants.length <= MAX_DISJOINT_BRANCHES &&
+  variants.every((first, index) =>
+    variants.slice(index + 1).every((second) => pairDisjoint(first, second, version)),
+  );
 
 const unionSchema = (
   variants: readonly unknown[],
   depth: number,
   version: OpenapiVersion,
   mode: SchemaMode,
+  // `oneOf` (exclusive) vs `anyOf` (inclusive).
+  exclusive: boolean,
 ): SchemaResult => {
   const members: z.ZodType[] = [];
   // Imperative on purpose: any single unrepresentable variant aborts the
@@ -700,7 +979,25 @@ const unionSchema = (
   if (members.length === 1) {
     return { ok: members[0] as z.ZodType };
   }
-  return { ok: z.union(members as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]]) };
+  // `oneOf` passes only if EXACTLY one subschema matches (JSON Schema Core
+  // 2020-12 §10.2.1.3); `anyOf` if at least one does (§10.2.1.2). Decision
+  // D12 (#43): z.xor (emitted as `oneOf` on the wire) is used only where it
+  // cannot reject a value the spec allows:
+  //   - response mode: always the inclusive z.union. Response objects are
+  //     open (#33), so a discriminator-mapping `oneOf` (Cat/Dog without a
+  //     `const` on the discriminator) would match a valid payload twice and
+  //     fail output validation.
+  //   - request mode: z.xor only when the branches are pairwise disjoint by
+  //     keywords this converter ENFORCES (see branchesDisjoint). `pattern` and
+  //     `format` are advertised, not enforced, so branches that differ only
+  //     by them would make z.xor reject every value — an uncallable tool.
+  //     Otherwise the inclusive union: the tool stays callable and the
+  //     upstream remains the authority on exclusivity.
+  // With disjoint branches xor and union accept the same values; the
+  // difference is that the wire then says `oneOf`, as the spec does.
+  const tuple = members as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]];
+  const xor = exclusive && mode === 'request' && branchesDisjoint(variants, version);
+  return { ok: xor ? z.xor(tuple) : z.union(tuple) };
 };
 
 const convertComposite = (
@@ -716,9 +1013,11 @@ const convertComposite = (
     }
     // Every allOf member must be an object; the merge produces one object schema.
     // A member declaring additionalProperties (false/true/schema) omits the
-    // operation — it cannot be faithfully merged. Single-member allOf is NOT
-    // special-cased: doing so dropped an outer `type` constraint
-    // (`{type:'object', allOf:[{type:'string'}]}` must omit, not become a string).
+    // operation — it cannot be faithfully merged. A single-member allOf reaches
+    // here only when it has a non-annotation sibling (see isAllOfWrapper in
+    // build): passing the member through then would drop that sibling, e.g. an
+    // outer `type` (`{type:'object', allOf:[{type:'string'}]}` must omit, not
+    // become a string).
     // An outer `type:'object'` (the only type the conflict gate allows here) is
     // redundant with the object merge.
     const merged = mergeAllOf(node['allOf']);
@@ -732,10 +1031,10 @@ const convertComposite = (
       : objectSchema(merged, depth, version, mode);
   }
   if (Array.isArray(node['oneOf'])) {
-    return unionSchema(node['oneOf'], depth, version, mode);
+    return unionSchema(node['oneOf'], depth, version, mode, true);
   }
   if (Array.isArray(node['anyOf'])) {
-    return unionSchema(node['anyOf'], depth, version, mode);
+    return unionSchema(node['anyOf'], depth, version, mode, false);
   }
   if (node['type'] === 'array') {
     return arraySchema(node, depth, version, mode);
@@ -835,43 +1134,174 @@ const normalizeType = (
   return { typeValue: nonNull[0], nullable };
 };
 
+// Keywords that may sit next to a single-member `allOf` without changing what
+// it validates: annotations only, plus 3.0 `nullable` (handled in build).
+const ALLOF_WRAPPER_SIBLINGS: ReadonlySet<string> = new Set([
+  'allOf',
+  'nullable',
+  'title',
+  'description',
+  'example',
+  'examples',
+  'default',
+  'deprecated',
+  'readOnly',
+  'writeOnly',
+  'xml',
+  'externalDocs',
+  '$comment',
+  '$schema',
+]);
+
+// `{description: '…', allOf: [{$ref: …}]}` is the OAS 3.0 idiom for
+// annotating a $ref (3.0 ignores siblings of $ref), emitted by FastAPI,
+// Spring and many hand-written specs — and the referenced schema is often NOT
+// an object (an enum, a string, an integer). `allOf` with ONE subschema
+// validates exactly what that subschema validates (JSON Schema Core 2020-12
+// §10.2.1.1), so with only annotation siblings the member converts as-is and
+// the outer description is attached by convertSchema. Any other sibling
+// (notably `type`: `{type:'object', allOf:[{type:'string'}]}` must still omit)
+// keeps the object-merge path.
+const isAllOfWrapper = (
+  node: Record<string, unknown>,
+): node is Record<string, unknown> & { allOf: [unknown] } =>
+  Array.isArray(node['allOf']) &&
+  node['allOf'].length === 1 &&
+  Object.keys(node).every((key) => key.startsWith('x-') || ALLOF_WRAPPER_SIBLINGS.has(key));
+
+// Admits null next to a determiner's own values (see build).
+const withNull = (result: SchemaResult, admitNull: boolean): SchemaResult =>
+  admitNull && 'ok' in result ? { ok: result.ok.nullable() } : result;
+
 const build = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
   mode: SchemaMode,
 ): SchemaResult => {
+  // const/enum are handled BEFORE type normalization: the value list alone
+  // fixes the value set, and conflictingCombination has already checked every
+  // value against a sibling `type` — including a 3.1 type array like
+  // `['string','integer']` that normalizeType would reject as multi-type.
+  //
+  // Nullability (#41, decision D9): wherever the spec marks a value nullable,
+  // null is admitted in BOTH directions. A 3.0 `nullable: true` next to an
+  // enum/const that does not list null (`{type:'string', nullable:true,
+  // enum:['a']}`, as older Swashbuckle/NSwag emit) admits null too. OAS 3.0.3
+  // §4.7.24.2 says such an enum "may disallow" null, but the author's intent
+  // is plain, a PATCH needs it to clear a field, and a response carrying null
+  // must not fail the call. The 3.1 dialect has no `nullable`: there an enum
+  // admits null only if it lists it.
+  const nullable30 = version === '3.0' && node['nullable'] === true;
+  if ('const' in node && node['const'] !== undefined) {
+    return withNull(constSchema(node['const']), nullable30 && node['const'] !== null);
+  }
+  if (Array.isArray(node['enum'])) {
+    return withNull(
+      enumSchema(node['enum']),
+      nullable30 && !node['enum'].some((value) => value === null),
+    );
+  }
   const normalized = normalizeType(node['type'], version, node['nullable'] === true);
   if ('ok' in normalized || 'unrepresentable' in normalized) {
     return normalized;
   }
   const { typeValue, nullable } = normalized;
-  // Determiners carry their own nullability through the enumerated values or
-  // members — a `.nullable()` wrapper would admit null they exclude (OAS 3.0:
-  // other constraints may disallow null). const/enum therefore IGNORE a sibling
-  // `nullable` (null is allowed only if it is itself an enumerated value); a
-  // nullable composition is not faithfully representable and omits.
-  if ('const' in node && node['const'] !== undefined) {
-    return constSchema(node['const']);
-  }
-  if (Array.isArray(node['enum'])) {
-    return enumSchema(node['enum']);
-  }
   if (
     Array.isArray(node['allOf']) ||
     Array.isArray(node['oneOf']) ||
     Array.isArray(node['anyOf'])
   ) {
-    if (nullable) {
-      return { unrepresentable: 'a nullable composition (allOf/oneOf/anyOf combined with null)' };
+    const composed = isAllOfWrapper(node)
+      ? convertSchema(node['allOf'][0], version, depth + 1, mode)
+      : convertComposite(node, depth, version, mode);
+    if (!('ok' in composed) || !nullable) {
+      return composed;
     }
-    return convertComposite(node, depth, version, mode);
+    // A 3.0 `nullable: true` beside a composition (the NSwag / Swashbuckle /
+    // drf-spectacular idiom for a nullable $ref, #41). OAS 3.0.3 §4.7.24.2
+    // reads nullable strictly ("only if `type` is explicitly defined", and the
+    // members "may disallow" null), but every generator emitting this idiom
+    // means "this reference may be null". Decision D9: admit null in BOTH
+    // directions — a request can clear the field (`"manager": null` in a
+    // PATCH), and a response carrying null does not fail the call. Every
+    // non-null value is still checked against the composition.
+    return { ok: composed.ok.nullable() };
   }
   const base = buildTyped(typeValue, node, depth, version, mode);
   if (!('ok' in base)) {
     return base;
   }
   return nullable ? { ok: base.ok.nullable() } : base;
+};
+
+// Per-build memoization (issue #90). Dereferencing shares one output object
+// per $ref target (#89), so the schema a GET, PUT and POST all return is the
+// SAME node, and converting it once per build is enough. The memo is keyed by
+// node identity, version and mode, lives only for one withConvertMemo call (one
+// buildTools run, so nothing leaks across specs), and caches unrepresentable
+// results too, so a hostile spec cannot force the same failing work twice.
+//
+// Depth is the one input besides the node: a nested conversion past
+// MAX_CONVERT_DEPTH is unrepresentable. Each entry therefore records its
+// height (how far below its own depth the conversion reached); it is reused
+// at another depth only if it stays within the budget there, and an entry
+// whose conversion hit the budget is not cached at all — so every result is
+// exactly what an uncached conversion at that depth returns.
+type ConvertMemoEntry = { result: SchemaResult; height: number };
+
+type BuildScope = {
+  // Per node: one entry per `${version}/${mode}` (see memoKey).
+  converted: WeakMap<object, Partial<Record<string, ConvertMemoEntry>>>;
+  // Keyed by Zod schema identity; undefined records a failed emission
+  jsonSchemas: WeakMap<z.ZodType, Record<string, unknown> | undefined>;
+};
+
+// The key must cover EVERY input that changes a conversion's result: node,
+// version, the request/response mode (#33/#47: readOnly/writeOnly handling,
+// open response objects, inclusive response oneOf, and the #39 response-only
+// pattern gate all depend on it) and, via height, depth. A new conversion
+// parameter has to join the key, or the first conversion of a shared node
+// would decide the result for every later use — e.g. a `User` schema shared
+// by a request body and a response would get the request's strict shape.
+const memoKey = (version: OpenapiVersion, mode: SchemaMode): string => `${version}/${mode}`;
+//
+// Imperative on purpose: the scope and the deepest depth reached are ambient
+// state of the current synchronous conversion, threaded implicitly so the
+// recursive converters keep their signatures. Both are only ever set inside
+// withConvertMemo / convertSchema and restored before they return. That is
+// sound only because conversion never awaits: convertSchema and everything
+// it calls must stay synchronous, or another build could observe the scope.
+let activeScope: BuildScope | undefined;
+let deepestDepth = 0;
+
+export const withConvertMemo = <Value>(run: () => Value): Value => {
+  const previous = activeScope;
+  activeScope = { converted: new WeakMap(), jsonSchemas: new WeakMap() };
+  try {
+    return run();
+  } finally {
+    activeScope = previous;
+  }
+};
+
+// z.toJSONSchema of one Zod schema instance, once per build. Callers must not
+// mutate the result: it is shared by every tool whose schema converted to the
+// same instance (the server snapshot freezes it).
+export const memoizedJsonSchema = (
+  schema: z.ZodType,
+  emit: (schema: z.ZodType) => Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  const scope = activeScope;
+  if (scope === undefined) {
+    return emit(schema);
+  }
+  if (scope.jsonSchemas.has(schema)) {
+    return scope.jsonSchemas.get(schema);
+  }
+  const emitted = emit(schema);
+  scope.jsonSchemas.set(schema, emitted);
+  return emitted;
 };
 
 export const convertSchema = (
@@ -886,6 +1316,35 @@ export const convertSchema = (
   // every nested schema. See SchemaMode.
   mode: SchemaMode = 'request',
 ): SchemaResult => {
+  const scope = activeScope;
+  if (scope === undefined || !isRecord(node)) {
+    return convertUncached(node, version, depth, mode);
+  }
+  const key = memoKey(version, mode);
+  const byKey = scope.converted.get(node);
+  const cached = byKey?.[key];
+  if (cached !== undefined && depth + cached.height <= MAX_CONVERT_DEPTH) {
+    deepestDepth = Math.max(deepestDepth, depth + cached.height);
+    return cached.result;
+  }
+  const outer = deepestDepth;
+  deepestDepth = depth;
+  const result = convertUncached(node, version, depth, mode);
+  const reached = deepestDepth;
+  deepestDepth = Math.max(outer, reached);
+  if (reached <= MAX_CONVERT_DEPTH) {
+    scope.converted.set(node, { ...byKey, [key]: { result, height: reached - depth } });
+  }
+  return result;
+};
+
+const convertUncached = (
+  node: unknown,
+  version: OpenapiVersion,
+  depth: number,
+  mode: SchemaMode,
+): SchemaResult => {
+  deepestDepth = Math.max(deepestDepth, depth);
   if (depth > MAX_CONVERT_DEPTH) {
     return { unrepresentable: 'schema nesting exceeds the depth budget' };
   }
@@ -912,7 +1371,7 @@ export const convertSchema = (
   ) {
     return { unrepresentable: UNSAFE_PATTERN_REASON };
   }
-  const conflict = conflictingCombination(node);
+  const conflict = conflictingCombination(node, version);
   if (conflict !== undefined) {
     return { unrepresentable: conflict };
   }
@@ -945,6 +1404,16 @@ export const convertSchema = (
   }
   if (typeof node['multipleOf'] === 'number') {
     meta['multipleOf'] = node['multipleOf'];
+  }
+  // Enforced by refinement in arraySchema / objectSchema, advertised here.
+  if (node['uniqueItems'] === true) {
+    meta['uniqueItems'] = true;
+  }
+  if (typeof node['minProperties'] === 'number') {
+    meta['minProperties'] = node['minProperties'];
+  }
+  if (typeof node['maxProperties'] === 'number') {
+    meta['maxProperties'] = node['maxProperties'];
   }
   const advertised = Object.keys(meta).length > 0 ? built.ok.meta(meta) : built.ok;
   return { ok: withDescription(advertised, node) };

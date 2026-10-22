@@ -10,6 +10,11 @@ export type RequestGuardOptions = {
   // port-comparison quirks); this guard is the single source of truth and
   // runs before the SDK transport ever sees the request.
   allowedHost: string;
+  // Further exact host:port values naming the SAME local listener (serve
+  // passes `localhost:<port>`). DNS-rebinding protection is unaffected: a
+  // rebinding page's request carries the attacker's own hostname in Host,
+  // never `localhost` — and the port must still match exactly.
+  allowedHostAliases?: ReadonlySet<string>;
   bearer: BearerCheck;
 };
 
@@ -46,7 +51,12 @@ export const evaluateRequest = (
   const origin = singleHeader(headers.origin);
 
   // Host MUST match exactly (including port) or 403 — before the bearer.
-  if (host === undefined || host !== opts.allowedHost) {
+  // Host names compare case-insensitively (RFC 9110 §4.2.3), so an alias
+  // is matched on the lowercased value.
+  if (
+    host === undefined ||
+    (host !== opts.allowedHost && opts.allowedHostAliases?.has(host.toLowerCase()) !== true)
+  ) {
     return { outcome: 'deny', status: 403, reason: 'invalid or missing Host header' };
   }
   // A PRESENT Origin (including the literal string "null", which browsers

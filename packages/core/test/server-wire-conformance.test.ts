@@ -144,9 +144,9 @@ const buildProbeSnapshot = (): ServerSnapshot => {
     inputSchema: z.object({}),
   };
   return {
+    ...base,
     tools: [...base.tools, probe],
     toolsByName: { ...base.toolsByName, [PROBE_TOOL_NAME]: probe },
-    meta: base.meta,
   };
 };
 
@@ -604,4 +604,118 @@ describe('2026-07-28 wire conformance — tool-name header safety', () => {
     expect(names).toContain(META_TOOL_NAME);
     expect(META_TOOL_NAME).toMatch(HEADER_SAFE_TOOL_NAME);
   }, 30_000);
+});
+
+describe('2026-07-28 wire conformance — discover tool mode (issue #38)', () => {
+  // The generator from issue #38: N trivial GET operations, each with one
+  // query parameter and a small JSON response (so each per-operation tool
+  // also carries an outputSchema).
+  const generatedSnapshot = (count: number, toolMode: 'per-operation' | 'discover') => {
+    const named: NamedOperation[] = Array.from({ length: count }, (_unused, index) => ({
+      toolName: `list_r${String(index)}`,
+      operation: {
+        method: 'get',
+        path: `/r${String(index)}`,
+        operationId: `list_r${String(index)}`,
+        summary: `List r${String(index)}`,
+        tags: [`group${String(index % 20)}`],
+        deprecated: false,
+        parameters: [{ name: 'limit', in: 'query', schema: { type: 'integer' } }],
+        responses: {
+          '200': {
+            description: 'ok',
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { id: { type: 'string' } } },
+              },
+            },
+          },
+        },
+      },
+    }));
+    const built = buildTools(named, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
+    return buildSnapshot(
+      built,
+      {
+        spec: { title: 't', specVersion: '1', omitted: [] },
+        contentHash: 'h',
+        displaySource: 's',
+        deadPatterns: [],
+      },
+      { toolMode },
+    );
+  };
+
+  const listOver = async (port: number, snapshot: ServerSnapshot) => {
+    const server = makeServer(port, snapshot);
+    await server.listen();
+    try {
+      return await post(port, modernHeaders('tools/list'), modernBody(1, 'tools/list'));
+    } finally {
+      await server.close();
+    }
+  };
+
+  it('keeps the tools/list response of a 400-operation API under 5 KB, against ~270 KB with one tool per operation', async () => {
+    const perOperation = await listOver(4669, generatedSnapshot(400, 'per-operation'));
+    const discover = await listOver(4670, generatedSnapshot(400, 'discover'));
+    expect(perOperation.envelope.result?.tools).toHaveLength(401);
+    expect(discover.envelope.result?.tools?.map((tool) => tool.name)).toEqual([
+      META_TOOL_NAME,
+      'search_operations',
+      'describe_operation',
+      'call_operation',
+    ]);
+    const perOperationBytes = Buffer.byteLength(perOperation.text, 'utf8');
+    const discoverBytes = Buffer.byteLength(discover.text, 'utf8');
+    expect(discoverBytes).toBeLessThan(5 * 1024);
+    // Measured: 273,824 vs 4,349 bytes (about 68k vs 1.1k tokens at 4 bytes
+    // per token). The bound below leaves room for wording changes.
+    expect(perOperationBytes).toBeGreaterThan(50 * discoverBytes);
+    // Every listed tool is object-rooted on the wire (MCP requires it).
+    for (const tool of discover.envelope.result?.tools ?? []) {
+      expect((tool.inputSchema as { type?: unknown }).type).toBe('object');
+    }
+    // The cost no longer grows with the operation count.
+    const larger = await listOver(4671, generatedSnapshot(1000, 'discover'));
+    expect(Buffer.byteLength(larger.text, 'utf8')).toBe(discoverBytes);
+  }, 30_000);
+
+  it('serves call_operation over the socket with the same result as the direct tool call', async () => {
+    const callOver = async (
+      port: number,
+      snapshot: ServerSnapshot,
+      name: string,
+      args: unknown,
+    ) => {
+      const server = makeServer(port, snapshot);
+      await server.listen();
+      try {
+        return await post(
+          port,
+          modernHeaders('tools/call', { 'mcp-name': name }),
+          modernBody(1, 'tools/call', { name, arguments: args }),
+        );
+      } finally {
+        await server.close();
+      }
+    };
+    const direct = await callOver(4672, generatedSnapshot(3, 'per-operation'), 'list_r1', {
+      limit: 'not-a-number',
+    });
+    const viaCall = await callOver(4673, generatedSnapshot(3, 'discover'), 'call_operation', {
+      name: 'list_r1',
+      arguments: { limit: 'not-a-number' },
+    });
+    expect(direct.status).toBe(200);
+    expect(direct.envelope.result?.['isError']).toBe(true);
+    expect(viaCall.envelope.result?.['content']).toEqual(direct.envelope.result?.['content']);
+    expect(viaCall.envelope.result?.['isError']).toBe(true);
+  }, 30_000);
+
+  it('the discovery tool names are header-safe', () => {
+    for (const tool of generatedSnapshot(1, 'discover').tools) {
+      expect(tool.name).toMatch(/^[A-Za-z0-9._-]{1,128}$/u);
+    }
+  });
 });

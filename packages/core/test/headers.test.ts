@@ -79,6 +79,23 @@ describe('resolveHeaderEnvMappings', () => {
     }
   });
 
+  it('rejects a character above U+00FF in a value without echoing the value', () => {
+    try {
+      resolveHeaderEnvMappings([mapping], { SPEC_TOKEN: 'secret-日本-token' });
+      expect.unreachable('expected a usage error');
+    } catch (error) {
+      expect((error as OpenapiMcpError).code).toBe('usage');
+      expect((error as OpenapiMcpError).message).not.toContain('secret');
+      expect((error as OpenapiMcpError).message).toContain('SPEC_TOKEN');
+      expect((error as OpenapiMcpError).message).toContain('above U+00FF');
+    }
+  });
+
+  it('accepts a Latin-1 value (U+0080..U+00FF are valid header bytes)', () => {
+    const resolved = resolveHeaderEnvMappings([mapping], { SPEC_TOKEN: 'café' });
+    expect(resolved).toEqual([{ name: mapping.headerName, value: 'café' }]);
+  });
+
   it('resolves multiple distinct headers in order', () => {
     const resolved = resolveHeaderEnvMappings(
       [
