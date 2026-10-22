@@ -76,6 +76,9 @@ export type SpecPipelineResult = {
 // responses, $refs included. Only the operations that survive filtering are
 // dereferenced, in finish.
 type ProcessedSpec = {
+  // RAW operations (issue #89): parameters, requestBody and responses may
+  // still hold `$ref`s. Only `namedOperations` in the result are dereferenced;
+  // nothing may read schemas from spec.operations.
   spec: NormalizedSpec;
   document: Record<string, unknown>;
 };
