@@ -5,11 +5,12 @@ on:
 # PR-controlled code runs in every job (install/build/test) — keep the ambient token read-only.
 permissions:
   contents: read
-# A new push to a PR branch supersedes the previous run, so cancel it instead of letting the whole matrix
-# finish. Pushes to main are never cancelled: every main commit keeps a complete CI result.
+# A newer push supersedes the previous run on the same ref, so cancel it instead of letting the whole
+# matrix finish. This includes main: when several PRs are merged in a row, only the newest main commit
+# needs a complete result, because each merged PR was already tested on top of everything before it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 # Supply-chain conventions shared by every job (same as release.yml):
 # - Actions are pinned to full commit SHAs (a tag can be moved by its owner or by whoever compromises
 #   it); the `# vX.Y.Z` comment is what Dependabot (.github/dependabot.yml) reads to bump the pin.
@@ -25,7 +26,11 @@ jobs:
     timeout-minutes: 20
     strategy:
       # An empty `node` falls back to .node-version (the dev pin); 24.11.0 is the published engines floor.
-      matrix: { os: [ubuntu-latest, macos-latest], node: ['', '24.11.0'] }
+      # macOS runs on main only: on a private repository its minutes are billed at ten times the Linux
+      # rate, and the platform-specific code paths (fsync, compile cache) rarely change in a PR.
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        node: ['', '24.11.0']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
