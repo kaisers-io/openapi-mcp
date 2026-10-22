@@ -668,17 +668,6 @@
         // and splitting it would only add a second barrel to keep in sync.
         "max-lines": "off"
       }
-    },
-    {
-      "files": ["packages/core/src/spec/normalize.ts"],
-      "rules": {
-        // Off: normalize.ts sat at exactly the 300-line limit before
-        // securitySchemes reading (#55) was added. The natural split --
-        // moving root server-URL extraction into its own module -- waits
-        // until the pending server-URL budget change (#37) has landed, so
-        // that change does not have to be re-applied in a moved file.
-        "max-lines": "off"
-      }
     }
   ]
 }

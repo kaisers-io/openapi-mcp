@@ -3,7 +3,7 @@ import { isRecord, resolveShallowOrSelf } from './refs.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import { extractSecuritySchemes, parseSecurityRequirements } from './security.ts';
 import type { SecurityRequirement, SecurityScheme } from './security.ts';
-import { expandServerUrlTemplate } from './server-url.ts';
+import { extractServerUrl } from './server-url.ts';
 import type { OpenapiVersion } from './validate.ts';
 
 export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head'] as const;
@@ -154,39 +154,6 @@ const buildOperation = (
     responses: isRecord(op['responses']) ? op['responses'] : {},
     ...(security === undefined ? {} : { security }),
   };
-};
-
-// Absolute iff the candidate URL has a leading URI scheme (RFC 3986 §3.1).
-const ABSOLUTE_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/iu;
-
-// Extracts the base-URL candidate from ROOT `document.servers[0]` only
-// (path/operation-level `servers` overrides stay omitted elsewhere in this
-// module). Fail-closed: any malformed shape yields `{}` rather than
-// throwing, and never affects the generated operation set. An expansion over
-// the byte budget is marked `serverUrlRejected` instead (server-url.ts).
-const extractServerUrl = (
-  document: Record<string, unknown>,
-): Pick<NormalizedSpec, 'serverUrl' | 'serverUrlIsRelative' | 'serverUrlRejected'> => {
-  const { servers } = document;
-  if (!Array.isArray(servers) || servers.length === 0) {
-    return {};
-  }
-  const [first] = servers;
-  if (!isRecord(first) || typeof first['url'] !== 'string') {
-    return {};
-  }
-  const variables = isRecord(first['variables']) ? first['variables'] : {};
-  const expansion = expandServerUrlTemplate(first['url'], variables);
-  if (expansion.kind === 'over-budget') {
-    return { serverUrlRejected: { expandedBytes: expansion.bytes } };
-  }
-  if (expansion.kind === 'unresolvable') {
-    return {};
-  }
-  const serverUrl = expansion.url;
-  return ABSOLUTE_SCHEME_PATTERN.test(serverUrl)
-    ? { serverUrl }
-    : { serverUrl, serverUrlIsRelative: true };
 };
 
 // Per-path slice of what normalizeSpec's old nested loop did in one iteration
