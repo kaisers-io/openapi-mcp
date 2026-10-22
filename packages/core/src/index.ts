@@ -35,7 +35,12 @@ export {
   type GutterFrameOptions,
   type GutteredBody,
 } from './spec/display.ts';
-export { HEADER_NAME_RE, parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
+export {
+  HEADER_NAME_RE,
+  NON_LATIN1_RE,
+  parseHeaderEnvMapping,
+  resolveHeaderEnvMappings,
+} from './http/headers.ts';
 export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';
 export { hashContent, loadSpecFromFile, parseSpecSource } from './spec/load.ts';
 export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
