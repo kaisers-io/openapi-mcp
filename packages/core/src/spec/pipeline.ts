@@ -37,6 +37,11 @@ export type SpecPipelineOptions = {
   trustSpecUpdates: boolean;
   cacheRoot: string | undefined;
   nowMs: number;
+  // The exposed-set budget for this run. Omitted means
+  // SPEC_BUDGETS.maxToolCount (one tool per operation); `serve --tool-mode
+  // discover|auto` passes SPEC_BUDGETS.maxDiscoverToolCount, since its
+  // tools/list size does not grow with the operation count.
+  maxToolCount?: number | undefined;
 };
 
 export type SpecPipelineDeps = {
@@ -89,10 +94,10 @@ const enforceOperationBudget = (spec: NormalizedSpec): void => {
   }
 };
 
-const enforceToolBudget = (exposedCount: number): void => {
-  if (exposedCount > SPEC_BUDGETS.maxToolCount) {
+const enforceToolBudget = (exposedCount: number, maxToolCount: number): void => {
+  if (exposedCount > maxToolCount) {
     throw validationError(
-      `${exposedCount} tools would be exposed after filtering — exceeds the ${SPEC_BUDGETS.maxToolCount}-tool budget; narrow the set with --allow or --deny`,
+      `${exposedCount} tools would be exposed after filtering — exceeds the ${maxToolCount}-tool budget; narrow the set with --allow or --deny`,
     );
   }
 };
@@ -384,7 +389,7 @@ const finish = (
   const filtered = applyFilters(named, opts.allow, opts.deny);
   // Every result, fresh or cached, passes through here: this is the one place
   // the exposed set is known, so the tool budget is enforced on it here
-  enforceToolBudget(filtered.exposed.length);
+  enforceToolBudget(filtered.exposed.length, opts.maxToolCount ?? SPEC_BUDGETS.maxToolCount);
   // Reporting the candidate only on the `candidate` status would mean a
   // later start inside the TTL returns `fresh` with no candidate hash and no
   // warning — the candidate would be on disk, gating the update, and

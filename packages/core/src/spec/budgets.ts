@@ -12,6 +12,12 @@ export const SPEC_BUDGETS = {
   // Bounds what is EXPOSED to the model, i.e. the operations left after
   // --allow/--deny filtering (issue #32)
   maxToolCount: 512,
+  // The exposed-set budget under --tool-mode discover (issue #38). tools/list
+  // then carries four fixed tools whatever the operation count, so this no
+  // longer bounds model context; it bounds the per-operation tool generation,
+  // output-validator compilation and search-index work instead, and is set to
+  // the raw operation cap so a filter is never required just to start.
+  maxDiscoverToolCount: 4096,
   // Raw sanity cap on the unfiltered document. maxSpecBytes and maxSchemaNodes
   // already bound the document's size; this bounds the per-operation
   // normalization, naming and filter-matching work, which runs over every
