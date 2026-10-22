@@ -126,6 +126,12 @@ Notes:
   every string is redacted. Whether or not `--log` is set, `openapi_mcp_status` reports
   process-local counters under `calls`: the total, counts by outcome, and p50/p95 upstream
   latency over the last 512 calls.
+- Response projection: every tool with a JSON response accepts an optional `_fields`
+  argument. It takes up to 32 RFC 6901 JSON Pointers, and `*` maps over an array, e.g.
+  `["/items/*/id", "/next_cursor"]`. Only the selected values come back, under
+  `projection`, keyed by pointer. A missing path yields `null`. The full response is still
+  validated against the tool's output schema first. Only the selected values are checked for
+  secrets. A truncated result tells the model to use `_fields`.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly

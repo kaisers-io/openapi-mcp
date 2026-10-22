@@ -25,6 +25,9 @@ export type GeneratedTool = {
   outputSchema?: JsonSchemaRecord;
   // Present only for a paginated GET (see toolgen/pagination.ts).
   pagination?: PaginationPlan;
+  // True when the tool takes the optional `_fields` projection argument
+  // (toolgen/projection.ts).
+  projection?: boolean;
 };
 
 export type BuildToolsResult = {
@@ -65,6 +68,22 @@ export const SYSTEM_HEADERS: ReadonlySet<string> = new Set([
   'expect',
 ]);
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+// Projection applies to JSON bodies only: a tool gets `_fields` when any of
+// its success responses declares a JSON media type.
+const declaresJsonSuccess = (operation: OperationRecord): boolean =>
+  Object.entries(operation.responses).some(
+    ([status, response]) =>
+      /^2(?:\d\d|xx)$/iu.test(status) &&
+      isRecord(response) &&
+      isRecord(response['content']) &&
+      Object.keys(response['content']).some((type) =>
+        /^application\/(?:[\w.+-]+\+)?json(?:\s*;.*)?$/iu.test(type.trim()),
+      ),
+  );
+
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 // Isolates the one throwing step (z.toJSONSchema) behind a pure result type so
@@ -89,7 +108,12 @@ const buildToolEntry = (
   openapiVersion: OpenapiVersion,
 ): GeneratedTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
-  const layout = buildLayout(named.operation, reservedHeaders, openapiVersion);
+  const layout = buildLayout(
+    named.operation,
+    reservedHeaders,
+    openapiVersion,
+    declaresJsonSuccess(named.operation),
+  );
   if (!('ok' in layout)) {
     return { method, path: named.operation.path, reason: layout.unrepresentable };
   }
@@ -110,6 +134,7 @@ const buildToolEntry = (
   );
   const outputSchema = deriveOutputSchema(named.operation, openapiVersion, {
     pagination: pagination !== undefined,
+    projection: layout.ok.projection,
   });
   return {
     toolName: named.toolName,
@@ -121,6 +146,7 @@ const buildToolEntry = (
     annotations,
     ...(outputSchema === undefined ? {} : { outputSchema }),
     ...(pagination === undefined ? {} : { pagination }),
+    ...(layout.ok.projection ? { projection: true } : {}),
   };
 };
 

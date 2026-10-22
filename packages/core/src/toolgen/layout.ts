@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SPEC_BUDGETS } from '../spec/budgets.ts';
+import { PROJECTION_FIELD, PROJECTION_FIELDS_SCHEMA } from './projection.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
@@ -129,6 +130,9 @@ export const paramFields = (
 export type LayoutResult = {
   inputSchema: z.ZodType;
   mapper: RequestMapper;
+  // True when the optional `_fields` projection argument was added (see
+  // toolgen/projection.ts) — never mapped onto the request.
+  projection: boolean;
 };
 
 type BodyContentType = 'application/json' | 'application/x-www-form-urlencoded';
@@ -393,6 +397,10 @@ export const buildLayout = (
   operation: OperationRecord,
   reservedHeaders: ReadonlySet<string>,
   version: OpenapiVersion = '3.1',
+  // Add the optional `_fields` projection argument (a JSON response is
+  // declared). Skipped — the operation is kept, without projection — when
+  // one of its own fields already has that name.
+  projectable = false,
 ): { ok: LayoutResult } | { unrepresentable: string } => {
   const params = paramFields(operation, reservedHeaders, version);
   if (!('ok' in params)) {
@@ -460,6 +468,10 @@ export const buildLayout = (
       (field) => [field.name, field.required ? field.schema : field.schema.optional()] as const,
     ),
   );
+  const projection = projectable && !resolved.ok.some((field) => field.name === PROJECTION_FIELD);
+  if (projection) {
+    shape[PROJECTION_FIELD] = PROJECTION_FIELDS_SCHEMA.optional();
+  }
   const strictSchema = z.strictObject(shape);
   const group = resolved.ok.filter((field) => field.bodyGroup !== undefined);
   const requiredNames = group
@@ -493,5 +505,5 @@ export const buildLayout = (
     ...(body.ok.contentType === undefined ? {} : { bodyContentType: body.ok.contentType }),
     fields,
   };
-  return { ok: { inputSchema, mapper } };
+  return { ok: { inputSchema, mapper, projection } };
 };

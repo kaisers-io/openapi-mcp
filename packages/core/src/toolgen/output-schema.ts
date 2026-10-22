@@ -63,8 +63,9 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
 export const deriveOutputSchema = (
   operation: OperationRecord,
   version: OpenapiVersion,
-  // A paginated tool's envelope also declares the `pagination` hint.
-  options: { pagination?: boolean } = {},
+  // A paginated tool's envelope also declares the `pagination` hint; a
+  // projectable tool also gets one `projection` branch per success branch.
+  options: { pagination?: boolean; projection?: boolean } = {},
 ): JsonSchemaRecord | undefined => {
   if (hasUnboundedSuccess(operation.responses)) {
     return undefined;
@@ -139,5 +140,21 @@ export const deriveOutputSchema = (
       additionalProperties: false,
     });
   }
-  return { type: 'object', oneOf: branches };
+  // A projected result (`_fields`) carries `projection` INSTEAD of `data`:
+  // subtrees of data already validated against the strict branch above, so
+  // their values are unconstrained here. `data` is required on the strict
+  // branches and absent here, so exactly one branch matches either shape.
+  const projected =
+    options.projection === true ? branches.map((branch) => projectionBranchOf(branch)) : [];
+  return { type: 'object', oneOf: [...branches, ...projected] };
+};
+
+const projectionBranchOf = (branch: JsonSchemaRecord): JsonSchemaRecord => {
+  const { data: _data, ...properties } = branch['properties'] as Record<string, unknown>;
+  return {
+    type: 'object',
+    properties: { ...properties, projection: { type: 'object', additionalProperties: {} } },
+    required: ['status', 'contentType', 'projection'],
+    additionalProperties: false,
+  };
 };

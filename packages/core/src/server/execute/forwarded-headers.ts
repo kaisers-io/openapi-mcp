@@ -1,8 +1,19 @@
-import { parseRetryAfter } from '../../http/response-headers.ts';
+import { parseLinkHeader, parseRetryAfter } from '../../http/response-headers.ts';
+import type { LinkValue } from '../../http/response-headers.ts';
 import type { Redactor } from '../../redact.ts';
 import { sanitizeSpecText } from '../../spec/sanitize.ts';
+import { NO_NEXT_PAGE } from '../../toolgen/pagination.ts';
 import type { PageHint } from '../../toolgen/pagination.ts';
+
 import type { ToolCallOutcome } from '../result.ts';
+
+export type { PageHint } from '../../toolgen/pagination.ts';
+
+export type PageInput = {
+  links?: readonly LinkValue[];
+  responseUrl: string;
+  data?: unknown;
+};
 
 // Turns the transport's captured response headers into what a tool result
 // may carry. Every value is upstream-controlled text, so each one is
@@ -49,7 +60,7 @@ const sameOriginPath = (
   }
 };
 
-const hasSecret = (redactor: Redactor, value: string): boolean => {
+const hasSecret = (redactor: Redactor, value: unknown): boolean => {
   try {
     return redactor.scanForSecret(value);
   } catch {
@@ -124,4 +135,29 @@ export const decorateTextOutcome = (
         ...withHeaders,
         meta: { ...withHeaders.meta, 'openapi-mcp/upstreamRetryAfterMs': retryAfterMs },
       };
+};
+
+// Binds a paginated tool's hint callback to one successful response (its
+// parsed Link header and URL), and withholds any hint that would echo a
+// registered secret into the next call's arguments.
+export const pageHinter = (
+  paginate: (input: PageInput) => PageHint,
+  redactor: Redactor,
+  headers: Readonly<Record<string, string>>,
+  responseUrl: string,
+  status: number,
+): ((data?: unknown) => PageHint) | undefined => {
+  if (status < 200 || status > 299) {
+    return undefined;
+  }
+  const linkHeader = headers['link'];
+  const links = linkHeader === undefined ? undefined : (parseLinkHeader(linkHeader) ?? []);
+  return (data) => {
+    const hint = paginate({
+      ...(links === undefined ? {} : { links }),
+      responseUrl,
+      ...(data === undefined ? {} : { data }),
+    });
+    return hasSecret(redactor, hint) ? { next: NO_NEXT_PAGE } : hint;
+  };
 };
