@@ -1381,6 +1381,108 @@ describe('createExecutor — pagination hints', () => {
     expect(nextOf(last.outcome)).toBeNull();
   });
 
+  const issuesOp = (explodeLabels: boolean): NamedOperation => ({
+    toolName: 'listIssues',
+    operation: {
+      method: 'get',
+      path: '/issues',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'cursor', in: 'query', schema: { type: 'string' } },
+        { name: 'page', in: 'query', schema: { type: 'integer' } },
+        { name: 'archived', in: 'query', schema: { type: 'boolean' } },
+        {
+          name: 'labels',
+          in: 'query',
+          style: 'form',
+          explode: explodeLabels,
+          schema: { type: 'array', items: { type: 'string' } },
+        },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          headers: { Link: { schema: { type: 'string' } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { items: { type: 'array' }, next_cursor: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const acceptedAsInput = (tool: SnapshotTool, next: unknown): boolean | undefined =>
+    tool.generated?.inputSchema.safeParse(next).success;
+
+  it('keeps carried boolean/array arguments in a body-cursor hint, and the 200 stays valid', async () => {
+    const { outcome, valid, tool } = await call(
+      issuesOp(false),
+      page(undefined, { items: [], next_cursor: 'c2' }),
+      { archived: true, labels: ['a', 'b'] },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ archived: true, labels: ['a', 'b'], cursor: 'c2' });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it.each([
+    [false, '<https://api.example.test/issues?page=2&archived=true&labels=a,b>; rel="next"'],
+    [true, '<https://api.example.test/issues?page=2&archived=true&labels=a&labels=b>; rel="next"'],
+  ])(
+    'decodes Link values per declared type and style (labels explode=%s), round-tripping the input schema',
+    async (explode, link) => {
+      const { outcome, valid, tool } = await call(issuesOp(explode), page(link, {}), {
+        archived: true,
+        labels: ['a', 'b'],
+      });
+      expect(outcome.isError).toBe(false);
+      expect(valid).toBe(true);
+      const next = nextOf(outcome);
+      expect(next).toEqual({ page: 2, archived: true, labels: ['a', 'b'] });
+      expect(acceptedAsInput(tool, next)).toBe(true);
+    },
+  );
+
+  it.each([
+    ['a non-boolean value for a boolean field', 'archived=maybe'],
+    ['a repeated key for an explode=false array', 'labels=a&labels=b'],
+  ])('yields next: null for %s', async (_label, query) => {
+    const { outcome, valid } = await call(
+      issuesOp(false),
+      page(`<https://api.example.test/issues?page=2&${query}>; rel="next"`, {}),
+      {},
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('yields next: null for a hint the tool input schema would reject (enum)', async () => {
+    const enumOp: NamedOperation = {
+      ...listReposOp,
+      operation: {
+        ...listReposOp.operation,
+        parameters: listReposOp.operation.parameters.map((param) =>
+          param['name'] === 'sort'
+            ? { ...param, schema: { type: 'string', enum: ['created'] } }
+            : param,
+        ),
+      },
+    };
+    const link = '<https://api.example.test/orgs/acme/repos?page=2&sort=pushed>; rel="next"';
+    const { outcome, valid } = await call(enumOp, page(link), { org: 'acme' });
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
   it('maps Stripe-style has_more + last id to starting_after', async () => {
     const more = await call(
       stripeOp,
