@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  HTTP_METHODS,
   LOCK_STALE_MS,
   MAX_AGE_DURATION_MS,
   MAX_DURATION_MS,
@@ -7,10 +8,14 @@ import {
   hashContent,
   parseAgeDuration,
   parseDuration,
+  parseFilterPattern,
   promoteCandidate,
+  runSpecPipeline,
+  touchRevalidated,
   writeAccepted,
   writeCandidate,
 } from '../src/index.ts';
+import type { SpecPipelineDeps } from '../src/index.ts';
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
@@ -27,11 +32,15 @@ describe('--ttl is an age, not a timer (#88 item 1)', () => {
   it('still rejects zero, garbage and more than a year', () => {
     for (const raw of ['0s', '-1d', '1w', '366d', `${'9'.repeat(30)}d`]) {
       expect(() => parseAgeDuration(raw)).toThrow(/invalid duration/u);
+      expect(() => parseAgeDuration(raw, '--ttl')).toThrow(
+        /^invalid --ttl duration .* up to 365d/u,
+      );
     }
   });
 
   it('keeps the timer limit for real timers (--timeout)', () => {
     expect(() => parseDuration('30d')).toThrow(/Node timer limit/u);
+    expect(() => parseDuration('30d', '--timeout')).toThrow(/^invalid --timeout duration "30d"/u);
     expect(parseDuration('24d')).toBe(24 * 86_400_000);
   });
 });
@@ -111,6 +120,74 @@ describe('orphaned temp files in the entry directory are collected (#88 item 2)'
     await plant(fs, { [`.meta.json.${UUID_B}.tmp`]: NOW });
     await promoteCandidate(LAYOUT, fs, NOW + 2, {});
     expect(entryNames(fs)).not.toContain(`.meta.json.${UUID_B}.tmp`);
+  });
+
+  it('collects after a 304 revalidation too, which never commits (#75)', async () => {
+    const fs = memoryCacheFs();
+    await writeAccepted(LAYOUT, fs, input(NOW));
+    // A writer killed mid-touchRevalidated, between temp write and rename
+    await plant(fs, { [`.meta.json.${UUID_A}.tmp`]: NOW });
+    expect(entryNames(fs)).toContain(`.meta.json.${UUID_A}.tmp`);
+    await touchRevalidated(LAYOUT, fs, NOW + 1, { etag: '"v1"' }, { expected: 'unchecked' });
+    expect(entryNames(fs)).toStrictEqual(['meta.json']);
+  });
+
+  it('a crash during one 304 is cleaned up by the next one (pipeline)', async () => {
+    const opts = {
+      specHeaders: [],
+      timeoutMs: 30_000,
+      cwd: '/nonexistent',
+      allowPrivateNetwork: false,
+      deny: [],
+      ttlMs: 1000,
+      trustSpecUpdates: false,
+      cacheRoot: '/cache',
+      nowMs: NOW,
+      allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
+    };
+    // The first fetch seeds the entry; every later one answers 304
+    let fetches = 0;
+    const fetcher = (() => {
+      fetches += 1;
+      return Promise.resolve(
+        fetches === 1
+          ? Response.json(
+              { openapi: '3.1.0', info: { title: 't', version: '1' }, paths: {} },
+              { headers: { etag: '"v1"' } },
+            )
+          : new Response(null, { status: 304, headers: { etag: '"v1"' } }),
+      );
+    }) as unknown as SpecPipelineDeps['fetcher'];
+    const fs = memoryCacheFs();
+    const deps = (cacheFs: MemoryCacheFs): SpecPipelineDeps => ({
+      readFileText: () => Promise.reject(new Error('no files')),
+      fileSizeBytes: () => Promise.reject(new Error('no files')),
+      fetcher,
+      lookup: () => Promise.resolve(['93.184.216.34']),
+      cacheFs,
+    });
+    const url = 'https://api.example.com/openapi.json';
+    await runSpecPipeline(url, opts, deps(fs));
+    const metaPath = [...fs.files.keys()].find((key) => key.endsWith('/meta.json'))!;
+    const dir = metaPath.slice(0, -'/meta.json'.length);
+    // The process dies inside touchRevalidated: the meta temp is written, the
+    // rename never happens
+    const crashing: MemoryCacheFs = {
+      ...fs,
+      writeFileAtomic: (path) => {
+        if (path === metaPath) {
+          fs.files.set(`${dir}/.meta.json.${UUID_A}.tmp`, 'partial');
+        }
+        return Promise.reject(new Error('killed'));
+      },
+    };
+    await expect(
+      runSpecPipeline(url, { ...opts, nowMs: NOW + 5000 }, deps(crashing)),
+    ).rejects.toThrow();
+    expect(fs.files.has(`${dir}/.meta.json.${UUID_A}.tmp`)).toBe(true);
+    const next = await runSpecPipeline(url, { ...opts, nowMs: NOW + 10_000 }, deps(fs));
+    expect(next.cacheStatus).toBe('revalidated');
+    expect(fs.files.has(`${dir}/.meta.json.${UUID_A}.tmp`)).toBe(false);
   });
 
   it('leaves lock temps alone when the filesystem cannot report their age', async () => {

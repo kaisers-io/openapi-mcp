@@ -49,18 +49,24 @@ export const zDuration = durationSchema(
 // An age compared against a timestamp (--ttl)
 export const zAgeDuration = durationSchema(MAX_AGE_DURATION_MS, 'duration exceeds 365d');
 
-export const parseDuration = (raw: string): number => {
+// `flag` names the option in the message: --timeout and --ttl now have
+// different limits, and a message that only says "duration" would leave the
+// operator guessing which one was meant
+const invalidDuration = (raw: string, flag: string | undefined, hint: string): Error =>
+  usageError(`invalid ${flag === undefined ? '' : `${flag} `}duration "${raw}" — ${hint}`);
+
+export const parseDuration = (raw: string, flag?: string): number => {
   const result = zDuration.safeParse(raw);
   if (!result.success) {
-    throw usageError(`invalid duration "${raw}" — ${GRAMMAR_HINT}`);
+    throw invalidDuration(raw, flag, GRAMMAR_HINT);
   }
   return result.data;
 };
 
-export const parseAgeDuration = (raw: string): number => {
+export const parseAgeDuration = (raw: string, flag?: string): number => {
   const result = zAgeDuration.safeParse(raw);
   if (!result.success) {
-    throw usageError(`invalid duration "${raw}" — ${AGE_GRAMMAR_HINT}`);
+    throw invalidDuration(raw, flag, AGE_GRAMMAR_HINT);
   }
   return result.data;
 };

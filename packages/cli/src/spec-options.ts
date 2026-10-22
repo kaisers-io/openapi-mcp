@@ -148,10 +148,10 @@ export type SpecPipelineArgs = {
 export const parseSpecPipelineArgs = (cmdOpts: SpecCmdOpts, ctx: CliContext): SpecPipelineArgs => {
   const mappings = cmdOpts.specHeaderEnv.map((raw) => parseHeaderEnvMapping(raw));
   const specHeaders: readonly ResolvedHeader[] = resolveHeaderEnvMappings(mappings, ctx.env);
-  const timeoutMs = parseDuration(cmdOpts.timeout);
+  const timeoutMs = parseDuration(cmdOpts.timeout, '--timeout');
   // An age, not a timer: --ttl is only compared with a cache entry's age, so
   // it is not bound by the Node timer limit that --timeout is (#88)
-  const ttlMs = parseAgeDuration(cmdOpts.ttl);
+  const ttlMs = parseAgeDuration(cmdOpts.ttl, '--ttl');
   const cacheKey = cmdOpts.cacheKey === undefined ? undefined : parseCacheKey(cmdOpts.cacheKey);
   const filters = parseFilters(cmdOpts.allow, cmdOpts.deny);
   return {

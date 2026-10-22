@@ -153,7 +153,7 @@ const registerRefresh: CommandRegistrar = (program, ctx, state) => {
           cmdOpts.spec,
           {
             specHeaders,
-            timeoutMs: parseDuration(cmdOpts.timeout),
+            timeoutMs: parseDuration(cmdOpts.timeout, '--timeout'),
             cwd: ctx.cwd(),
             allowPrivateNetwork: cmdOpts.allowPrivateNetwork === true,
             allow: [],

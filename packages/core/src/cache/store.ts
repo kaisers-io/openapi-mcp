@@ -489,6 +489,13 @@ const commitEntry = async (
 //    may be in flight; removing it would make that writer's link() fail with
 //    ENOENT. Only one older than LOCK_STALE_MS is collected, and only when
 //    the filesystem can report its age.
+// Object temps (`objects/.<hash>.json.<uuid>.tmp`) need no rule of their own:
+// they do not match `<hash>.json`, so the unreferenced-object sweep in
+// collectGarbage removes them, which is intended.
+//
+// Besides every commit, this also runs after touchRevalidated's write (also
+// under the lock): since #75 an unchanged spec never commits, so a temp left
+// by a writer killed mid-revalidation would otherwise linger indefinitely.
 const META_TEMP_RE = /^\.meta\.json\.[0-9a-f-]{36}\.tmp$/u;
 const LOCK_TEMP_RE = /^\.lock\.[0-9a-f-]{36}\.tmp$/u;
 
@@ -507,6 +514,18 @@ const collectEntryTemps = async (
         await fs.removeFile(path);
       }
     }
+  }
+};
+
+const collectEntryTempsBestEffort = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  nowMs: number,
+): Promise<void> => {
+  try {
+    await collectEntryTemps(layout, fs, nowMs);
+  } catch {
+    // Best-effort, like collectGarbage: the write already succeeded
   }
 };
 
@@ -1035,6 +1054,7 @@ const touchRevalidatedImpl = async (
     };
     await prepareDirs(layout, fs);
     await fs.writeFileAtomic(layout.metaPath, serializeMeta(meta));
+    await collectEntryTempsBestEffort(layout, fs, nowMs);
     return { recorded: true };
   };
   if (opts.bestEffort === true) {
