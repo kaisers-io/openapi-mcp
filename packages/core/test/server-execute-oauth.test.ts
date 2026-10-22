@@ -9,7 +9,6 @@ import {
   SYSTEM_HEADERS,
 } from '../src/index.ts';
 import type {
-  CallTelemetry,
   ExecutorConfig,
   NamedOperation,
   PinnedDeps,
@@ -17,6 +16,7 @@ import type {
   TokenResult,
   TokenSource,
 } from '../src/index.ts';
+import type { CallTelemetry } from '../src/server/telemetry.ts';
 
 // The executor's OAuth2 wiring: Bearer injection, the single replay on 401,
 // and token-failure mapping — against a fake TokenSource and a fake fetch
