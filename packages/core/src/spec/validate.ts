@@ -1,34 +1,14 @@
-import Ajv04Module from 'ajv-draft-04';
-import Ajv2020Module from 'ajv/dist/2020.js';
-import addFormatsModule from 'ajv-formats';
-import type { Options, ValidateFunction } from 'ajv';
-import schema30 from '@seriousme/openapi-schema-validator/schemas/v3.0/schema.json' with { type: 'json' };
-import schema31 from '@seriousme/openapi-schema-validator/schemas/v3.1/schema.json' with { type: 'json' };
+import type { ValidateFunction } from 'ajv';
+import validate30 from './generated/openapi-3.0-validator.cjs';
+import validate31 from './generated/openapi-3.1-validator.cjs';
 import { validationError } from '../errors.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 
-// The official OpenAPI meta-schemas are imported as JSON modules so tsdown can
-// inline them into the single-file bundle. The 3.0 schema is JSON Schema
-// draft-04, the 3.1 schema is draft 2020-12 — hence two Ajv builds.
-
-// CJS interop: TypeScript under nodenext types these CJS default imports as
-// namespaces without construct/call signatures, while at runtime the binding
-// (and its .default) is the class/function in every module system in play
-// (Node ESM, Vite, rolldown — probed). Unwrap once, typed.
-type AjvInstance = {
-  addFormat: (name: string, format: true) => unknown;
-  compile: (schema: object) => ValidateFunction;
-};
-type AjvConstructor = new (opts: Options) => AjvInstance;
-
-const unwrapDefault = <Unwrapped>(moduleValue: unknown): Unwrapped => {
-  const withDefault = moduleValue as { default?: Unwrapped };
-  return withDefault.default ?? (moduleValue as Unwrapped);
-};
-
-const AjvDraft04 = unwrapDefault<AjvConstructor>(Ajv04Module);
-const Ajv2020 = unwrapDefault<AjvConstructor>(Ajv2020Module);
-const addFormats = unwrapDefault<(ajv: AjvInstance) => unknown>(addFormatsModule);
+// The official OpenAPI meta-schemas (3.0: JSON Schema draft-04, 3.1: draft
+// 2020-12), precompiled at development time into Ajv standalone code (issue
+// #76, see generate-validators.ts). Compiling them at runtime cost about 120 ms
+// on every run that processed a spec; the generated code is what Ajv compiles,
+// with the same options, so the verdicts and error objects are identical.
 
 export type OpenapiVersion = '3.0' | '3.1';
 
@@ -37,23 +17,12 @@ export type ValidatedSpec = {
   version: OpenapiVersion;
 };
 
-const compiledValidators: Partial<Record<OpenapiVersion, ValidateFunction>> = {};
-
-const getValidator = (version: OpenapiVersion): ValidateFunction => {
-  const existing = compiledValidators[version];
-  if (existing !== undefined) {
-    return existing;
-  }
-  // Strict mode stays off: the official meta-schemas are not strict-mode clean
-  const ajv =
-    version === '3.0' ? new AjvDraft04({ strict: false }) : new Ajv2020({ strict: false });
-  addFormats(ajv);
-  // Mirrors @seriousme/openapi-schema-validator: media-range is used by the 3.1 schema
-  ajv.addFormat('media-range', true);
-  const validate = ajv.compile(version === '3.0' ? schema30 : schema31);
-  compiledValidators[version] = validate;
-  return validate;
+const VALIDATORS: Record<OpenapiVersion, ValidateFunction> = {
+  '3.0': validate30,
+  '3.1': validate31,
 };
+
+const getValidator = (version: OpenapiVersion): ValidateFunction => VALIDATORS[version];
 
 // The declared version is spec content: bound it before it reaches any message
 const DECLARED_VERSION_MAX = 32;

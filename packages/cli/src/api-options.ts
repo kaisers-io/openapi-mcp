@@ -1,7 +1,9 @@
 import type { Command } from '@commander-js/extra-typings';
 import {
   HEADER_NAME_RE,
+  NON_LATIN1_RE,
   parseByteSize,
+  parseDuration,
   parseHeaderEnvMapping,
   resolveHeaderEnvMappings,
   SYSTEM_HEADERS,
@@ -9,6 +11,8 @@ import {
 } from '@kaisers-io/openapi-mcp-core';
 import type { HeaderEnvMapping } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
+import { resolveOAuthConfig } from './oauth-options.ts';
+import type { OAuthCmdOpts, ResolvedOAuthConfig } from './oauth-options.ts';
 
 const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,
@@ -74,6 +78,15 @@ const MAX_HEADER_AGGREGATE_BYTES = 65_536;
 // worst-case per-call memory rather than reflecting a protocol limit.
 const MAX_RESPONSE_BYTES_CEILING = 104_857_600; // 100 MiB
 
+// Finite ceilings only — there is deliberately no "unlimited" value: the MCP
+// tools spec says servers MUST rate limit, and an unbounded concurrency cap
+// would let one client open unbounded upstream connections. The rate
+// limiter keeps one timestamp per call in its window, so its ceiling bounds
+// memory too.
+const MAX_CONCURRENCY_CEILING = 256;
+const MAX_RATE_LIMIT_CALLS = 100_000;
+const POSITIVE_INT_RE = /^[1-9]\d*$/u;
+
 // Mirrors redact.ts's own (non-exported) MIN_VARIANT_LENGTH: below this
 // length, createRedactor computes no encoding variants for a needle at all,
 // so registering a short static --header value buys no defense-in-depth and
@@ -109,9 +122,25 @@ export type ResolvedApiConfig = {
   secretValues: string[];
   maxResponseBytes: number;
   allowInsecureHttp: boolean;
+  // Upstream calls in flight at once (--max-concurrency); more wait in a
+  // bounded queue.
+  maxConcurrency: number;
+  // Tool calls per sliding window (--rate-limit <calls>/<duration>).
+  rateLimit: { maxCalls: number; windowMs: number };
+  // Deadline for one upstream API call (--request-timeout), independent of
+  // the spec fetch's --timeout.
+  requestTimeoutMs: number;
+  // Extra attempts for transient failures of retry-safe requests
+  // (--retries; 0 = off).
+  retries: number;
+  // Forward a call's W3C trace context (traceparent/tracestate from the MCP
+  // request's _meta) to the upstream; --no-trace-propagation turns it off.
+  propagateTraceContext: boolean;
+  // Present iff --upstream-oauth-* was given (see oauth-options.ts).
+  oauth?: ResolvedOAuthConfig;
 };
 
-export type ApiCmdOpts = {
+export type ApiCmdOpts = OAuthCmdOpts & {
   // Same commander generic-constraint workaround as SpecCmdOpts
   // (spec-options.ts): a plain object literal type is rejected by
   // `Command<[], Opts>`'s `Opts extends OptionValues` constraint without an
@@ -122,6 +151,12 @@ export type ApiCmdOpts = {
   header: readonly string[];
   maxResponseBytes: string;
   allowInsecureHttp?: boolean;
+  maxConcurrency: string;
+  rateLimit: string;
+  requestTimeout: string;
+  retries: string;
+  // Commander's `--no-trace-propagation` sets this false (default true).
+  tracePropagation?: boolean;
 };
 
 // The --base-url/--header-env/--header/--max-response-bytes/
@@ -144,12 +179,56 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     )
     .option(
       '--max-response-bytes <size>',
-      'cap the decompressed upstream response body (<int><B|KB|MB> or a plain byte count)',
+      'cap the decompressed upstream response body and the outgoing request body (<int><B|KB|MB> or a plain byte count)',
       '10MB',
     )
     .option(
       '--allow-insecure-http',
       'permit an operator credential (--header-env) over cleartext http to a non-loopback origin',
+    )
+    .option(
+      '--max-concurrency <n>',
+      'upstream calls in flight at once; further calls wait in a bounded queue',
+      '16',
+    )
+    .option('--rate-limit <calls/duration>', 'tool calls allowed per sliding window', '120/1m')
+    .option(
+      '--request-timeout <duration>',
+      'deadline for each upstream API request (<int><s|m|h|d>); --timeout covers the spec fetch',
+      '30s',
+    )
+    .option(
+      '--retries <n>',
+      'retry a transient upstream failure (429/502/503/504, connection error) up to n times (0-3) for GET/HEAD/PUT/DELETE, and for POST/PATCH only with an Idempotency-Key header',
+      '0',
+    )
+    .option(
+      '--no-trace-propagation',
+      "do not forward a call's W3C trace context (traceparent/tracestate) to the upstream API",
+    )
+    .option(
+      '--upstream-oauth-client-id-env <ENV>',
+      'OAuth2 client-credentials: env var holding the client id',
+    )
+    .option(
+      '--upstream-oauth-client-secret-env <ENV>',
+      'OAuth2 client-credentials: env var holding the client secret (secret)',
+    )
+    .option(
+      '--upstream-oauth-scheme <name>',
+      'which oauth2 securitySchemes entry to use when the spec declares several',
+    )
+    .option(
+      '--upstream-oauth-scope <scope>',
+      'scope to request (repeatable; none by default)',
+      collect,
+      [] as readonly string[],
+    )
+    .option('--upstream-oauth-token-url <url>', "override the spec's clientCredentials tokenUrl")
+    .option(
+      '--upstream-oauth-client-auth <method>',
+      'client authentication: client_secret_basic or client_secret_post',
+      'client_secret_basic',
     );
 
 // Shared by both header groups so the name/value size checks are defined
@@ -191,7 +270,7 @@ const trimOptionalSpace = (value: string): string => value.replace(/^ +/u, '').r
 
 // Imperative on purpose: `seen` accumulates across iterations (duplicate
 // detection depends on every prior entry, not just the current one) and each
-// of the seven checks below throws in encounter order — a map/filter
+// of the checks below throws in encounter order — a map/filter
 // pipeline would evaluate every entry before any throw could surface,
 // changing which malformed --header the operator sees first.
 const parseStaticHeaders = (raw: readonly string[]): { name: string; value: string }[] => {
@@ -220,6 +299,11 @@ const parseStaticHeaders = (raw: readonly string[]): { name: string; value: stri
     }
     if (CONTROL_CHAR_RE.test(value)) {
       throw usageError(`value of header "${name}" contains control characters`);
+    }
+    if (NON_LATIN1_RE.test(value)) {
+      throw usageError(
+        `value of header "${name}" contains a character above U+00FF, which an HTTP header cannot carry — use ASCII or Latin-1 text (e.g. percent-encode it if the API expects that)`,
+      );
     }
     assertHeaderSizeBudget(name, value, false);
     if (seen.has(lower)) {
@@ -314,6 +398,52 @@ const parseMaxResponseBytes = (raw: string): number => {
   return bytes;
 };
 
+const parseMaxConcurrency = (raw: string): number => {
+  const value = Number(raw);
+  if (!POSITIVE_INT_RE.test(raw) || value > MAX_CONCURRENCY_CEILING) {
+    throw usageError(
+      `invalid --max-concurrency "${raw}" — expected an integer from 1 to ${MAX_CONCURRENCY_CEILING}`,
+    );
+  }
+  return value;
+};
+
+const RATE_LIMIT_HINT = `expected <calls>/<duration>, e.g. "120/1m" or "10/1s" (calls 1 to ${MAX_RATE_LIMIT_CALLS})`;
+
+const parseRateLimit = (raw: string): { maxCalls: number; windowMs: number } => {
+  const separator = raw.indexOf('/');
+  const calls = separator === -1 ? '' : raw.slice(0, separator);
+  const maxCalls = Number(calls);
+  if (!POSITIVE_INT_RE.test(calls) || maxCalls > MAX_RATE_LIMIT_CALLS) {
+    throw usageError(`invalid --rate-limit "${raw}" — ${RATE_LIMIT_HINT}`);
+  }
+  // The duration grammar (and its Node-timer ceiling) is parseDuration's;
+  // its usage error names only the duration, so it is rethrown with the flag.
+  try {
+    return { maxCalls, windowMs: parseDuration(raw.slice(separator + 1)) };
+  } catch {
+    throw usageError(`invalid --rate-limit "${raw}" — ${RATE_LIMIT_HINT}`);
+  }
+};
+
+const MAX_RETRIES_FLAG = 3;
+const parseRetries = (raw: string): number => {
+  if (!/^\d$/u.test(raw) || Number(raw) > MAX_RETRIES_FLAG) {
+    throw usageError(
+      `invalid --retries "${raw}" — expected an integer from 0 to ${MAX_RETRIES_FLAG}`,
+    );
+  }
+  return Number(raw);
+};
+
+const parseRequestTimeout = (raw: string): number => {
+  try {
+    return parseDuration(raw);
+  } catch {
+    throw usageError(`invalid --request-timeout "${raw}" — expected <int><s|m|h|d>, e.g. "30s"`);
+  }
+};
+
 // Parses and cross-validates every API-request flag into one trusted config.
 // Every failure here is a startup usageError (exit 2), before any network
 // call or credential use.
@@ -335,6 +465,14 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
       .map((header) => header.value)
       .filter((value) => value.length >= MIN_SECRET_REGISTRATION_LENGTH),
   ];
+  const oauth = resolveOAuthConfig(
+    cmdOpts,
+    new Set(secretHeaders.map((header) => header.name.toLowerCase())),
+    ctx.env,
+  );
+  if (oauth !== undefined) {
+    secretValues.push(...oauth.secretValues);
+  }
   const maxResponseBytes = parseMaxResponseBytes(cmdOpts.maxResponseBytes);
   const baseUrlOverride =
     cmdOpts.baseUrl === undefined ? undefined : validateBaseUrl(cmdOpts.baseUrl);
@@ -346,5 +484,11 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
     secretValues,
     maxResponseBytes,
     allowInsecureHttp: cmdOpts.allowInsecureHttp === true,
+    maxConcurrency: parseMaxConcurrency(cmdOpts.maxConcurrency),
+    rateLimit: parseRateLimit(cmdOpts.rateLimit),
+    requestTimeoutMs: parseRequestTimeout(cmdOpts.requestTimeout),
+    retries: parseRetries(cmdOpts.retries),
+    propagateTraceContext: cmdOpts.tracePropagation !== false,
+    ...(oauth === undefined ? {} : { oauth }),
   };
 };

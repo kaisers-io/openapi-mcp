@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CLI_ENTRY, stopChild } from './cli-subprocess.ts';
+import { SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
 // A real, local upstream (127.0.0.1, ephemeral port) that the executor
 // actually calls through — this test asserts a genuine upstream response,
@@ -46,7 +48,6 @@ const startUpstream = (): Promise<{
     });
   });
 
-const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 
 type JsonRpcMessage = {
@@ -85,11 +86,11 @@ const sendModern = (
 };
 
 // The tools/list order is fixed by the snapshot, not by the wire: the meta tool is
-// always first, then the spec's operations in document order (`legacyList` is
-// omitted upstream — it carries a cookie parameter). Pinning the exact array
+// always first, then the spec's operations sorted by tool name, independent of
+// document order (`legacyList` is omitted upstream — it carries a cookie parameter). Pinning the exact array
 // (not a containment check) is what makes a reordering of the derived list a
 // test failure rather than an invisible change for every cached client.
-const EXPECTED_TOOL_ORDER = ['openapi_mcp_status', 'listPets', 'createPet'];
+const EXPECTED_TOOL_ORDER = ['openapi_mcp_status', 'createPet', 'listPets'];
 
 type Collected = {
   stdoutLines: string[];
@@ -124,7 +125,7 @@ const collectLines = (proc: ReturnType<typeof spawn>): Collected => {
   return { stdoutLines, stderrLines, rawStdout: () => rawStdout };
 };
 
-const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void> => {
+const waitFor = async (predicate: () => boolean, timeoutMs = SUBPROCESS_WAIT_MS): Promise<void> => {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) {
@@ -148,12 +149,10 @@ describe('serve — stdio subprocess E2E', () => {
   afterEach(async () => {
     // `kill()` only SIGNALS — the child may still have in-flight cache I/O
     // under tempHome, so await its actual exit before removing the directory.
-    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
-      const exited = new Promise<void>((resolve) => {
-        child?.once('exit', () => resolve());
-      });
-      child.kill('SIGKILL');
-      await exited;
+    // stopChild asks for a graceful exit first, so the child also writes its
+    // coverage (cli-subprocess.ts).
+    if (child !== undefined) {
+      await stopChild(child);
     }
     child = undefined;
     if (tempHome !== undefined) {
@@ -169,7 +168,7 @@ describe('serve — stdio subprocess E2E', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'petstore.json',
@@ -283,7 +282,7 @@ describe('serve — stdio subprocess E2E', () => {
       expect(parsed.jsonrpc).toBe('2.0');
     }
     expect(stderrLines.every((line) => !line.includes('{'))).toBe(true); // Stderr carries plain-text diagnostics, not JSON-RPC
-  }, 10_000);
+  });
 
   // Era negotiation: the SAME server, the SAME factory, opened with a 2025-era
   // `initialize` instead of an envelope claim. A claim-less opening pins the
@@ -296,7 +295,7 @@ describe('serve — stdio subprocess E2E', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'petstore.json',
@@ -350,7 +349,7 @@ describe('serve — stdio subprocess E2E', () => {
     const finalRaw = rawStdout();
     expect(finalRaw === '' || finalRaw.endsWith('\n')).toBe(true);
     expect(finalRaw.split('\n').filter((line) => line !== '')).toHaveLength(3);
-  }, 10_000);
+  });
 
   // FALSIFICATION target: pointing buildTools back at
   // SYSTEM_HEADERS only (dropping the `...apiConfig.reservedHeaderNames`
@@ -363,7 +362,7 @@ describe('serve — stdio subprocess E2E', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'header-collision.json',
@@ -397,9 +396,13 @@ describe('serve — stdio subprocess E2E', () => {
   });
 
   it('a startup failure (missing spec file) goes to stderr as plain text, even with the global --json flag, and never touches stdout', async () => {
-    child = spawn(process.execPath, [bin, '--json', 'serve', '--spec', 'does-not-exist.json'], {
-      cwd: fixturesDir,
-    });
+    child = spawn(
+      process.execPath,
+      [CLI_ENTRY, '--json', 'serve', '--spec', 'does-not-exist.json'],
+      {
+        cwd: fixturesDir,
+      },
+    );
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
@@ -412,7 +415,7 @@ describe('serve — stdio subprocess E2E', () => {
   });
 
   it("a PRE-action commander parse failure (missing --spec) with the global --json flag never touches stdout — the failure happens before serve.ts's own action body ever runs", async () => {
-    child = spawn(process.execPath, [bin, '--json', 'serve'], { cwd: fixturesDir }); // No --spec at all
+    child = spawn(process.execPath, [CLI_ENTRY, '--json', 'serve'], { cwd: fixturesDir }); // No --spec at all
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
@@ -424,6 +427,80 @@ describe('serve — stdio subprocess E2E', () => {
     expect(stderrLines.join('\n').length).toBeGreaterThan(0);
   });
 
+  it('pages tools/list only when --tools-page-size is given (off by default)', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    const listPage = async (extraArgs: readonly string[]) => {
+      child = spawn(
+        process.execPath,
+        [
+          CLI_ENTRY,
+          'serve',
+          '--spec',
+          'petstore.json',
+          '--base-url',
+          'http://127.0.0.1:1',
+          ...extraArgs,
+        ],
+        { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+      );
+      const { stdoutLines } = collectLines(child);
+      sendModern(child, 1, 'tools/list');
+      await waitFor(() => stdoutLines.length > 0);
+      child.kill();
+      return (JSON.parse(stdoutLines[0] as string) as JsonRpcMessage).result ?? {};
+    };
+    const all = await listPage([]);
+    expect((all['tools'] as unknown[]).length).toBeGreaterThan(1);
+    expect(all['nextCursor']).toBeUndefined();
+    const paged = await listPage(['--tools-page-size', '1']);
+    expect(paged['tools']).toHaveLength(1);
+    expect(typeof paged['nextCursor']).toBe('string');
+  }, 15_000);
+
+  it('offers _fields only with --response-projection (off by default)', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    const fieldsOffered = async (extraArgs: readonly string[]) => {
+      child = spawn(
+        process.execPath,
+        [
+          CLI_ENTRY,
+          'serve',
+          '--spec',
+          'petstore.json',
+          '--base-url',
+          'http://127.0.0.1:1',
+          ...extraArgs,
+        ],
+        { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+      );
+      const { stdoutLines } = collectLines(child);
+      sendModern(child, 1, 'tools/list');
+      await waitFor(() => stdoutLines.length > 0);
+      child.kill();
+      return (stdoutLines[0] ?? '').includes('"_fields"');
+    };
+    expect(await fieldsOffered([])).toBe(false);
+    expect(await fieldsOffered(['--response-projection'])).toBe(true);
+  }, 15_000);
+
+  it.each(['0', '-1', '1.5', '513'])(
+    'rejects --tools-page-size %s as a usage error naming the flag',
+    async (value) => {
+      child = spawn(
+        process.execPath,
+        [CLI_ENTRY, 'serve', '--spec', 'petstore.json', '--tools-page-size', value],
+        { cwd: fixturesDir },
+      );
+      const { stderrLines, rawStdout } = collectLines(child);
+      const code = await new Promise<number | null>((resolve) => {
+        child?.once('exit', (exitCode) => resolve(exitCode));
+      });
+      expect(code).toBe(2); // EXIT.USAGE
+      expect(rawStdout()).toBe('');
+      expect(stderrLines.join('\n')).toContain('--tools-page-size');
+    },
+  );
+
   it('a PRE-action commander parse failure (an unknown flag) never touches stdout, even with the global --json flag', async () => {
     // MUST pass --json here to actually bind the policy this test claims to
     // exercise: with --json ABSENT, getGlobalOpts(program) reads json:false
@@ -434,7 +511,7 @@ describe('serve — stdio subprocess E2E', () => {
     // actually diverge.
     child = spawn(
       process.execPath,
-      [bin, '--json', 'serve', '--spec', 'petstore.json', '--bogus-flag'],
+      [CLI_ENTRY, '--json', 'serve', '--spec', 'petstore.json', '--bogus-flag'],
       { cwd: fixturesDir },
     );
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
@@ -454,7 +531,7 @@ describe('serve — stdio subprocess E2E', () => {
     // isServeInvocation() scan would stop on `--` itself, misclassify this
     // as a non-serve invocation, and fall back to getGlobalOpts (json:true),
     // writing the {"ok":false,...} envelope to stdout.
-    child = spawn(process.execPath, [bin, '--json', '--', 'serve'], { cwd: fixturesDir });
+    child = spawn(process.execPath, [CLI_ENTRY, '--json', '--', 'serve'], { cwd: fixturesDir });
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
@@ -475,7 +552,9 @@ describe('serve — stdio subprocess E2E', () => {
     // (`--json`/`--verbose`) and `--` would stop at `--bogus`, classify this
     // as a non-serve invocation, and fall back to getGlobalOpts (json:true)
     // — leaking the {"ok":false,...} envelope to stdout.
-    child = spawn(process.execPath, [bin, '--json', '--bogus', 'serve'], { cwd: fixturesDir });
+    child = spawn(process.execPath, [CLI_ENTRY, '--json', '--bogus', 'serve'], {
+      cwd: fixturesDir,
+    });
     const { stdoutLines, stderrLines, rawStdout } = collectLines(child);
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
@@ -492,7 +571,7 @@ describe('serve — stdio subprocess E2E', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'petstore.json',
@@ -535,7 +614,7 @@ describe('serve — stdio subprocess E2E', () => {
     tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
     child = spawn(
       process.execPath,
-      [bin, 'serve', '--spec', 'petstore.json', '--base-url', 'http://127.0.0.1:1'],
+      [CLI_ENTRY, 'serve', '--spec', 'petstore.json', '--base-url', 'http://127.0.0.1:1'],
       { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
     );
     const { stdoutLines } = collectLines(child);
@@ -550,7 +629,85 @@ describe('serve — stdio subprocess E2E', () => {
       child?.once('exit', (exitCode) => resolve(exitCode));
     });
     expect(code).toBe(0);
-  }, 10_000);
+  });
+
+  it('--strict-filters turns a dead pattern into a startup failure on stderr, before anything is served', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        CLI_ENTRY,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        'http://127.0.0.1:1',
+        '--strict-filters',
+        '--deny',
+        'noSuchOperation',
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    const { stderrLines, rawStdout } = collectLines(child);
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(3);
+    expect(rawStdout()).toBe('');
+    expect(stderrLines.join('\n')).toContain('noSuchOperation');
+  });
+
+  it('serves a URL spec fetched with --spec-header-env, sending that header to the spec host', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    const spec = await readFile(join(fixturesDir, 'petstore.json'), 'utf8');
+    let specAuth: string | undefined;
+    const specServer = createServer((req, res) => {
+      specAuth = req.headers['x-spec-key'] as string | undefined;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(spec);
+    });
+    await new Promise<void>((resolve) => {
+      specServer.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      const { port } = specServer.address() as AddressInfo;
+      child = spawn(
+        process.execPath,
+        [
+          CLI_ENTRY,
+          'serve',
+          '--spec',
+          `http://127.0.0.1:${String(port)}/openapi.json`,
+          '--spec-header-env',
+          'X-Spec-Key=SPEC_KEY',
+          '--cache-key',
+          'e2e',
+          '--allow-private-network',
+          '--base-url',
+          'http://127.0.0.1:1',
+        ],
+        {
+          cwd: fixturesDir,
+          env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, SPEC_KEY: 'spec-secret' },
+        },
+      );
+      const { stdoutLines, stderrLines } = collectLines(child);
+      sendModern(child, 1, 'server/discover');
+      await waitFor(() => stdoutLines.length > 0);
+      expect(specAuth).toBe('spec-secret');
+      // The spec header value is registered for redaction like every secret
+      expect(stderrLines.join('\n')).not.toContain('spec-secret');
+      child.stdin?.end();
+      const code = await new Promise<number | null>((resolve) => {
+        child?.once('exit', (exitCode) => resolve(exitCode));
+      });
+      expect(code).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => {
+        specServer.close(() => resolve());
+      });
+    }
+  });
 
   // The executor's cleartext gate (executor.ts's
   // `cleartextBlocked` — a secret `--header-env` header over a cleartext
@@ -590,7 +747,7 @@ describe('serve — stdio subprocess E2E', () => {
       spawn(
         process.execPath,
         [
-          bin,
+          CLI_ENTRY,
           'serve',
           '--spec',
           'petstore.json',
@@ -652,5 +809,325 @@ describe('serve — stdio subprocess E2E', () => {
       permitted.once('exit', () => resolve());
     });
     child = undefined;
-  }, 10_000);
+  });
+});
+
+// Concurrency and rate limiting end to end: real `serve` subprocess, real
+// pinned transport, a local upstream that answers after 20 ms. MCP hosts
+// issue parallel tool calls routinely; with the old fail-fast semaphore
+// (16 slots, no queue) a burst of 30 parallel calls returned errors for
+// every call past the 16th that arrived while all slots were busy.
+describe('serve — parallel tool calls and configurable limits (stdio subprocess)', () => {
+  let child: ReturnType<typeof spawn> | undefined;
+  let tempHome: string | undefined;
+  let upstream: Server | undefined;
+
+  afterEach(async () => {
+    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        child?.once('exit', () => resolve());
+      });
+      child.kill('SIGKILL');
+      await exited;
+    }
+    child = undefined;
+    if (upstream !== undefined) {
+      const server = upstream;
+      upstream = undefined;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+    if (tempHome !== undefined) {
+      await rm(tempHome, { recursive: true, force: true });
+      tempHome = undefined;
+    }
+  });
+
+  const startSlowUpstream = async (): Promise<number> => {
+    const server = createServer((_req, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify([{ id: 1, name: 'Rex' }]));
+      }, 20);
+    });
+    upstream = server;
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    return (server.address() as AddressInfo).port;
+  };
+
+  const spawnServe = async (port: number, extraArgs: readonly string[]) => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        CLI_ENTRY,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        `http://127.0.0.1:${String(port)}`,
+        '--trust-spec-updates',
+        ...extraArgs,
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    return { proc: child, ...collectLines(child) };
+  };
+
+  const resultsById = (lines: readonly string[]): Map<number, JsonRpcMessage> =>
+    new Map(
+      lines
+        .map((line) => JSON.parse(line) as JsonRpcMessage)
+        .filter((message) => message.id !== undefined)
+        .map((message) => [message.id as number, message]),
+    );
+
+  it('30 parallel tools/call requests at default settings all succeed (0 errors)', async () => {
+    const port = await startSlowUpstream();
+    const { proc, stdoutLines } = await spawnServe(port, []);
+    sendModern(proc, 1, 'server/discover');
+    await waitFor(() => stdoutLines.length > 0);
+    for (let id = 100; id < 130; id += 1) {
+      sendModern(proc, id, 'tools/call', { name: 'listPets', arguments: {} });
+    }
+    await waitFor(() => stdoutLines.length >= 31, 8000);
+    const results = resultsById(stdoutLines);
+    const calls = Array.from({ length: 30 }, (_unused, index) => results.get(100 + index));
+    const errors = calls.filter((message) => message?.result?.['isError'] === true);
+    expect(errors).toEqual([]);
+    expect(calls.every((message) => message?.result?.['structuredContent'] !== undefined)).toBe(
+      true,
+    );
+  }, 15_000);
+
+  it('--rate-limit takes effect and the refusal carries an exact retryAfterMs in _meta', async () => {
+    const port = await startSlowUpstream();
+    const { proc, stdoutLines } = await spawnServe(port, [
+      '--rate-limit',
+      '2/1m',
+      '--max-concurrency',
+      '1',
+    ]);
+    for (let id = 1; id <= 3; id += 1) {
+      sendModern(proc, id, 'tools/call', { name: 'listPets', arguments: {} });
+    }
+    await waitFor(() => stdoutLines.length >= 3, 8000);
+    const results = resultsById(stdoutLines);
+    expect(results.get(1)?.result?.['isError']).not.toBe(true);
+    expect(results.get(2)?.result?.['isError']).not.toBe(true);
+    const refused = results.get(3)?.result;
+    expect(refused?.['isError']).toBe(true);
+    // The detail rides in `_meta`, not structuredContent: listPets declares
+    // an outputSchema, which an error detail could never conform to.
+    expect(refused?.['structuredContent']).toBeUndefined();
+    const meta = refused?.['_meta'] as Record<string, unknown> | undefined;
+    expect(meta?.['openapi-mcp/error']).toBe('rate_limited');
+    expect(meta?.['openapi-mcp/retryAfterMs']).toBeGreaterThan(55_000);
+    expect(meta?.['openapi-mcp/retryAfterMs']).toBeLessThanOrEqual(60_000);
+  }, 15_000);
+});
+
+// The upstream HTTP client end to end through a real `serve` subprocess
+// against a private, trusted --base-url (the internal-API case).
+describe('serve — upstream client behaviour (stdio subprocess)', () => {
+  let child: ReturnType<typeof spawn> | undefined;
+  let tempHome: string | undefined;
+  let upstream: Server | undefined;
+  const seenAccept: (string | undefined)[] = [];
+
+  afterEach(async () => {
+    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        child?.once('exit', () => resolve());
+      });
+      child.kill('SIGKILL');
+      await exited;
+    }
+    child = undefined;
+    if (upstream !== undefined) {
+      const server = upstream;
+      upstream = undefined;
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
+    if (tempHome !== undefined) {
+      await rm(tempHome, { recursive: true, force: true });
+      tempHome = undefined;
+    }
+    seenAccept.length = 0;
+  });
+
+  // GET /pets redirects within the same origin (to /pets/), which answers
+  // JSON; GET /slow never answers in time.
+  const start = async (): Promise<number> => {
+    const server = createServer((req, res) => {
+      seenAccept.push(req.headers.accept);
+      if (req.url === '/pets') {
+        res.writeHead(301, { location: '/pets/' });
+        res.end();
+        return;
+      }
+      if (req.url === '/pets/') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify([{ id: 1, name: 'Rex' }]));
+      }
+      // Anything else hangs past the request timeout.
+    });
+    upstream = server;
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => resolve());
+    });
+    return (server.address() as AddressInfo).port;
+  };
+
+  const spawnServe = async (baseUrl: string, extraArgs: readonly string[]) => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        CLI_ENTRY,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        baseUrl,
+        '--trust-spec-updates',
+        ...extraArgs,
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    return { proc: child, ...collectLines(child) };
+  };
+
+  it('follows a same-origin redirect on a private --base-url and sends a JSON-first Accept', async () => {
+    const port = await start();
+    const { proc, stdoutLines } = await spawnServe(`http://127.0.0.1:${String(port)}`, []);
+    sendModern(proc, 1, 'tools/call', { name: 'listPets', arguments: {} });
+    await waitFor(() => stdoutLines.length > 0, 8000);
+    const response = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(response.result?.['isError']).not.toBe(true);
+    expect((response.result?.['structuredContent'] as { data: unknown } | undefined)?.data).toEqual(
+      [{ id: 1, name: 'Rex' }],
+    );
+    expect(seenAccept).toEqual(['application/json, */*;q=0.1', 'application/json, */*;q=0.1']);
+  }, 15_000);
+
+  it('--request-timeout bounds an upstream call independently of --timeout', async () => {
+    const port = await start();
+    // The base path makes listPets hit /slow/pets, which never answers.
+    const { proc, stdoutLines } = await spawnServe(`http://127.0.0.1:${String(port)}/slow`, [
+      '--timeout',
+      '30s',
+      '--request-timeout',
+      '1s',
+    ]);
+    const started = Date.now();
+    sendModern(proc, 1, 'tools/call', { name: 'listPets', arguments: {} });
+    await waitFor(() => stdoutLines.length > 0, 8000);
+    const elapsed = Date.now() - started;
+    const response = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(response.result?.['isError']).toBe(true);
+    expect(JSON.stringify(response.result?.['content'])).toContain('timed out');
+    expect(elapsed).toBeLessThan(5000);
+  }, 15_000);
+});
+
+describe('serve --log json (stdio subprocess)', () => {
+  let child: ReturnType<typeof spawn> | undefined;
+  let tempHome: string | undefined;
+
+  afterEach(async () => {
+    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise<void>((resolve) => {
+        child?.once('exit', () => resolve());
+      });
+      child.kill('SIGKILL');
+      await exited;
+    }
+    child = undefined;
+    if (tempHome !== undefined) {
+      await rm(tempHome, { recursive: true, force: true });
+      tempHome = undefined;
+    }
+  });
+
+  const runOneCall = async (extraArgs: readonly string[]) => {
+    const upstream = await startUpstream();
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        CLI_ENTRY,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        `http://127.0.0.1:${String(upstream.port)}`,
+        '--trust-spec-updates',
+        ...extraArgs,
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    const collected = collectLines(child);
+    sendModern(child, 1, 'tools/call', { name: 'listPets', arguments: {} });
+    await waitFor(() => collected.stdoutLines.length > 0, 8000);
+    child.stdin?.end();
+    await new Promise<void>((resolve) => {
+      child?.once('exit', () => resolve());
+    });
+    await upstream.close();
+    return collected;
+  };
+
+  it('writes exactly one JSON tool_call line to stderr, and stdout stays pure JSON-RPC', async () => {
+    const { stdoutLines, stderrLines, rawStdout } = await runOneCall(['--log', 'json']);
+    const logLines = stderrLines.filter((line) => line.includes('"tool_call"'));
+    expect(logLines).toHaveLength(1);
+    expect(JSON.parse(logLines[0] as string)).toMatchObject({
+      event: 'tool_call',
+      tool: 'listPets',
+      method: 'GET',
+      pathTemplate: '/pets',
+      status: 200,
+      outcome: 'ok',
+    });
+    expect(stdoutLines).toHaveLength(1);
+    expect(rawStdout()).not.toContain('tool_call');
+    expect((JSON.parse(stdoutLines[0] as string) as JsonRpcMessage).jsonrpc).toBe('2.0');
+  }, 15_000);
+
+  it('writes no call log without --log', async () => {
+    const { stderrLines } = await runOneCall([]);
+    expect(stderrLines.some((line) => line.includes('tool_call'))).toBe(false);
+  }, 15_000);
+
+  it('rejects an unsupported --log format at startup', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        CLI_ENTRY,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        'http://127.0.0.1:1',
+        '--log',
+        'text',
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    const { stderrLines } = collectLines(child);
+    const code = await new Promise<number | null>((resolve) => {
+      child?.once('exit', (exitCode) => resolve(exitCode));
+    });
+    expect(code).toBe(2);
+    expect(stderrLines.join('\n')).toContain('--log');
+  }, 15_000);
 });

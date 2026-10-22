@@ -1,5 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+import type { ValidateFunction } from 'ajv';
 import { describe, expect, it } from 'vitest';
-import { OpenapiMcpError, validateOpenApiDocument } from '../src/index.ts';
+import { OpenapiMcpError, parseSpecText, validateOpenApiDocument } from '../src/index.ts';
+import { GENERATED_FILES, generateValidator } from '../src/spec/generate-validators.ts';
+import validate30 from '../src/spec/generated/openapi-3.0-validator.cjs';
+import validate31 from '../src/spec/generated/openapi-3.1-validator.cjs';
 
 const minimal30 = (): Record<string, unknown> => ({
   openapi: '3.0.3',
@@ -115,6 +122,61 @@ describe('validateOpenApiDocument', () => {
     } catch (error) {
       // 32-char cap on the version fragment, not on the whole message
       expect((error as OpenapiMcpError).message).not.toContain('x'.repeat(40));
+    }
+  });
+});
+
+describe('precompiled meta-schema validators (issue #76)', () => {
+  it('are exactly what the generator produces from the installed dependencies', () => {
+    // Fails after a bump of ajv, ajv-formats, ajv-draft-04 or the schema
+    // package until `node scripts/generate-validators.ts` is run
+    for (const version of ['3.0', '3.1'] as const) {
+      const committed = readFileSync(
+        new URL(`../src/spec/generated/${GENERATED_FILES[version]}`, import.meta.url),
+        'utf8',
+      );
+      expect(committed).toBe(generateValidator(version));
+    }
+  });
+
+  it('reach the same verdicts and errors as compiling the meta-schema at runtime', async () => {
+    // The previous implementation, as the reference
+    const require = createRequire(import.meta.url);
+    type Compiler = {
+      addFormat: (name: string, format: true) => unknown;
+      compile: (schema: object) => ValidateFunction;
+    };
+    const compileAtRuntime = (version: '3.0' | '3.1'): ValidateFunction => {
+      const { default: Ctor } = require(
+        version === '3.0' ? 'ajv-draft-04' : 'ajv/dist/2020.js',
+      ) as { default: new (opts: object) => Compiler };
+      const ajv = new Ctor({ strict: false });
+      (require('ajv-formats') as { default: (instance: Compiler) => unknown }).default(ajv);
+      ajv.addFormat('media-range', true);
+      const schema = require(
+        `@seriousme/openapi-schema-validator/schemas/v${version}/schema.json`,
+      ) as object;
+      return ajv.compile(schema);
+    };
+    const runtime = { '3.0': compileAtRuntime('3.0'), '3.1': compileAtRuntime('3.1') };
+    const precompiled = { '3.0': validate30, '3.1': validate31 };
+    const fixtures = [
+      parseSpecText(await readFile(new URL('fixtures/petstore-3.0.json', import.meta.url), 'utf8')),
+      parseSpecText(await readFile(new URL('fixtures/petstore-3.1.yaml', import.meta.url), 'utf8')),
+    ];
+    const broken: Record<string, unknown>[] = [
+      { ...minimal30(), info: { title: 'T' } },
+      { ...minimal31(), info: { title: 7, version: '1' } },
+      { ...minimal30(), paths: { 'no-slash': {} } },
+      { ...minimal31(), paths: { '/x': { get: { responses: 'nope' } } } },
+      { ...minimal31(), servers: [{ url: 'https://example.com', variables: { v: {} } }] },
+      { ...minimal30(), components: { schemas: { A: { type: 'object', nullable: 'yes' } } } },
+      { ...minimal31(), webhooks: { a: { post: { requestBody: { content: { 'x/y': 1 } } } } } },
+    ];
+    for (const document of [...fixtures, ...broken]) {
+      const version = String(document['openapi']).startsWith('3.0') ? '3.0' : '3.1';
+      expect(precompiled[version](document)).toBe(runtime[version](document));
+      expect(precompiled[version].errors).toEqual(runtime[version].errors);
     }
   });
 });

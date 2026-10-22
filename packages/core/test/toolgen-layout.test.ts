@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { buildLayout, paramFields } from '../src/index.ts';
 import type { OperationRecord } from '../src/index.ts';
 
@@ -395,6 +396,82 @@ describe('buildLayout — body classification', () => {
   });
 });
 
+// #47: request bodies drop readOnly properties (OAS 3.0.3 / 3.1.1 Schema
+// Object: readOnly properties SHOULD NOT be sent in a request, and a
+// `required` readOnly property applies to the response only). #35: a
+// free-form object field accepts arbitrary keys.
+describe('buildLayout — request direction (#35, #47)', () => {
+  const userBody = (required: boolean) =>
+    jsonBody(
+      {
+        type: 'object',
+        required: ['id', 'name'],
+        properties: { id: { type: 'string', readOnly: true }, name: { type: 'string' } },
+      },
+      required,
+    );
+
+  it('drops a required readOnly property from a flattened body', () => {
+    const operation = bodyOp(userBody(true));
+    const l = layout(buildLayout(operation, new Set()));
+    expect(l.mapper.bodyMode).toBe('flattened');
+    expect(Object.keys(l.mapper.fields)).toEqual(['name']);
+    expect(l.inputSchema.safeParse({ name: 'x' }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ id: '1', name: 'x' }).success).toBe(false);
+  });
+
+  it('does not count a dropped readOnly property in the optional-body group', () => {
+    const operation = bodyOp(userBody(false));
+    const l = layout(buildLayout(operation, new Set()));
+    expect(l.inputSchema.safeParse({}).success).toBe(true);
+    expect(l.inputSchema.safeParse({ name: 'x' }).success).toBe(true);
+  });
+
+  it('drops nested readOnly properties inside a single (non-flattened) body', () => {
+    const body = jsonBody(
+      {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['id', 'name'],
+          properties: { id: { type: 'string', readOnly: true }, name: { type: 'string' } },
+        },
+      },
+      true,
+    );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
+    expect(l.mapper.bodyMode).toBe('single');
+    expect(l.inputSchema.safeParse({ body: [{ name: 'x' }] }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ body: [{ id: '1', name: 'x' }] }).success).toBe(false);
+  });
+
+  it('keeps the operation when every body property is readOnly (no body fields)', () => {
+    const body = jsonBody(
+      { type: 'object', properties: { id: { type: 'string', readOnly: true } } },
+      true,
+    );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
+    expect(Object.keys(l.mapper.fields)).toEqual([]);
+    expect(l.inputSchema.safeParse({}).success).toBe(true);
+  });
+
+  it('exposes a flattened free-form property as an object accepting arbitrary keys', () => {
+    const body = jsonBody(
+      {
+        type: 'object',
+        required: ['name'],
+        properties: { name: { type: 'string' }, metadata: { type: 'object' } },
+      },
+      true,
+    );
+    const l = layout(buildLayout(bodyOp(body), new Set()));
+    const parsed = l.inputSchema.safeParse({ name: 'x', metadata: { env: 'prod', n: 1 } });
+    expect(parsed.success).toBe(true);
+    expect((parsed.data as Record<string, unknown>)['metadata']).toEqual({ env: 'prod', n: 1 });
+    expect(l.inputSchema.safeParse({ name: 'x', metadata: 'prod' }).success).toBe(false);
+  });
+});
+
 describe('buildLayout — collisions and optional body', () => {
   it('prefixes colliding names by location', () => {
     const body = jsonBody(
@@ -606,5 +683,438 @@ describe('buildLayout — path template consistency', () => {
           new Set(),
         ),
     ).toBe(true);
+  });
+});
+
+// #54 / decision D5: every JSON media-type variant is accepted (`+json`
+// suffix, parameters), the DECLARED media type is what gets sent, and the
+// choice among several variants is deterministic.
+describe('buildLayout — JSON media-type variants (#54, D5)', () => {
+  const objectSchema = { type: 'object', properties: { name: { type: 'string' } } };
+  const withContent = (content: Record<string, unknown>) =>
+    buildLayout(bodyOp({ required: true, content }), new Set());
+
+  it.each([
+    'application/json; charset=utf-8',
+    'application/merge-patch+json',
+    'application/vnd.api+json',
+    'application/json; profile="https://example.com/p"',
+    'Application/JSON',
+  ])('exposes a body declared as %s and keeps the declared media type', (key) => {
+    const l = layout(withContent({ [key]: { schema: objectSchema } }));
+    expect(l.mapper.bodyMode).toBe('flattened');
+    expect(l.mapper.bodyContentType).toBe(key);
+  });
+
+  it('routes an array-root application/json-patch+json body to the single body field', () => {
+    const l = layout(
+      withContent({
+        'application/json-patch+json': {
+          schema: {
+            type: 'array',
+            items: { type: 'object', properties: { op: { type: 'string' } } },
+          },
+        },
+      }),
+    );
+    expect(l.mapper.bodyMode).toBe('single');
+    expect(l.mapper.bodyContentType).toBe('application/json-patch+json');
+  });
+
+  it('prefers exact application/json over any variant, and the parameterless key among application/json keys', () => {
+    expect(
+      layout(
+        withContent({
+          'application/merge-patch+json': { schema: objectSchema },
+          'application/json': { schema: objectSchema },
+        }),
+      ).mapper.bodyContentType,
+    ).toBe('application/json');
+    expect(
+      layout(
+        withContent({
+          'application/json; charset=utf-8': { schema: objectSchema },
+          'application/json': { schema: objectSchema },
+        }),
+      ).mapper.bodyContentType,
+    ).toBe('application/json');
+  });
+
+  it('picks application/merge-patch+json among the Kubernetes PATCH media types', () => {
+    const patch = { schema: { type: 'object', description: 'Patch' } };
+    const l = layout(
+      withContent({
+        'application/apply-patch+yaml': patch,
+        'application/json-patch+json': patch,
+        'application/merge-patch+json': patch,
+        'application/strategic-merge-patch+json': patch,
+      }),
+    );
+    expect(l.mapper.bodyContentType).toBe('application/merge-patch+json');
+  });
+
+  it('omits when several JSON variants have no deterministic winner', () => {
+    const r = withContent({
+      'application/vnd.a+json': { schema: objectSchema },
+      'application/vnd.b+json': { schema: objectSchema },
+    });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(/several JSON media types/u);
+  });
+
+  it.each([
+    'text/plain',
+    'application/json;',
+    'application/json; charset',
+    'application/json\r\nX-Evil: 1',
+    'application/jsonx',
+  ])('still omits a non-JSON or malformed media type key %j', (key) => {
+    expect('unrepresentable' in withContent({ [key]: { schema: objectSchema } })).toBe(true);
+  });
+
+  it.each([
+    'application/x-www-form-urlencoded; charset=utf-8',
+    'application/x-www-form-urlencoded;charset="UTF-8"',
+    'Application/X-WWW-Form-Urlencoded',
+  ])('exposes a form body declared as %j and keeps the declared media type', (key) => {
+    const l = layout(withContent({ [key]: { schema: objectSchema } }));
+    expect(l.mapper.bodyMode).toBe('flattened');
+    expect(l.mapper.bodyContentType).toBe(key);
+  });
+
+  it('prefers the bare form key over a parameterised one', () => {
+    const l = layout(
+      withContent({
+        'application/x-www-form-urlencoded; charset=utf-8': { schema: objectSchema },
+        'application/x-www-form-urlencoded': { schema: objectSchema },
+      }),
+    );
+    expect(l.mapper.bodyContentType).toBe('application/x-www-form-urlencoded');
+  });
+
+  it.each([
+    'application/x-www-form-urlencoded; charset=iso-8859-1',
+    'application/x-www-form-urlencoded; charset=utf-8; foo=bar',
+  ])('omits a form key %j whose parameters the UTF-8 encoder cannot honour', (key) => {
+    expect('unrepresentable' in withContent({ [key]: { schema: objectSchema } })).toBe(true);
+  });
+});
+
+// #59: query styles beyond `form` (OAS 3.1.1 §4.8.12.3 Style Values,
+// §4.8.12.4 Style Examples). Only the combinations the spec defines are
+// accepted; every `n/a` cell of the examples table still omits.
+describe('paramFields — deepObject / spaceDelimited / pipeDelimited (#59)', () => {
+  const query = (extra: Record<string, unknown>) =>
+    paramFields(op([{ name: 'created', in: 'query', ...extra }]), new Set());
+  const scalarObject = {
+    type: 'object',
+    properties: { gt: { type: 'integer' }, lte: { type: 'integer' } },
+  };
+
+  it('accepts deepObject + explode:true on an object of scalars', () => {
+    const [field] = okFields(query({ style: 'deepObject', explode: true, schema: scalarObject }));
+    expect(field?.mapping).toEqual({
+      destination: 'query',
+      wireName: 'created',
+      style: 'deepObject',
+      explode: true,
+      required: false,
+    });
+  });
+
+  it('accepts a free-form deepObject (JSON:API-style filter[...])', () => {
+    expect('ok' in query({ style: 'deepObject', explode: true, schema: { type: 'object' } })).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    [
+      'deepObject without explode (spec default false: n/a)',
+      { style: 'deepObject', schema: scalarObject },
+    ],
+    [
+      'deepObject with explode:false',
+      { style: 'deepObject', explode: false, schema: scalarObject },
+    ],
+    [
+      'deepObject with a nested object property',
+      {
+        style: 'deepObject',
+        explode: true,
+        schema: { type: 'object', properties: { range: { type: 'object' } } },
+      },
+    ],
+    [
+      'deepObject with an array property',
+      {
+        style: 'deepObject',
+        explode: true,
+        schema: {
+          type: 'object',
+          properties: { ids: { type: 'array', items: { type: 'string' } } },
+        },
+      },
+    ],
+    [
+      'deepObject on a scalar schema',
+      { style: 'deepObject', explode: true, schema: { type: 'string' } },
+    ],
+    [
+      'pipeDelimited with explode:true',
+      {
+        style: 'pipeDelimited',
+        explode: true,
+        schema: { type: 'array', items: { type: 'string' } },
+      },
+    ],
+    ['spaceDelimited on a scalar schema', { style: 'spaceDelimited', schema: { type: 'string' } }],
+    [
+      'pipeDelimited on an array of objects',
+      { style: 'pipeDelimited', schema: { type: 'array', items: { type: 'object' } } },
+    ],
+  ])('still omits %s', (_label, extra) => {
+    expect('unrepresentable' in query(extra)).toBe(true);
+  });
+
+  it.each(['spaceDelimited', 'pipeDelimited'])(
+    'accepts %s (explode default false) on an array of scalars',
+    (style) => {
+      const [field] = okFields(
+        query({ style, schema: { type: 'array', items: { type: 'string' } } }),
+      );
+      expect(field?.mapping).toMatchObject({ style, explode: false });
+    },
+  );
+
+  it('omits deepObject outside query (header)', () => {
+    expect(
+      'unrepresentable' in
+        paramFields(
+          op([
+            { name: 'x', in: 'header', style: 'deepObject', explode: true, schema: scalarObject },
+          ]),
+          new Set(),
+        ),
+    ).toBe(true);
+  });
+});
+
+// #40: body presence is recorded in the mapper, not inferred from which
+// flattened fields happen to be populated.
+describe('buildLayout — required body presence (#40)', () => {
+  const optionalOnly = { type: 'object', properties: { note: { type: 'string' } } };
+  const mapperFor = (requestBody: Record<string, unknown>) => {
+    const operation = bodyOp(requestBody);
+    return layout(buildLayout(operation, new Set())).mapper;
+  };
+
+  it('records bodyRequired for a required body, in both flattened and single mode', () => {
+    expect(mapperFor(jsonBody(optionalOnly, true))).toMatchObject({
+      bodyMode: 'flattened',
+      bodyRequired: true,
+    });
+    const arrayBody = jsonBody({ type: 'array', items: { type: 'string' } }, true);
+    expect(mapperFor(arrayBody).bodyRequired).toBe(true);
+  });
+
+  it('does not set bodyRequired for an optional body', () => {
+    expect(mapperFor(jsonBody(optionalOnly, false)).bodyRequired).toBeUndefined();
+  });
+});
+
+// #71: an application/octet-stream body is exposed as ONE base64 string field
+// (JSON-RPC tool arguments cannot carry raw bytes) and decoded before sending.
+describe('buildLayout — application/octet-stream bodies (#71)', () => {
+  const binaryOp = (content: Record<string, unknown>, required = true) =>
+    buildLayout(bodyOp({ ...(required ? { required: true } : {}), content }), new Set());
+
+  it('exposes a {type:string, format:binary} body as a base64 `body` field', () => {
+    const l = layout(
+      binaryOp({ 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } }),
+    );
+    expect(l.mapper.bodyMode).toBe('single');
+    expect(l.mapper.bodyContentType).toBe('application/octet-stream');
+    expect(l.mapper.fields['body']).toEqual({ destination: 'body', bodyPath: [], required: true });
+    expect(l.inputSchema.safeParse({ body: 'aGVsbG8=' }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ body: '' }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ body: 'not base64!' }).success).toBe(false);
+    expect(l.inputSchema.safeParse({ body: 'aGVsbG8' }).success).toBe(false);
+    expect(l.inputSchema.safeParse({ body: 123 }).success).toBe(false);
+    expect(l.inputSchema.safeParse({}).success).toBe(false);
+    // Non-canonical trailing bits (RFC 4648 §3.5) and a line break are rejected.
+    expect(l.inputSchema.safeParse({ body: 'QR==' }).success).toBe(false);
+    expect(l.inputSchema.safeParse({ body: 'aGVs\nbG8=' }).success).toBe(false);
+  });
+
+  it('validates a multi-MiB base64 body without throwing', () => {
+    const l = layout(
+      binaryOp({ 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } }),
+    );
+    const large = Buffer.alloc(6 * 1024 * 1024, 7).toString('base64');
+    expect(l.inputSchema.safeParse({ body: large }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ body: `${large.slice(0, -4)}!!!!` }).success).toBe(false);
+  });
+
+  it('advertises the base64 encoding and the media type on the wire', () => {
+    const l = layout(
+      binaryOp({ 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } }),
+    );
+    const wire = z.toJSONSchema(l.inputSchema) as {
+      properties: Record<string, Record<string, unknown>>;
+    };
+    expect(wire.properties['body']).toMatchObject({
+      type: 'string',
+      contentEncoding: 'base64',
+      contentMediaType: 'application/octet-stream',
+    });
+  });
+
+  it('accepts a 3.1 octet-stream body with no schema', () => {
+    expect('ok' in binaryOp({ 'application/octet-stream': {} })).toBe(true);
+  });
+
+  it('prefers a JSON body over an octet-stream alternative', () => {
+    const l = layout(
+      binaryOp({
+        'application/octet-stream': { schema: { type: 'string', format: 'binary' } },
+        'application/json': { schema: { type: 'object', properties: { a: { type: 'string' } } } },
+      }),
+    );
+    expect(l.mapper.bodyContentType).toBe('application/json');
+  });
+
+  it.each([
+    ['an object schema', { type: 'object', properties: { a: { type: 'string' } } }],
+    ['format: byte (base64 TEXT, not raw bytes)', { type: 'string', format: 'byte' }],
+    [
+      'an already-encoded 3.1 body (contentEncoding)',
+      { type: 'string', contentEncoding: 'base64' },
+    ],
+  ])('still omits an octet-stream body with %s', (_label, schema) => {
+    expect('unrepresentable' in binaryOp({ 'application/octet-stream': { schema } })).toBe(true);
+  });
+});
+
+// #71: multipart/form-data bodies — flattened like form-urlencoded, with
+// binary parts exposed as base64 string fields.
+describe('buildLayout — multipart/form-data bodies (#71)', () => {
+  const multipart = (schema: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    buildLayout(
+      bodyOp({ required: true, content: { 'multipart/form-data': { schema, ...extra } } }),
+      new Set(),
+    );
+  const upload = {
+    type: 'object',
+    required: ['file'],
+    properties: {
+      file: { type: 'string', format: 'binary' },
+      note: { type: 'string' },
+    },
+  };
+
+  it('flattens the parts and marks the binary part', () => {
+    const l = layout(multipart(upload));
+    expect(l.mapper.bodyMode).toBe('flattened');
+    expect(l.mapper.bodyContentType).toBe('multipart/form-data');
+    expect(l.mapper.fields['file']).toEqual({
+      destination: 'body',
+      bodyPath: ['file'],
+      required: true,
+      binary: true,
+    });
+    expect(l.mapper.fields['note']).toEqual({
+      destination: 'body',
+      bodyPath: ['note'],
+      required: false,
+    });
+    expect(l.inputSchema.safeParse({ file: 'aGVsbG8=', note: 'x' }).success).toBe(true);
+    expect(l.inputSchema.safeParse({ file: 'not base64!' }).success).toBe(false);
+    expect(l.inputSchema.safeParse({ note: 'x' }).success).toBe(false);
+  });
+
+  it.each([
+    ['an encoding object', upload, { encoding: { file: { contentType: 'image/png' } } }],
+    ['a non-object root', { type: 'string', format: 'binary' }, {}],
+    [
+      'a part name that cannot be put in a Content-Disposition header',
+      { type: 'object', properties: { 'a"b': { type: 'string' } } },
+      {},
+    ],
+  ])('still omits multipart with %s', (_label, schema, extra) => {
+    expect('unrepresentable' in multipart(schema, extra)).toBe(true);
+  });
+
+  const withPart = (part: unknown) => ({
+    type: 'object',
+    required: ['file'],
+    properties: { file: { type: 'string', format: 'binary' }, extra: part },
+  });
+
+  it.each([
+    ['an array of strings', { type: 'array', items: { type: 'string' } }],
+    ['an object', { type: 'object', properties: { a: { type: 'string' } } }],
+    ['a 3.1 nullable string', { type: ['string', 'null'] }],
+    ['a 3.0 nullable string', { type: 'string', nullable: true }],
+    ['a typeless schema', {}],
+    ['an enum with null', { enum: ['a', null] }],
+    ['multiple files', { type: 'array', items: { type: 'string', format: 'binary' } }],
+  ])('omits a multipart part that is %s (the serializer only writes scalars)', (_label, part) => {
+    const r = multipart(withPart(part));
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(/multipart part "extra"/u);
+  });
+
+  it.each([
+    ['maxLength', { type: 'string', format: 'binary', maxLength: 1024 }],
+    ['nullable', { type: 'string', format: 'binary', nullable: true }],
+    ['an enum', { type: 'string', contentMediaType: 'image/png', enum: ['a'] }],
+  ])('omits a declared file part with %s instead of sending it as text', (_label, part) => {
+    const r = multipart({ type: 'object', properties: { file: part } });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(/file part "file"/u);
+  });
+
+  it('keeps a writeOnly file part binary', () => {
+    const l = layout(
+      multipart({
+        type: 'object',
+        properties: { file: { type: 'string', format: 'binary', writeOnly: true } },
+      }),
+    );
+    expect(l.mapper.fields['file']).toMatchObject({ binary: true });
+  });
+
+  it('uses a concrete declared contentMediaType as the part type, not a range', () => {
+    const png = layout(
+      multipart({
+        type: 'object',
+        properties: { file: { type: 'string', contentMediaType: 'image/png' } },
+      }),
+    );
+    expect(png.mapper.fields['file']).toMatchObject({ binary: true, partContentType: 'image/png' });
+    const range = layout(
+      multipart({
+        type: 'object',
+        properties: { file: { type: 'string', contentMediaType: 'image/*' } },
+      }),
+    );
+    expect(range.mapper.fields['file']).not.toHaveProperty('partContentType');
+  });
+
+  it('omits a required multipart body that declares no parts', () => {
+    const r = multipart({
+      type: 'object',
+      properties: { id: { type: 'string', readOnly: true } },
+    });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(/declares no parts/u);
+  });
+
+  it('omits a declared multipart key that carries parameters (the boundary is generated)', () => {
+    const r = buildLayout(
+      bodyOp({
+        required: true,
+        content: { 'multipart/form-data; boundary=x': { schema: upload } },
+      }),
+      new Set(),
+    );
+    expect('unrepresentable' in r).toBe(true);
   });
 });

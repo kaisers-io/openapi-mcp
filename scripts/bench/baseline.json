@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "node": "v24.22.1",
+  "platform": "linux",
+  "arch": "x64",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.80GHz",
+  "runs": 5,
+  "sequentialCalls": 20,
+  "parallelCalls": 16,
+  "upstreamLatencyMs": 20,
+  "results": {
+    "head": {
+      "cli": {
+        "versionMs": {
+          "median": 122.15,
+          "min": 114.99,
+          "max": 147.58,
+          "samples": [114.99, 127.78, 118.21, 147.58, 122.15]
+        },
+        "toolsMs": {
+          "median": 158.27,
+          "min": 131.66,
+          "max": 172.77,
+          "samples": [168.13, 172.77, 131.66, 158.27, 147.95]
+        }
+      },
+      "fixtures": {
+        "petstore": {
+          "startupMs": {
+            "median": 391.69,
+            "min": 353.03,
+            "max": 469.68,
+            "samples": [367.32, 469.68, 391.69, 353.03, 391.94]
+          },
+          "warmStartupMs": {
+            "median": 283.6,
+            "min": 267.7,
+            "max": 304.78,
+            "samples": [296.72, 267.7, 282.5, 283.6, 304.78]
+          },
+          "toolsListMs": {
+            "median": 3.55,
+            "min": 3.29,
+            "max": 3.98,
+            "samples": [3.65, 3.55, 3.98, 3.29, 3.39]
+          },
+          "rssMB": {
+            "median": 89.92,
+            "min": 89.87,
+            "max": 90.88,
+            "samples": [89.95, 89.87, 89.92, 89.9, 90.88]
+          },
+          "warmRssMB": {
+            "median": 112.85,
+            "min": 112.74,
+            "max": 112.96,
+            "samples": [112.82, 112.85, 112.74, 112.91, 112.96]
+          },
+          "sequentialCallMs": {
+            "median": 24.33,
+            "min": 24.05,
+            "max": 24.7,
+            "samples": [24.5, 24.33, 24.7, 24.05, 24.24]
+          },
+          "parallelCallMs": {
+            "median": 51.53,
+            "min": 44.32,
+            "max": 62.65,
+            "samples": [47.24, 53.55, 44.32, 51.53, 62.65]
+          },
+          "toolsListBytes": 2505,
+          "toolCount": 2,
+          "omittedCount": 1,
+          "parallelErrors": 0,
+          "upstreamConnections": 16
+        },
+        "flat-500": {
+          "startupMs": {
+            "median": 1160,
+            "min": 1066.7,
+            "max": 1438.34,
+            "samples": [1074.24, 1438.34, 1160, 1066.7, 1324.17]
+          },
+          "warmStartupMs": {
+            "median": 1092.8,
+            "min": 1050.52,
+            "max": 1399.39,
+            "samples": [1058.82, 1399.39, 1050.52, 1092.8, 1104.01]
+          },
+          "toolsListMs": {
+            "median": 15.91,
+            "min": 15.24,
+            "max": 23.63,
+            "samples": [15.91, 23.63, 17.44, 15.32, 15.24]
+          },
+          "rssMB": {
+            "median": 176.5,
+            "min": 175.89,
+            "max": 177.55,
+            "samples": [176.79, 177.55, 175.89, 176.45, 176.5]
+          },
+          "warmRssMB": {
+            "median": 195.62,
+            "min": 193.47,
+            "max": 196.61,
+            "samples": [196.25, 196.61, 195.62, 194.99, 193.47]
+          },
+          "sequentialCallMs": {
+            "median": 24.52,
+            "min": 23.55,
+            "max": 24.83,
+            "samples": [24.53, 24.52, 24.12, 24.83, 23.55]
+          },
+          "parallelCallMs": {
+            "median": 42.74,
+            "min": 38.94,
+            "max": 48.59,
+            "samples": [41.01, 42.74, 42.94, 38.94, 48.59]
+          },
+          "toolsListBytes": 410806,
+          "toolCount": 501,
+          "omittedCount": 0,
+          "parallelErrors": 0,
+          "upstreamConnections": 16
+        },
+        "layered-100": {
+          "startupMs": {
+            "median": 2938.74,
+            "min": 2834.63,
+            "max": 3014.01,
+            "samples": [3005.48, 2938.74, 2834.63, 2842.89, 3014.01]
+          },
+          "warmStartupMs": {
+            "median": 2928.87,
+            "min": 2672.31,
+            "max": 3080.04,
+            "samples": [3080.04, 2928.87, 2672.31, 3061.06, 2762.1]
+          },
+          "toolsListMs": {
+            "median": 54.55,
+            "min": 46.1,
+            "max": 83,
+            "samples": [83, 46.1, 52.36, 54.55, 67.79]
+          },
+          "rssMB": {
+            "median": 338.43,
+            "min": 337.98,
+            "max": 340.58,
+            "samples": [338.29, 338.43, 337.98, 338.54, 340.58]
+          },
+          "warmRssMB": {
+            "median": 362.93,
+            "min": 362.12,
+            "max": 363.2,
+            "samples": [363.2, 362.12, 362.18, 362.93, 363.06]
+          },
+          "sequentialCallMs": {
+            "median": 24.66,
+            "min": 24.51,
+            "max": 25.42,
+            "samples": [24.56, 24.74, 24.51, 25.42, 24.66]
+          },
+          "parallelCallMs": {
+            "median": 41.73,
+            "min": 41.32,
+            "max": 46.01,
+            "samples": [41.73, 41.34, 45.54, 46.01, 41.32]
+          },
+          "toolsListBytes": 948656,
+          "toolCount": 101,
+          "omittedCount": 0,
+          "parallelErrors": 0,
+          "upstreamConnections": 16
+        }
+      }
+    }
+  }
+}

@@ -1,7 +1,12 @@
+import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
+import { envelopeHasSecret } from '../src/server/execute/response.ts';
+import { BOUNDARY_WITHHELD_SUCCESS_TEXT } from '../src/server/withheld.ts';
 import {
   compileEnvelopeValidator,
+  createEnvelopeCompiler,
   createRedactor,
+  deriveOutputSchema,
   mapResponse,
   TRUNCATION_MARKER,
 } from '../src/index.ts';
@@ -52,6 +57,8 @@ const response = (
   status,
   ...(contentType === undefined ? {} : { contentType }),
   bodyBytes: typeof body === 'string' ? encoder.encode(body) : body,
+  headers: {},
+  url: 'https://api.example.test/',
 });
 
 const errorOutcome = (reason: PinnedErrorReason, detail?: string): PinnedOutcome => ({
@@ -94,6 +101,98 @@ describe('compileEnvelopeValidator', () => {
 
   it('throws at compile time for an incompatible schema (fail fast at startup, not first call)', () => {
     expect(() => compileEnvelopeValidator({ type: 'object', oneOf: 'not-an-array' })).toThrow();
+  });
+});
+
+describe('createEnvelopeCompiler — one compiler context per snapshot (issue #42)', () => {
+  const envelope = (data: Record<string, unknown>): Record<string, unknown> => ({
+    type: 'object',
+    oneOf: [
+      {
+        type: 'object',
+        properties: {
+          status: { const: 200 },
+          contentType: { const: 'application/json' },
+          data,
+        },
+        required: ['status', 'contentType', 'data'],
+        additionalProperties: false,
+      },
+    ],
+  });
+  const wrap = (data: unknown): unknown => ({ status: 200, contentType: 'application/json', data });
+  const schemas = [
+    envelope({ type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] }),
+    envelope({ type: 'string', format: 'email' }),
+    envelope({ type: 'string', format: 'date-time', maxLength: 30 }),
+    envelope({ type: 'array', items: { type: 'number', minimum: 0 } }),
+  ];
+  const samples = [
+    { id: 1 },
+    { id: 'x' },
+    'a@example.com',
+    'not-an-email',
+    '2026-10-21T10:00:00Z',
+    '2026-13-45',
+    [1, 2],
+    [-1],
+    null,
+  ];
+
+  it('validates exactly like a fresh Ajv instance per tool', () => {
+    const compile = createEnvelopeCompiler();
+    for (const schema of schemas) {
+      const shared = compile(schema) as EnvelopeValidator;
+      const fresh = compileEnvelopeValidator(schema) as EnvelopeValidator;
+      for (const sample of samples) {
+        expect(shared(wrap(sample))).toBe(fresh(wrap(sample)));
+      }
+    }
+  });
+
+  it('still fails at compile time for an incompatible schema', () => {
+    const compile = createEnvelopeCompiler();
+    expect(() => compile({ type: 'object', oneOf: 'not-an-array' })).toThrow();
+    // The context stays usable after a failed compile
+    expect((compile(schemas[0]) as EnvelopeValidator)(wrap({ id: 1 }))).toBe(true);
+  });
+
+  it('returns undefined for a tool without an outputSchema', () => {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- the parameter is required: the absent outputSchema is the case under test
+    expect(createEnvelopeCompiler()(undefined)).toBeUndefined();
+  });
+
+  it('accepts the same $id twice in one context and keeps contexts independent', () => {
+    // Nothing is registered by $id, so two tools (or two servers) whose
+    // schemas happen to share an id never collide
+    const withId = { $id: 'https://example.com/envelope', ...schemas[0] };
+    const first = createEnvelopeCompiler();
+    expect(() => first(withId)).not.toThrow();
+    expect(() => first({ ...withId })).not.toThrow();
+    const second = createEnvelopeCompiler();
+    expect((second(withId) as EnvelopeValidator)(wrap({ id: 2 }))).toBe(true);
+  });
+
+  it('keeps a NESTED shared $id per tool: each validator checks its own subschema, none resolves another tool’s', () => {
+    // A component schema with $id is inlined under `data` in many envelopes
+    const nested = (pet: Record<string, unknown>): Record<string, unknown> =>
+      envelope({
+        $defs: { pet: { $id: 'https://x.test/Pet', ...pet } },
+        $ref: 'https://x.test/Pet',
+      });
+    const compile = createEnvelopeCompiler();
+    const byId = compile(
+      nested({ type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] }),
+    ) as EnvelopeValidator;
+    const byName = compile(
+      nested({ type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }),
+    ) as EnvelopeValidator;
+    expect(byId(wrap({ id: 1 }))).toBe(true);
+    expect(byId(wrap({ name: 'x' }))).toBe(false);
+    expect(byName(wrap({ name: 'x' }))).toBe(true);
+    expect(byName(wrap({ id: 1 }))).toBe(false);
+    // An id defined only in another tool's schema does not leak through
+    expect(() => compile(envelope({ $ref: 'https://x.test/Pet' }))).toThrow(/resolve/u);
   });
 });
 
@@ -215,6 +314,56 @@ describe('mapResponse — HTTP error status (>=400)', () => {
     const text = isError(mapResponse(defaultOpts({ outcome, redactor: forcedResidue })));
     expect(text).toBe('upstream request failed with status 500');
   });
+
+  // Issue #58: secrets are registered as whole header values, so these
+  // bodies — which echo only the credential, a decoded Basic part, or an
+  // encoding the redactor did not know — used to come back verbatim.
+  describe('echoed credentials derived from an Authorization value (#58)', () => {
+    const token = 'example-token-not-a-secret';
+    const basicHeader = `Basic ${Buffer.from('alice:example/pass word-not-a-secret').toString('base64')}`;
+
+    it.each([
+      ['a bare Bearer token', `Bearer ${token}`, `{"error":"invalid api key ${token}"}`, token],
+      [
+        'a decoded Basic user:pass',
+        basicHeader,
+        'login failed for alice:example/pass word-not-a-secret',
+        'pass word',
+      ],
+      [
+        'a decoded Basic password',
+        basicHeader,
+        'bad password example/pass word-not-a-secret',
+        'pass word',
+      ],
+      [
+        'a lowercase %xx password',
+        basicHeader,
+        'pw=example%2fpass%20word-not-a-secret',
+        'pass%20word',
+      ],
+      ['a form-encoded password', basicHeader, 'pw=example%2Fpass+word-not-a-secret', 'pass+word'],
+      [
+        'a JSON \\/-escaped password',
+        basicHeader,
+        String.raw`{"pw":"example\/pass word-not-a-secret"}`,
+        'pass word',
+      ],
+    ])('500 text/plain echoing %s is redacted', (_label, headerValue, body, fragment) => {
+      const redactor = createRedactor([headerValue]);
+      const outcome = response(500, 'text/plain', body);
+      const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
+      expect(text).toMatch(/^upstream request failed with status 500: .*\[redacted\]/u);
+      expect(text).not.toContain(fragment);
+    });
+
+    it('500 application/json echoing a bare Bearer token never leaks', () => {
+      const redactor = createRedactor([`Bearer ${token}`]);
+      const outcome = response(500, 'application/json', `{"error":"invalid api key ${token}"}`);
+      const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
+      expect(text).not.toContain(token);
+    });
+  });
 });
 
 describe('mapResponse — no outputSchema (validator undefined)', () => {
@@ -244,8 +393,23 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     const redactor = createRedactor([secret]);
     const result = mapResponse(defaultOpts({ outcome, redactor }));
     const text = isError(result);
-    expect(text).toBe('the upstream response could not be returned safely');
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
     expect(text).not.toContain(secret);
+  });
+
+  // A 2xx whose result is withheld must not read like a plain failure: the
+  // upstream call succeeded, so an agent that retries a write could apply it
+  // twice. Same wording as the dispatch boundary (withheld.ts).
+  it('a withheld 2xx result says the call succeeded and must not be retried blindly', () => {
+    const secret = 'tok-abcdefghij0123456789';
+    const outcome = response(201, 'application/json', `{"token":"${secret}"}`);
+    const redactor = createRedactor([secret]);
+    const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
+    expect(text).toContain('the upstream call succeeded');
+    expect(text).toContain('contained a registered secret');
+    expect(text).toContain('likely taken effect');
+    expect(text).toContain('do not retry it blindly');
+    expect(text).not.toContain('could not be returned safely');
   });
 
   // Covers the "parse failed" branch: a body whose Content-Type
@@ -274,7 +438,7 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
       },
     };
     const text = isError(mapResponse(defaultOpts({ outcome, redactor: throwingScan })));
-    expect(text).toBe('the upstream response could not be returned safely');
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
   });
 
   it('a text/* body within cap is returned as redacted plain text', () => {
@@ -282,6 +446,14 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     const result = mapResponse(defaultOpts({ outcome }));
     expect(result.isError).toBe(false);
     expect(result.content[0]?.text).toBe('hello world');
+  });
+
+  it('a 200 text/* body echoing a bare Bearer credential is returned redacted (#58)', () => {
+    const redactor = createRedactor(['Bearer example-token-not-a-secret']);
+    const outcome = response(200, 'text/plain', 'your key is example-token-not-a-secret');
+    const result = mapResponse(defaultOpts({ outcome, redactor }));
+    expect(result.isError).toBe(false);
+    expect(result.content[0]?.text).toBe('your key is [redacted]');
   });
 
   it('a body over maxTextBytes is truncated with an explicit marker', () => {
@@ -372,7 +544,7 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
       scanForSecret: () => true,
     };
     const text = isError(mapResponse(defaultOpts({ outcome, redactor: forcedResidue })));
-    expect(text).toBe('the upstream response could not be returned safely');
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
   });
 
   // The old no-outputSchema JSON path did STRING-only redaction on the raw
@@ -399,7 +571,7 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     const redactor = createRedactor([secret]);
     const outcome = response(200, 'application/json', body);
     const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
-    expect(text).toBe('the upstream response could not be returned safely');
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
     expect(text).not.toContain(secret);
     expect(text).not.toContain(escapedSecret);
   });
@@ -571,5 +743,198 @@ describe('mapResponse — outputSchema present (validator defined)', () => {
     const validator = compileEnvelopeValidator(sampleOutputSchema()) as EnvelopeValidator;
     const text = isError(mapResponse(defaultOpts({ outcome, validator, outputSchema: undefined })));
     expect(text.length).toBeGreaterThan(0);
+  });
+});
+
+describe('mapResponse — 3xx statuses the transport does not follow', () => {
+  it.each([
+    [300, 'text/html', '<html>choices</html>'],
+    [304, undefined, ''],
+    [305, undefined, ''],
+    [399, 'application/json', '{}'],
+  ])('maps a %i to a tool error, never to success', (status, contentType, body) => {
+    const opts = defaultOpts({ outcome: response(status, contentType, body) });
+    const text = isError(mapResponse(opts));
+    expect(text).toBe(
+      `tool execution failed: the upstream server returned status ${status}, which is not supported`,
+    );
+  });
+
+  it('applies to a tool with an output schema too', () => {
+    const outputSchema = sampleOutputSchema();
+    const validator = compileEnvelopeValidator(outputSchema);
+    const outcome = response(304, undefined, '');
+    const text = isError(mapResponse(defaultOpts({ outcome, outputSchema, validator })));
+    expect(text).toContain('status 304');
+  });
+
+  it('leaves 2xx untouched (the boundary is exactly 300)', () => {
+    const result = mapResponse(defaultOpts({ outcome: response(299, 'text/plain', 'ok') }));
+    expect(result.isError).toBe(false);
+  });
+});
+
+describe('mapResponse — large structured results: one secret scan, bounded text copy', () => {
+  const SECRET = 'example-token-not-a-secret';
+  const anyDataSchema = (): Record<string, unknown> => ({
+    type: 'object',
+    oneOf: [
+      {
+        type: 'object',
+        properties: {
+          status: { const: 200 },
+          contentType: { const: 'application/json' },
+          data: {},
+        },
+        required: ['status', 'contentType', 'data'],
+      },
+    ],
+  });
+  const structured = (body: string, maxTextBytes = 4096): ToolCallOutcome => {
+    const outputSchema = anyDataSchema();
+    const validator = compileEnvelopeValidator(outputSchema);
+    return mapResponse(
+      defaultOpts({
+        outcome: response(200, 'application/json', body),
+        outputSchema,
+        validator,
+        redactor: createRedactor([SECRET]),
+        maxTextBytes,
+      }),
+    );
+  };
+
+  it('caps the text copy at maxTextBytes while structuredContent keeps the full data', () => {
+    const items = Array.from({ length: 2000 }, (_unused, index) => ({ id: index }));
+    const result = structured(JSON.stringify(items), 1024);
+    expect(result.isError).toBe(false);
+    const text = result.content[0]?.text ?? '';
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(1024);
+    expect(text.endsWith(TRUNCATION_MARKER)).toBe(true);
+    expect(text.startsWith('{"status":200,"contentType":"application/json","data":[{"id":0}')).toBe(
+      true,
+    );
+    expect(result.structuredContent?.['data']).toHaveLength(2000);
+  });
+
+  it('leaves a small result text complete', () => {
+    const result = structured('{"id":1}');
+    expect(result.content[0]?.text).toBe(
+      '{"status":200,"contentType":"application/json","data":{"id":1}}',
+    );
+  });
+
+  it.each([
+    ['in a string value (no escapes: raw-text fast path)', `{"note":"${SECRET}"}`],
+    ['in an object key (no escapes: raw-text fast path)', `{"${SECRET}":1}`],
+    [
+      'next to an escaped \\/ elsewhere (tree-scan fallback)',
+      `{"path":"a\\/b","note":"${SECRET}"}`,
+    ],
+    ['escaped as \\u002d (tree-scan fallback)', `{"note":"${SECRET.replaceAll('-', '\\u002d')}"}`],
+    ['escaped key (tree-scan fallback)', `{"${SECRET.replaceAll('t', '\\u0074')}":1}`],
+  ])('still refuses a body with a secret %s', (_label, body) => {
+    expect(JSON.stringify(JSON.parse(body))).toContain(SECRET);
+    const text = isError(structured(body));
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
+  });
+
+  it.each([
+    ['without escapes (raw-text fast path)', '{"id":1}'],
+    ['with escapes (tree-scan fallback)', '{"path":"a\\/b"}'],
+  ])('tree-scans every non-data envelope field %s', (_label, body) => {
+    const redactor = createRedactor([SECRET]);
+    const data: unknown = JSON.parse(body);
+    const clean = { status: 200, contentType: 'application/json', data };
+    expect(envelopeHasSecret(redactor, body, clean)).toBe(false);
+    // A field a later layer adds (forwarded headers, a pagination hint) is
+    // covered without touching the fast path; so is the content type.
+    expect(envelopeHasSecret(redactor, body, { ...clean, headers: { [SECRET]: 'x' } })).toBe(true);
+    expect(envelopeHasSecret(redactor, body, { ...clean, pagination: { next: SECRET } })).toBe(
+      true,
+    );
+    expect(
+      envelopeHasSecret(redactor, body, { ...clean, contentType: `application/${SECRET}` }),
+    ).toBe(true);
+  });
+
+  it('accepts a secret-free body that contains escapes (tree-scan fallback, no false positive)', () => {
+    const result = structured('{"path":"a\\/b","quote":"\\"x\\""}');
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent?.['data']).toEqual({ path: 'a/b', quote: '"x"' });
+  });
+});
+
+// #33: end-to-end through the real generated outputSchema — an upstream that
+// adds an undocumented response field must still yield structured output.
+describe('mapResponse — generated outputSchema with an undocumented field (#33)', () => {
+  it('returns structuredContent, not an output-schema error', () => {
+    const outputSchema = deriveOutputSchema(
+      {
+        method: 'get',
+        path: '/x',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        responses: {
+          '200': {
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { id: { type: 'string' } } },
+              },
+            },
+          },
+        },
+      },
+      '3.1',
+    );
+    const validator = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+    const outcome = response(200, 'application/json', '{"id":"a","created":1}');
+    const result = mapResponse(defaultOpts({ outcome, outputSchema, validator }));
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 'a', created: 1 },
+    });
+  });
+});
+
+// #72: with --default-response-is-error, an undocumented 2xx names the flag.
+describe('mapResponse — undocumented 2xx under the default-is-error assumption (#72)', () => {
+  const outputSchema = sampleOutputSchema();
+  const validator = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+  const hint = '--default-response-is-error';
+
+  it('names the flag when the hint is set', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toContain('201');
+    expect(text).toContain(hint);
+  });
+
+  it('says the upstream reported success and warns against a blind retry (D13)', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toMatch(/^the upstream reported success \(status 201\)/u);
+    expect(text).toContain('likely applied');
+    expect(text).toContain('do not retry it blindly');
+  });
+
+  it('keeps the existing message without the hint', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const text = isError(mapResponse(defaultOpts({ outcome, outputSchema, validator })));
+    expect(text).toContain('did not match a declared output branch');
+    expect(text).not.toContain(hint);
+  });
+
+  it('still maps a 4xx through the HTTP error path', () => {
+    const outcome = response(404, 'application/json', '{"error":{}}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toContain('404');
+    expect(text).not.toContain(hint);
   });
 });

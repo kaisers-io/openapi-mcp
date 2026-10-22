@@ -2,3 +2,5 @@ _local
 node_modules/
 dist/
 coverage/
+# Commit-pinned public benchmark specs, downloaded on demand (pnpm bench --suite public)
+scripts/bench/.cache/

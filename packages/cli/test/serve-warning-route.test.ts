@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { testContext } from '../src/context.ts';
-import { createTransportWarningRoute } from '../src/commands/serve.ts';
+import { createTransportWarningRoute } from '../src/commands/serve-action.ts';
 
 // In-process unit coverage for the bounded stderr route serve.ts hands both
 // transports as their out-of-band error sink. The E2E suites drive the route
-// through a real spawned subprocess (v8 coverage never sees inside a child),
-// and a real subprocess cannot be made to cross the window without actually
-// sleeping — so the window itself is exercised here, against the injected
+// through a real spawned subprocess, which cannot be made to cross the
+// window without actually sleeping — so the window itself is exercised here, against the injected
 // clock, which is the whole reason the route takes `ctx.now` instead of
 // calling Date.now.
 const routeWith = (nowMs: () => number) => {

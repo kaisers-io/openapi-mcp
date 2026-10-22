@@ -1,5 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { validationError } from './errors.ts';
+import { createMatcher, replaceSpans } from './redact-match.ts';
+import type { Span } from './redact-match.ts';
 
 const MAX_SECRETS = 64; // Bound construction cost
 const MAX_SECRET_LENGTH = 8192; // Bound per-needle scan cost
@@ -7,15 +9,99 @@ const MIN_VARIANT_LENGTH = 8; // Encoding variants only for 8+ char secrets
 const REDACTED = '[redacted]';
 
 // The literal needles for one secret: the raw value, plus (for 8+ chars) the
-// bounded standard-Base64, Base64URL, and percent-encoded forms. All literal
-// strings — matched via split/join, never a built RegExp (no ReDoS surface).
+// bounded encoded forms an upstream plausibly echoes it in — standard
+// Base64, Base64URL, percent-encoding with upper- AND lowercase hex (RFC 3986
+// §2.1 makes them equivalent and some servers emit lowercase),
+// application/x-www-form-urlencoded (space as `+`, per the WHATWG URL
+// serializer), and the JSON-string-escaped body (`JSON.stringify` escapes,
+// plus `/` as `\/`, which PHP's json_encode and others emit). The JSON forms
+// matter for TEXT bodies: an `application/json` body is already covered by
+// response.ts's parse-and-scan-structure path, but a text/plain or HTML
+// error page that embeds a JSON snippet is only ever string-redacted.
+// All literal strings — matched literally by redact-match.ts, never a built
+// RegExp (no ReDoS surface; the one RegExp below is a fixed pattern applied
+// to the ENCODED secret, not built from it). Callers dedupe through a Set,
+// so a secret with no special characters costs no extra needles for the
+// forms that collapse to the raw value.
 const variantsOf = (secret: string): string[] => {
   if (secret.length < MIN_VARIANT_LENGTH) {
     return [secret];
   }
   const std = Buffer.from(secret, 'utf8').toString('base64');
   const url = std.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
-  return [secret, std, url, encodeURIComponent(secret)];
+  const pct = encodeURIComponent(secret);
+  const pctLower = pct.replaceAll(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase());
+  const form = new URLSearchParams([['', secret]]).toString().slice(1);
+  const json = JSON.stringify(secret).slice(1, -1);
+  return [secret, std, url, pct, pctLower, form, json, json.replaceAll('/', String.raw`\/`)];
+};
+
+// RFC 9110 §5.6.2 `token` (the auth-scheme) followed by whitespace and ONE
+// further whitespace-free run — the `auth-scheme 1*SP token68` shape of
+// RFC 9110 §11.4 (`Bearer x`, `Token x`, `Basic x`, `ApiKey x`). A fixed,
+// linear pattern (the three character classes are pairwise disjoint, so
+// there is no backtracking ambiguity) over a value already capped at
+// MAX_SECRET_LENGTH. Deliberately NOT a generic "last whitespace-separated
+// token": the scheme must be a bare token (no `/`, `(`, `;`...), so a
+// static header such as `User-Agent: client/1.2 extra-info` or
+// `Accept: text/html, application/json` never has a fragment of it promoted
+// to a needle. The auth-param list form (`Digest username="..", ...`) is
+// intentionally out of scope: its values are per-request digests, not a
+// reusable credential, and it contains several spaces.
+const AUTH_CREDENTIALS_RE = /^(?<scheme>[!#$%&'*+.^_`|~0-9A-Za-z-]+)[ \t]+(?<credential>\S+)$/u;
+
+// Strict UTF-8 decode for a Basic credential: a password that does not
+// decode cleanly is not text an upstream could echo as text.
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+
+// RFC 7617 §2: `Basic base64(user-id ":" password)`. Returns the decoded
+// `user:pass` and the password, or nothing when the credential is not
+// canonical Base64 (Buffer.from is lenient — it skips invalid characters —
+// so the round-trip check rejects anything that is not exactly what an
+// encoder would have produced) or carries no colon.
+const basicParts = (credential: string): string[] => {
+  const bytes = Buffer.from(credential, 'base64');
+  if (bytes.toString('base64') !== credential) {
+    return [];
+  }
+  let decoded: string;
+  try {
+    decoded = strictUtf8.decode(bytes);
+  } catch {
+    return [];
+  }
+  // RFC 7617 §2: the user-id cannot contain a colon, so the FIRST colon is
+  // the separator and the password may itself contain colons.
+  const colon = decoded.indexOf(':');
+  return colon === -1 ? [] : [decoded, decoded.slice(colon + 1)];
+};
+
+// The secrets DERIVED from one registered value, beyond the value itself.
+// A header secret is registered as its whole value (`Bearer <token>`), but
+// an upstream that echoes the credential ("invalid api key <token>") echoes
+// only the part after the scheme — so that part is a secret in its own
+// right. For Basic, the decoded `user:pass` and the password are, too
+// (login-failure messages commonly name them). The user-id ALONE is never
+// derived: it is an identifier, not a secret, and is often a short common
+// word. Every derived part shorter than MIN_VARIANT_LENGTH is dropped, so a
+// short password or token fragment cannot become a needle that redacts
+// ordinary text or collides with the marker (the marker guard in
+// createRedactor still runs over every derived needle — fail closed).
+// Auth-scheme matching is case-insensitive (RFC 9110 §11.1).
+//
+// This lives HERE rather than at registration (api-options.ts) on purpose:
+// createRedactor is the single choke point that every secret source feeds
+// (spec-fetch headers, --header/--header-env, the HTTP bearer token — see
+// serve.ts), so deriving here covers all of them uniformly and keeps the
+// MAX_SECRETS / length budgets and the marker guard in one place.
+const derivedSecretsOf = (secret: string): string[] => {
+  const match = AUTH_CREDENTIALS_RE.exec(secret);
+  if (match === null) {
+    return [];
+  }
+  const { scheme = '', credential = '' } = match.groups ?? {};
+  const parts = [credential, ...(scheme.toLowerCase() === 'basic' ? basicParts(credential) : [])];
+  return parts.filter((part) => part.length >= MIN_VARIANT_LENGTH);
 };
 
 export type Redactor = {
@@ -24,55 +110,111 @@ export type Redactor = {
   scanForSecret: (value: unknown) => boolean;
 };
 
-export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
+// The redactor createRedactor returns: the read side every output channel
+// uses, plus append-only registration for the one owner of runtime secrets.
+export type RuntimeRedactor = Redactor & {
+  // Registers a secret obtained AFTER startup (an OAuth2 access token) so
+  // every later redaction covers it. Must be called before the secret is
+  // first used. Throws a validationError, registering nothing, when the
+  // value fails the same checks a startup secret does or the runtime budget
+  // is exhausted — the caller must then not use the secret (fail closed).
+  // `retainUntilMs` is when the secret stops being a usable credential
+  // (its expiry); only then may it be dropped to make room for a new one.
+  registerRuntimeSecret: (secret: string, retainUntilMs: number, nowMs: number) => void;
+  // Marks a registered runtime secret as REPLACED: its owner has a newer
+  // credential and will never send this one again. It stays redacted, but
+  // may be evicted to make room once the budget is full.
+  retireRuntimeSecret: (secret: string) => void;
+};
+
+// Bounds the runtime registrations held at once. An entry past its
+// retainUntilMs is dropped first; when that is not enough, the OLDEST
+// retired (replaced, no longer sent) entry makes room. A credential still in
+// use is never dropped — registration fails instead.
+export const MAX_RUNTIME_SECRETS = 256;
+
+// The validated needle set for one secret. Throws on a value that cannot be
+// redacted safely: empty, over the length budget, or yielding a needle
+// that is a substring of the marker (the replacement would reintroduce it,
+// silently defeating redaction).
+const needlesOf = (secret: string): string[] => {
+  if (secret === '') {
+    throw validationError('cannot register an empty secret with the redactor');
+  }
+  if (secret.length > MAX_SECRET_LENGTH) {
+    throw validationError('secret exceeds the redaction length budget');
+  }
+  const needles = [secret, ...derivedSecretsOf(secret)].flatMap((part) => variantsOf(part));
+  if (needles.some((needle) => REDACTED.includes(needle))) {
+    throw validationError(
+      'a configured secret is too trivial to redact safely (it is a substring of the redaction marker)',
+    );
+  }
+  return needles;
+};
+
+type RuntimeSecret = { needles: readonly string[]; retainUntilMs: number; retired: boolean };
+
+export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor => {
   if (rawSecrets.length > MAX_SECRETS) {
     throw validationError(`too many secrets to redact (${rawSecrets.length} > ${MAX_SECRETS})`);
   }
-  const needles = new Set<string>();
-  // Imperative on purpose (like headers.ts's mapping loop): each secret is
-  // validated — and, on failure, THROWS — in encounter order, while
-  // `needles` accumulates variant strings across iterations. A `flatMap`
-  // whose callback threw would be technically equivalent but would hide
-  // that side effect inside a mapping; the explicit loop keeps it visible.
-  for (const secret of rawSecrets) {
-    if (secret === '') {
-      throw validationError('cannot register an empty secret with the redactor');
-    }
-    if (secret.length > MAX_SECRET_LENGTH) {
-      throw validationError('secret exceeds the redaction length budget');
-    }
-    for (const variant of variantsOf(secret)) {
-      needles.add(variant);
-    }
-  }
+  // Each secret is validated — and, on failure, THROWS — in encounter order.
+  const staticNeedles = rawSecrets.flatMap((secret) => needlesOf(secret));
+  const runtime = new Map<string, RuntimeSecret>();
   // Longest first: an encoding variant that contains a shorter needle as a
-  // substring must still redact as the whole variant.
-  const ordered = [...needles].toSorted((first, second) => second.length - first.length);
-  // Fail closed at construction: a needle that is itself a substring of the
-  // marker would be reintroduced into the output by the very replacement
-  // meant to remove it, silently defeating redaction.
-  for (const needle of ordered) {
-    if (REDACTED.includes(needle)) {
-      throw validationError(
-        'a configured secret is too trivial to redact safely (it is a substring of the redaction marker)',
-      );
-    }
-  }
-  // Imperative on purpose: `value` is unbounded untrusted text (a response
-  // body, a request, etc.) — the streaming replace-in-place shape here
-  // avoids building intermediate closures/arrays over that text beyond what
-  // split/join already require per matched needle.
-  const redactString = (value: string): string => {
-    let out = value;
-    for (const needle of ordered) {
-      if (out.includes(needle)) {
-        out = out.split(needle).join(REDACTED);
+  // substring must still redact as the whole variant (createMatcher takes
+  // the first — longest — needle matching at each position). Rebuilt only
+  // when the runtime set changes (a token refresh, minutes apart), never
+  // per redaction.
+  const build = (): ((value: string, firstOnly: boolean) => Span[]) => {
+    const needles = new Set([
+      ...staticNeedles,
+      ...[...runtime.values()].flatMap((entry) => entry.needles),
+    ]);
+    return createMatcher([...needles].toSorted((first, second) => second.length - first.length));
+  };
+  let findSpans = build();
+  const registerRuntimeSecret = (secret: string, retainUntilMs: number, nowMs: number): void => {
+    const needles = needlesOf(secret);
+    for (const [value, entry] of runtime) {
+      if (entry.retainUntilMs <= nowMs) {
+        runtime.delete(value);
       }
     }
-    return out;
+    if (!runtime.has(secret) && runtime.size >= MAX_RUNTIME_SECRETS) {
+      // Map iteration is insertion order: the first retired entry is the
+      // oldest replaced credential.
+      const oldestRetired = [...runtime].find(([, entry]) => entry.retired)?.[0];
+      if (oldestRetired === undefined) {
+        // Rebuild anyway: expired entries may have been pruned above.
+        findSpans = build();
+        throw validationError('too many unexpired runtime secrets to redact');
+      }
+      runtime.delete(oldestRetired);
+    }
+    const previous = runtime.get(secret)?.retainUntilMs ?? retainUntilMs;
+    runtime.set(secret, {
+      needles,
+      retainUntilMs: Math.max(previous, retainUntilMs),
+      retired: false,
+    });
+    findSpans = build();
   };
-  const stringHasSecret = (value: string): boolean =>
-    ordered.some((needle) => value.includes(needle));
+  const retireRuntimeSecret = (secret: string): void => {
+    const entry = runtime.get(secret);
+    if (entry !== undefined) {
+      entry.retired = true;
+    }
+  };
+  // `value` is unbounded untrusted text (a response body, a request, etc.):
+  // one matcher pass over it, then one join — a clean value is returned
+  // as-is without any copy.
+  const redactString = (value: string): string => {
+    const spans = findSpans(value, false);
+    return spans.length === 0 ? value : replaceSpans(value, spans, REDACTED);
+  };
+  const stringHasSecret = (value: string): boolean => findSpans(value, true).length > 0;
   // Contract: operates on JSON-compatible data only (JSON.parse output or the
   // built envelope) — symbol/non-enumerable keys and cycles are out of
   // contract; a pathologically deep input throws, mapped by the executor to
@@ -116,5 +258,5 @@ export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
     }
     return value;
   };
-  return { redactString, redactJson, scanForSecret };
+  return { redactString, redactJson, scanForSecret, registerRuntimeSecret, retireRuntimeSecret };
 };
