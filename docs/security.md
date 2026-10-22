@@ -93,7 +93,7 @@ generated API request:
 - `--header` (static, non-secret headers) enforces a deny-list of sensitive header names:
   `Authorization`, `Proxy-Authorization`, `Cookie`, `Set-Cookie`, plus any header name
   containing (case-insensitively) `auth`, `token`, `secret`, `key`, `session`, `credential`,
-  `cookie`, or `signature`. Those names must go through `--header-env` instead. This is an
+  `signature`, `password`, `bearer`, or `jwt`. Those names must go through `--header-env` instead. This is an
   enforced deny-list, not a mechanical guarantee — an API using an unusual secret header name
   outside these patterns could still be misconfigured via `--header`; prefer `--header-env`
   for anything sensitive regardless of name.
@@ -189,7 +189,7 @@ credentials — so:
 - Clients authenticate with `Authorization: Bearer <token>`, compared using a constant-time
   digest comparison (both sides hashed, length-safe, no early exit on a length mismatch) to
   avoid timing side channels.
-- The server binds `127.0.0.1` only; `Origin`/`Host` are validated to guard against
+- In this default `static` mode the server binds `127.0.0.1` only; `Origin`/`Host` are validated to guard against
   DNS-rebinding. `Host` must be exactly `127.0.0.1:<port>` or `localhost:<port>` (the port
   must match). Any other value, including `[::1]:<port>`, gets 403. A rebinding page always
   sends its own hostname in `Host`, so it is still rejected.
@@ -270,10 +270,10 @@ loopback-only.
     logged as a warning until a signing key is published again.
 - **No token passthrough.** The client's access token is read from the `Authorization` header
   only and is never forwarded upstream or written to any output; upstream credentials are still
-  only `--header-env`. Rejection causes are logged to stderr (rate-bounded) without the token.
+  only the operator's (`--header-env`, or a token from `--upstream-oauth-*`). Rejection causes are logged to stderr (rate-bounded) without the token.
 - **One upstream identity for everyone.** OAuth here decides who may use *this server*; it does
   not give per-user authorization at the upstream API. Every authenticated caller acts with the
-  operator's single `--header-env` identity, so `--oauth-required-scope` is the only per-user
+  operator's single upstream identity (`--header-env` or `--upstream-oauth-*`), so `--oauth-required-scope` is the only per-user
   control. Without it, any token the issuer mints for `--oauth-audience` grants access to every
   tool; on a non-loopback `--http-host` the server says so in a startup warning.
 - **No sessions to hijack.** The transport is stateless: no `Mcp-Session-Id` is issued and no

@@ -134,6 +134,15 @@
   request once with a fresh token; that replay is separate from `--retries`. A call whose token
   could not be obtained is logged with the new outcome `token_error`.
 
+### Documentation
+
+- **READMEs match the current CLI.** The host examples no longer pass `--allow "read*"` (an
+  operationId glob that is not "read operations" and matches nothing on many specs); they keep
+  the read-only default. The READMEs now describe tool naming, the egress policy, trace
+  propagation being on by default, the newer serve options, the compile cache and the exit
+  codes, and list the `--header` deny-list as the code enforces it. The npm README no longer
+  links to the source repository.
+
 ### Performance
 
 - **Faster starts after the first run, slower first run (#76).** The OpenAPI meta-schema
