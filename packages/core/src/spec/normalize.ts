@@ -3,6 +3,7 @@ import { isRecord, resolveShallowOrSelf } from './refs.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import { extractSecuritySchemes, parseSecurityRequirements } from './security.ts';
 import type { SecurityRequirement, SecurityScheme } from './security.ts';
+import { extractServerUrl } from './server-url.ts';
 import type { OpenapiVersion } from './validate.ts';
 
 export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head'] as const;
@@ -42,9 +43,13 @@ export type NormalizedSpec = {
   operations: readonly OperationRecord[];
   omitted: readonly OmittedOperation[];
   // The resolved-or-absolute base-URL candidate from root `document.servers[0]`
-  // (variable-default expanded). Undefined when unresolvable — fail-closed,
-  // never throws. See `extractServerUrl`.
+  // (variable-default expanded). Undefined when unresolvable — fail-closed.
   serverUrl?: string;
+  // Set (with `serverUrl` undefined) when servers[0].url would expand past
+  // SPEC_BUDGETS.maxServerUrlBytes. Unlike a plain undefined, the consumer
+  // must NOT fall back to the document origin: it requires --base-url.
+  // `expandedBytes` feeds the warning (serverUrlRejectedWarning).
+  serverUrlRejected?: { expandedBytes: number };
   // True when `serverUrl` is a relative reference (no scheme) that still
   // needs a document base to resolve into an absolute URL.
   serverUrlIsRelative?: boolean;
@@ -149,72 +154,6 @@ const buildOperation = (
     responses: isRecord(op['responses']) ? op['responses'] : {},
     ...(security === undefined ? {} : { security }),
   };
-};
-
-// Absolute iff the candidate URL has a leading URI scheme (RFC 3986 §3.1).
-const ABSOLUTE_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/iu;
-
-// Substitute every `{name}` placeholder in a server URL template with
-// `variables[name].default`. Returns undefined (unresolvable) if any
-// placeholder lacks a matching `variables` entry with a string default.
-//
-// Single-pass only: `String.replace` with a global regex scans the ORIGINAL
-// template left-to-right exactly once and never re-scans replacement text.
-// A prior per-match `split(placeholder).join(defaultValue)` loop re-scanned
-// the growing ACCUMULATOR on every iteration; a hostile spec with a
-// placeholder repeated k times whose own default re-injects that placeholder
-// (e.g. `url: "{x}{x}...{x}"`, `variables.x.default = "{x}{x}"`) doubled the
-// placeholder count each iteration, an exponential (~k*2^k) CPU/memory DoS
-// at spec-normalization time on untrusted spec content. A residual `{`/`}`
-// after the single pass (malformed template, or a default that itself
-// injected a brace) is fail-closed to undefined rather than resolved.
-const expandServerUrlTemplate = (
-  template: string,
-  variables: Record<string, unknown>,
-): string | undefined => {
-  // Imperative on purpose: the failure signal must be set from INSIDE the
-  // single replaceAll callback (see the single-pass rationale above) — a
-  // second pass (e.g. matchAll + reduce) to compute it separately would
-  // duplicate the exact re-scan this function exists to avoid.
-  let failed = false;
-  const expanded = template.replaceAll(/\{(?<name>[^{}]+)\}/gu, (whole: string, name: string) => {
-    const variable = variables[name];
-    const defaultValue = isRecord(variable) ? variable['default'] : undefined;
-    if (typeof defaultValue !== 'string') {
-      failed = true;
-      return whole;
-    }
-    return defaultValue;
-  });
-  if (failed || expanded.includes('{') || expanded.includes('}')) {
-    return undefined;
-  }
-  return expanded;
-};
-
-// Extracts the base-URL candidate from ROOT `document.servers[0]` only
-// (path/operation-level `servers` overrides stay omitted elsewhere in this
-// module). Fail-closed: any malformed shape yields `{}` rather than
-// throwing, and never affects the generated operation set.
-const extractServerUrl = (
-  document: Record<string, unknown>,
-): Pick<NormalizedSpec, 'serverUrl' | 'serverUrlIsRelative'> => {
-  const { servers } = document;
-  if (!Array.isArray(servers) || servers.length === 0) {
-    return {};
-  }
-  const [first] = servers;
-  if (!isRecord(first) || typeof first['url'] !== 'string') {
-    return {};
-  }
-  const variables = isRecord(first['variables']) ? first['variables'] : {};
-  const serverUrl = expandServerUrlTemplate(first['url'], variables);
-  if (serverUrl === undefined) {
-    return {};
-  }
-  return ABSOLUTE_SCHEME_PATTERN.test(serverUrl)
-    ? { serverUrl }
-    : { serverUrl, serverUrlIsRelative: true };
 };
 
 // Per-path slice of what normalizeSpec's old nested loop did in one iteration

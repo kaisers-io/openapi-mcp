@@ -98,6 +98,10 @@ Notes:
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
+- `servers[0].url` is expanded with its variables' defaults. If the result would exceed
+  2048 UTF-8 bytes, it is ignored with a warning (nothing is built). `--base-url` still
+  works with such a spec; without it, `serve` stops with the usual "no absolute server URL"
+  usage error, also for a spec loaded from a URL (no fallback to the spec's own origin).
 - `--request-timeout` replaces `--timeout` for upstream API calls. **Upgrading:** if you raised
   `--timeout` to make slow API calls work, set `--request-timeout` instead; `--timeout` now
   covers only the spec fetch.

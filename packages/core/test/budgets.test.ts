@@ -14,6 +14,7 @@ describe('SPEC_BUDGETS', () => {
       maxDiscoverToolCount: 4096,
       maxOperationCount: 4096,
       maxTextLength: 4096,
+      maxServerUrlBytes: 2048,
     });
   });
 });

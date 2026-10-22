@@ -14,7 +14,8 @@ export type CallOutcomeKind =
   | 'http_error'
   | 'response_error'
   // The upstream answered, but the result carried a registered secret and
-  // was withheld at the dispatch boundary (the client got an error).
+  // was withheld, by the executor or at the dispatch boundary (the client
+  // got an error).
   | 'secret_withheld'
   | 'validation_error'
   // Refused by local policy before any request was sent (cleartext

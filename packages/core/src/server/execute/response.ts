@@ -1,6 +1,6 @@
 import Ajv2020Module from 'ajv/dist/2020.js';
+import type { Options, ValidateFunction } from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
-import type { Options, ValidateFunction } from 'ajv';
 import type { PinnedErrorReason, PinnedOutcome } from '../../http/pinned-dispatcher.ts';
 import { isJsonEssence } from '../../toolgen/media-type.ts';
 import {
@@ -19,6 +19,7 @@ import {
 import type { PageHint, PageInput } from './forwarded-headers.ts';
 import { markSecretScanned, structuredOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
+import { withheldSuccess } from '../withheld.ts';
 
 // The executor is the SOLE enforcer of {status,contentType,data} envelope
 // conformance — the low-level SDK Server performs no per-tool outputSchema
@@ -227,8 +228,6 @@ const truncateUtf8 = (text: string, maxBytes: number): string => {
 // own contract), matching how DISPLAY_TEXT_MAX is consumed everywhere else.
 const ERROR_EXCERPT_MAX = DISPLAY_TEXT_MAX;
 
-const GENERIC_UNSAFE_TEXT = 'the upstream response could not be returned safely';
-
 // Keeps mapResponse locally fail-closed: scanForSecret's contract
 // (redact.ts) explicitly documents that a pathologically deep
 // JSON-compatible input throws rather than looping forever. Every
@@ -333,7 +332,7 @@ const mapNoSchemaSuccess = (
     if (attempt.ok && scanSafely(redactor, attempt.value)) {
       // Never emit a body that contains the secret in escaped form: no
       // string-redacted fallback here, a generic isError with no body.
-      return textOutcome(GENERIC_UNSAFE_TEXT, true);
+      return withheldSuccess();
     }
   }
   // Redact BEFORE truncating, same rationale as mapHttpError above: the
@@ -341,7 +340,7 @@ const mapNoSchemaSuccess = (
   const redacted = redactor.redactString(decoded.ok);
   const truncated = truncateUtf8(redacted, maxTextBytes);
   if (scanSafely(redactor, truncated)) {
-    return textOutcome(GENERIC_UNSAFE_TEXT, true);
+    return withheldSuccess();
   }
   return textOutcome(truncated, false);
 };
@@ -393,7 +392,7 @@ const projectEnvelope = (
   const { data: _full, ...rest } = envelope;
   const projected: Record<string, unknown> = { ...rest, projection: project(data, fields) };
   if (scanSafely(redactor, projected)) {
-    return textOutcome(GENERIC_UNSAFE_TEXT, true);
+    return withheldSuccess();
   }
   markSecretScanned(projected, redactor);
   return structuredOutcome(truncateUtf8(JSON.stringify(projected), maxTextBytes), projected);
@@ -414,7 +413,7 @@ const mapNoSchemaProjection = (
   }
   const projection = project(parsed.value, fields);
   if (scanSafely(redactor, projection)) {
-    return textOutcome(GENERIC_UNSAFE_TEXT, true);
+    return withheldSuccess();
   }
   return textOutcome(truncateUtf8(JSON.stringify(projection), maxTextBytes), false);
 };
@@ -494,7 +493,7 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   // envelope's DATA is never itself rewritten: either it is secret-free and
   // returned verbatim, or the call is refused outright.
   if (envelopeHasSecret(redactor, decoded.ok, envelope)) {
-    return textOutcome(GENERIC_UNSAFE_TEXT, true);
+    return withheldSuccess();
   }
   if (!validator(envelope)) {
     // Never forward raw ajv errors — they can embed offending instance

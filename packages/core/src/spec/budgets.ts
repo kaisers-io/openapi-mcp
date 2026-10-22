@@ -25,6 +25,11 @@ export const SPEC_BUDGETS = {
   // GitHub REST description has 1,242 operations, Stripe 612).
   maxOperationCount: 4096,
   maxTextLength: 4096,
+  // UTF-8 bytes of the root server URL after variable expansion. A base URL is
+  // a prefix of every request URL, and RFC 9110 §4.1 only recommends
+  // supporting 8000-octet request targets; real base URLs are a few dozen
+  // bytes. Checked BEFORE the expansion is materialized (issue #37).
+  maxServerUrlBytes: 2048,
 } as const;
 
 export type SpecBudgets = typeof SPEC_BUDGETS;

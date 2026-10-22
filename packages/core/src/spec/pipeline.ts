@@ -26,6 +26,7 @@ import { normalizeSpec } from './normalize.ts';
 import type { NormalizedSpec, OmittedOperation, OperationRecord } from './normalize.ts';
 import { parseSpecText } from './parse.ts';
 import { operationKeysOf, pendingCandidateKeys, withholdRemoved } from './pending-candidate.ts';
+import { serverUrlRejectedWarning } from './server-url.ts';
 import { validateOpenApiDocument } from './validate.ts';
 import type { OpenapiVersion } from './validate.ts';
 
@@ -546,8 +547,12 @@ const finish = (
   const pending = input.cached?.meta.candidate;
   const candidateContentHash = input.candidateContentHash ?? pending?.contentHash;
   const withholding = withholdRemoved(filtered.exposed, input.candidateOperationKeys);
+  // Every served path (fresh, cached, refreshed) ends here, so the rejected
+  // server URL is reported on each of them, not only when it was first seen
+  const rejected = spec.serverUrlRejected;
   const allWarnings = [
     ...warnings,
+    ...(rejected === undefined ? [] : [serverUrlRejectedWarning(rejected.expandedBytes)]),
     ...(pending === undefined || input.candidateContentHash !== undefined
       ? []
       : [PENDING_PROMOTION_WARNING]),

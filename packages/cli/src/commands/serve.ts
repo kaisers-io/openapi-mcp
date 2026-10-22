@@ -165,6 +165,15 @@ export const resolveBaseUrl = (
   if (spec.serverUrl !== undefined && spec.serverUrlIsRelative !== true) {
     return { url: new URL(spec.serverUrl), trusted: false };
   }
+  // A server URL rejected for size (the pipeline already warned why) must not
+  // fall back to the document origin: requests would silently go to the spec
+  // host instead of the API the spec names
+  if (spec.serverUrlRejected !== undefined) {
+    throw usageError(
+      'the spec has no absolute server URL to use as the API base (servers[0].url is over ' +
+        `the ${String(SPEC_BUDGETS.maxServerUrlBytes)}-byte server URL budget) — pass --base-url <url>`,
+    );
+  }
   if (specSourceIsFile) {
     throw usageError(
       'the spec has no absolute server URL to use as the API base — pass --base-url <url>',
