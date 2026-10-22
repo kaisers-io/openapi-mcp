@@ -14,16 +14,45 @@ const { existsSync } = await import('node:fs');
 // its source again. In a directory of this user's own (next to the spec cache), not the shared
 // OS temp default another local account could pre-create. NODE_DISABLE_COMPILE_CACHE=1 turns
 // it off; any failure only means no cache.
+//
+// Node would create the directory recursively under the process umask (0755 by default), which
+// would leave the app root world-listable before the spec cache ever creates it 0700. So every
+// missing component is created here first and chmod'ed 0700 right away, the same walk as the
+// CLI's mkdirSecure: ancestors that already exist are not ours and are left alone, and a
+// symlink planted at a component means no cache rather than following it.
 try {
-  const { enableCompileCache } = await import('node:module');
-  const { homedir } = await import('node:os');
-  const { join } = await import('node:path');
-  const home = homedir();
-  if (home !== '') {
-    enableCompileCache?.(join(home, '.kaisers-io', 'openapi-mcp', 'compile-cache'));
+  if (process.env.NODE_DISABLE_COMPILE_CACHE === undefined) {
+    const { enableCompileCache } = await import('node:module');
+    const { homedir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { chmodSync, lstatSync, mkdirSync } = await import('node:fs');
+    const home = homedir();
+    if (home !== '' && enableCompileCache !== undefined) {
+      let dir = home;
+      for (const segment of ['.kaisers-io', 'openapi-mcp', 'compile-cache']) {
+        dir = join(dir, segment);
+        let created = true;
+        try {
+          mkdirSync(dir);
+        } catch (error) {
+          if (error?.code !== 'EEXIST') {
+            throw error;
+          }
+          created = false;
+        }
+        if (!lstatSync(dir).isDirectory()) {
+          throw new Error('not a directory');
+        }
+        // The cache directory itself is always ours: repair it if an earlier build made it 0755
+        if (created || segment === 'compile-cache') {
+          chmodSync(dir, 0o700);
+        }
+      }
+      enableCompileCache(dir);
+    }
   }
 } catch {
-  // No home directory or no compile cache support: start without it
+  // No home directory, an unusable path or no compile cache support: start without it
 }
 const dist = new URL('../dist/openapi-mcp.mjs', import.meta.url);
 // Dynamic import makes `import.meta.main` false in the target module (it is only true for
