@@ -265,6 +265,12 @@ const FLATTEN_ROOT_KEYS: ReadonlySet<string> = new Set([
 ]);
 
 type MediaCandidate = { contentType: string; essence: string; hasParameters: boolean };
+
+// A form key whose only parameter is `charset=utf-8` (any case, optionally
+// quoted) — the charset the body is actually encoded in.
+const UTF8_FORM_KEY_RE =
+  /^application\/x-www-form-urlencoded[ \t]*;[ \t]*charset=(?:utf-8|"utf-8")[ \t]*$/iu;
+const isUtf8FormKey = (contentType: string): boolean => UTF8_FORM_KEY_RE.test(contentType);
 type SelectedMedia = { contentType: string; entry: Record<string, unknown> };
 
 // Among candidates of one tier: the only one, else the only one without
@@ -296,7 +302,10 @@ const jsonTier = (json: readonly MediaCandidate[]): readonly MediaCandidate[] =>
 //      object-shaped patch format (Kubernetes declares json-patch+json,
 //      merge-patch+json and strategic-merge-patch+json on every PATCH, all
 //      with the same schema); any other tie omits — never an arbitrary pick;
-//   3. otherwise `application/x-www-form-urlencoded` (exact key, as before).
+//   3. otherwise `application/x-www-form-urlencoded`, bare or with
+//      `charset=utf-8` (the bare key wins if both are declared). The body is
+//      always encoded as UTF-8 (WHATWG URL §5.2), so a key naming another
+//      charset is not selected (fail-closed: the operation is omitted).
 // The declared key is returned verbatim; a key that is not a well-formed
 // media type is never selected (see media-type.ts).
 const selectMedia = (
@@ -321,8 +330,22 @@ const selectMedia = (
       entry: content[chosen.contentType] as Record<string, unknown>,
     };
   }
-  const form = content[FORM_URLENCODED];
-  return isRecord(form) ? { contentType: FORM_URLENCODED, entry: form } : undefined;
+  const form = Object.keys(content).flatMap((contentType) => {
+    const parsed = parseMediaType(contentType);
+    return parsed !== undefined &&
+      parsed.essence === FORM_URLENCODED &&
+      (!parsed.hasParameters || isUtf8FormKey(contentType)) &&
+      isRecord(content[contentType])
+      ? [{ contentType, ...parsed }]
+      : [];
+  });
+  const chosenForm = pickOne(form);
+  return chosenForm === undefined
+    ? undefined
+    : {
+        contentType: chosenForm.contentType,
+        entry: content[chosenForm.contentType] as Record<string, unknown>,
+      };
 };
 
 const isFlattenableRoot = (root: unknown): root is Record<string, unknown> => {
