@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import { PAGINATION_SCHEMA } from './pagination.ts';
 import { convertSchema, memoizedJsonSchema, UNSAFE_PATTERN_REASON } from './schema.ts';
 
 export type JsonSchemaRecord = Record<string, unknown>;
@@ -69,6 +70,8 @@ export type OutputSchemaOptions = {
   // is why this is opt-in. At runtime such an undocumented 2xx still fails
   // closed (`isError`), never a nonconforming structuredContent.
   defaultResponseIsError?: boolean;
+  // A paginated tool's envelope also declares the `pagination` hint.
+  pagination?: boolean;
 };
 
 // Isolates the one throwing step (z.toJSONSchema) behind an Option-shaped
@@ -174,6 +177,7 @@ export const explainOutputSchema = (
         // server/execute/forwarded-headers.ts. Optional, so a result
         // without them still conforms.
         headers: RESPONSE_HEADERS_SCHEMA,
+        ...(options.pagination === true ? { pagination: PAGINATION_SCHEMA } : {}),
       },
       required: ['status', 'contentType', 'data'],
       additionalProperties: false,

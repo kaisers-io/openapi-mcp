@@ -112,6 +112,22 @@ Notes:
   headers are never read. `Link` is not forwarded as a raw URL. A value that contains a
   configured secret is dropped. On a `429` or `503`, a valid `Retry-After` is also reported
   as `_meta["openapi-mcp/upstreamRetryAfterMs"]`.
+- Pagination: a `GET` tool is paginated when it has a query parameter named `cursor`,
+  `page_token`/`pageToken`, `after`, `starting_after` or `page`, or when it declares a `Link`
+  response header. Size or position parameters alone (`limit`, `offset`, `per_page`,
+  `page_size`) do not make it paginated. For such a tool, each successful result carries
+  `pagination.next`: the arguments for the next call, including the call's other arguments.
+  `null` means no next page is known: the last page, or the upstream gave no usable hint. It
+  does not prove the data is exhausted (e.g. an `offset` API without a `Link` header). A
+  `Link: <…>; rel="next"` header is used only if it has the same origin and the same
+  (byte-identical) path as the request, and all of its query parameters map onto the tool's
+  own query parameters. Values are decoded by the parameter's declared type and form style
+  (booleans, numbers, comma-joined or repeated arrays). Otherwise a body cursor is used:
+  `next_cursor`/`nextCursor` maps to `cursor`, `next_page_token` to `page_token`,
+  `nextPageToken` to `pageToken`, and Stripe-style `has_more` with the last item's `id` maps to
+  `starting_after`. A body cursor needs a structured result (an output schema), so a
+  text-only result gets only the `Link` hint. A hint the tool's own input schema would reject
+  becomes `null`. The hint never contains a raw URL.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly

@@ -9,6 +9,8 @@ import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
 import { explainOutputSchema } from './output-schema.ts';
 import type { JsonSchemaRecord } from './output-schema.ts';
+import { detectPagination } from './pagination.ts';
+import type { PaginationPlan } from './pagination.ts';
 import { withConvertMemo } from './schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
@@ -31,6 +33,8 @@ export type GeneratedTool = {
   // response `pattern` with nested quantifiers). Also folded into the
   // description.
   outputSchemaWithheld?: string;
+  // Present only for a paginated GET (see toolgen/pagination.ts).
+  pagination?: PaginationPlan;
 };
 
 export type BuildToolsResult = {
@@ -105,8 +109,14 @@ const buildToolEntry = (
       reason: `input schema cannot be represented as JSON Schema: ${wireResult.error}`,
     };
   }
+  const pagination = detectPagination(
+    named.operation,
+    layout.ok.mapper,
+    wireResult.ok as Record<string, unknown>,
+  );
   const { outputSchema, withheld } = explainOutputSchema(named.operation, openapiVersion, {
     defaultResponseIsError,
+    pagination: pagination !== undefined,
   });
   const description = composeDescription(named.operation, withheld);
   const annotations = deriveAnnotations(named.operation.method);
@@ -125,6 +135,7 @@ const buildToolEntry = (
     ...(outputSchema === undefined ? {} : { outputSchema }),
     ...(assumesDefaultIsError ? { outputSchemaAssumesDefaultIsError: true as const } : {}),
     ...(withheld === undefined ? {} : { outputSchemaWithheld: withheld }),
+    ...(pagination === undefined ? {} : { pagination }),
   };
 };
 

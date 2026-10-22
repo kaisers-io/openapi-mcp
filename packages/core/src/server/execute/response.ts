@@ -2,6 +2,10 @@ import Ajv2020Module from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
 import type { Options, ValidateFunction } from 'ajv';
 import type { PinnedErrorReason, PinnedOutcome } from '../../http/pinned-dispatcher.ts';
+import { parseLinkHeader } from '../../http/response-headers.ts';
+import type { LinkValue } from '../../http/response-headers.ts';
+import { NO_NEXT_PAGE } from '../../toolgen/pagination.ts';
+import type { PageHint } from '../../toolgen/pagination.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText, TRUNCATION_MARKER } from '../../spec/sanitize.ts';
 import {
@@ -80,6 +84,16 @@ export type MapResponseOptions = {
   // undocumented 2xx then names that assumption, so the operator can tell a
   // spec gap from a server bug.
   undeclaredSuccessHint?: string;
+  // For a paginated tool: computes the `pagination` hint for a successful
+  // response from its parsed Link header and (structured path only) its
+  // parsed data. The hint is secret-checked here before it is used.
+  paginate?: (input: PageInput) => PageHint;
+};
+
+export type PageInput = {
+  links?: readonly LinkValue[];
+  responseUrl: string;
+  data?: unknown;
 };
 
 // Fixed, reason-keyed text — never the PinnedOutcome's own `detail` string,
@@ -367,11 +381,13 @@ type SchemaSuccessOptions = Omit<MapResponseOptions, 'outcome' | 'outputSchema' 
   validator: EnvelopeValidator;
   // Allowlisted upstream response headers, already secret-checked.
   forwarded: Readonly<Record<string, string>>;
+  // The pagination hint for this response (paginated tools only).
+  page: ((data?: unknown) => PageHint) | undefined;
 };
 
 const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   const { status, contentType, bodyBytes, outputSchema, validator, redactor } = opts;
-  const { undeclaredSuccessHint, maxTextBytes, forwarded } = opts;
+  const { undeclaredSuccessHint, maxTextBytes, forwarded, page } = opts;
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
   if (
@@ -419,6 +435,7 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
     contentType: branch.contentType,
     data: parseAttempt.value,
     ...(Object.keys(forwarded).length === 0 ? {} : { headers: { ...forwarded } }),
+    ...(page === undefined ? {} : { pagination: page(parseAttempt.value) }),
   };
   // A secret anywhere in the structured data downgrades to a generic
   // isError — never a redacted-but-successful structuredContent. The
@@ -447,6 +464,7 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
 const mapBody = (
   opts: MapResponseOptions,
   forwarded: Readonly<Record<string, string>>,
+  page?: (data?: unknown) => PageHint,
 ): ToolCallOutcome => {
   const { outcome } = opts;
   if (outcome.kind === 'error') {
@@ -491,6 +509,7 @@ const mapBody = (
     outputSchema: opts.outputSchema,
     validator: opts.validator,
     forwarded,
+    page,
   });
 };
 
@@ -506,9 +525,42 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
     redactor: opts.redactor,
   });
   const nowMs = (opts.now ?? Date.now)();
+  const page = pageHinter(opts, outcome.headers, outcome.url, outcome.status);
+  const mapped = mapBody(opts, forwarded, page);
+  // A text result (no outputSchema) gets the Link-derived hint as its own
+  // block; a structured one already carries it in the envelope.
+  const textHint =
+    page !== undefined && !mapped.isError && mapped.structuredContent === undefined
+      ? page()
+      : undefined;
   return decorateTextOutcome(
-    mapBody(opts, forwarded),
+    mapped,
     forwarded,
     upstreamRetryAfterMs(outcome.status, outcome.headers, nowMs),
+    textHint,
   );
+};
+
+// Binds the tool's paginate callback to this response, and withholds any
+// hint that would echo a registered secret into the next call's arguments.
+const pageHinter = (
+  opts: MapResponseOptions,
+  headers: Readonly<Record<string, string>>,
+  responseUrl: string,
+  status: number,
+): ((data?: unknown) => PageHint) | undefined => {
+  const { paginate } = opts;
+  if (paginate === undefined || status < 200 || status > 299) {
+    return undefined;
+  }
+  const linkHeader = headers['link'];
+  const links = linkHeader === undefined ? undefined : (parseLinkHeader(linkHeader) ?? []);
+  return (data) => {
+    const hint = paginate({
+      ...(links === undefined ? {} : { links }),
+      responseUrl,
+      ...(data === undefined ? {} : { data }),
+    });
+    return scanSafely(opts.redactor, hint) ? { next: NO_NEXT_PAGE } : hint;
+  };
 };

@@ -1375,6 +1375,368 @@ describe('createExecutor — forwarded upstream response headers', () => {
   });
 });
 
+describe('createExecutor — pagination hints', () => {
+  const SECRET = 'example-token-not-a-secret-456';
+  const listReposOp: NamedOperation = {
+    toolName: 'listRepos',
+    operation: {
+      method: 'get',
+      path: '/orgs/{org}/repos',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'org', in: 'path', required: true, schema: { type: 'string' } },
+        { name: 'page', in: 'query', schema: { type: 'integer' } },
+        { name: 'per_page', in: 'query', schema: { type: 'integer' } },
+        { name: 'sort', in: 'query', schema: { type: 'string' } },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          headers: { Link: { schema: { type: 'string' } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'array',
+                items: { type: 'object', properties: { id: { type: 'integer' } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const cursorOp: NamedOperation = {
+    toolName: 'listEvents',
+    operation: {
+      method: 'get',
+      path: '/events',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'cursor', in: 'query', schema: { type: 'string' } },
+        { name: 'limit', in: 'query', schema: { type: 'integer' } },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { items: { type: 'array' }, next_cursor: { type: ['string', 'null'] } },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const stripeOp: NamedOperation = {
+    toolName: 'listCharges',
+    operation: {
+      method: 'get',
+      path: '/v1/charges',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'starting_after', in: 'query', schema: { type: 'string' } },
+        { name: 'limit', in: 'query', schema: { type: 'integer' } },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { has_more: { type: 'boolean' }, data: { type: 'array' } },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const call = async (
+    op: NamedOperation,
+    response: () => Response,
+    args: Record<string, unknown>,
+  ) => {
+    const snapshot = buildToolSnapshot([op]);
+    const tool = snapshot.toolsByName[op.toolName] as SnapshotTool;
+    const { deps, calls } = recordingTransport(response);
+    const executor = createExecutor(
+      baseConfig({ validators: validatorsFor(snapshot), redactor: createRedactor([SECRET]) }),
+      deps,
+    );
+    const outcome = await executor(tool, args, freshSignal());
+    const validate = compileEnvelopeValidator(tool.wireTool.outputSchema);
+    return { outcome, tool, calls, valid: validate?.(outcome.structuredContent) };
+  };
+
+  const page =
+    (link: string | undefined, body: unknown = [{ id: 1 }, { id: 2 }]) =>
+    () =>
+      Response.json(body, { status: 200, headers: link === undefined ? {} : { link } });
+
+  const nextOf = (outcome: { structuredContent?: Record<string, unknown> }) =>
+    (outcome.structuredContent?.['pagination'] as { next: unknown } | undefined)?.next;
+
+  it('maps Link rel="next" onto the tool arguments, typed per field, and the envelope validates', async () => {
+    const { outcome, valid, calls } = await call(
+      listReposOp,
+      page(
+        '<https://api.example.test/orgs/acme/repos?page=2&per_page=2>; rel="next", ' +
+          '<https://api.example.test/orgs/acme/repos?page=3&per_page=2>; rel="last"',
+      ),
+      { org: 'acme', per_page: 2 },
+    );
+    expect(calls[0]?.url).toBe('https://api.example.test/orgs/acme/repos?per_page=2');
+    expect(outcome.isError).toBe(false);
+    expect(nextOf(outcome)).toEqual({ org: 'acme', page: 2, per_page: 2 });
+    expect(valid).toBe(true);
+    // No raw URL reaches the result (D4).
+    expect(JSON.stringify(outcome)).not.toContain('https://api.example.test/orgs');
+  });
+
+  it.each([
+    ['another origin', '<https://evil.example/orgs/acme/repos?page=2>; rel="next"'],
+    ['another path', '<https://api.example.test/orgs/other/repos?page=2>; rel="next"'],
+    [
+      'an unmapped parameter',
+      '<https://api.example.test/orgs/acme/repos?page=2&token=x>; rel="next"',
+    ],
+    [
+      'a non-numeric value for an integer field',
+      '<https://api.example.test/orgs/acme/repos?page=two>; rel="next"',
+    ],
+    [
+      'a repeated parameter',
+      '<https://api.example.test/orgs/acme/repos?page=2&page=3>; rel="next"',
+    ],
+    ['no rel=next (last page)', '<https://api.example.test/orgs/acme/repos?page=1>; rel="prev"'],
+    ['a malformed Link header', 'https://api.example.test/orgs/acme/repos?page=2; rel=next'],
+  ])('yields next: null for %s', async (_label, link) => {
+    const { outcome, valid } = await call(listReposOp, page(link), { org: 'acme' });
+    expect(outcome.isError).toBe(false);
+    expect(nextOf(outcome)).toBeNull();
+    expect(valid).toBe(true);
+  });
+
+  it('resolves a relative next link against the response URL', async () => {
+    const { outcome } = await call(listReposOp, page('</orgs/acme/repos?page=2>; rel="next"'), {
+      org: 'acme',
+    });
+    expect(nextOf(outcome)).toEqual({ org: 'acme', page: 2 });
+  });
+
+  it('withholds a hint that would carry a registered secret into the next call', async () => {
+    const { outcome } = await call(
+      listReposOp,
+      page(`<https://api.example.test/orgs/acme/repos?sort=${SECRET}>; rel="next"`),
+      { org: 'acme' },
+    );
+    expect(nextOf(outcome)).toBeNull();
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+  });
+
+  it('maps a body cursor (next_cursor -> cursor), keeping the other arguments', async () => {
+    const { outcome, valid } = await call(
+      cursorOp,
+      page(undefined, { items: [], next_cursor: 'c-2' }),
+      { limit: 10 },
+    );
+    expect(nextOf(outcome)).toEqual({ limit: 10, cursor: 'c-2' });
+    expect(valid).toBe(true);
+    const last = await call(cursorOp, page(undefined, { items: [], next_cursor: null }), {});
+    expect(nextOf(last.outcome)).toBeNull();
+  });
+
+  const issuesOp = (explodeLabels: boolean): NamedOperation => ({
+    toolName: 'listIssues',
+    operation: {
+      method: 'get',
+      path: '/issues',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'cursor', in: 'query', schema: { type: 'string' } },
+        { name: 'page', in: 'query', schema: { type: 'integer' } },
+        { name: 'archived', in: 'query', schema: { type: 'boolean' } },
+        {
+          name: 'labels',
+          in: 'query',
+          style: 'form',
+          explode: explodeLabels,
+          schema: { type: 'array', items: { type: 'string' } },
+        },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          headers: { Link: { schema: { type: 'string' } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { items: { type: 'array' }, next_cursor: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const acceptedAsInput = (tool: SnapshotTool, next: unknown): boolean | undefined =>
+    tool.generated?.inputSchema.safeParse(next).success;
+
+  it('keeps carried boolean/array arguments in a body-cursor hint, and the 200 stays valid', async () => {
+    const { outcome, valid, tool } = await call(
+      issuesOp(false),
+      page(undefined, { items: [], next_cursor: 'c2' }),
+      { archived: true, labels: ['a', 'b'] },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ archived: true, labels: ['a', 'b'], cursor: 'c2' });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it.each([
+    [false, '<https://api.example.test/issues?page=2&archived=true&labels=a,b>; rel="next"'],
+    [true, '<https://api.example.test/issues?page=2&archived=true&labels=a&labels=b>; rel="next"'],
+  ])(
+    'decodes Link values per declared type and style (labels explode=%s), round-tripping the input schema',
+    async (explode, link) => {
+      const { outcome, valid, tool } = await call(issuesOp(explode), page(link, {}), {
+        archived: true,
+        labels: ['a', 'b'],
+      });
+      expect(outcome.isError).toBe(false);
+      expect(valid).toBe(true);
+      const next = nextOf(outcome);
+      expect(next).toEqual({ page: 2, archived: true, labels: ['a', 'b'] });
+      expect(acceptedAsInput(tool, next)).toBe(true);
+    },
+  );
+
+  it('yields next: null for a pipe-delimited array parameter (not decoded yet, #145)', async () => {
+    const op = issuesOp(false);
+    const piped: NamedOperation = {
+      ...op,
+      operation: {
+        ...op.operation,
+        parameters: [
+          ...op.operation.parameters.filter((param) => param['name'] !== 'labels'),
+          {
+            name: 'labels',
+            in: 'query',
+            style: 'pipeDelimited',
+            explode: false,
+            schema: { type: 'array', items: { type: 'string' } },
+          },
+        ],
+      },
+    };
+    const { outcome, valid } = await call(
+      piped,
+      page('<https://api.example.test/issues?page=2&labels=a|b>; rel="next"', {}),
+      {},
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it.each([
+    ['a non-boolean value for a boolean field', 'archived=maybe'],
+    ['a repeated key for an explode=false array', 'labels=a&labels=b'],
+  ])('yields next: null for %s', async (_label, query) => {
+    const { outcome, valid } = await call(
+      issuesOp(false),
+      page(`<https://api.example.test/issues?page=2&${query}>; rel="next"`, {}),
+      {},
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('yields next: null for a hint the tool input schema would reject (enum)', async () => {
+    const enumOp: NamedOperation = {
+      ...listReposOp,
+      operation: {
+        ...listReposOp.operation,
+        parameters: listReposOp.operation.parameters.map((param) =>
+          param['name'] === 'sort'
+            ? { ...param, schema: { type: 'string', enum: ['created'] } }
+            : param,
+        ),
+      },
+    };
+    const link = '<https://api.example.test/orgs/acme/repos?page=2&sort=pushed>; rel="next"';
+    const { outcome, valid } = await call(enumOp, page(link), { org: 'acme' });
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('maps Stripe-style has_more + last id to starting_after', async () => {
+    const more = await call(
+      stripeOp,
+      page(undefined, { has_more: true, data: [{ id: 'ch_1' }, { id: 'ch_2' }] }),
+      { limit: 2 },
+    );
+    expect(nextOf(more.outcome)).toEqual({ limit: 2, starting_after: 'ch_2' });
+    const done = await call(stripeOp, page(undefined, { has_more: false, data: [] }), {});
+    expect(nextOf(done.outcome)).toBeNull();
+  });
+
+  it('leaves a non-paginated tool byte-identical: no pagination key, none in its schema', async () => {
+    const { outcome, tool } = await call(
+      idPathOp,
+      page('<https://api.example.test/things/1?page=2>; rel="next"', { id: 1 }),
+      { id: '1' },
+    );
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+    });
+    expect(JSON.stringify(tool.wireTool.outputSchema)).not.toContain('pagination');
+  });
+
+  it('never treats a non-GET operation as paginated', () => {
+    const postOp: NamedOperation = {
+      ...listReposOp,
+      toolName: 'createRepo',
+      operation: { ...listReposOp.operation, method: 'post' },
+    };
+    const snapshot = buildToolSnapshot([postOp]);
+    expect(snapshot.toolsByName['createRepo']?.generated?.pagination).toBeUndefined();
+  });
+
+  it('adds the hint as its own text block for a paginated tool without an output schema', async () => {
+    const textOp: NamedOperation = {
+      ...listReposOp,
+      toolName: 'listReposText',
+      operation: {
+        ...listReposOp.operation,
+        responses: { '200': { description: 'ok', headers: { Link: {} } } },
+      },
+    };
+    const { outcome } = await call(
+      textOp,
+      page('<https://api.example.test/orgs/acme/repos?page=2>; rel="next"'),
+      { org: 'acme' },
+    );
+    expect(outcome.content.at(-1)?.text).toBe('pagination: {"next":{"org":"acme","page":2}}');
+  });
+});
+
 // #72: end to end with --default-response-is-error semantics.
 describe('createExecutor — default response treated as error (#72)', () => {
   const chargeOp: NamedOperation = {
