@@ -57,12 +57,8 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
-<<<<<<< HEAD
-| `--request-timeout <duration>` | no | deadline for each upstream API request (independent of `--timeout`, which covers the spec fetch) | `30s` |
-| `--retries <n>` | no | retry a transient upstream failure up to `n` times (0–3), only for retry-safe requests (see below) | `0` |
-=======
 | `--request-timeout <duration>` | no | time budget for each upstream tool call, queue wait included (independent of `--timeout`, which covers the spec fetch) | `30s` |
->>>>>>> origin/feat/61-pagination-hints
+| `--retries <n>` | no | retry a transient upstream failure up to `n` times (0–3), only for retry-safe requests (see below) | `0` |
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
 | `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
@@ -108,25 +104,6 @@ Notes:
   configured secret is dropped. On a `429` or `503`, a valid `Retry-After` is also reported
   as `_meta["openapi-mcp/upstreamRetryAfterMs"]`.
 - Pagination: a `GET` tool is paginated when it has a query parameter named `cursor`,
-<<<<<<< HEAD
-  `page_token`/`pageToken`, `after`, `starting_after`, `page`, `offset`, `limit`, `per_page`
-  or `page_size`/`pageSize`, or when it declares a `Link` response header. For such a tool,
-  each successful result carries `pagination.next`, the arguments for the next call, or
-  `null` when no next page is known. A `Link: <…>; rel="next"` header is used only if it has
-  the same origin and path as the request and all of its query parameters map onto the
-  tool's own query parameters. Otherwise a body cursor is used: `next_cursor`/`nextCursor`
-  maps to `cursor`, `next_page_token` to `page_token`, `nextPageToken` to `pageToken`, and
-  Stripe-style `has_more` with the last item's `id` maps to `starting_after`. The hint never
-  contains a raw URL.
-- Retries (`--retries`, off by default): a failed upstream call is retried only for
-  `GET`, `HEAD`, `PUT` and `DELETE` requests. A `POST` or `PATCH` is retried only when its
-  operation declares an `Idempotency-Key` header. The server then sends one key, the
-  caller's value or a generated UUID, on every attempt. Only `429`, `502`, `503`, `504`, and
-  connection errors that happen before any response arrived are retried. Backoff is
-  exponential with full jitter (250 ms base, 5 s cap), or the upstream's `Retry-After` when
-  it sends one. Retries stay within `--request-timeout`, the call's concurrency slot and its
-  single rate-limit charge.
-=======
   `page_token`/`pageToken`, `after`, `starting_after` or `page`, or when it declares a `Link`
   response header. Size or position parameters alone (`limit`, `offset`, `per_page`,
   `page_size`) do not make it paginated. For such a tool, each successful result carries
@@ -142,7 +119,19 @@ Notes:
   `starting_after`. A body cursor needs a structured result (an output schema), so a
   text-only result gets only the `Link` hint. A hint the tool's own input schema would reject
   becomes `null`. The hint never contains a raw URL.
->>>>>>> origin/feat/61-pagination-hints
+- Retries (`--retries`, off by default): a failed upstream call is retried only for
+  `GET`, `HEAD`, `PUT` and `DELETE` requests. A `POST` or `PATCH` is retried only when its
+  operation declares an `Idempotency-Key` header. The server then sends one key, the
+  caller's value or a generated UUID, on every attempt, and returns it as
+  `_meta["openapi-mcp/idempotencyKey"]`: if the call still fails, repeat it with that key so
+  the upstream can deduplicate. Only `429`, `502`, `503`, `504`, and connection errors that
+  happen before any response arrived are retried. A `DELETE` is not retried after such a
+  connection error: the upstream may already have deleted the resource, and the retry would
+  then report `404`. Backoff is exponential with full jitter (250 ms base, 5 s cap), or the
+  upstream's `Retry-After` on a `429` or `503`. Retries stay within `--request-timeout`, the
+  call's concurrency slot and its single rate-limit charge. The slot is held during backoff,
+  so under an upstream `Retry-After` storm queued calls wait (and may time out waiting for a
+  slot) rather than add load.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly
