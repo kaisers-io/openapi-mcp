@@ -59,13 +59,18 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
-| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
+| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
 
 Notes:
 
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.
+- Header values (from `--header`, `--header-env` and `--spec-header-env`, and header parameters
+  a tool caller passes) are sent as bytes. Control characters and characters above U+00FF are
+  refused: operator headers at startup, tool arguments per call, before any request is sent.
+  Characters U+0080–U+00FF are allowed, are sent as single bytes, and the receiving server reads
+  them as Latin-1 (ISO-8859-1), not UTF-8. ASCII is the safe choice.
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.

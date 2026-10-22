@@ -1,4 +1,4 @@
-import { HEADER_NAME_RE } from '../../http/headers.ts';
+import { HEADER_NAME_RE, NON_LATIN1_RE } from '../../http/headers.ts';
 import { isDangerousKey } from '../../toolgen/schema.ts';
 import type { FieldMapping, RequestMapper } from '../../toolgen/layout.ts';
 
@@ -76,12 +76,23 @@ const encodeLeaf = (raw: string): string | undefined => {
 // it. The static half of the path template is already vetted at build time
 // (toolgen/layout.ts's `isDangerousStaticSegment`) — this only guards the
 // dynamic VALUE.
+// An encoded dot counts the same as a literal one for that double-decode:
+// `.%2e`, `%2e.` and `%2e%2e` all become `..`, and a lone `%2e` becomes `.`,
+// so any dot pair involving at least one `%2e`, and a leaf that is nothing
+// but one encoded dot, are refused alike.
+const ENCODED_DOT_PAIR_RE = /%2e%2e|\.%2e|%2e\./u;
+
 const isDangerousPathLeaf = (raw: string): boolean => {
   if (raw === '.' || raw === '..' || raw.includes('/') || raw.includes('\\')) {
     return true;
   }
   const lower = raw.toLowerCase();
-  return lower.includes('%2f') || lower.includes('%5c') || lower.includes('%2e%2e');
+  return (
+    lower.includes('%2f') ||
+    lower.includes('%5c') ||
+    lower === '%2e' ||
+    ENCODED_DOT_PAIR_RE.test(lower)
+  );
 };
 
 type PathMapping = Extract<FieldMapping, { destination: 'path' }>;
@@ -99,7 +110,7 @@ const serializePathValue = (
   const leaf = (raw: string): { ok: string } | { error: string } => {
     if (isDangerousPathLeaf(raw)) {
       return {
-        error: `path parameter "${mapping.wireName}" would introduce a path separator or dot-segment`,
+        error: `path parameter "${mapping.wireName}" was refused: it contains a path separator or dot-segment (/, \\, . or .., or an encoded slash or dot such as %2F, %5C or %2E). No request was sent; pass the value without them`,
       };
     }
     const encoded = encodeLeaf(raw);
@@ -255,6 +266,10 @@ type HeaderMapping = Extract<FieldMapping, { destination: 'header' }>;
 // rejected outright — never stripped, never encoded.
 // oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it rejects them outright)
 const HEADER_CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
+// NON_LATIN1_RE (http/headers.ts): a header value travels as bytes, so a
+// code point above U+00FF cannot be represented, and the transport would
+// only throw later as an opaque network failure — after the request was
+// prepared — so it is refused here as an argument error the caller can fix.
 
 // `mapping.wireName` is spec-derived, untrusted text (the header parameter's
 // NAME, not its value). The undici transport THROWS at fetch time on a
@@ -280,6 +295,11 @@ const serializeHeaderValue = (
   ): { ok: string } | { error: string } => {
     if (HEADER_CONTROL_CHAR_RE.test(raw)) {
       return { error: `header parameter "${mapping.wireName}" contains a control character` };
+    }
+    if (NON_LATIN1_RE.test(raw)) {
+      return {
+        error: `header parameter "${mapping.wireName}" was refused: it contains a character above U+00FF, which an HTTP header cannot carry. No request was sent; use Latin-1 text only (ASCII is safest)`,
+      };
     }
     if (delimiters.some((delimiter) => raw.includes(delimiter))) {
       return {
