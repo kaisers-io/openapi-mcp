@@ -77,7 +77,7 @@ describe('serve — unsatisfied security requirement warnings (in-process)', () 
   it('warns, naming the missing header flag, when nothing satisfies the requirement', async () => {
     const text = await runServe([]);
     expect(text).toContain(
-      '1 exposed operation (e.g. GET /things) require credentials no configured header satisfies',
+      '1 exposed operation (e.g. GET /things) requires credentials no configured header satisfies',
     );
     expect(text).toContain('pass --header-env X-API-Key=<ENV>');
   });

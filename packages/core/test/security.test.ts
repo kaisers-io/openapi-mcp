@@ -120,7 +120,7 @@ describe('describeSecurityScheme', () => {
     expect(hint('cookie')).toContain('--header-env Cookie=<ENV> holding "sid=<value>"');
     expect(hint('bearer')).toContain('--header-env Authorization=<ENV> holding "Bearer <token>"');
     expect(hint('basic')).toContain('holding "Basic <base64 user:password>"');
-    expect(hint('digest')).toContain('holding "digest <credentials>"');
+    expect(hint('cookie')).toContain('several cookie schemes go into that one Cookie value');
     expect(hint('cc')).toContain('(oauth2 clientCredentials)');
     expect(hint('oidc')).toContain('with a token obtained elsewhere');
   });
@@ -129,7 +129,12 @@ describe('describeSecurityScheme', () => {
     expect(hint('query')).toContain('query-string credentials are not supported');
     expect(hint('code')).toContain('interactive OAuth flows are not supported');
     expect(hint('mtls')).toContain('client certificates are not supported');
-    expect(hint('weird')).toContain('unrecognized or malformed');
+    expect(hint('weird')).toContain('not supported: unknown security scheme type "kerberos"');
+    expect(hint('broken')).toContain('not supported: apiKey scheme without a valid "in"');
+    expect(hint('digest')).toContain(
+      'http digest is a challenge/response scheme and cannot be supplied as a static header',
+    );
+    expect(hint('digest')).not.toContain('--header-env');
   });
 
   it('sanitizes hostile spec text in the hint', () => {
@@ -167,10 +172,10 @@ describe('summarizeSecurity / unsatisfiedSecurityWarnings', () => {
   it('warns per unsatisfied requirement, with an example operation and the hints', () => {
     const warnings = unsatisfiedSecurityWarnings(spec, ops, { headerNames: new Set() });
     expect(warnings).toHaveLength(4);
-    expect(warnings[0]).toContain('1 exposed operation (e.g. GET /root) require');
+    expect(warnings[0]).toContain('1 exposed operation (e.g. GET /root) requires credentials');
     expect(warnings[0]).toContain('--header-env X-API-Key=<ENV>');
     expect(warnings[1]).toContain('GET /either');
-    expect(warnings[1]).toContain('; or ');
+    expect(warnings[1]).toContain('; OR ');
     expect(warnings[3]).toContain('"ghost" is not declared in components.securitySchemes');
     // An optional ({}) alternative and an explicit [] are never warned about.
     expect(warnings.join('\n')).not.toContain('/optional');
@@ -190,6 +195,88 @@ describe('summarizeSecurity / unsatisfiedSecurityWarnings', () => {
     });
     expect(all).toHaveLength(1);
     expect(all[0]).toContain('GET /ghost');
+  });
+
+  it('renders one AND group with AND, and two OR alternatives with OR', () => {
+    const both = specWith(schemes, { '/x': { get: { responses: ok } } }, [{ key: [], cookie: [] }]);
+    const [andWarning] = unsatisfiedSecurityWarnings(both, both.operations, {
+      headerNames: new Set(),
+    });
+    expect(andWarning).toMatch(/all of: security scheme "key" .* AND security scheme "cookie"/u);
+    expect(andWarning).not.toContain('OR');
+
+    const either = specWith(schemes, { '/x': { get: { responses: ok } } }, [
+      { key: [] },
+      { cookie: [] },
+    ]);
+    const [orWarning] = unsatisfiedSecurityWarnings(either, either.operations, {
+      headerNames: new Set(),
+    });
+    expect(orWarning).toMatch(/security scheme "key" .*; OR security scheme "cookie"/u);
+    expect(orWarning).not.toContain('AND');
+  });
+
+  it('never reports an AND of two Authorization-based schemes as satisfied by one header', () => {
+    const spec2 = specWith(schemes, { '/c': { get: { responses: ok } } }, [{ bearer: [], cc: [] }]);
+    const warnings = unsatisfiedSecurityWarnings(spec2, spec2.operations, {
+      headerNames: new Set(['authorization']),
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain(
+      'cannot be met: 2 schemes each need the one Authorization header',
+    );
+  });
+
+  it('several cookie schemes in one alternative are satisfied by the one Cookie header', () => {
+    const cookies = specWith(
+      { ...schemes, csrf: { type: 'apiKey', in: 'cookie', name: 'csrf' } },
+      { '/x': { get: { responses: ok } } },
+      [{ cookie: [], csrf: [] }],
+    );
+    expect(
+      unsatisfiedSecurityWarnings(cookies, cookies.operations, {
+        headerNames: new Set(['cookie']),
+      }),
+    ).toEqual([]);
+  });
+
+  it('does not recommend a header name that cannot be sent, nor a challenge/response scheme', () => {
+    const odd = specWith(
+      { spaced: { type: 'apiKey', in: 'header', name: 'api key' }, digest: schemes.digest },
+      { '/x': { get: { responses: ok } } },
+      [{ spaced: [] }, { digest: [] }],
+    );
+    const [warning] = unsatisfiedSecurityWarnings(odd, odd.operations, {
+      headerNames: new Set(['api key', 'authorization']),
+    });
+    expect(warning).toContain('this header name cannot be sent');
+    expect(warning).not.toContain('--header-env api key');
+    expect(warning).toContain('http digest is a challenge/response scheme');
+    const summary = summarizeSecurity(odd, odd.operations);
+    expect(summary.map((entry) => entry.reason !== undefined)).toEqual([true, true]);
+  });
+
+  it('carries a reason for every scheme that cannot be supplied, and none otherwise', () => {
+    const all = specWith(schemes, { '/x': { get: { responses: ok } } }, [
+      Object.fromEntries(Object.keys(schemes).map((name) => [name, []])),
+    ]);
+    const reasons = Object.fromEntries(
+      summarizeSecurity(all, all.operations).map((entry) => [entry.scheme, entry.reason]),
+    );
+    expect(reasons).toEqual({
+      key: undefined,
+      query: expect.stringContaining('query-string'),
+      cookie: undefined,
+      bearer: undefined,
+      basic: undefined,
+      digest: expect.stringContaining('challenge/response'),
+      cc: undefined,
+      code: undefined,
+      oidc: undefined,
+      mtls: 'client certificates are not supported',
+      weird: 'unknown security scheme type "kerberos"',
+      broken: expect.stringContaining('apiKey scheme without'),
+    });
   });
 
   it('groups operations sharing one requirement into a single warning', () => {

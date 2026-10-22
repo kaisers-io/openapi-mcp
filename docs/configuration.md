@@ -150,9 +150,18 @@ openapi-mcp tools --spec https://api.example.com/openapi.json --allow "read*"
 When the exposed operations declare `security` requirements, `tools` prints one `auth:` line
 per referenced `components.securitySchemes` entry naming the credential it expects and the
 flag that supplies it (e.g. `pass --header-env X-API-Key=<ENV>`), and the `--json` envelope
-carries the same list as `data.security`. Query-string API keys, interactive OAuth flows and
-mutual TLS are reported as unsupported. `serve` warns at startup when an exposed operation's
-requirement is satisfied by none of the configured `--header` / `--header-env` headers.
+carries the same list as `data.security` (an entry that cannot be supplied through
+`--header-env` has a `reason`). Reported as unsupported: query-string API keys, header API keys
+whose name is not a valid HTTP header name, challenge/response `http` schemes (`digest`,
+`negotiate`, `ntlm`, `hoba`, `mutual`, `scram-*`), mutual TLS, and malformed schemes;
+interactive OAuth flows need a token obtained elsewhere. Several cookie schemes share one
+`--header-env Cookie=<ENV>` value (`a=1; b=2`).
+
+`serve` warns at startup when an exposed operation's requirement is satisfied by none of the
+configured `--header` / `--header-env` headers. The warning lists the alternatives joined with
+`OR`; the schemes one alternative needs together are joined with `AND`. An alternative that
+needs two `Authorization`-based schemes at once cannot be met by one request and is reported
+as such.
 
 ## `cache`
 
