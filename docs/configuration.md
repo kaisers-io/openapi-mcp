@@ -63,6 +63,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--no-trace-propagation` | no | do not forward a call's W3C trace context (`_meta.traceparent`/`tracestate`) to the upstream API | forwarded |
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
 | `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
+| `--log <format>` | no | write one structured line per tool call to stderr; the only format is `json` | off |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
@@ -156,6 +157,21 @@ Notes:
   `nextCursor`, so paging would silently hide every tool after the first page there. Set
   `--tools-page-size <n>` only when your host follows `nextCursor`. A cursor is bound to the
   served spec; a cursor from another spec version is rejected with Invalid Params.
+- Call log (`--log json`, off by default): one JSON line per tool call goes to stderr,
+  never stdout. Each line has `ts`, `event: "tool_call"`, `tool`, `method`, `pathTemplate`,
+  `status`, `outcome`, `latencyMs`, `responseBytes`, `queuedMs`, `upstreamMs` and `attempts`.
+  `outcome` is one of `ok`, `http_error`, `response_error`, `secret_withheld` (the upstream
+  answered, but the result contained a configured secret and the client got an error),
+  `validation_error` (bad arguments), `refused` (local policy: the cleartext credential gate
+  or the outbound size budget), `rate_limited`, `overloaded`, `egress_denied`, `timeout`,
+  `cancelled`, `network_error` or `internal_error`. `upstreamMs` runs from the first request
+  to the final outcome, so with `--retries` it includes every attempt and the backoff or
+  `Retry-After` waits between them; `attempts` says how many requests were sent. Arguments,
+  header values, filled URLs and bodies are never logged, and every string is redacted.
+  Whether or not `--log` is set, `openapi_mcp_status` reports process-local counters under
+  `calls`: the total, counts by outcome, and p50/p95 of `upstreamMs` over the last 512 calls.
+  These counters are visible to every client of the server: over `--http` with several
+  clients, each one sees the aggregate counts of all of them (counts only, no content).
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly

@@ -63,3 +63,13 @@
 - **Trace propagation is on by default (#77).** A valid W3C `traceparent`/`tracestate` from a
   `tools/call`'s `_meta` (also through `call_operation`) is sent to the upstream on
   same-origin hops. For third-party APIs you do not operate, pass `--no-trace-propagation`.
+
+- **Opt-in call log and call counters (#78).** `--log json` writes one JSON line per tool call
+  to stderr (never arguments, header values or bodies). `openapi_mcp_status` reports
+  process-local counters under `calls` (visible to every client of the server). Outcomes
+  include `secret_withheld` and `refused`.
+- **A result withheld for containing a registered secret now says what happened (#78).** When
+  the upstream call succeeded, the message says so and warns not to retry blindly, instead of
+  "tool execution result could not be returned safely".
+- **`openapi_mcp_status` returns `cacheLock`** when start-up could not record the spec
+  revalidation (#65); it was declared in the output schema but missing from the result.

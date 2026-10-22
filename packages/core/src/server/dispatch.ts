@@ -1,24 +1,21 @@
 import type { RateLimiter } from './rate-limit.ts';
 import type { Redactor } from '../redact.ts';
-import { describeOperation, lookupOperation, unknownOperationOutcome } from './discovery.ts';
-import type { CallInput } from './discovery-schemas.ts';
-import {
-  retryableErrorOutcome,
-  structuredOutcome,
-  textOutcome,
-  wasSecretScanned,
-} from './result.ts';
-import { searchOperations } from './search-index.ts';
+import { retryableErrorOutcome, textOutcome, wasSecretScanned } from './result.ts';
 import type { DispatchResult, ToolCallOutcome } from './result.ts';
+import { carryOutcomeTag, observeCalls } from './telemetry.ts';
+import type { CallObserver, CallTelemetry } from './telemetry.ts';
 import type { TraceContext } from './trace.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
+import { runDiscoveryTool } from './discovery-route.ts';
 import { validateAndExecute } from './validation.ts';
+import { withheld } from './withheld.ts';
 
 export type ToolExecutor = (
   tool: SnapshotTool,
   args: unknown,
   signal: AbortSignal,
   trace?: TraceContext,
+  report?: (telemetry: CallTelemetry) => void,
 ) => Promise<ToolCallOutcome>;
 
 export type MetaExecutor = (
@@ -37,6 +34,8 @@ export type DispatcherDeps = {
   // executor and any future executor get the same defense, not just the
   // built-in upstream one.
   redactor: Redactor;
+  // Receives one record per tools/call (opt-in logging and counters).
+  onCall?: CallObserver;
 };
 
 export type CallRequest = {
@@ -45,12 +44,9 @@ export type CallRequest = {
   signal: AbortSignal;
   // Validated W3C trace context from the request's `_meta` (server/trace.ts).
   trace?: TraceContext;
+  // Set by observeCalls (server/telemetry.ts) when call logging is on.
+  report?: (telemetry: CallTelemetry) => void;
 };
-
-// A single, generic, stable message — never the structured content itself —
-// for the case a secret is found anywhere inside it. Mirrors
-// server/execute/response.ts's own GENERIC_UNSAFE_TEXT wording.
-const BOUNDARY_UNSAFE_TEXT = 'tool execution result could not be returned safely';
 
 // The dispatch-boundary finalizer, the LAST step before ANY outcome leaves
 // createDispatcher.call: every content[].text block is redacted; a secret
@@ -82,7 +78,7 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
       scanForSecretSafely(redactor, outcome.structuredContent)) ||
     (outcome.meta !== undefined && scanForSecretSafely(redactor, outcome.meta))
   ) {
-    return textOutcome(BOUNDARY_UNSAFE_TEXT, true);
+    return withheld(outcome);
   }
   const redactedContent = outcome.content.map((block) => ({
     ...block,
@@ -98,58 +94,12 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
   // error as the structuredContent branch above, rather than ever returning
   // text that still matches a registered secret.
   if (redactedContent.some((block) => scanForSecretSafely(redactor, block.text))) {
-    return textOutcome(BOUNDARY_UNSAFE_TEXT, true);
+    return withheld(outcome);
   }
-  return {
+  return carryOutcomeTag(outcome, {
     ...outcome,
     content: redactedContent,
-  };
-};
-
-// The call_operation path: resolve the target among the snapshot's EXPOSED
-// operations only (an operation a filter excluded was never built, so it is
-// unknown here exactly as it is to a direct call), then run the target
-// through the same validate-then-execute tail as a direct call of that tool.
-// The rate limit was already charged once for this call_operation call by
-// createDispatcher.call and is not charged again; the dispatch-boundary
-// redaction runs once, on the outcome returned from there.
-const callOperation = (
-  deps: DispatcherDeps,
-  data: unknown,
-  { signal, trace }: CallRequest,
-): Promise<ToolCallOutcome> => {
-  const input = data as CallInput;
-  const target = lookupOperation(deps.snapshot.operationsByName, input.name);
-  if (target === undefined) {
-    return Promise.resolve(unknownOperationOutcome(input.name));
-  }
-  return validateAndExecute(target, input.arguments, (targetData) =>
-    deps.executor(target, targetData, signal, trace),
-  );
-};
-
-const runDiscoveryTool = (
-  deps: DispatcherDeps,
-  tool: SnapshotTool,
-  data: unknown,
-  request: CallRequest,
-): Promise<ToolCallOutcome> => {
-  switch (tool.discovery) {
-    case 'search': {
-      return deps.snapshot.searchIndex === undefined
-        ? Promise.resolve(textOutcome('tool execution failed unexpectedly', true))
-        : Promise.resolve(searchOperations(deps.snapshot.searchIndex, data));
-    }
-    case 'describe': {
-      return Promise.resolve(describeOperation(deps.snapshot.operationsByName, data));
-    }
-    case 'call': {
-      return callOperation(deps, data, request);
-    }
-    default: {
-      return Promise.resolve(textOutcome('tool execution failed unexpectedly', true));
-    }
-  }
+  });
 };
 
 const routeExecutor = (
@@ -166,12 +116,12 @@ const routeExecutor = (
       return runDiscoveryTool(deps, tool, data, request);
     }
     case 'upstream': {
-      return deps.executor(tool, data, request.signal, request.trace);
+      return deps.executor(tool, data, request.signal, request.trace, request.report);
     }
   }
 };
 
-export const createDispatcher = (
+const createUnobservedDispatcher = (
   deps: DispatcherDeps,
 ): { call: (request: CallRequest) => Promise<DispatchResult> } => ({
   call: async (request: CallRequest): Promise<DispatchResult> => {
@@ -227,17 +177,11 @@ export const createDispatcher = (
   },
 });
 
-export const createMetaExecutor = (): MetaExecutor => (snapshot) => {
-  const { meta } = snapshot;
-  const payload = {
-    specTitle: meta.specTitle,
-    specVersion: meta.specVersion,
-    displaySource: meta.displaySource,
-    toolCount: meta.toolCount,
-    omittedCount: meta.omittedCount,
-    omittedReasons: meta.omittedReasons,
-    acceptedContentHash: meta.acceptedContentHash,
-    deadPatternCount: meta.deadPatternCount,
-  };
-  return Promise.resolve(structuredOutcome(JSON.stringify(payload), payload));
+export const createDispatcher = (
+  deps: DispatcherDeps,
+): { call: (request: CallRequest) => Promise<DispatchResult> } => {
+  const { call } = createUnobservedDispatcher(deps);
+  return { call: deps.onCall === undefined ? call : observeCalls(call, deps.onCall, deps.now) };
 };
+
+export { createMetaExecutor } from './meta.ts';

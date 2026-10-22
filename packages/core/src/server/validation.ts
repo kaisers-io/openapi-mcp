@@ -1,5 +1,6 @@
 import { sanitizeDisplayText, sanitizeSpecText } from '../spec/sanitize.ts';
 import { textOutcome } from './result.ts';
+import { tagOutcome } from './telemetry.ts';
 import type { ToolCallOutcome } from './result.ts';
 import type { SnapshotTool } from './types.ts';
 
@@ -70,7 +71,10 @@ const redactedValidationOutcome = (issues: readonly ZodIssueLike[]): ToolCallOut
   // one line (see `caps a validation failure at 20 rendered issues total`).
   const suffix = issues.length > capped.length ? `\n(+${issues.length - capped.length} more)` : '';
   const rendered = `invalid tool arguments:\n${lines.join('\n')}${suffix}`;
-  return textOutcome(sanitizeDisplayText(rendered, MAX_RENDERED_LENGTH), true);
+  return tagOutcome(
+    textOutcome(sanitizeDisplayText(rendered, MAX_RENDERED_LENGTH), true),
+    'validation_error',
+  );
 };
 
 // `safeParseAsync` does not only RESOLVE with `{ success: false }` on a bad shape —
@@ -82,9 +86,9 @@ const redactedValidationOutcome = (issues: readonly ZodIssueLike[]): ToolCallOut
 // fixed, generic outcome (no per-issue detail is available, since parsing never
 // completed), matching the same redacted "invalid tool arguments" isError shape the
 // ordinary validation-failure path returns.
-const PARSE_THREW_OUTCOME: ToolCallOutcome = textOutcome(
-  'invalid tool arguments: unable to validate the request',
-  true,
+const PARSE_THREW_OUTCOME: ToolCallOutcome = tagOutcome(
+  textOutcome('invalid tool arguments: unable to validate the request', true),
+  'validation_error',
 );
 
 // Wraps `safeParseAsync`'s own throw case (see `PARSE_THREW_OUTCOME` above):

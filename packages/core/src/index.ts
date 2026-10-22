@@ -210,13 +210,17 @@ export type {
 } from './toolgen/index.ts';
 export {
   AUTO_DISCOVER_THRESHOLD,
+  BOUNDARY_WITHHELD_ERROR_TEXT,
+  BOUNDARY_WITHHELD_SUCCESS_TEXT,
   buildSnapshot,
   CALL_TOOL_NAME,
   constantTimeEquals,
   createDispatcher,
   createExecutor,
+  createCallStats,
   createMetaExecutor,
   createRateLimiter,
+  formatCallLog,
   DEFAULT_RATE_LIMIT,
   DESCRIBE_TOOL_NAME,
   discoverApprovalWarning,
@@ -234,6 +238,8 @@ export {
 } from './server/index.ts';
 export type {
   BearerCheck,
+  CallObserver,
+  CallRecord,
   CallRequest,
   DiscoveryToolName,
   DispatcherDeps,
