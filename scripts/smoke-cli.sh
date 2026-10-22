@@ -47,6 +47,7 @@ node -e '
     clearTimeout(timer);
     const reply = JSON.parse(line);
     child.stdin.end();
+    // Bump with the MCP SDK: LATEST_PROTOCOL_VERSION in @modelcontextprotocol/core
     if (reply.result?.protocolVersion !== "2025-11-25") {
       console.error("serve smoke FAILED:", line);
       process.exit(1);

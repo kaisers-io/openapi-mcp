@@ -16,7 +16,12 @@ hash_bundle() {
     const { createHash } = require("node:crypto");
     const { readFileSync, readdirSync } = require("node:fs");
     const hash = createHash("sha256");
-    for (const name of readdirSync(process.argv[1]).sort()) {
+    // Recursive, files only: a future subdirectory (source maps, assets) is hashed, not EISDIR
+    const files = readdirSync(process.argv[1], { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => `${entry.parentPath}/${entry.name}`.slice(process.argv[1].length + 1))
+      .sort();
+    for (const name of files) {
       hash.update(name).update("\0").update(readFileSync(`${process.argv[1]}/${name}`)).update("\0");
     }
     process.stdout.write(hash.digest("hex"));

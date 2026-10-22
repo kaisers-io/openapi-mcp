@@ -1,7 +1,8 @@
 import type { Command } from '@commander-js/extra-typings';
 import { registerApiOptions } from '../api-options.ts';
+import { emitError } from '../output.ts';
 import { registerSpecOptions } from '../spec-options.ts';
-import type { ServeCmdOpts } from './serve-action.ts';
+import type { runServe as RunServe, ServeCmdOpts } from './serve-action.ts';
 import type { CommandRegistrar } from './registry.ts';
 
 // Registration only: the options and help text are defined here, statically,
@@ -29,7 +30,15 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
   // The cast below restores the accumulated shape explicitly, matching
   // SpecCmdOpts's own "hand-written mirror" idiom in spec-options.ts.
   (command as unknown as Command<[], ServeCmdOpts>).action(async (cmdOpts: ServeCmdOpts) => {
-    const { runServe } = await import('./serve-action.ts');
+    // A missing chunk (broken install) takes serve's own error path: plain
+    // text on stderr regardless of --json, stdout stays MCP-only
+    let runServe: typeof RunServe;
+    try {
+      ({ runServe } = await import('./serve-action.ts'));
+    } catch (error) {
+      state.exitCode = emitError(ctx, { json: false, verbose: false }, error);
+      return;
+    }
     await runServe(command as unknown as Command<[], ServeCmdOpts>, cmdOpts, ctx, state);
   });
 };

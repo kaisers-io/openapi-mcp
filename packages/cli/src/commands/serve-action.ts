@@ -200,7 +200,7 @@ type ServeCommand = Pick<Command<[], ServeCmdOpts>, 'getOptionValueSource'>;
 // distinguishes "the user actually passed --port" from "the default
 // applied" regardless of whether the passed value happens to equal
 // the default.
-const resolveHttpConfig = (
+export const resolveHttpConfig = (
   command: ServeCommand,
   cmdOpts: ServeCmdOpts,
   ctx: CliContext,
