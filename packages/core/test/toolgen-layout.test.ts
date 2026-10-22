@@ -797,3 +797,103 @@ describe('buildLayout — JSON media-type variants (#54, D5)', () => {
     expect('unrepresentable' in withContent({ [key]: { schema: objectSchema } })).toBe(true);
   });
 });
+
+// #59: query styles beyond `form` (OAS 3.1.1 §4.8.12.3 Style Values,
+// §4.8.12.4 Style Examples). Only the combinations the spec defines are
+// accepted; every `n/a` cell of the examples table still omits.
+describe('paramFields — deepObject / spaceDelimited / pipeDelimited (#59)', () => {
+  const query = (extra: Record<string, unknown>) =>
+    paramFields(op([{ name: 'created', in: 'query', ...extra }]), new Set());
+  const scalarObject = {
+    type: 'object',
+    properties: { gt: { type: 'integer' }, lte: { type: 'integer' } },
+  };
+
+  it('accepts deepObject + explode:true on an object of scalars', () => {
+    const [field] = okFields(query({ style: 'deepObject', explode: true, schema: scalarObject }));
+    expect(field?.mapping).toEqual({
+      destination: 'query',
+      wireName: 'created',
+      style: 'deepObject',
+      explode: true,
+      required: false,
+    });
+  });
+
+  it('accepts a free-form deepObject (JSON:API-style filter[...])', () => {
+    expect('ok' in query({ style: 'deepObject', explode: true, schema: { type: 'object' } })).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    [
+      'deepObject without explode (spec default false: n/a)',
+      { style: 'deepObject', schema: scalarObject },
+    ],
+    [
+      'deepObject with explode:false',
+      { style: 'deepObject', explode: false, schema: scalarObject },
+    ],
+    [
+      'deepObject with a nested object property',
+      {
+        style: 'deepObject',
+        explode: true,
+        schema: { type: 'object', properties: { range: { type: 'object' } } },
+      },
+    ],
+    [
+      'deepObject with an array property',
+      {
+        style: 'deepObject',
+        explode: true,
+        schema: {
+          type: 'object',
+          properties: { ids: { type: 'array', items: { type: 'string' } } },
+        },
+      },
+    ],
+    [
+      'deepObject on a scalar schema',
+      { style: 'deepObject', explode: true, schema: { type: 'string' } },
+    ],
+    [
+      'pipeDelimited with explode:true',
+      {
+        style: 'pipeDelimited',
+        explode: true,
+        schema: { type: 'array', items: { type: 'string' } },
+      },
+    ],
+    ['spaceDelimited on a scalar schema', { style: 'spaceDelimited', schema: { type: 'string' } }],
+    [
+      'pipeDelimited on an array of objects',
+      { style: 'pipeDelimited', schema: { type: 'array', items: { type: 'object' } } },
+    ],
+  ])('still omits %s', (_label, extra) => {
+    expect('unrepresentable' in query(extra)).toBe(true);
+  });
+
+  it.each(['spaceDelimited', 'pipeDelimited'])(
+    'accepts %s (explode default false) on an array of scalars',
+    (style) => {
+      const [field] = okFields(
+        query({ style, schema: { type: 'array', items: { type: 'string' } } }),
+      );
+      expect(field?.mapping).toMatchObject({ style, explode: false });
+    },
+  );
+
+  it('omits deepObject outside query (header)', () => {
+    expect(
+      'unrepresentable' in
+        paramFields(
+          op([
+            { name: 'x', in: 'header', style: 'deepObject', explode: true, schema: scalarObject },
+          ]),
+          new Set(),
+        ),
+    ).toBe(true);
+  });
+});

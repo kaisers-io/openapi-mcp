@@ -34,9 +34,9 @@ type Shape =
   | { kind: 'array'; values: readonly Primitive[] }
   | { kind: 'object'; entries: readonly (readonly [string, Primitive])[] };
 
-// The mapper only ever emits path/simple, query/form, header/simple — and
-// those styles are DEFINED only for a primitive, an array-of-primitives, or a
-// flat object-of-primitives. Our Zod schemas do not prevent a nested object
+// The mapper only ever emits path/simple, query/form|deepObject|
+// spaceDelimited|pipeDelimited, header/simple — and those styles are DEFINED
+// only for a primitive, an array-of-primitives, or a flat object-of-primitives. Our Zod schemas do not prevent a nested object
 // or array-of-objects from reaching here, so this guard fails closed rather
 // than ever emitting `[object Object]` onto the wire.
 const classifyShape = (value: unknown): Shape | undefined => {
@@ -179,6 +179,99 @@ type QueryPair = {
 
 type QueryMapping = Extract<FieldMapping, { destination: 'query' }>;
 
+type Encoder = (raw: string) => { ok: string } | { error: string };
+
+// The deepObject style (OAS 3.1.1 §4.8.12.4): `name[key]=value` per property, with the
+// brackets percent-encoded exactly as in the spec's example
+// (`?color%5BR%5D=100&color%5BG%5D=200`). Key and value are encoded leaf-wise
+// like every other query leaf, so `&`, `=`, `#` inside them can never start a
+// new parameter. Only an object of scalars is defined; anything else fails
+// closed (a nested value is already rejected by classifyShape). A key that
+// contains `[` or `]` is rejected as ambiguous: it would encode to `%5B`/`%5D`,
+// the very bytes of the structural brackets, so `{"a][b": v}` would reach a
+// bracket-parsing server (Rails/Rack, PHP, qs) as the NESTED `name[a][b]`.
+const serializeDeepObject = (
+  mapping: QueryMapping,
+  wireKey: string,
+  shape: Shape,
+  enc: Encoder,
+): { ok: readonly QueryPair[] } | { error: string } => {
+  if (shape.kind !== 'object') {
+    return { error: `query parameter "${mapping.wireName}" (deepObject) must be an object` };
+  }
+  // Imperative on purpose: same first-failure rationale as serializeQueryValue.
+  const pairs: QueryPair[] = [];
+  for (const [key, val] of shape.entries) {
+    if (key.includes('[') || key.includes(']')) {
+      return {
+        error: `query parameter "${mapping.wireName}" (deepObject) has a key containing "[" or "]", which is ambiguous with nesting; use keys without brackets`,
+      };
+    }
+    const keyResult = enc(key);
+    if ('error' in keyResult) {
+      return keyResult;
+    }
+    const valResult = enc(String(val));
+    if ('error' in valResult) {
+      return valResult;
+    }
+    pairs.push({ key: `${wireKey}%5B${keyResult.ok}%5D`, value: valResult.ok });
+  }
+  return { ok: pairs };
+};
+
+const DELIMITERS: Readonly<
+  Record<'spaceDelimited' | 'pipeDelimited', { raw: string; wire: string }>
+> = {
+  spaceDelimited: { raw: ' ', wire: '%20' },
+  pipeDelimited: { raw: '|', wire: '%7C' },
+};
+
+// The spaceDelimited / pipeDelimited styles with explode=false (the only defined form,
+// OAS 3.1.1 §4.8.12.4): one key, array items or object k,v,k,v joined by the
+// PERCENT-ENCODED delimiter (`%20` / `%7C`, as in the spec's examples). A leaf
+// that itself contains the raw delimiter would encode to the very same bytes
+// and make the list ambiguous, so it is rejected rather than sent.
+const serializeDelimited = (
+  mapping: QueryMapping,
+  style: 'spaceDelimited' | 'pipeDelimited',
+  wireKey: string,
+  shape: Shape,
+  enc: Encoder,
+): { ok: readonly QueryPair[] } | { error: string } => {
+  const delimiter = DELIMITERS[style];
+  if (shape.kind === 'primitive') {
+    return {
+      error: `query parameter "${mapping.wireName}" (${style}) must be an array or object`,
+    };
+  }
+  const leaves =
+    shape.kind === 'array'
+      ? shape.values.map(String)
+      : shape.entries.flatMap(([key, val]) => [key, String(val)]);
+  // An empty array/object sends nothing, like `form` does: `ids=` would read
+  // as "filter by the empty string" on many APIs, not as "no filter".
+  if (leaves.length === 0) {
+    return { ok: [] };
+  }
+  // Flattening to raw strings is a cheap O(n) copy; the per-leaf ENCODING
+  // below stops at the first failure (same rationale as serializeQueryValue).
+  const parts: string[] = [];
+  for (const leaf of leaves) {
+    if (leaf.includes(delimiter.raw)) {
+      return {
+        error: `query parameter "${mapping.wireName}" contains its own ${style} delimiter, which is ambiguous`,
+      };
+    }
+    const result = enc(leaf);
+    if ('error' in result) {
+      return result;
+    }
+    parts.push(result.ok);
+  }
+  return { ok: [{ key: wireKey, value: parts.join(delimiter.wire) }] };
+};
+
 const serializeQueryValue = (
   mapping: QueryMapping,
   value: unknown,
@@ -198,6 +291,12 @@ const serializeQueryValue = (
   const wireKey = enc(mapping.wireName);
   if ('error' in wireKey) {
     return wireKey;
+  }
+  if (mapping.style === 'deepObject') {
+    return serializeDeepObject(mapping, wireKey.ok, shape, enc);
+  }
+  if (mapping.style === 'spaceDelimited' || mapping.style === 'pipeDelimited') {
+    return serializeDelimited(mapping, mapping.style, wireKey.ok, shape, enc);
   }
   // Imperative on purpose (applies to every per-leaf loop below): `enc()`
   // can fail per leaf, and the array/object branches must stop at the FIRST
