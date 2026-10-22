@@ -5,8 +5,8 @@ import {
   AUTO_DISCOVER_THRESHOLD,
   buildSnapshot,
   buildTools,
-  compileEnvelopeValidator,
   createClientCredentialsSource,
+  createEnvelopeCompiler,
   discoverApprovalWarning,
   createExecutor,
   createCallStats,
@@ -586,10 +586,15 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // startup, so an incompatible schema fails fast rather than on the
       // first matching call. `validators.has` is the executor's fail-closed
       // contract — every upstream tool gets an entry, `undefined` only for a
-      // genuine no-outputSchema tool.
+      // genuine no-outputSchema tool. One compiler context serves the whole
+      // snapshot (issue #42): the meta-schema is compiled once, not per tool.
+      // Created per snapshot, never module-global: Ajv caches every compiled
+      // schema by identity, so a future snapshot reload must build a new
+      // compiler rather than reuse this one, or old schemas pile up.
+      const compileToolValidator = createEnvelopeCompiler();
       const validatorEntries = snapshot.operations.map((tool) => {
         try {
-          return [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)] as const;
+          return [tool.name, compileToolValidator(tool.wireTool.outputSchema)] as const;
         } catch (error) {
           throw usageError(
             `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,

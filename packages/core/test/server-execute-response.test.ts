@@ -4,6 +4,7 @@ import { envelopeHasSecret } from '../src/server/execute/response.ts';
 import { BOUNDARY_WITHHELD_SUCCESS_TEXT } from '../src/server/withheld.ts';
 import {
   compileEnvelopeValidator,
+  createEnvelopeCompiler,
   createRedactor,
   deriveOutputSchema,
   mapResponse,
@@ -100,6 +101,98 @@ describe('compileEnvelopeValidator', () => {
 
   it('throws at compile time for an incompatible schema (fail fast at startup, not first call)', () => {
     expect(() => compileEnvelopeValidator({ type: 'object', oneOf: 'not-an-array' })).toThrow();
+  });
+});
+
+describe('createEnvelopeCompiler — one compiler context per snapshot (issue #42)', () => {
+  const envelope = (data: Record<string, unknown>): Record<string, unknown> => ({
+    type: 'object',
+    oneOf: [
+      {
+        type: 'object',
+        properties: {
+          status: { const: 200 },
+          contentType: { const: 'application/json' },
+          data,
+        },
+        required: ['status', 'contentType', 'data'],
+        additionalProperties: false,
+      },
+    ],
+  });
+  const wrap = (data: unknown): unknown => ({ status: 200, contentType: 'application/json', data });
+  const schemas = [
+    envelope({ type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] }),
+    envelope({ type: 'string', format: 'email' }),
+    envelope({ type: 'string', format: 'date-time', maxLength: 30 }),
+    envelope({ type: 'array', items: { type: 'number', minimum: 0 } }),
+  ];
+  const samples = [
+    { id: 1 },
+    { id: 'x' },
+    'a@example.com',
+    'not-an-email',
+    '2026-10-21T10:00:00Z',
+    '2026-13-45',
+    [1, 2],
+    [-1],
+    null,
+  ];
+
+  it('validates exactly like a fresh Ajv instance per tool', () => {
+    const compile = createEnvelopeCompiler();
+    for (const schema of schemas) {
+      const shared = compile(schema) as EnvelopeValidator;
+      const fresh = compileEnvelopeValidator(schema) as EnvelopeValidator;
+      for (const sample of samples) {
+        expect(shared(wrap(sample))).toBe(fresh(wrap(sample)));
+      }
+    }
+  });
+
+  it('still fails at compile time for an incompatible schema', () => {
+    const compile = createEnvelopeCompiler();
+    expect(() => compile({ type: 'object', oneOf: 'not-an-array' })).toThrow();
+    // The context stays usable after a failed compile
+    expect((compile(schemas[0]) as EnvelopeValidator)(wrap({ id: 1 }))).toBe(true);
+  });
+
+  it('returns undefined for a tool without an outputSchema', () => {
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- the parameter is required: the absent outputSchema is the case under test
+    expect(createEnvelopeCompiler()(undefined)).toBeUndefined();
+  });
+
+  it('accepts the same $id twice in one context and keeps contexts independent', () => {
+    // Nothing is registered by $id, so two tools (or two servers) whose
+    // schemas happen to share an id never collide
+    const withId = { $id: 'https://example.com/envelope', ...schemas[0] };
+    const first = createEnvelopeCompiler();
+    expect(() => first(withId)).not.toThrow();
+    expect(() => first({ ...withId })).not.toThrow();
+    const second = createEnvelopeCompiler();
+    expect((second(withId) as EnvelopeValidator)(wrap({ id: 2 }))).toBe(true);
+  });
+
+  it('keeps a NESTED shared $id per tool: each validator checks its own subschema, none resolves another tool’s', () => {
+    // A component schema with $id is inlined under `data` in many envelopes
+    const nested = (pet: Record<string, unknown>): Record<string, unknown> =>
+      envelope({
+        $defs: { pet: { $id: 'https://x.test/Pet', ...pet } },
+        $ref: 'https://x.test/Pet',
+      });
+    const compile = createEnvelopeCompiler();
+    const byId = compile(
+      nested({ type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] }),
+    ) as EnvelopeValidator;
+    const byName = compile(
+      nested({ type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }),
+    ) as EnvelopeValidator;
+    expect(byId(wrap({ id: 1 }))).toBe(true);
+    expect(byId(wrap({ name: 'x' }))).toBe(false);
+    expect(byName(wrap({ name: 'x' }))).toBe(true);
+    expect(byName(wrap({ id: 1 }))).toBe(false);
+    // An id defined only in another tool's schema does not leak through
+    expect(() => compile(envelope({ $ref: 'https://x.test/Pet' }))).toThrow(/resolve/u);
   });
 });
 
