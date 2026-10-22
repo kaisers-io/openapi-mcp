@@ -150,4 +150,6 @@
   same applies to a URL that answers `200` with identical bytes. The DigitalOcean spec (1.6 MB
   YAML) as a local file starts in 508 ms instead of 1,204 ms from the second start on, with
   131 MB peak RSS instead of 247 MB. The tools are still generated on every start, so every
-  flag takes effect immediately.
+  flag takes effect immediately. A validation rule added by a newer release is not applied to
+  an unchanged file until the file changes (or `openapi-mcp cache clear`); before, such a file
+  was served as the last known good baseline with a warning.

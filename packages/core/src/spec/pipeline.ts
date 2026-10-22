@@ -171,9 +171,9 @@ const processCachedDocument = (
 // means that processing changed since the entry was written (a legacy entry
 // even holds the dereferenced form), so it is processed again and rewritten.
 // Not keyed on the package version: a validation rule a newer build adds
-// would not apply here, but it does not apply today either, because a
-// refreshed spec that fails validation falls back to this same accepted
-// document (last known good).
+// is not applied to unchanged bytes. The same document would be served
+// today (last known good), but now without the refresh-failed warning; a
+// rule that must reach existing entries bumps CACHE_META_SCHEMA_VERSION.
 const reusableAcceptedDocument = (
   cached: CacheEntry | undefined,
   sourceContentHash: string,

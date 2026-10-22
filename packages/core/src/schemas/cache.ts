@@ -6,8 +6,12 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 // understood one.
 //
 // RULE: every change to how a spec is PROCESSED before it is cached (parsing,
-// dereferencing, normalisation — anything that changes the stored document
-// for the same source bytes) must bump this constant. An unchanged source is
+// validation (meta-schema, checkRefs), dereferencing, normalisation —
+// anything that changes the stored document, or whether it is accepted at
+// all, for the same source bytes) must bump this constant. Unchanged source
+// bytes are not parsed or validated again while their entry is current
+// (reusableAcceptedDocument in spec/pipeline.ts, #76), so a new validation
+// rule reaches existing entries only through a bump. An unchanged source is
 // never rewritten while its entry is current (a 304 keeps the entry, and since
 // #75 a 200 with identical bytes only refreshes fetchedAt/validators), so a
 // version bump is the ONLY thing that makes existing entries pick up new
