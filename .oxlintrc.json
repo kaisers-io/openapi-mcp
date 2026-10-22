@@ -414,6 +414,17 @@
       }
     },
     {
+      "files": ["packages/core/src/server/execute/executor.ts"],
+      "rules": {
+        // Off: executor.ts is the composition root of one upstream tool
+        // call -- request building, the pinned transport and its agent pool,
+        // the admission queue, retries, Accept, trace context, pagination,
+        // projection, telemetry and response mapping meet here, and each
+        // guard is re-checked right before a byte leaves the process.
+        "import/max-dependencies": "off"
+      }
+    },
+    {
       "files": ["packages/core/src/cache/store.ts"],
       "rules": {
         // Off: store.ts is the transactional cache-store core -- schema

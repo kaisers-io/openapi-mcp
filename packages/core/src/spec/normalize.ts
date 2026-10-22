@@ -1,4 +1,5 @@
 import { SPEC_BUDGETS } from './budgets.ts';
+import { isRecord, resolveShallowOrSelf } from './refs.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import type { OpenapiVersion } from './validate.ts';
 
@@ -44,28 +45,42 @@ export type NormalizedSpec = {
   serverUrlIsRelative?: boolean;
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
+// Normalization reads the document BEFORE it is dereferenced (issue #89): a
+// path item or parameter `{ $ref }` is followed only as far as needed to read
+// it; contents stay raw until the pipeline dereferences exposed operations.
+type Resolve = (node: unknown) => unknown;
 
 const mergeParameters = (
   pathLevel: readonly unknown[],
   opLevel: readonly unknown[],
-): { parameters: Record<string, unknown>[]; unresolvable: boolean } => {
-  const merged = new Map<string, Record<string, unknown>>();
+  resolve: Resolve,
+): { parameters: Record<string, unknown>[]; unresolvable: boolean; cookie: boolean } => {
+  // Keyed by the RESOLVED name/in, but the parameter is kept as written (a
+  // `{ $ref }` stays one): keywords next to the $ref are applied when the
+  // operation is dereferenced (OpenAPI 3.1, issue #63), which resolving it
+  // here would lose
+  const merged = new Map<string, { written: Record<string, unknown>; inValue: string }>();
   for (const source of [pathLevel, opLevel]) {
-    for (const param of source) {
+    for (const written of source) {
+      const param = resolve(written);
       if (
+        !isRecord(written) ||
         !isRecord(param) ||
         typeof param['name'] !== 'string' ||
         typeof param['in'] !== 'string'
       ) {
         // Covers cyclic { $ref } markers and malformed parameter shapes
-        return { parameters: [], unresolvable: true };
+        return { parameters: [], unresolvable: true, cookie: false };
       }
-      merged.set(`${param['in']} ${param['name']}`, param);
+      merged.set(`${param['in']} ${param['name']}`, { written, inValue: param['in'] });
     }
   }
-  return { parameters: [...merged.values()], unresolvable: false };
+  const entries = [...merged.values()];
+  return {
+    parameters: entries.map((entry) => entry.written),
+    unresolvable: false,
+    cookie: entries.some((entry) => entry.inValue === 'cookie'),
+  };
 };
 
 const buildOperation = (
@@ -73,6 +88,7 @@ const buildOperation = (
   path: string,
   op: Record<string, unknown>,
   pathParameters: readonly unknown[],
+  resolve: Resolve,
 ): OperationRecord | OmittedOperation => {
   const upper = method.toUpperCase();
   if (op['servers'] !== undefined) {
@@ -82,7 +98,11 @@ const buildOperation = (
     return { method: upper, path, reason: 'callbacks are not supported' };
   }
   const opParameters = Array.isArray(op['parameters']) ? op['parameters'] : [];
-  const { parameters, unresolvable } = mergeParameters(pathParameters, opParameters);
+  const { parameters, unresolvable, cookie } = mergeParameters(
+    pathParameters,
+    opParameters,
+    resolve,
+  );
   if (unresolvable) {
     return {
       method: upper,
@@ -90,7 +110,7 @@ const buildOperation = (
       reason: 'a parameter could not be resolved (unsupported shape or cyclic $ref)',
     };
   }
-  if (parameters.some((param) => param['in'] === 'cookie')) {
+  if (cookie) {
     return { method: upper, path, reason: 'cookie parameters are not supported' };
   }
   const tags = Array.isArray(op['tags'])
@@ -194,6 +214,7 @@ const extractServerUrl = (
 const buildPathEntries = (
   path: string,
   item: unknown,
+  resolve: Resolve,
 ): { operations: OperationRecord[]; omitted: OmittedOperation[] } => {
   if (!path.startsWith('/') || !isRecord(item)) {
     // Path-object extension keys (x-*) are not paths
@@ -225,7 +246,7 @@ const buildPathEntries = (
         },
       ];
     }
-    return [buildOperation(method, path, op, pathParameters)];
+    return [buildOperation(method, path, op, pathParameters, resolve)];
   });
   return {
     operations: perMethod.filter((entry): entry is OperationRecord => !('reason' in entry)),
@@ -252,7 +273,10 @@ export const normalizeSpec = (
   const paths = isRecord(document['paths']) ? document['paths'] : {};
   // One buildPathEntries call per path, in Object.entries order — matches the
   // original outer for-of's iteration order exactly.
-  const perPath = Object.entries(paths).map(([path, item]) => buildPathEntries(path, item));
+  const resolve: Resolve = (node) => resolveShallowOrSelf(document, node);
+  const perPath = Object.entries(paths).map(([path, item]) =>
+    buildPathEntries(path, resolve(item), resolve),
+  );
   const operations = perPath.flatMap((entry) => entry.operations);
   const webhooks = isRecord(document['webhooks']) ? document['webhooks'] : {};
   const omitted = [

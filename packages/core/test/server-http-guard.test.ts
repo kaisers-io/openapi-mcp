@@ -54,6 +54,22 @@ describe('isValidBearerToken', () => {
     expect(isValidBearerToken('short')).toBe(false);
     expect(isValidBearerToken('!'.repeat(43))).toBe(false);
   });
+
+  // The shapes docs/security.md lists as rejected: each one satisfies the old ">=32 Base64
+  // characters" prose, so these pin the documented rule to the validator.
+  it.each([
+    ['hex, the shape of `openssl rand -hex 32` (64 chars, 32 bytes as hex)', 'ab'.repeat(32)],
+    ['padded Base64 of 48 bytes, the shape of `openssl rand -base64 48`', 'A'.repeat(64)],
+    ['44 chars with double padding', `${'A'.repeat(42)}==`],
+    ['44 chars, Base64URL alphabet with padding', `${'A'.repeat(42)}_=`],
+    ['43 chars unpadded, standard alphabet (+)', `${'A'.repeat(42)}+`],
+    ['43 chars unpadded, standard alphabet (/)', `${'A'.repeat(42)}/`],
+    ['43 chars padded to 44 with a trailing newline', `${'A'.repeat(43)}\n`],
+    ['valid 44-char token with a trailing newline', `${'A'.repeat(43)}=\n`],
+    ['valid 43-char token with surrounding spaces', ` ${'A'.repeat(43)} `],
+  ])('rejects %s', (_label, token) => {
+    expect(isValidBearerToken(token)).toBe(false);
+  });
 });
 
 describe('constantTimeEquals', () => {
@@ -257,5 +273,41 @@ describe('evaluateRequest — the Host/Origin/bearer matrix', () => {
       status: 401,
       reason: 'missing or invalid bearer token',
     });
+  });
+});
+
+describe('evaluateRequest — Host aliases', () => {
+  const local: RequestGuardOptions = {
+    ...opts,
+    allowedHostAliases: new Set(['localhost:3044']),
+  };
+  const auth = `Bearer ${TOKEN}`;
+
+  it.each(['127.0.0.1:3044', 'localhost:3044', 'LOCALHOST:3044'])('accepts Host %s', (host) => {
+    expect(evaluateRequest(local, headers({ host, authorization: auth }))).toEqual({
+      outcome: 'allow',
+    });
+  });
+
+  it.each([
+    'evil.example.com:3044',
+    'localhost:3045',
+    'localhost',
+    '127.0.0.1',
+    '[::1]:3044',
+    'localhost.evil.example:3044',
+    'evil.localhost:3044',
+  ])('still rejects Host %s with 403', (host) => {
+    expect(evaluateRequest(local, headers({ host, authorization: auth }))).toEqual({
+      outcome: 'deny',
+      status: 403,
+      reason: 'invalid or missing Host header',
+    });
+  });
+
+  it('accepts no alias unless one is configured', () => {
+    expect(
+      evaluateRequest(opts, headers({ host: 'localhost:3044', authorization: auth })),
+    ).toMatchObject({ outcome: 'deny', status: 403 });
   });
 });
