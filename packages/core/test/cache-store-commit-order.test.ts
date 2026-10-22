@@ -58,6 +58,7 @@ describe('commit ordering (objects durable before meta.json)', () => {
       title: 'v1',
       specVersion: '1',
       fetchedAt: 1,
+      expected: 'unchecked',
     });
     expect(events).toContain('start object');
     assertObjectsDurableBeforeMeta(events);
@@ -69,6 +70,7 @@ describe('commit ordering (objects durable before meta.json)', () => {
       title: 'v2',
       specVersion: '2',
       fetchedAt: 2,
+      expected: 'unchecked',
     });
     expect(await fs.pathExists(objectPath(LAYOUT, candidateContentHash))).toBe(true);
     expect(events).toContain('start object');
