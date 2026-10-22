@@ -20,3 +20,9 @@ export const withheld = (outcome: ToolCallOutcome): ToolCallOutcome =>
     ),
     'secret_withheld',
   );
+
+// For a 2xx body the executor itself refuses to return (execute/response.ts):
+// every such path is a success, so the same success wording applies. Tagged
+// so the call log reports `secret_withheld`, not `response_error`.
+export const withheldSuccess = (): ToolCallOutcome =>
+  tagOutcome(textOutcome(BOUNDARY_WITHHELD_SUCCESS_TEXT, true), 'secret_withheld');

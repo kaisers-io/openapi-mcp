@@ -237,6 +237,28 @@ describe('call records — one per call, classified', () => {
     ]);
   });
 
+  // The executor withholds a 2xx body that carries a registered secret itself
+  // (response.ts), before the boundary sees it: the record must still say
+  // secret_withheld, also when forwarded headers rebuild the outcome.
+  it.each<[string, Record<string, string>]>([
+    ['without forwarded headers', {}],
+    ['with a forwarded header', { etag: '"v1"' }],
+  ])(
+    'records secret_withheld for a 2xx body withheld by the executor (%s)',
+    async (_l, headers) => {
+      const leaky: PinnedDeps['fetch'] = () =>
+        Promise.resolve(Response.json({ id: 1, note: SECRET }, { headers }));
+      const { call, records } = pipeline(leaky);
+      const result = await call({ petId: '1' });
+      expect(result).toMatchObject({ kind: 'outcome', outcome: { isError: true } });
+      expect(JSON.stringify(result)).toContain('the upstream call succeeded');
+      expect(JSON.stringify(result)).not.toContain(SECRET);
+      expect(records).toEqual([
+        expect.objectContaining({ outcome: 'secret_withheld', status: 200, method: 'GET' }),
+      ]);
+    },
+  );
+
   it('does not record an unknown tool (a protocol error, not a tool call)', async () => {
     const { dispatcher, records } = pipeline(ok200);
     await dispatcher.call({ name: 'nope', arguments: {}, signal: new AbortController().signal });

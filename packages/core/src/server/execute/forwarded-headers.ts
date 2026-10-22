@@ -6,6 +6,7 @@ import { NO_NEXT_PAGE } from '../../toolgen/pagination.ts';
 import type { PageHint } from '../../toolgen/pagination.ts';
 
 import type { ToolCallOutcome } from '../result.ts';
+import { carryOutcomeTag } from '../telemetry.ts';
 
 export type { PageHint } from '../../toolgen/pagination.ts';
 
@@ -131,12 +132,15 @@ export const decorateTextOutcome = (
   }
   const withHeaders: ToolCallOutcome =
     blocks.length === 0 ? outcome : { ...outcome, content: [...outcome.content, ...blocks] };
-  return retryAfterMs === undefined
-    ? withHeaders
-    : {
-        ...withHeaders,
-        meta: { ...withHeaders.meta, 'openapi-mcp/upstreamRetryAfterMs': retryAfterMs },
-      };
+  const decorated: ToolCallOutcome =
+    retryAfterMs === undefined
+      ? withHeaders
+      : {
+          ...withHeaders,
+          meta: { ...withHeaders.meta, 'openapi-mcp/upstreamRetryAfterMs': retryAfterMs },
+        };
+  // A rebuilt outcome keeps its call-log tag (e.g. secret_withheld)
+  return carryOutcomeTag(outcome, decorated);
 };
 
 // Binds a paginated tool's hint callback to one successful response (its

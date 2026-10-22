@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
 import { envelopeHasSecret } from '../src/server/execute/response.ts';
+import { BOUNDARY_WITHHELD_SUCCESS_TEXT } from '../src/server/withheld.ts';
 import {
   compileEnvelopeValidator,
   createRedactor,
@@ -299,8 +300,23 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     const redactor = createRedactor([secret]);
     const result = mapResponse(defaultOpts({ outcome, redactor }));
     const text = isError(result);
-    expect(text).toBe('the upstream response could not be returned safely');
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
     expect(text).not.toContain(secret);
+  });
+
+  // A 2xx whose result is withheld must not read like a plain failure: the
+  // upstream call succeeded, so an agent that retries a write could apply it
+  // twice. Same wording as the dispatch boundary (withheld.ts).
+  it('a withheld 2xx result says the call succeeded and must not be retried blindly', () => {
+    const secret = 'tok-abcdefghij0123456789';
+    const outcome = response(201, 'application/json', `{"token":"${secret}"}`);
+    const redactor = createRedactor([secret]);
+    const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
+    expect(text).toContain('the upstream call succeeded');
+    expect(text).toContain('contained a registered secret');
+    expect(text).toContain('likely taken effect');
+    expect(text).toContain('do not retry it blindly');
+    expect(text).not.toContain('could not be returned safely');
   });
 
   // Covers the "parse failed" branch: a body whose Content-Type
@@ -329,7 +345,7 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
       },
     };
     const text = isError(mapResponse(defaultOpts({ outcome, redactor: throwingScan })));
-    expect(text).toBe('the upstream response could not be returned safely');
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
   });
 
   it('a text/* body within cap is returned as redacted plain text', () => {
@@ -435,7 +451,7 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
       scanForSecret: () => true,
     };
     const text = isError(mapResponse(defaultOpts({ outcome, redactor: forcedResidue })));
-    expect(text).toBe('the upstream response could not be returned safely');
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
   });
 
   // The old no-outputSchema JSON path did STRING-only redaction on the raw
@@ -462,7 +478,7 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     const redactor = createRedactor([secret]);
     const outcome = response(200, 'application/json', body);
     const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
-    expect(text).toBe('the upstream response could not be returned safely');
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
     expect(text).not.toContain(secret);
     expect(text).not.toContain(escapedSecret);
   });
@@ -727,7 +743,7 @@ describe('mapResponse — large structured results: one secret scan, bounded tex
   ])('still refuses a body with a secret %s', (_label, body) => {
     expect(JSON.stringify(JSON.parse(body))).toContain(SECRET);
     const text = isError(structured(body));
-    expect(text).toBe('the upstream response could not be returned safely');
+    expect(text).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
   });
 
   it.each([
