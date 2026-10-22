@@ -1086,6 +1086,162 @@ describe('convertSchema — nullable and single-member allOf idioms (#41)', () =
   });
 });
 
+// #43 / decision D12: oneOf requires EXACTLY one matching subschema (JSON
+// Schema Core 2020-12 §10.2.1.3). Exclusivity (z.xor, `oneOf` on the wire) is
+// used only in request mode and only when the branches are disjoint by
+// enforced keywords; otherwise the inclusive union keeps every tool callable.
+describe('convertSchema — oneOf exclusivity (#43, D12)', () => {
+  const wireOf = (schema: z.ZodType): Record<string, unknown> =>
+    z.toJSONSchema(schema) as Record<string, unknown>;
+
+  const card = {
+    type: 'object',
+    required: ['kind', 'number'],
+    properties: { kind: { const: 'card' }, number: { type: 'string' } },
+  };
+  const bank = {
+    type: 'object',
+    required: ['kind', 'iban'],
+    properties: { kind: { const: 'bank' }, iban: { type: 'string' } },
+  };
+
+  it('request: disjoint types use oneOf on the wire', () => {
+    const s = ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] }));
+    expect(s.safeParse('x').success).toBe(true);
+    expect(s.safeParse(3).success).toBe(true);
+    expect(s.safeParse(true).success).toBe(false);
+    const wire = wireOf(s);
+    expect(Array.isArray(wire['oneOf'])).toBe(true);
+    expect(wire['anyOf']).toBeUndefined();
+  });
+
+  it('request: a const discriminator required in every branch uses oneOf', () => {
+    const s = ok(convertSchema({ oneOf: [card, bank], discriminator: { propertyName: 'kind' } }));
+    expect(s.safeParse({ kind: 'card', number: '4' }).success).toBe(true);
+    expect(s.safeParse({ kind: 'bank', iban: 'DE' }).success).toBe(true);
+    expect(s.safeParse({ kind: 'cash' }).success).toBe(false);
+    expect(Array.isArray(wireOf(s)['oneOf'])).toBe(true);
+  });
+
+  it('request: distinct enums and disjoint required keys of closed objects use oneOf', () => {
+    const enums = ok(convertSchema({ oneOf: [{ enum: ['a', 'b'] }, { enum: ['c'] }] }));
+    expect(Array.isArray(wireOf(enums)['oneOf'])).toBe(true);
+    const closed = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'object', required: ['a'], properties: { a: { type: 'string' } } },
+          { type: 'object', required: ['b'], properties: { b: { type: 'string' } } },
+        ],
+      }),
+    );
+    expect(closed.safeParse({ a: 'x' }).success).toBe(true);
+    expect(closed.safeParse({ b: 'x' }).success).toBe(true);
+    expect(Array.isArray(wireOf(closed)['oneOf'])).toBe(true);
+  });
+
+  it('request: overlapping branches fall back to the inclusive union (number vs integer)', () => {
+    const s = ok(convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }));
+    expect(s.safeParse(3).success).toBe(true);
+    expect(s.safeParse(3.5).success).toBe(true);
+    expect(s.safeParse('x').success).toBe(false);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+
+  it('request: an "id or slug" parameter whose branches differ only by pattern stays callable', () => {
+    // `pattern` is advertised, never enforced, so z.xor would reject EVERY
+    // value (both branches match any string): an uncallable tool.
+    const s = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'string', pattern: '^[0-9]+$' },
+          { type: 'string', pattern: '^[a-z-]+$' },
+        ],
+      }),
+    );
+    expect(s.safeParse('123').success).toBe(true);
+    expect(s.safeParse('my-repo').success).toBe(true);
+    expect(s.safeParse(1).success).toBe(false);
+  });
+
+  it('request: branches that differ only by format stay callable', () => {
+    const s = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'string', format: 'email' },
+          { type: 'string', format: 'uuid' },
+        ],
+      }),
+    );
+    expect(s.safeParse('a@b.co').success).toBe(true);
+    expect(s.safeParse('123e4567-e89b-12d3-a456-426614174000').success).toBe(true);
+  });
+
+  it('request: a nullable branch that overlaps a null branch is not treated as disjoint', () => {
+    const s = ok(
+      convertSchema(
+        {
+          oneOf: [
+            { type: 'string', nullable: true },
+            { type: 'boolean', nullable: true },
+          ],
+        },
+        '3.0',
+      ),
+    );
+    expect(s.safeParse(null).success).toBe(true);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+
+  it('response: a discriminator-mapping oneOf (no const) accepts a valid payload', () => {
+    // Cat/Dog share `petType` and `name`; only `discriminator.mapping` tells
+    // them apart. Response objects are open (#33), so a Dog matches both.
+    const pet = {
+      oneOf: [
+        {
+          type: 'object',
+          required: ['petType'],
+          properties: {
+            petType: { type: 'string' },
+            name: { type: 'string' },
+            hunts: { type: 'boolean' },
+          },
+        },
+        {
+          type: 'object',
+          required: ['petType'],
+          properties: {
+            petType: { type: 'string' },
+            name: { type: 'string' },
+            bark: { type: 'boolean' },
+          },
+        },
+      ],
+      discriminator: {
+        propertyName: 'petType',
+        mapping: { cat: '#/components/schemas/Cat', dog: '#/components/schemas/Dog' },
+      },
+    };
+    const s = ok(convertSchema(pet, '3.1', 0, 'response'));
+    expect(s.safeParse({ petType: 'dog', name: 'Rex', bark: true }).success).toBe(true);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+
+  it('response: always inclusive, even for disjoint branches', () => {
+    const s = ok(
+      convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }, '3.1', 0, 'response'),
+    );
+    expect(s.safeParse(3).success).toBe(true);
+    const disjoint = ok(convertSchema({ oneOf: [card, bank] }, '3.1', 0, 'response'));
+    expect(wireOf(disjoint)['oneOf']).toBeUndefined();
+  });
+
+  it('leaves anyOf inclusive', () => {
+    const s = ok(convertSchema({ anyOf: [{ type: 'string' }, { type: 'string', maxLength: 3 }] }));
+    expect(s.safeParse('ab').success).toBe(true);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+});
+
 // #39 / D11: a response `pattern` with nested quantifiers is unrepresentable.
 describe('convertSchema — response pattern safety (#39)', () => {
   it('response mode: a nested-quantifier pattern is unrepresentable', () => {

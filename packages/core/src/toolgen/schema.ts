@@ -692,11 +692,179 @@ const arraySchema = (
   return { ok: withMax };
 };
 
+// --- Static disjointness of oneOf branches (decision D12, #43) -------------
+// Every helper is conservative: "unknown" never proves anything. A branch is
+// summarised by what it admits, as far as enforced keywords tell: a finite
+// list of values (const/enum), a set of JSON types, or unknown. `nullable`
+// records a 3.0 `nullable: true`, which admits null as well (D9).
+type BranchShape =
+  | { kind: 'values'; values: readonly unknown[]; nullable: boolean }
+  | { kind: 'types'; types: readonly string[] }
+  | { kind: 'unknown' };
+
+// More branches than this are not compared pairwise (O(n²) on a
+// spec-controlled list); the union stays inclusive.
+const MAX_DISJOINT_BRANCHES = 32;
+
+const propertiesOf = (node: Record<string, unknown>): Record<string, unknown> =>
+  isRecord(node['properties']) ? node['properties'] : {};
+
+const requiredOf = (node: Record<string, unknown>): readonly string[] =>
+  Array.isArray(node['required'])
+    ? node['required'].filter((name): name is string => typeof name === 'string')
+    : [];
+
+const declaredTypes = (node: Record<string, unknown>): readonly string[] | undefined => {
+  const { type } = node;
+  if (typeof type === 'string') {
+    return [type];
+  }
+  if (Array.isArray(type) && type.every((name) => typeof name === 'string')) {
+    return type as string[];
+  }
+  // A typeless node with non-empty properties converts as an object.
+  if (type === undefined && Object.keys(propertiesOf(node)).length > 0) {
+    return ['object'];
+  }
+  return undefined;
+};
+
+const branchShape = (node: unknown, version: OpenapiVersion): BranchShape => {
+  if (!isRecord(node)) {
+    return { kind: 'unknown' };
+  }
+  const nullable = version === '3.0' && node['nullable'] === true;
+  if ('const' in node && node['const'] !== undefined) {
+    return { kind: 'values', values: [node['const']], nullable };
+  }
+  if (Array.isArray(node['enum'])) {
+    return { kind: 'values', values: node['enum'], nullable };
+  }
+  if (['allOf', 'oneOf', 'anyOf'].some((keyword) => node[keyword] !== undefined)) {
+    return { kind: 'unknown' };
+  }
+  const types = declaredTypes(node);
+  if (types === undefined) {
+    return { kind: 'unknown' };
+  }
+  return { kind: 'types', types: nullable ? [...types, 'null'] : types };
+};
+
+// `integer` values are `number` values too.
+const typesOverlap = (left: string, right: string): boolean =>
+  left === right ||
+  (left === 'integer' && right === 'number') ||
+  (left === 'number' && right === 'integer');
+
+const admitsNull = (shape: BranchShape): boolean => {
+  if (shape.kind === 'values') {
+    return shape.nullable || shape.values.some((value) => value === null);
+  }
+  return shape.kind === 'unknown' || shape.types.includes('null');
+};
+
+const admitsValue = (shape: BranchShape, value: unknown): boolean => {
+  if (shape.kind === 'values') {
+    return shape.values.includes(value) || (value === null && shape.nullable);
+  }
+  if (shape.kind === 'types') {
+    return shape.types.some((name) => valueMatchesType(value, name));
+  }
+  return true;
+};
+
+const shapesDisjoint = (left: BranchShape, right: BranchShape): boolean => {
+  if (left.kind === 'unknown' || right.kind === 'unknown') {
+    return false;
+  }
+  if (left.kind === 'values') {
+    // Every value `left` admits (null included when nullable) is refused by `right`.
+    return (
+      left.values.every((value) => !admitsValue(right, value)) &&
+      !(left.nullable && admitsNull(right))
+    );
+  }
+  if (right.kind === 'values') {
+    return shapesDisjoint(right, left);
+  }
+  return left.types.every((name) => !right.types.some((other) => typesOverlap(name, other)));
+};
+
+// A request-mode object that can never carry an undeclared key: explicit
+// `additionalProperties: false`, or declared properties with no
+// `additionalProperties` (the strict-input rule in objectSchema).
+const isClosedRequestObject = (node: Record<string, unknown>): boolean =>
+  node['additionalProperties'] === false ||
+  (node['additionalProperties'] === undefined && Object.keys(propertiesOf(node)).length > 0);
+
+// A property both branches require (and the request still carries — not
+// readOnly) whose enforced value sets are disjoint: a discriminator with a
+// `const`/`enum` per branch.
+const discriminatedBy = (
+  first: Record<string, unknown>,
+  second: Record<string, unknown>,
+  version: OpenapiVersion,
+): boolean => {
+  const secondRequired = new Set(requiredOf(second));
+  return requiredOf(first).some((name) => {
+    const left = propertiesOf(first)[name];
+    const right = propertiesOf(second)[name];
+    return (
+      secondRequired.has(name) &&
+      !isAccessOnly(left, 'readOnly') &&
+      !isAccessOnly(right, 'readOnly') &&
+      shapesDisjoint(branchShape(left, version), branchShape(right, version))
+    );
+  });
+};
+
+// `first` requires a key that the closed object `second` does not declare.
+const requiresKeyClosedTo = (
+  first: Record<string, unknown>,
+  second: Record<string, unknown>,
+): boolean =>
+  isClosedRequestObject(second) &&
+  requiredOf(first).some(
+    (name) =>
+      !Object.hasOwn(propertiesOf(second), name) &&
+      !isAccessOnly(propertiesOf(first)[name], 'readOnly'),
+  );
+
+const isPlainObjectBranch = (
+  node: unknown,
+  version: OpenapiVersion,
+): node is Record<string, unknown> => {
+  const shape = branchShape(node, version);
+  return shape.kind === 'types' && shape.types.length === 1 && shape.types[0] === 'object';
+};
+
+const pairDisjoint = (first: unknown, second: unknown, version: OpenapiVersion): boolean => {
+  if (shapesDisjoint(branchShape(first, version), branchShape(second, version))) {
+    return true;
+  }
+  if (!isPlainObjectBranch(first, version) || !isPlainObjectBranch(second, version)) {
+    return false;
+  }
+  return (
+    discriminatedBy(first, second, version) ||
+    requiresKeyClosedTo(first, second) ||
+    requiresKeyClosedTo(second, first)
+  );
+};
+
+const branchesDisjoint = (variants: readonly unknown[], version: OpenapiVersion): boolean =>
+  variants.length <= MAX_DISJOINT_BRANCHES &&
+  variants.every((first, index) =>
+    variants.slice(index + 1).every((second) => pairDisjoint(first, second, version)),
+  );
+
 const unionSchema = (
   variants: readonly unknown[],
   depth: number,
   version: OpenapiVersion,
   mode: SchemaMode,
+  // `oneOf` (exclusive) vs `anyOf` (inclusive).
+  exclusive: boolean,
 ): SchemaResult => {
   const members: z.ZodType[] = [];
   // Imperative on purpose: any single unrepresentable variant aborts the
@@ -718,7 +886,25 @@ const unionSchema = (
   if (members.length === 1) {
     return { ok: members[0] as z.ZodType };
   }
-  return { ok: z.union(members as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]]) };
+  // `oneOf` passes only if EXACTLY one subschema matches (JSON Schema Core
+  // 2020-12 §10.2.1.3); `anyOf` if at least one does (§10.2.1.2). Decision
+  // D12 (#43): z.xor (emitted as `oneOf` on the wire) is used only where it
+  // cannot reject a value the spec allows:
+  //   - response mode: always the inclusive z.union. Response objects are
+  //     open (#33), so a discriminator-mapping `oneOf` (Cat/Dog without a
+  //     `const` on the discriminator) would match a valid payload twice and
+  //     fail output validation.
+  //   - request mode: z.xor only when the branches are pairwise disjoint by
+  //     keywords this converter ENFORCES (see branchesDisjoint). `pattern` and
+  //     `format` are advertised, not enforced, so branches that differ only
+  //     by them would make z.xor reject every value — an uncallable tool.
+  //     Otherwise the inclusive union: the tool stays callable and the
+  //     upstream remains the authority on exclusivity.
+  // With disjoint branches xor and union accept the same values; the
+  // difference is that the wire then says `oneOf`, as the spec does.
+  const tuple = members as unknown as [z.ZodType, z.ZodType, ...z.ZodType[]];
+  const xor = exclusive && mode === 'request' && branchesDisjoint(variants, version);
+  return { ok: xor ? z.xor(tuple) : z.union(tuple) };
 };
 
 const convertComposite = (
@@ -752,10 +938,10 @@ const convertComposite = (
       : objectSchema(merged, depth, version, mode);
   }
   if (Array.isArray(node['oneOf'])) {
-    return unionSchema(node['oneOf'], depth, version, mode);
+    return unionSchema(node['oneOf'], depth, version, mode, true);
   }
   if (Array.isArray(node['anyOf'])) {
-    return unionSchema(node['anyOf'], depth, version, mode);
+    return unionSchema(node['anyOf'], depth, version, mode, false);
   }
   if (node['type'] === 'array') {
     return arraySchema(node, depth, version, mode);

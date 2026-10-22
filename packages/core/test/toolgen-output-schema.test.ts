@@ -257,3 +257,40 @@ describe('deriveOutputSchema — response-mode conversion (#33, #47)', () => {
     expect(validate(envelope({}))).toBe(false);
   });
 });
+
+describe('deriveOutputSchema — oneOf in responses (#43, D12)', () => {
+  it('validates a response oneOf inclusively, so a discriminator-mapping payload passes', () => {
+    const branch = (extra: string) => ({
+      type: 'object',
+      required: ['petType'],
+      properties: {
+        petType: { type: 'string' },
+        name: { type: 'string' },
+        [extra]: { type: 'boolean' },
+      },
+    });
+    const outputSchema = deriveOutputSchema(
+      op({
+        '200': {
+          content: {
+            'application/json': {
+              schema: {
+                oneOf: [branch('hunts'), branch('bark')],
+                discriminator: { propertyName: 'petType' },
+              },
+            },
+          },
+        },
+      }),
+      '3.1',
+    ) as Record<string, unknown>;
+    const validate = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+    const envelope = (value: unknown) => ({
+      status: 200,
+      contentType: 'application/json',
+      data: value,
+    });
+    expect(validate(envelope({ petType: 'dog', name: 'Rex', bark: true }))).toBe(true);
+    expect(validate(envelope({ name: 'Rex' }))).toBe(false);
+  });
+});
