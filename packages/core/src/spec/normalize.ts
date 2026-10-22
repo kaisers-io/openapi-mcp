@@ -1,4 +1,5 @@
 import { SPEC_BUDGETS } from './budgets.ts';
+import { resolveShallow } from './refs.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import type { OpenapiVersion } from './validate.ts';
 
@@ -47,13 +48,21 @@ export type NormalizedSpec = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
+// Normalization reads the document BEFORE it is dereferenced (issue #89): a
+// path item or parameter may still be a `{ $ref }`, which is followed only as
+// far as needed to read it. Their contents (schemas, examples) stay raw until
+// the operation is exposed and dereferenced in the pipeline.
+type Resolve = (node: unknown) => unknown;
+
 const mergeParameters = (
   pathLevel: readonly unknown[],
   opLevel: readonly unknown[],
+  resolve: Resolve,
 ): { parameters: Record<string, unknown>[]; unresolvable: boolean } => {
   const merged = new Map<string, Record<string, unknown>>();
   for (const source of [pathLevel, opLevel]) {
-    for (const param of source) {
+    for (const reference of source) {
+      const param = resolve(reference);
       if (
         !isRecord(param) ||
         typeof param['name'] !== 'string' ||
@@ -73,6 +82,7 @@ const buildOperation = (
   path: string,
   op: Record<string, unknown>,
   pathParameters: readonly unknown[],
+  resolve: Resolve,
 ): OperationRecord | OmittedOperation => {
   const upper = method.toUpperCase();
   if (op['servers'] !== undefined) {
@@ -82,7 +92,7 @@ const buildOperation = (
     return { method: upper, path, reason: 'callbacks are not supported' };
   }
   const opParameters = Array.isArray(op['parameters']) ? op['parameters'] : [];
-  const { parameters, unresolvable } = mergeParameters(pathParameters, opParameters);
+  const { parameters, unresolvable } = mergeParameters(pathParameters, opParameters, resolve);
   if (unresolvable) {
     return {
       method: upper,
@@ -194,6 +204,7 @@ const extractServerUrl = (
 const buildPathEntries = (
   path: string,
   item: unknown,
+  resolve: Resolve,
 ): { operations: OperationRecord[]; omitted: OmittedOperation[] } => {
   if (!path.startsWith('/') || !isRecord(item)) {
     // Path-object extension keys (x-*) are not paths
@@ -225,7 +236,7 @@ const buildPathEntries = (
         },
       ];
     }
-    return [buildOperation(method, path, op, pathParameters)];
+    return [buildOperation(method, path, op, pathParameters, resolve)];
   });
   return {
     operations: perMethod.filter((entry): entry is OperationRecord => !('reason' in entry)),
@@ -252,7 +263,20 @@ export const normalizeSpec = (
   const paths = isRecord(document['paths']) ? document['paths'] : {};
   // One buildPathEntries call per path, in Object.entries order — matches the
   // original outer for-of's iteration order exactly.
-  const perPath = Object.entries(paths).map(([path, item]) => buildPathEntries(path, item));
+  // A reference that does not resolve is left as the `{ $ref }` it is, which
+  // the callers already omit as unresolvable. The pipeline rejects dangling
+  // references before normalizing (checkRefs); this only keeps a hand-built
+  // or already-dereferenced document (cycle markers) from throwing.
+  const resolve: Resolve = (node) => {
+    try {
+      return resolveShallow(document, node);
+    } catch {
+      return node;
+    }
+  };
+  const perPath = Object.entries(paths).map(([path, item]) =>
+    buildPathEntries(path, resolve(item), resolve),
+  );
   const operations = perPath.flatMap((entry) => entry.operations);
   const webhooks = isRecord(document['webhooks']) ? document['webhooks'] : {};
   const omitted = [

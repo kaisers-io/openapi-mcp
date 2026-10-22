@@ -10,6 +10,7 @@ import {
   runSpecPipeline,
 } from '../src/index.ts';
 import type { CacheLayout, CacheMeta, SpecPipelineDeps, SpecPipelineResult } from '../src/index.ts';
+import { operationKeysOf } from '../src/spec/pending-candidate.ts';
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
@@ -173,6 +174,29 @@ describe('operations removed in a pending candidate are withheld (#60)', () => {
     expect(result.withheldOperations).toStrictEqual([]);
   });
 
+  it('follows a Path Item $ref: operations under a referenced path item are not withheld', async () => {
+    // The cache holds the SOURCE document (#89), so the candidate's path item
+    // is still a `{ $ref }` when its operation keys are read
+    const referenced = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 't', version: '1' },
+      servers: [{ url: 'https://example.com' }],
+      paths: {
+        '/a': op('getA', 'changed'),
+        '/b': { $ref: '#/components/pathItems/B' },
+      },
+      components: { pathItems: { B: op('getB') } },
+    });
+    const { fs, result } = await withCandidate(referenced);
+    expect(result.cacheStatus).toBe('candidate');
+    expect(toolNames(result)).toStrictEqual(['getA', 'getB']);
+    expect(result.withheldOperations).toStrictEqual([]);
+    // And on a later start, where the keys come from the cached candidate
+    const restart = await runAt(fs, 20_500, 'fail');
+    expect(restart.cacheStatus).toBe('fresh');
+    expect(toolNames(restart)).toStrictEqual(['getA', 'getB']);
+  });
+
   it('reports withheld operations through the meta tool omissions', async () => {
     const { result } = await withCandidate();
     const built = buildTools(result.namedOperations, {
@@ -224,5 +248,30 @@ describe('operations removed in a pending candidate are withheld (#60)', () => {
       code: 'conflict',
       exitCode: 5,
     });
+  });
+});
+
+describe('operationKeysOf', () => {
+  it('reads methods through a Path Item $ref and a chain of them, with normalized templates', () => {
+    const keys = operationKeysOf({
+      paths: {
+        '/inline': op('a'),
+        '/ref/{id}': { $ref: '#/components/pathItems/P' },
+        '/chain': { $ref: '#/components/pathItems/Alias' },
+      },
+      components: { pathItems: { P: op('p'), Alias: { $ref: '#/components/pathItems/P' } } },
+    });
+    expect([...keys].toSorted()).toStrictEqual(['GET /chain', 'GET /inline', 'GET /ref/{}']);
+  });
+
+  it('gives a path item whose $ref does not resolve or loops no keys (withheld, fail closed)', () => {
+    const keys = operationKeysOf({
+      paths: {
+        '/dangling': { $ref: '#/components/pathItems/Missing' },
+        '/loop': { $ref: '#/components/pathItems/L' },
+      },
+      components: { pathItems: { L: { $ref: '#/components/pathItems/L' } } },
+    });
+    expect([...keys]).toStrictEqual([]);
   });
 });

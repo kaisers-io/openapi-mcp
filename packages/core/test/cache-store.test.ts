@@ -3,6 +3,7 @@ import {
   CACHE_MAX_PERSISTED_BYTES,
   CACHE_META_MAX_BYTES,
   CACHE_META_SCHEMA_VERSION,
+  LEGACY_CACHE_META_SCHEMA_VERSION,
   FETCHED_AT_MAX,
   cacheLayout,
   clearNamespace,
@@ -128,8 +129,12 @@ const validMeta = (): CacheMeta => ({
 });
 
 describe('zCacheMeta', () => {
-  it('pins the schema version at 1', () => {
-    expect(CACHE_META_SCHEMA_VERSION).toBe(1);
+  it('pins the schema version at 2, with 1 still readable as the legacy format', () => {
+    // Version 2 (issue #89) persists the validated source document instead of
+    // its dereferenced form; version 1 entries are migrated by the pipeline
+    expect(CACHE_META_SCHEMA_VERSION).toBe(2);
+    expect(LEGACY_CACHE_META_SCHEMA_VERSION).toBe(1);
+    expect(zCacheMeta.safeParse({ ...validMeta(), schemaVersion: 1 }).success).toBe(true);
   });
 
   it('accepts a fully populated entry', () => {
@@ -177,7 +182,7 @@ describe('zCacheMeta', () => {
     expect(zCacheMeta.safeParse({ ...validMeta(), extra: 1 }).success).toBe(false);
   });
 
-  it.each([0, 2, 1.5, '1'])('rejects the non-literal schema version %j', (schemaVersion) => {
+  it.each([0, 3, 1.5, '1', '2'])('rejects the unknown schema version %j', (schemaVersion) => {
     expect(zCacheMeta.safeParse({ ...validMeta(), schemaVersion }).success).toBe(false);
   });
 

@@ -6,6 +6,7 @@ import { conflictError } from '../errors.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
 import { HTTP_METHODS } from './normalize.ts';
 import type { OmittedOperation } from './normalize.ts';
+import { resolveShallow } from './refs.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 
 // While a changed spec waits as a candidate, the accepted baseline keeps
@@ -33,7 +34,7 @@ const operationKey = (method: string, path: string): string =>
 const displayKey = (method: string, path: string): string => `${method.toUpperCase()} ${path}`;
 
 // Every `METHOD path` the candidate document declares. Read from the
-// validated, dereferenced document's own `paths`, not from its normalized
+// validated document's own `paths`, not from its normalized
 // form: an operation present there is present for this purpose even if this
 // build would omit it as a tool, so it is never withheld by mistake.
 export const operationKeysOf = (document: Record<string, unknown>): ReadonlySet<string> => {
@@ -42,7 +43,18 @@ export const operationKeysOf = (document: Record<string, unknown>): ReadonlySet<
   if (typeof paths !== 'object' || paths === null) {
     return keys;
   }
-  for (const [path, item] of Object.entries(paths)) {
+  for (const [path, written] of Object.entries(paths)) {
+    // The cache holds the SOURCE document (#89), so a path item may still be
+    // a `{ $ref }` to a shared one. Following it is what keeps every method
+    // under it from reading as removed. The candidate's refs were checked
+    // before it was written; one that still does not resolve (or loops)
+    // leaves the path without keys, i.e. withheld, the fail-closed direction.
+    let item: unknown;
+    try {
+      item = resolveShallow(document, written);
+    } catch {
+      continue;
+    }
     if (typeof item !== 'object' || item === null) {
       continue;
     }

@@ -8,10 +8,20 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 // RULE: every change to how a spec is PROCESSED before it is cached (parsing,
 // dereferencing, normalisation — anything that changes the stored document
 // for the same source bytes) must bump this constant. An unchanged source is
-// never rewritten (a 304 keeps the entry, and since #75 a 200 with identical
-// bytes only refreshes fetchedAt/validators), so a version bump is the ONLY
-// thing that makes existing entries pick up new processing.
-export const CACHE_META_SCHEMA_VERSION = 1;
+// never rewritten while its entry is current (a 304 keeps the entry, and since
+// #75 a 200 with identical bytes only refreshes fetchedAt/validators), so a
+// version bump is the ONLY thing that makes existing entries pick up new
+// processing: the pipeline revalidates an older entry without validators and
+// rewrites it in full (the bookkeeping-only path is skipped for it).
+//
+// Version 2 (issue #89): the persisted spec object is the validated SOURCE
+// document, no longer its dereferenced form. Version 1 entries stay readable
+// (LEGACY_CACHE_META_SCHEMA_VERSION): their dereferenced document is still a
+// valid spec, and an unchanged source is rewritten in the version 2 form —
+// the approval it records is of the source bytes, which are compared by hash.
+// Anything else stays unreadable.
+export const CACHE_META_SCHEMA_VERSION = 2;
+export const LEGACY_CACHE_META_SCHEMA_VERSION = 1;
 
 // Content hashes are sha256 hex digests produced by the store from the exact
 // persisted bytes
@@ -93,7 +103,10 @@ const zCandidate = z.strictObject({
 // by something this build does not understand, and guessing is the failure
 // mode this schema exists to prevent by failing closed instead.
 export const zCacheMeta: z.ZodType<CacheMeta> = z.strictObject({
-  schemaVersion: z.literal(CACHE_META_SCHEMA_VERSION),
+  schemaVersion: z.union([
+    z.literal(CACHE_META_SCHEMA_VERSION),
+    z.literal(LEGACY_CACHE_META_SCHEMA_VERSION),
+  ]),
   // Always the redacted origin + path form; enforced again on write
   displaySource: z.string().min(1).max(DISPLAY_SOURCE_MAX),
   cacheKey: z.string().regex(CACHE_KEY_RE).optional(),

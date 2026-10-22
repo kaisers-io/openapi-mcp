@@ -396,7 +396,7 @@ const persistableTextOrThrow = (
   const text = serializeWithinBudget(document, CACHE_MAX_PERSISTED_BYTES);
   if (text === undefined) {
     throw validationError(
-      `refusing to cache the ${slot} spec: its dereferenced form exceeds the ${CACHE_MAX_PERSISTED_BYTES}-byte persisted-document budget`,
+      `refusing to cache the ${slot} spec: it exceeds the ${CACHE_MAX_PERSISTED_BYTES}-byte persisted-document budget`,
     );
   }
   return text;
