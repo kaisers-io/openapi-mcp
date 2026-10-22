@@ -124,13 +124,19 @@ export {
   listNamespaceIds,
   promoteCandidate,
   readCacheEntry,
+  readCandidateDocument,
   serializedSizeWithin,
   serializeWithinBudget,
   touchRevalidated,
   writeAccepted,
   writeCandidate,
 } from './cache/store.ts';
-export type { CacheEntry, CacheEntrySummary, CacheReadResult } from './cache/store.ts';
+export type {
+  CacheEntry,
+  CacheEntrySummary,
+  CacheReadResult,
+  CandidateReadResult,
+} from './cache/store.ts';
 export { evaluateFreshness } from './cache/ttl.ts';
 export type { FreshnessDecision } from './cache/ttl.ts';
 export {

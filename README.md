@@ -203,13 +203,20 @@ See [`docs/security.md`](docs/security.md) for the full threat model.
 
 ## Caching & refresh
 
-Specs are cached under `~/.kaisers-io/openapi-mcp/cache/<namespace>/`, refreshed on a timer
-(`--ttl`, default `1h`) using conditional requests (ETag/Last-Modified).
+Specs are cached under `~/.kaisers-io/openapi-mcp/cache/<namespace>/` and re-validated at
+startup once the TTL has expired (`--ttl`, default `1h`), using conditional requests
+(ETag/Last-Modified). A running server does not refresh its tool list; restart it to pick up
+a newer spec.
 
 Refresh is **fail-closed**: the cache holds an accepted baseline and, separately, at most one
 pending candidate. A changed spec fetched at runtime is validated and written as a candidate
-only — it never activates automatically. The only automatic change is a **removal** (an
-operation gone from the candidate is disabled immediately, the fail-safe direction).
+only — it never activates automatically. The only automatic change is a **removal**: while
+the candidate waits, an accepted operation that the candidate no longer has (same method and
+path) is withheld, on every start, and listed in a warning and in `openapi_mcp_status`. That
+is the fail-safe direction. Operations present in both keep their accepted definition. Paths
+are compared with parameter names ignored (`/pets/{petId}` and `/pets/{id}` are the same
+operation), and `servers` is not compared: a candidate that only moves the base path (say
+`/v1` to `/v2`) withholds nothing, and the move waits for promotion like any other change.
 Everything else (new tools, changed descriptions or input schemas, method/path/base-URL
 changes, auth-scheme changes) waits for an explicit decision:
 

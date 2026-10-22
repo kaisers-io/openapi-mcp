@@ -1154,6 +1154,58 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
   }
 };
 
+// The waiting candidate's document, read lock-free beside an entry the
+// caller is serving (#60: operations removed in the candidate are withheld
+// while it waits). The same verification as the accepted object — content
+// hash, JSON-object shape — because the result decides what is NOT exposed:
+// unverifiable bytes must not decide it either way.
+//
+// A missing candidate object is told apart from damage the same way the
+// accepted reader does it: re-read meta.json, and if it no longer names this
+// candidate, a concurrent commit (promote, refresh, clear) replaced it — a
+// lost race, reported as `changed` so the caller can ask for a rerun. If meta
+// still names it, the object is genuinely gone: corrupt.
+export type CandidateReadResult =
+  | { kind: 'ok'; document: Record<string, unknown> }
+  | { kind: 'changed' }
+  | { kind: 'corrupt'; reason: string };
+
+const readCandidateDocumentImpl = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  candidateContentHash: string,
+): Promise<CandidateReadResult> => {
+  const corrupt = (detail: string): CandidateReadResult => ({
+    kind: 'corrupt',
+    reason: `the candidate spec for cache entry ${layout.namespace} ${detail}`,
+  });
+  // Imperative on purpose: the catch returns a result of a different type
+  // from the success value, as in the accepted reader above
+  let text: string;
+  try {
+    text = await fs.readFileTextCapped(
+      objectPath(layout, candidateContentHash),
+      CACHE_MAX_PERSISTED_BYTES,
+    );
+  } catch (error) {
+    if (error instanceof OpenapiMcpError && error.code === 'validation') {
+      return corrupt(`exceeds its ${CACHE_MAX_PERSISTED_BYTES}-byte budget`);
+    }
+    if (!isCacheAbsence(error)) {
+      throw error;
+    }
+    const recheck = await readMetaFile(layout, fs);
+    return recheck.kind === 'ok' && recheck.meta.candidate?.contentHash === candidateContentHash
+      ? corrupt('cannot be read')
+      : { kind: 'changed' };
+  }
+  if (hashContent(text) !== candidateContentHash) {
+    return corrupt('does not match its recorded content hash');
+  }
+  const document = parseJsonObject(text);
+  return document === undefined ? corrupt('is not a JSON object') : { kind: 'ok', document };
+};
+
 // ---------------------------------------------------------------------------
 // Promotion, clearing and listing. These three round out the store's public
 // surface, built on top of readCacheEntry and the write paths defined above.
@@ -1444,6 +1496,10 @@ const listCacheEntriesImpl = async (
 // ---------------------------------------------------------------------------
 
 export const readCacheEntry = withCacheErrors('read a cache entry', readCacheEntryImpl);
+export const readCandidateDocument = withCacheErrors(
+  'read the candidate spec',
+  readCandidateDocumentImpl,
+);
 export const writeAccepted = withCacheErrors('write the accepted spec', writeAcceptedImpl);
 export const writeCandidate = withCacheErrors('write the candidate spec', writeCandidateImpl);
 export const touchRevalidated = withCacheErrors('record a revalidation', touchRevalidatedImpl);

@@ -34,7 +34,12 @@ Everything below is a defense *in addition to* that requirement, not a replaceme
   (cross-document) `$ref`s are rejected outright as a spec-level hard failure.
 - A refreshed spec fetched at runtime never silently changes what a model can do: the cache
   keeps a durable accepted baseline plus at most one pending candidate. The only change
-  applied automatically is a **removal** (fail-safe direction). New tools, changed
+  applied automatically is a **removal** (fail-safe direction): while a candidate waits, an
+  accepted operation it no longer has (matched by method and path) is withheld and reported,
+  and operations present in both keep their accepted definition. A candidate object that
+  cannot be verified fails closed like any other damaged cache entry. Specs are only
+  re-validated at startup (once the TTL has expired); a running server never changes its tool
+  list. New tools, changed
   descriptions, changed input schemas, method/path/base-URL changes, and auth-scheme changes
   all wait behind an explicit `openapi-mcp cache promote` (or the operator's own
   `--trust-spec-updates` opt-out for a spec they own). Restart is not treated as approval —
