@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import type { Command } from '@commander-js/extra-typings';
 import {
   assertAllowedRedirectTarget,
@@ -9,6 +10,7 @@ import {
   createExecutor,
   createCallStats,
   createMetaExecutor,
+  createOAuthResourceServer,
   formatCallLog,
   createRateLimiter,
   createRedactor,
@@ -31,6 +33,7 @@ import type {
   ExecutorConfig,
   NormalizedSpec,
   RequestedToolMode,
+  OAuthGuardOptions,
   RequestGuardOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
@@ -191,11 +194,112 @@ type ServeCmdOpts = SpecCmdOpts &
     http?: boolean;
     port: string;
     httpTokenEnv?: string;
+    httpAuth: string;
+    httpHost?: string;
+    oauthIssuer?: string;
+    oauthAudience?: string;
+    oauthRequiredScope?: string[];
     log?: string;
     toolsPageSize?: string;
     responseProjection?: boolean;
     toolMode: string;
   };
+
+type HttpAuthConfig =
+  | { kind: 'static'; token: string }
+  | { kind: 'oauth'; issuer: string; audience: string; requiredScopes: string[] };
+
+type HttpConfig = { port: number; hostname: string; auth: HttpAuthConfig };
+
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1']);
+
+// Discovers the authorization server and loads its JWKS through the same
+// pinned egress transport as the upstream API — an unreachable or
+// inconsistent authorization server is a startup failure, not a 503 per
+// request. Host is the audience's authority: behind a TLS-terminating
+// reverse proxy, the proxy must forward the client's Host header.
+const createOAuthGuard = async (
+  auth: Extract<HttpAuthConfig, { kind: 'oauth' }>,
+  ctx: CliContext,
+  egress: { allowPrivateNetwork: boolean; timeoutMs: number },
+): Promise<OAuthGuardOptions> => {
+  const oauth = await createOAuthResourceServer(
+    {
+      issuer: auth.issuer,
+      audience: auth.audience,
+      requiredScopes: auth.requiredScopes,
+      ...egress,
+    },
+    {
+      transport: ctx.transport,
+      now: ctx.now,
+      // Key-set notices (a failed refresh, an empty set) are already bounded
+      // to one per refresh cooldown by the cache itself.
+      warn: (message) => emitWarnings(ctx, [`oauth: ${message}`]),
+    },
+  );
+  return { allowedOrigins: new Set(), allowedHost: oauth.publicHost, oauth };
+};
+
+// Without a required scope, ANY token the issuer mints for this audience
+// gets full access — fine on loopback, worth saying out loud on a network.
+const noRequiredScopeWarning = (config: HttpConfig): string[] =>
+  config.auth.kind === 'oauth' &&
+  config.auth.requiredScopes.length === 0 &&
+  !LOOPBACK_ADDRESSES.has(config.hostname)
+    ? [
+        `oauth: no --oauth-required-scope is set, so every access token ${config.auth.issuer} issues for ${config.auth.audience} grants full access to all tools; pass --oauth-required-scope to restrict it`,
+      ]
+    : [];
+
+// RFC 6749 §3.3 scope-token: printable ASCII except space, `"` and `\`.
+const SCOPE_TOKEN_RE = /^[\u0021\u0023-\u005B\u005D-\u007E]+$/u;
+
+const collect = (value: string, previous: string[] | undefined): string[] => [
+  ...(previous ?? []),
+  value,
+];
+
+// The OAuth resource-server half of the HTTP config. Kept apart from the
+// static-token path so neither mode can silently absorb the other's flags.
+const resolveOAuthConfig = (cmdOpts: ServeCmdOpts): HttpAuthConfig => {
+  if (cmdOpts.httpTokenEnv !== undefined) {
+    throw usageError('--http-token-env cannot be combined with --http-auth oauth');
+  }
+  if (cmdOpts.oauthIssuer === undefined || cmdOpts.oauthAudience === undefined) {
+    throw usageError('--http-auth oauth requires --oauth-issuer <url> and --oauth-audience <uri>');
+  }
+  const requiredScopes = cmdOpts.oauthRequiredScope ?? [];
+  const badScope = requiredScopes.find((scope) => !SCOPE_TOKEN_RE.test(scope));
+  if (badScope !== undefined) {
+    throw usageError('--oauth-required-scope values must be single OAuth scope tokens');
+  }
+  return {
+    kind: 'oauth',
+    issuer: cmdOpts.oauthIssuer,
+    audience: cmdOpts.oauthAudience,
+    requiredScopes,
+  };
+};
+
+// The bind address. Only an IP literal is accepted (no name resolution at
+// bind time), and anything but loopback only in OAuth mode with an https
+// audience: binding a network interface while clients are told to use
+// cleartext would put access tokens on the wire unprotected.
+const resolveBindAddress = (cmdOpts: ServeCmdOpts, auth: HttpAuthConfig): string => {
+  const hostname = cmdOpts.httpHost ?? '127.0.0.1';
+  if (isIP(hostname) === 0) {
+    throw usageError(`--http-host "${hostname}" must be an IP address`);
+  }
+  if (
+    !LOOPBACK_ADDRESSES.has(hostname) &&
+    auth.kind === 'oauth' &&
+    !auth.audience.toLowerCase().startsWith('https:')
+  ) {
+    throw usageError('a non-loopback --http-host requires an https --oauth-audience');
+  }
+  return hostname;
+};
 
 // Upper bound for --tools-page-size: the spec budget's tool cap, so a larger
 // value could never page anyway.
@@ -227,9 +331,31 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     .description(
       'start an MCP server (stdio by default) exposing tools generated from an OpenAPI spec',
     )
-    .option('--http', 'serve over Streamable HTTP (127.0.0.1 only) instead of stdio')
+    .option('--http', 'serve over Streamable HTTP (127.0.0.1 unless --http-host) instead of stdio')
     .option('--port <n>', 'HTTP port', '3044')
     .option('--http-token-env <ENV>', 'env var holding the bearer token required for HTTP requests')
+    .option(
+      '--http-auth <mode>',
+      'HTTP authentication: "static" (--http-token-env) or "oauth" (resource-server mode)',
+      'static',
+    )
+    .option(
+      '--http-host <addr>',
+      'IP address to bind (default 127.0.0.1; any other requires --http-auth oauth)',
+    )
+    .option(
+      '--oauth-issuer <url>',
+      'authorization server issuer whose JWT access tokens are accepted',
+    )
+    .option(
+      '--oauth-audience <uri>',
+      "this server's canonical resource URI; tokens must carry it in aud",
+    )
+    .option(
+      '--oauth-required-scope <scope>',
+      'scope every access token must grant (repeatable)',
+      collect,
+    )
     .option(
       '--log <format>',
       'write one structured line per tool call to stderr (only "json"; never arguments, header values or bodies)',
@@ -254,17 +380,41 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
   // distinguishes "the user actually passed --port" from "the default
   // applied" regardless of whether the passed value happens to equal
   // the default.
-  const resolveHttpConfig = (
-    cmdOpts: ServeCmdOpts,
-  ): { token: string; port: number } | undefined => {
+  const resolveHttpConfig = (cmdOpts: ServeCmdOpts): HttpConfig | undefined => {
+    const oauthFlagGiven =
+      cmdOpts.oauthIssuer !== undefined ||
+      cmdOpts.oauthAudience !== undefined ||
+      cmdOpts.oauthRequiredScope !== undefined;
     if (
       cmdOpts.http !== true &&
-      (cmdOpts.httpTokenEnv !== undefined || command.getOptionValueSource('port') === 'cli')
+      (cmdOpts.httpTokenEnv !== undefined ||
+        command.getOptionValueSource('port') === 'cli' ||
+        command.getOptionValueSource('httpAuth') === 'cli' ||
+        cmdOpts.httpHost !== undefined ||
+        oauthFlagGiven)
     ) {
-      throw usageError('--port and --http-token-env require --http');
+      throw usageError(
+        '--port, --http-token-env, --http-auth, --http-host, --oauth-issuer, --oauth-audience and --oauth-required-scope require --http',
+      );
     }
     if (cmdOpts.http !== true) {
       return undefined;
+    }
+    if (cmdOpts.httpAuth !== 'static' && cmdOpts.httpAuth !== 'oauth') {
+      throw usageError(`--http-auth must be "static" or "oauth", not "${cmdOpts.httpAuth}"`);
+    }
+    if (cmdOpts.httpAuth === 'static' && (oauthFlagGiven || cmdOpts.httpHost !== undefined)) {
+      throw usageError(
+        '--http-host, --oauth-issuer, --oauth-audience and --oauth-required-scope require --http-auth oauth',
+      );
+    }
+    const port = Number(cmdOpts.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+      throw usageError(`--port "${cmdOpts.port}" is not a valid port number`);
+    }
+    if (cmdOpts.httpAuth === 'oauth') {
+      const auth = resolveOAuthConfig(cmdOpts);
+      return { port, hostname: resolveBindAddress(cmdOpts, auth), auth };
     }
     if (cmdOpts.httpTokenEnv === undefined) {
       throw usageError('--http requires --http-token-env <ENV>');
@@ -279,11 +429,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           'Base64URL characters, or 44-character padded standard Base64 (e.g. `openssl rand -base64 32`)',
       );
     }
-    const port = Number(cmdOpts.port);
-    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
-      throw usageError(`--port "${cmdOpts.port}" is not a valid port number`);
-    }
-    return { token, port };
+    return { port, hostname: '127.0.0.1', auth: { kind: 'static', token } };
   };
   // `.option()` chained onto a Command whose Opts type already carries
   // SpecCmdOpts's own index signature does not narrow any further through
@@ -397,7 +543,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       const redactor = createRedactor([
         ...args.options.specHeaders.map((header) => header.value),
         ...apiConfig.secretValues,
-        ...(httpConfig === undefined ? [] : [httpConfig.token]),
+        ...(httpConfig?.auth.kind === 'static' ? [httpConfig.auth.token] : []),
       ]);
 
       // Every upstream tool's outputSchema is compiled eagerly HERE, at
@@ -474,6 +620,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...result.warnings,
         ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
+        ...(httpConfig === undefined ? [] : noRequiredScopeWarning(httpConfig)),
         ...[discoverApprovalWarning(snapshot.toolMode, snapshot.operations)].filter(
           (line): line is string => line !== undefined,
         ),
@@ -508,19 +655,25 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         process.removeListener('SIGTERM', onShutdownSignal);
         await session.close();
       } else {
-        const guard: RequestGuardOptions = {
-          // No CLI flag for browser Origins (documented scope: a single
-          // local, non-browser client) — an empty allowlist means every
-          // PRESENT Origin 403s; an absent Origin still works with a valid
-          // bearer.
-          allowedOrigins: new Set(),
-          allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
-          // `http://localhost:<port>/` is how many clients are configured;
-          // the listener is the same loopback socket (IPv4 only, so no
-          // `[::1]` alias).
-          allowedHostAliases: new Set([`localhost:${String(httpConfig.port)}`]),
-          bearer: { configuredToken: httpConfig.token },
-        };
+        // No CLI flag for browser Origins (documented scope: non-browser
+        // clients) — an empty allowlist means every PRESENT Origin 403s; an
+        // absent Origin still works with valid credentials.
+        const { auth } = httpConfig;
+        const guard: RequestGuardOptions | OAuthGuardOptions =
+          auth.kind === 'static'
+            ? {
+                allowedOrigins: new Set(),
+                allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
+                // `http://localhost:<port>/` is how many clients are
+                // configured; the listener is the same loopback socket (static
+                // mode always binds 127.0.0.1, so no `[::1]` alias).
+                allowedHostAliases: new Set([`localhost:${String(httpConfig.port)}`]),
+                bearer: { configuredToken: auth.token },
+              }
+            : await createOAuthGuard(auth, ctx, {
+                allowPrivateNetwork,
+                timeoutMs: args.options.timeoutMs,
+              });
         const httpServer = createStreamableHttpServer({
           name: 'openapi-mcp',
           version: pkg.version,
@@ -529,6 +682,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           ...paging,
           guard,
           port: httpConfig.port,
+          hostname: httpConfig.hostname,
           // Same reasoning — and the same bounded route — as the stdio
           // branch's onError above: an out-of-band transport error has no
           // JSON-RPC reply to ride on, and its text can echo client-supplied

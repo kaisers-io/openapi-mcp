@@ -210,6 +210,11 @@ export type PinnedRequestOptions = {
   maxResponseBytes: number;
   // The MCP client-cancel signal (extra.signal).
   signal: AbortSignal;
+  // An extra, caller-specific check applied to EVERY hop (hop 0 and each
+  // redirect target) before it is requested: returns an error description
+  // to refuse the hop as egress, or undefined to allow it. Used where the
+  // caller's own URL rules (e.g. https-only) must also bind redirects.
+  checkHop?: (url: URL) => string | undefined;
 };
 
 // Typed via undici's own fetch, never Node's global fetch (dual-package
@@ -498,7 +503,7 @@ export const pinnedRequest = async (
     const trusted = opts.baseTrusted && onTrustedOrigin;
     const policy: PinnedPolicy = { allowPrivateNetwork: opts.allowPrivateNetwork, trusted };
     // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
-    const sync = validateHopUrlSync(url, policy);
+    const sync = validateHopUrlSync(url, policy) ?? opts.checkHop?.(url);
     if (sync !== undefined) {
       return { kind: 'error', reason: 'egress', detail: sync };
     }

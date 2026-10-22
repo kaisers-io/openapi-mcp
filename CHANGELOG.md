@@ -83,3 +83,12 @@
   access token against a kid-indexed JWKS: asymmetric algorithms only (RS/PS/ES/EdDSA), `kid`
   required, canonical base64url, exact `iss`, `aud` bound to the resource URI, `exp` required,
   60 s clock skew. Library only; the HTTP resource-server wiring follows.
+
+- **OAuth resource-server mode for `--http` (#70).** `--http-auth oauth` with `--oauth-issuer`,
+  `--oauth-audience` and optional `--oauth-required-scope` validates JWT access tokens locally
+  against the issuer's JWKS, serves RFC 9728 Protected Resource Metadata and answers with
+  `401`/`403` challenges. Every MCP request is checked at the transport, `call_operation`
+  included. Only this mode may bind a non-loopback `--http-host` (with an `https` audience).
+  The JWKS is refreshed stale-while-revalidate, at most once per 30 s; a failed refresh keeps
+  the last good set for up to an hour, an empty set revokes every key. Static `--http-token-env`
+  stays the default.

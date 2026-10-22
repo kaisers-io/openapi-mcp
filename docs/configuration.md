@@ -47,7 +47,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
 | `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
-| `--timeout <duration>` | no | spec fetch timeout | `30s` |
+| `--timeout <duration>` | no | spec fetch timeout; also each authorization-server metadata and JWKS fetch in `--http-auth oauth` mode | `30s` |
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
@@ -64,9 +64,14 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
 | `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
 | `--log <format>` | no | write one structured line per tool call to stderr; the only format is `json` | off |
-| `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
+| `--http` | no | serve over Streamable HTTP (127.0.0.1 unless `--http-host`) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
-| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
+| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` in `static` mode. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
+| `--http-auth <mode>` | no | `static` (one bearer token from `--http-token-env`) or `oauth` (OAuth resource-server mode, see [security.md](security.md#oauth-resource-server-mode-opt-in)) | `static` |
+| `--http-host <addr>` | no | IP address to bind; anything but loopback requires `--http-auth oauth` and an `https` `--oauth-audience` | `127.0.0.1` |
+| `--oauth-issuer <url>` | no | authorization server issuer whose JWT access tokens are accepted; required with `--http-auth oauth` | none |
+| `--oauth-audience <uri>` | no | this server's canonical resource URI (its public URL); tokens must carry it in `aud`; required with `--http-auth oauth` | none |
+| `--oauth-required-scope <scope>` | yes | scope every access token must grant; advertised as `scopes_supported` | `[]` |
 | `--tool-mode <mode>` | no | `per-operation`, `discover` or `auto` — see [Tool modes](#tool-modes) | `per-operation` |
 | `--response-projection` | no | offer an optional `_fields` argument (JSON Pointers) on tools with a JSON response | off |
 | `--tools-page-size <n>` | no | page `tools/list` with `n` tools per page (1–512); only for MCP hosts that follow `nextCursor` | off (all tools in one response) |
@@ -236,6 +241,18 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
 
+OAuth resource-server example (behind a TLS-terminating reverse proxy that serves
+`https://mcp.example.com/mcp` and forwards the client's `Host` header):
+
+```bash
+openapi-mcp serve --spec https://api.example.com/openapi.json \
+  --header-env Authorization=API_TOKEN \
+  --http --http-auth oauth --http-host 0.0.0.0 --port 3044 \
+  --oauth-issuer https://auth.example.com/realms/main \
+  --oauth-audience https://mcp.example.com/mcp \
+  --oauth-required-scope mcp:tools
+```
+
 ### Tool modes
 
 `--tool-mode` decides how the exposed operations reach the model.
@@ -299,7 +316,7 @@ API-request or transport flags (no `--base-url`, `--header*`, `--max-response-by
 | `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
 | `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
-| `--timeout <duration>` | no | spec fetch timeout | `30s` |
+| `--timeout <duration>` | no | spec fetch timeout; also each authorization-server metadata and JWKS fetch in `--http-auth oauth` mode | `30s` |
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
