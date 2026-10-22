@@ -1,0 +1,25 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Codes", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.example.com" }],
+  "paths": {
+    "/codes": {
+      "get": {
+        "operationId": "listCodes",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": { "code": { "type": "string", "pattern": "^(a+)+$" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
