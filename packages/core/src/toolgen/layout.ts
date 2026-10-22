@@ -39,7 +39,12 @@ export type RequestMapper = {
   // `requestBody.required: true` (OAS 3.1.1 §4.8.13.1). Body PRESENCE is part
   // of the contract and cannot be inferred from which flattened fields are
   // populated: a required body whose properties are all optional must still
-  // be sent (as `{}`) when every field is absent (#40). Absent means optional.
+  // be sent (as `{}`) when every field is absent (#40).
+  // Encoding is deliberately asymmetric: the key is present (and `true`) only
+  // for a required body, and ABSENT — never `false` — for an optional one, so
+  // a mapper for an optional body stays byte-identical to the pre-#40 shape.
+  // Anything that serializes, compares or memoizes mappers must treat a
+  // missing key as "optional", not as "unknown".
   bodyRequired?: true;
   fields: Record<string, FieldMapping>;
 };
