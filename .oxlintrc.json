@@ -172,6 +172,11 @@
     "typescript/no-misused-promises": "error",
     "typescript/await-thenable": "error",
     "typescript/require-await": "error",
+    // Off: the untyped twin of typescript/require-await above, which the
+    // categories enable too. Both reported every async function without an
+    // await; the type-aware one is kept because it also knows an async
+    // function returning a thenable is fine.
+    "require-await": "off",
     "typescript/no-unnecessary-type-assertion": "error",
     // Configured (not the default "in-try-catch"): this option reports only
     // the cases that change behaviour, i.e. a promise returned without await
