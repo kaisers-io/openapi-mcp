@@ -176,3 +176,31 @@ choose `--allow` patterns deliberately rather than exposing write operations by 
 review a spec's diff before running `cache promote`; and treat any `--base-url` you set as an
 explicit, trusted operator decision, since it bypasses the private-range deny-by-default
 check that applies to spec-derived origins.
+
+## Dependency audit (maintainers)
+
+`pnpm audit --audit-level=high` checks the whole lockfile against the live advisory database. It
+covers dev dependencies too, because the CLI bundles its runtime dependencies from them. The check
+runs in `.github/workflows/audit.yml`:
+
+- weekly on `main` (Mondays, 06:17 UTC),
+- on demand (Actions → audit → Run workflow),
+- on pull requests that change `pnpm-lock.yaml`, `pnpm-workspace.yaml` or a `package.json`.
+
+It is not part of `ci.yml` and must not be a required status check. A new advisory against an
+unrelated transitive package would otherwise turn every open PR red without any change in the PR.
+
+When a run fails:
+
+1. **Read the advisory.** Check whether the vulnerable code path is reachable here: is it in the
+   shipped bundle (`packages/cli/dist`), or only in dev tooling?
+2. **Fix by upgrading.** This is the normal case. Bump the direct dependency that pulls the
+   vulnerable package in. If that is not possible yet, run `pnpm audit --fix update` (re-resolves
+   the lockfile) or `pnpm audit --fix override` (pins a fixed version through `overrides` in
+   `pnpm-workspace.yaml`). Open a PR. The audit runs on it because it changes the lockfile.
+3. **Accept only with a record.** Accept an advisory only when no fixed version exists and the
+   code path is not reachable. Add `--ignore GHSA-xxxx-xxxx-xxxx` to the audit step in
+   `audit.yml` with a comment giving the reason and a review-by date. Remove the ignore once a
+   fix ships, or when the date passes.
+4. **Shipped code affected.** If the vulnerable code is in the shipped bundle and reachable,
+   treat it as a release blocker: fix it, then cut a patch release.
