@@ -19,8 +19,18 @@ import { sanitizeSpecText } from './sanitize.ts';
 //
 // Operations are matched by `METHOD path`, the identity the spec itself
 // gives them (an operationId can be added, renamed or dropped without the
-// endpoint changing).
-const operationKey = (method: string, path: string): string => `${method.toUpperCase()} ${path}`;
+// endpoint changing). Path parameter NAMES are not part of that identity:
+// OpenAPI treats templated paths that differ only in parameter names as the
+// same path, so `/pets/{petId}` renamed to `/pets/{id}` is the same endpoint,
+// not a removal. Each `{…}` is therefore normalized to `{}` for matching.
+//
+// `servers` (the base URL / base path) is not part of the key either: a
+// candidate that moves the API from `/v1` to `/v2` but keeps `paths` removes
+// nothing here; the move itself waits for `cache promote` like any change.
+const TEMPLATE_PARAM_RE = /\{[^{}]*\}/gu;
+const operationKey = (method: string, path: string): string =>
+  `${method.toUpperCase()} ${path.replaceAll(TEMPLATE_PARAM_RE, '{}')}`;
+const displayKey = (method: string, path: string): string => `${method.toUpperCase()} ${path}`;
 
 // Every `METHOD path` the candidate document declares. Read from the
 // validated, dereferenced document's own `paths`, not from its normalized
@@ -101,7 +111,7 @@ export const withholdRemoved = (
     .slice(0, WITHHELD_WARNING_MAX)
     .map(
       (named) =>
-        `${operationKey(named.operation.method, sanitizeSpecText(named.operation.path, PATH_DISPLAY_MAX))} (${named.toolName})`,
+        `${displayKey(named.operation.method, sanitizeSpecText(named.operation.path, PATH_DISPLAY_MAX))} (${named.toolName})`,
     );
   const more = removed.length - listed.length;
   return {
