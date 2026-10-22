@@ -12,9 +12,12 @@ export type { ExitCode, RenderedError } from './errors.ts';
 export { createRedactor } from './redact.ts';
 export type { Redactor } from './redact.ts';
 export {
+  MAX_AGE_DURATION_MS,
   MAX_DURATION_MS,
+  parseAgeDuration,
   parseByteSize,
   parseDuration,
+  zAgeDuration,
   zByteSize,
   zDuration,
 } from './schemas/primitives.ts';
@@ -35,13 +38,20 @@ export {
   type GutterFrameOptions,
   type GutteredBody,
 } from './spec/display.ts';
-export { HEADER_NAME_RE, parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
+export {
+  HEADER_NAME_RE,
+  NON_LATIN1_RE,
+  parseHeaderEnvMapping,
+  resolveHeaderEnvMappings,
+} from './http/headers.ts';
 export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';
 export { hashContent, loadSpecFromFile, parseSpecSource } from './spec/load.ts';
 export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
 export { assertAllowedRedirectTarget, classifyAddress } from './http/egress.ts';
 export type { AddressClass, DnsLookup, EgressPolicyOptions } from './http/egress.ts';
 export { pinnedRequest } from './http/pinned-dispatcher.ts';
+export { createPinnedAgentPool } from './http/agent-pool.ts';
+export type { PinnedAgentPool, PinnedAgentPoolOptions } from './http/agent-pool.ts';
 export type {
   HopHeaders,
   PinnedDeps,
@@ -63,7 +73,15 @@ export type { ConditionalFetchResult, FetchSpecDeps, FetchSpecOptions } from './
 export { parseSpecText } from './spec/parse.ts';
 export { validateOpenApiDocument } from './spec/validate.ts';
 export type { OpenapiVersion, ValidatedSpec } from './spec/validate.ts';
-export { dereference } from './spec/dereference.ts';
+export {
+  checkRefs,
+  createDereferencer,
+  createCycleDetector,
+  dereference,
+  MAX_EXPANDED_NODES,
+  resolveShallow,
+} from './spec/dereference.ts';
+export type { Dereferencer, DereferencerOptions } from './spec/dereference.ts';
 export { HTTP_METHODS, normalizeSpec } from './spec/normalize.ts';
 export type {
   HttpMethod,
@@ -85,12 +103,13 @@ export type {
 } from './spec/security.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
 export type {
+  CacheLockState,
   CacheStatus,
   SpecPipelineDeps,
   SpecPipelineOptions,
   SpecPipelineResult,
 } from './spec/pipeline.ts';
-export type { CacheFs } from './cache/fs.ts';
+export type { CacheFs, CacheRuntime } from './cache/fs.ts';
 export {
   CACHE_KEY_MAX_LENGTH,
   CACHE_MAX_PERSISTED_BYTES,
@@ -106,9 +125,18 @@ export {
   resolveCachePolicy,
 } from './cache/paths.ts';
 export type { CacheLayout, CachePolicy } from './cache/paths.ts';
-export { LOCK_STALE_MS, unlockNamespace, withNamespaceLock } from './cache/lock.ts';
+export {
+  LOCK_RETRY_DELAYS_MS,
+  LOCK_STALE_MS,
+  lockRetrySchedule,
+  tryWithNamespaceLock,
+  unlockNamespace,
+  withNamespaceLock,
+} from './cache/lock.ts';
+export { describeLockHolder } from './cache/lock-holder.ts';
 export {
   CACHE_META_SCHEMA_VERSION,
+  LEGACY_CACHE_META_SCHEMA_VERSION,
   CACHE_TEXT_MAX,
   FETCHED_AT_MAX,
   zCacheMeta,
@@ -122,13 +150,19 @@ export {
   listNamespaceIds,
   promoteCandidate,
   readCacheEntry,
+  readCandidateDocument,
   serializedSizeWithin,
   serializeWithinBudget,
   touchRevalidated,
   writeAccepted,
   writeCandidate,
 } from './cache/store.ts';
-export type { CacheEntry, CacheEntrySummary, CacheReadResult } from './cache/store.ts';
+export type {
+  CacheEntry,
+  CacheEntrySummary,
+  CacheReadResult,
+  CandidateReadResult,
+} from './cache/store.ts';
 export { evaluateFreshness } from './cache/ttl.ts';
 export type { FreshnessDecision } from './cache/ttl.ts';
 export {
@@ -160,11 +194,15 @@ export {
   composeDescription,
   convertSchema,
   deriveAnnotations,
+  DEFAULT_RESPONSE_IS_ERROR_FLAG,
   deriveOutputSchema,
+  explainOutputSchema,
   MAX_CONVERT_DEPTH,
   paramFields,
   SYSTEM_HEADERS,
   TOOL_NAME_MAX_LENGTH,
+  UNSAFE_PATTERN_REASON,
+  hasNestedQuantifier,
 } from './toolgen/index.ts';
 export type {
   BuildToolsResult,
@@ -172,49 +210,85 @@ export type {
   FieldMapping,
   GeneratedTool,
   JsonSchemaRecord,
+  OutputSchemaOptions,
   LayoutResult,
   NamedOperation,
+  OutputSchemaDerivation,
   RequestMapper,
+  SchemaMode,
   SchemaResult,
   ToolAnnotations,
   WireSchema,
 } from './toolgen/index.ts';
 export {
+  AUTO_DISCOVER_THRESHOLD,
+  BOUNDARY_WITHHELD_ERROR_TEXT,
+  BOUNDARY_WITHHELD_SUCCESS_TEXT,
   buildSnapshot,
+  CALL_TOOL_NAME,
   constantTimeEquals,
   createDispatcher,
   createExecutor,
+  createCallStats,
   createMetaExecutor,
+  createOAuthResourceServer,
   createRateLimiter,
+  formatCallLog,
   DEFAULT_RATE_LIMIT,
+  DESCRIBE_TOOL_NAME,
+  discoverApprovalWarning,
+  evaluateHostOrigin,
   evaluateRequest,
   extractBearerToken,
   isAuthorized,
   isValidBearerToken,
+  markSecretScanned,
   META_TOOL_NAME,
+  parseJwks,
+  resolveToolMode,
+  SEARCH_TOOL_NAME,
   structuredOutcome,
   textOutcome,
+  TOOL_MODES,
+  verifyJwt,
 } from './server/index.ts';
 export type {
   BearerCheck,
+  CallObserver,
+  CallRecord,
   CallRequest,
+  DiscoveryToolName,
   DispatcherDeps,
   DispatchResult,
   ExecutorConfig,
   ExecutorDeps,
   GuardDecision,
+  HostOriginOptions,
   IncomingHeaders,
+  JwtFailure,
+  JwtVerifyResult,
+  KeySet,
   MetaExecutor,
   MetaSummary,
+  OAuthDecision,
+  OAuthDeps,
+  OAuthResourceServer,
+  OAuthResourceServerConfig,
   RateLimiter,
   RateLimiterOptions,
+  RequestedToolMode,
   RequestGuardOptions,
+  SearchIndex,
   ServerSnapshot,
+  SnapshotOptions,
   SnapshotPipelineInput,
   SnapshotTool,
   SnapshotToolKind,
   ToolCallOutcome,
   ToolExecutor,
+  ToolMode,
+  UpstreamExecutor,
+  VerifiedAccessToken,
   WireTool,
 } from './server/index.ts';
 export { serveStdioSession } from './server/sdk/stdio.ts';
@@ -223,6 +297,7 @@ export { createProtocolSession } from './server/sdk/protocol.ts';
 export type { ProtocolSessionOptions } from './server/sdk/protocol.ts';
 export { createStreamableHttpServer } from './server/sdk/streamable-http.ts';
 export type {
+  OAuthGuardOptions,
   StreamableHttpOptions,
   StreamableHttpServerHandle,
 } from './server/sdk/streamable-http.ts';

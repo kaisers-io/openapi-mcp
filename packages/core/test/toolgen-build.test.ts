@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTools, SYSTEM_HEADERS } from '../src/index.ts';
+import { buildTools, MAX_CONVERT_DEPTH, SYSTEM_HEADERS } from '../src/index.ts';
 import type { HttpMethod, NamedOperation } from '../src/index.ts';
 
 const named = (
@@ -199,5 +199,199 @@ describe('buildTools — wire schema + sanitization', () => {
     expect(tool?.description).toBe('Get a thing');
     expect(tool?.annotations).toEqual({ readOnlyHint: true, openWorldHint: true });
     expect(tool?.outputSchema).toBeDefined();
+  });
+});
+
+describe('buildTools — common nullable / allOf idioms are no longer omitted (#41)', () => {
+  it('generates the operation instead of listing it in omitted', () => {
+    const body = (schema: Record<string, unknown>) => ({
+      required: true,
+      content: { 'application/json': { schema } },
+    });
+    const { tools, omitted } = buildTools(
+      [
+        named(
+          'nullableRef',
+          [],
+          body({
+            type: 'object',
+            properties: {
+              parent: {
+                nullable: true,
+                allOf: [{ type: 'object', properties: { id: { type: 'string' } } }],
+              },
+            },
+          }),
+        ),
+        named(
+          'describedRef',
+          [],
+          body({
+            type: 'object',
+            properties: {
+              status: { description: 'status', allOf: [{ type: 'string', enum: ['a', 'b'] }] },
+            },
+          }),
+        ),
+      ],
+      { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.0' },
+    );
+    expect(omitted).toEqual([]);
+    expect(tools.map((tool) => tool.toolName)).toEqual(['nullableRef', 'describedRef']);
+  });
+});
+
+describe('buildTools — defaultResponseIsError (#72)', () => {
+  const success = { content: { 'application/json': { schema: { type: 'string' } } } };
+  const opWith = (responses: Record<string, unknown>): NamedOperation => ({
+    toolName: 'getCharge',
+    operation: {
+      method: 'get' as HttpMethod,
+      path: '/charges',
+      tags: [],
+      deprecated: false,
+      parameters: [],
+      responses,
+    },
+  });
+  const base = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' as const };
+
+  it('threads the option into the outputSchema and marks the tool', () => {
+    const withDefault = opWith({ '200': success, default: { description: 'error' } });
+    const off = buildTools([withDefault], base);
+    expect(off.tools[0]?.outputSchema).toBeUndefined();
+    expect(off.tools[0]?.outputSchemaAssumesDefaultIsError).toBeUndefined();
+    const on = buildTools([withDefault], { ...base, defaultResponseIsError: true });
+    expect(on.tools[0]?.outputSchema).toBeDefined();
+    expect(on.tools[0]?.outputSchemaAssumesDefaultIsError).toBe(true);
+  });
+
+  it('does not mark a tool whose outputSchema never depended on the option', () => {
+    const on = buildTools([opWith({ '200': success })], { ...base, defaultResponseIsError: true });
+    expect(on.tools[0]?.outputSchema).toBeDefined();
+    expect(on.tools[0]?.outputSchemaAssumesDefaultIsError).toBeUndefined();
+  });
+});
+
+describe('buildTools — per-build memoization (issue #90)', () => {
+  // One shared schema node, as the dereferencer hands out for a $ref target
+  // used by several operations (issue #89)
+  const shared: Record<string, unknown> = {
+    type: 'object',
+    required: ['id'],
+    properties: { id: { type: 'string' }, tags: { type: 'array', items: { type: 'string' } } },
+  };
+  const returning = (toolName: string, schema: Record<string, unknown>): NamedOperation => ({
+    toolName,
+    operation: {
+      method: 'get' as HttpMethod,
+      path: `/${toolName}`,
+      tags: [],
+      deprecated: false,
+      parameters: [],
+      responses: {
+        200: { description: 'ok', content: { 'application/json': { schema } } },
+      },
+    },
+  });
+  const opts = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' } as const;
+  const dataOf = (tool: { outputSchema?: Record<string, unknown> } | undefined): unknown =>
+    (tool?.outputSchema?.['oneOf'] as { properties: { data: unknown } }[] | undefined)?.[0]
+      ?.properties.data;
+
+  it('converts a schema node shared by several operations once', () => {
+    const { tools } = buildTools([returning('a', shared), returning('b', shared)], opts);
+    // One conversion, one JSON Schema emission: both tools carry the same object
+    expect(dataOf(tools[0])).toBe(dataOf(tools[1]));
+  });
+
+  it('keeps nothing across buildTools calls', () => {
+    const first = buildTools([returning('a', shared)], opts);
+    const second = buildTools([returning('a', shared)], opts);
+    expect(dataOf(first.tools[0])).not.toBe(dataOf(second.tools[0]));
+    expect(dataOf(first.tools[0])).toEqual(dataOf(second.tools[0]));
+  });
+
+  it('produces exactly what converting each operation on its own produces', () => {
+    const operations = [
+      returning('a', shared),
+      named('b', [{ name: 'q', in: 'query', schema: shared['properties'] as never }], {
+        required: true,
+        content: { 'application/json': { schema: shared } },
+      }),
+      returning('c', { type: 'object', properties: { nested: shared } }),
+    ];
+    const together = buildTools(operations, opts);
+    const alone = operations.map((operation) => buildTools([operation], opts));
+    const view = (result: ReturnType<typeof buildTools>): unknown =>
+      JSON.stringify([
+        result.tools.map((tool) => [tool.toolName, tool.wireSchema, tool.outputSchema]),
+        result.omitted,
+      ]);
+    expect(view(together)).toBe(
+      JSON.stringify([
+        alone.flatMap((result) =>
+          result.tools.map((tool) => [tool.toolName, tool.wireSchema, tool.outputSchema]),
+        ),
+        alone.flatMap((result) => result.omitted),
+      ]),
+    );
+  });
+
+  it('keys the memo by request/response mode: a node shared by a request body and a response converts per mode', () => {
+    // A readOnly property is dropped from requests, writeOnly from open responses, and a
+    // nested-quantifier pattern withholds only the output schema (#39).
+    const user: Record<string, unknown> = {
+      type: 'object',
+      required: ['id', 'password'],
+      properties: {
+        id: { type: 'string', readOnly: true },
+        password: { type: 'string', writeOnly: true },
+        code: { type: 'string', pattern: '^(a+)+$' },
+      },
+    };
+    const reader = returning('getUser', user);
+    const writer = named('createUser', [], {
+      required: true,
+      content: { 'application/json': { schema: user } },
+    });
+    for (const order of [
+      [reader, writer],
+      [writer, reader],
+    ]) {
+      const { tools } = buildTools(order, opts);
+      const byName = new Map(tools.map((tool) => [tool.toolName, tool]));
+      const input = byName.get('createUser')?.wireSchema as { properties: Record<string, unknown> };
+      expect(Object.keys(input.properties).toSorted()).toEqual(['code', 'password']);
+      expect(byName.get('getUser')?.outputSchema).toBeUndefined();
+      expect(byName.get('getUser')?.outputSchemaWithheld).toMatch(/nested quantifiers/u);
+    }
+  });
+
+  it('applies the depth budget to a shared node by the depth it is reached at, in either order', () => {
+    // A chain that fits when it is the response schema itself, and crosses
+    // MAX_CONVERT_DEPTH when the same node sits 20 levels further down
+    let deep: Record<string, unknown> = { type: 'string' };
+    for (let level = 0; level < MAX_CONVERT_DEPTH - 10; level += 1) {
+      deep = { type: 'object', properties: { next: deep } };
+    }
+    let wrapped: Record<string, unknown> = deep;
+    for (let level = 0; level < 20; level += 1) {
+      wrapped = { type: 'object', properties: { inner: wrapped } };
+    }
+    const shallow = returning('shallow', deep);
+    const nested = returning('nested', wrapped);
+    for (const order of [
+      [shallow, nested],
+      [nested, shallow],
+    ]) {
+      const { tools } = buildTools(order, opts);
+      const byName = new Map(tools.map((tool) => [tool.toolName, tool]));
+      // The output schema is all-or-nothing: the nested one is dropped
+      expect(byName.get('shallow')?.outputSchema).toBeDefined();
+      expect(byName.get('nested')?.outputSchema).toBeUndefined();
+      const alone = buildTools([nested], opts);
+      expect(alone.tools[0]?.outputSchema).toBeUndefined();
+    }
   });
 });
