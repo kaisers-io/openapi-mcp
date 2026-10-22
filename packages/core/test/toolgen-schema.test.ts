@@ -265,16 +265,34 @@ describe('convertSchema — enum, const, null', () => {
     expect('unrepresentable' in convertSchema({ type: ['string', 'number'] })).toBe(true);
   });
 
-  it('does NOT let a sibling nullable widen an enum that excludes null', () => {
-    // {type:string, nullable:true, enum:['a']} must reject null — the enum is
-    // authoritative; a .nullable() wrapper would silently admit null. Pass '3.0'
-    // so the boolean `nullable` is ACTIVE (under the default '3.1' it is ignored
-    // globally, so the test would pass vacuously and the 7(c) sabotage would not
-    // bind). Under 3.0 nullable is true, and the enum branch must STILL reject
-    // null — proving determiners ignore a sibling nullable rather than wrapping it.
-    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.0'));
+  it('3.0: a sibling nullable admits null next to an enum that does not list it (D9)', () => {
+    // {type:string, nullable:true, enum:['a']} (older Swashbuckle/NSwag): the
+    // author marked the value nullable, so null is admitted in both directions;
+    // every other non-enumerated value is still rejected.
+    for (const mode of ['request', 'response'] as const) {
+      const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.0', 0, mode));
+      expect(s.safeParse('a').success).toBe(true);
+      expect(s.safeParse(null).success).toBe(true);
+      expect(s.safeParse('b').success).toBe(false);
+    }
+  });
+
+  it('3.0: the OAS 3.0.3 nullable enum that lists null is representable', () => {
+    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a', null] }, '3.0'));
+    expect(s.safeParse(null).success).toBe(true);
     expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
+    // Without nullable, null contradicts the sibling type: still omitted.
+    expect('unrepresentable' in convertSchema({ type: 'string', enum: ['a', null] }, '3.0')).toBe(
+      true,
+    );
+  });
+
+  it('3.1: nullable is not a keyword, so an enum without null still rejects null', () => {
+    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.1'));
     expect(s.safeParse(null).success).toBe(false);
+    const arr = ok(convertSchema({ type: ['string', 'null'], enum: ['a'] }, '3.1'));
+    expect(arr.safeParse(null).success).toBe(false);
   });
 
   it('accepts null only when it is an enumerated value', () => {
@@ -284,12 +302,11 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('b').success).toBe(false);
   });
 
-  it('does NOT let a sibling nullable widen a const', () => {
-    // Pass '3.0' so `nullable` is active (see the enum sibling test above); under
-    // 3.0 nullable is true and the const branch must still reject null.
+  it('3.0: a sibling nullable admits null next to a const (D9)', () => {
     const s = ok(convertSchema({ const: 'a', nullable: true }, '3.0'));
     expect(s.safeParse('a').success).toBe(true);
-    expect(s.safeParse(null).success).toBe(false);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
   });
 
   it('maps const: null to z.null()', () => {
@@ -298,30 +315,26 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('a').success).toBe(false);
   });
 
-  it('omits a nullable composition', () => {
-    // The nullable-composition guard is reachable ONLY under 3.0: the boolean
-    // `nullable` is honoured only there (build gates it on version === '3.0'), and
-    // a 3.1 `[T,'null']`-union combined with oneOf is caught earlier by the
-    // conflict gate. Pass '3.0' explicitly so nullable is true and the guard fires;
-    // with the default '3.1', nullable is ignored and the node is a plain
-    // (representable) oneOf, so this test would wrongly expect unrepresentable. The
-    // 3.1-representable case is asserted separately, in the companion test below
-    // ('represents a 3.1 nullable-composition node...').
-    expect(
-      'unrepresentable' in convertSchema({ nullable: true, oneOf: [{ type: 'string' }] }, '3.0'),
-    ).toBe(true);
+  it('represents a 3.0 nullable composition and admits null in a request (#41, D9)', () => {
+    // The boolean `nullable` is honoured only under 3.0 (build gates it on
+    // version === '3.0'); a 3.1 `[T,'null']`-union combined with oneOf is caught
+    // earlier by the conflict gate.
+    const s = ok(convertSchema({ nullable: true, oneOf: [{ type: 'string' }] }, '3.0'));
+    expect(s.safeParse('x').success).toBe(true);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse(1).success).toBe(false);
   });
 });
 
 describe('convertSchema — keyword allowlist (fail-closed)', () => {
   it.each([
-    ['uniqueItems', { type: 'array', items: { type: 'string' }, uniqueItems: true }],
+    ['propertyNames', { type: 'object', propertyNames: { pattern: '^a' } }],
     ['not', { not: { type: 'string' } }],
     ['patternProperties', { type: 'object', patternProperties: {} }],
     // oxlint-disable-next-line unicorn/no-thenable -- `then:` here is a literal JSON-Schema if/then keyword fixture, not a thenable
     ['if', { if: { type: 'string' }, then: {} }],
     ['prefixItems', { prefixItems: [{ type: 'string' }] }],
-    ['minProperties', { type: 'object', minProperties: 2 }],
+    ['dependentRequired', { type: 'object', dependentRequired: { a: ['b'] } }],
     ['contains', { type: 'array', contains: { type: 'string' } }],
     ['$ref', { $ref: '#/x' }],
   ])('omits on the unsupported keyword %s', (_label, node) => {
@@ -458,12 +471,16 @@ describe('convertSchema — composites', () => {
     ).toBe(true);
   });
 
-  it('omits an allOf with a non-object member (single or multi)', () => {
-    // Every allOf member must be an object; the merge produces one object.
+  it('omits a multi-member allOf with a non-object member; a single member converts as-is (#41)', () => {
+    // Every member of a MULTI-member allOf must be an object; the merge produces
+    // one object.
     expect(
       'unrepresentable' in convertSchema({ allOf: [{ type: 'object' }, { type: 'string' }] }),
     ).toBe(true);
-    expect('unrepresentable' in convertSchema({ allOf: [{ type: 'string' }] })).toBe(true);
+    // allOf:[S] validates exactly what S validates (JSON Schema Core §10.2.1.1).
+    const single = ok(convertSchema({ allOf: [{ type: 'string' }] }));
+    expect(single.safeParse('x').success).toBe(true);
+    expect(single.safeParse(1).success).toBe(false);
   });
 
   it('omits an allOf whose outer type contradicts an object merge', () => {
@@ -585,15 +602,17 @@ describe('convertSchema — composites', () => {
   });
 
   it('omits any allOf member declaring additionalProperties (fail-closed, cannot merge)', () => {
-    // Single-member with AP:true → omit (not silently strict, not silently open).
-    expect(
-      'unrepresentable' in
-        convertSchema({
-          allOf: [
-            { type: 'object', additionalProperties: true, properties: { a: { type: 'string' } } },
-          ],
-        }),
-    ).toBe(true);
+    // A single member converts as-is (#41), so its additionalProperties:true is
+    // honoured exactly — open, not silently strict.
+    const single = ok(
+      convertSchema({
+        allOf: [
+          { type: 'object', additionalProperties: true, properties: { a: { type: 'string' } } },
+        ],
+      }),
+    );
+    expect(single.safeParse({ a: 'x', extra: 1 }).success).toBe(true);
+    expect(single.safeParse({ a: 1 }).success).toBe(false);
     // Multi-member with any declared AP → omit.
     expect(
       'unrepresentable' in
@@ -665,10 +684,15 @@ describe('convertSchema — composites', () => {
 
   it('omits an allOf member with no object evidence', () => {
     // Each of these accepts any value; merging as z.strictObject({}) would narrow.
-    expect('unrepresentable' in convertSchema({ allOf: [{}] })).toBe(true);
-    expect('unrepresentable' in convertSchema({ allOf: [{ description: 'x' }] })).toBe(true);
+    // A SINGLE such member converts as-is (#41): `{}` and a description-only
+    // node accept any value exactly (z.unknown), never a narrowed object; the
+    // typeless orphan assertions still omit.
+    expect(ok(convertSchema({ allOf: [{}] })).safeParse('anything').success).toBe(true);
+    expect(ok(convertSchema({ allOf: [{ description: 'x' }] })).safeParse(1).success).toBe(true);
     expect('unrepresentable' in convertSchema({ allOf: [{ properties: {} }] })).toBe(true);
     expect('unrepresentable' in convertSchema({ allOf: [{ required: [] }] })).toBe(true);
+    // In a MULTI-member allOf (the object merge) they still omit.
+    expect('unrepresentable' in convertSchema({ allOf: [{}, { type: 'object' }] })).toBe(true);
   });
 
   it('maps a typeless NON-EMPTY properties-only object as a strict object', () => {
@@ -975,6 +999,249 @@ describe('convertSchema — request/response mode (#33, #47)', () => {
   });
 });
 
+// #41: three common idioms that used to omit their operation.
+describe('convertSchema — nullable and single-member allOf idioms (#41)', () => {
+  const obj = { type: 'object', properties: { a: { type: 'string' } } };
+
+  it('3.0 nullable allOf: null admitted in both directions (D9: a PATCH can clear the field)', () => {
+    const node = { nullable: true, allOf: [obj] };
+    const request = ok(convertSchema(node, '3.0'));
+    expect(request.safeParse({ a: 'x' }).success).toBe(true);
+    expect(request.safeParse(null).success).toBe(true);
+    expect(request.safeParse('x').success).toBe(false);
+    const response = ok(convertSchema(node, '3.0', 0, 'response'));
+    expect(response.safeParse({ a: 'x' }).success).toBe(true);
+    expect(response.safeParse(null).success).toBe(true);
+    expect(response.safeParse('x').success).toBe(false);
+  });
+
+  it('3.0 nullable oneOf: representable; null admitted in both directions', () => {
+    const node = { nullable: true, oneOf: [{ type: 'string' }, { type: 'integer' }] };
+    const request = ok(convertSchema(node, '3.0'));
+    expect(request.safeParse('x').success).toBe(true);
+    expect(request.safeParse(1).success).toBe(true);
+    expect(request.safeParse(null).success).toBe(true);
+    expect(request.safeParse(true).success).toBe(false);
+    const response = ok(convertSchema(node, '3.0', 0, 'response'));
+    expect(response.safeParse(null).success).toBe(true);
+    expect(response.safeParse(true).success).toBe(false);
+  });
+
+  it('single-member allOf wrapping a non-object ($ref + description idiom) converts the member and keeps the outer description', () => {
+    const r = convertSchema(
+      { description: 'status', allOf: [{ type: 'string', enum: ['a', 'b'] }] },
+      '3.1',
+    );
+    const s = ok(r);
+    expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse('b').success).toBe(true);
+    expect(s.safeParse('c').success).toBe(false);
+    expect((z.toJSONSchema(s) as { description?: string }).description).toBe('status');
+  });
+
+  it('single-member allOf with an integer member and metadata siblings (default, title, x-*)', () => {
+    const s = ok(
+      convertSchema({
+        title: 'Count',
+        default: 1,
+        'x-order': 2,
+        allOf: [{ type: 'integer', minimum: 1 }],
+      }),
+    );
+    expect(s.safeParse(2).success).toBe(true);
+    expect(s.safeParse(0).success).toBe(false);
+    expect(s.safeParse(1.5).success).toBe(false);
+  });
+
+  it('still omits a single-member allOf whose outer type contradicts the member', () => {
+    expect(
+      'unrepresentable' in convertSchema({ type: 'object', allOf: [{ type: 'string' }] }),
+    ).toBe(true);
+  });
+
+  it('3.1 nullable enum: a [T, "null"] type with an enum that lists null', () => {
+    const s = ok(convertSchema({ type: ['string', 'null'], enum: ['a', null] }, '3.1'));
+    expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
+  });
+
+  it('3.1 multi-type enum/const: every value must match one of the listed types', () => {
+    const s = ok(convertSchema({ type: ['string', 'integer'], enum: ['a', 1] }, '3.1'));
+    expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse(1).success).toBe(true);
+    expect(s.safeParse(2).success).toBe(false);
+    expect(
+      ok(convertSchema({ type: ['string', 'null'], const: null })).safeParse(null).success,
+    ).toBe(true);
+    // A value outside every listed type is a contradiction → omit (fail-closed).
+    expect(
+      'unrepresentable' in convertSchema({ type: ['string', 'null'], enum: ['a', 1] }, '3.1'),
+    ).toBe(true);
+    // A malformed type array still omits.
+    expect(
+      'unrepresentable' in convertSchema({ type: ['string', 'string'], enum: ['a'] }, '3.1'),
+    ).toBe(true);
+    expect('unrepresentable' in convertSchema({ type: [], enum: ['a'] }, '3.1')).toBe(true);
+  });
+});
+
+// #43 / decision D12: oneOf requires EXACTLY one matching subschema (JSON
+// Schema Core 2020-12 §10.2.1.3). Exclusivity (z.xor, `oneOf` on the wire) is
+// used only in request mode and only when the branches are disjoint by
+// enforced keywords; otherwise the inclusive union keeps every tool callable.
+describe('convertSchema — oneOf exclusivity (#43, D12)', () => {
+  const wireOf = (schema: z.ZodType): Record<string, unknown> =>
+    z.toJSONSchema(schema) as Record<string, unknown>;
+
+  const card = {
+    type: 'object',
+    required: ['kind', 'number'],
+    properties: { kind: { const: 'card' }, number: { type: 'string' } },
+  };
+  const bank = {
+    type: 'object',
+    required: ['kind', 'iban'],
+    properties: { kind: { const: 'bank' }, iban: { type: 'string' } },
+  };
+
+  it('request: disjoint types use oneOf on the wire', () => {
+    const s = ok(convertSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] }));
+    expect(s.safeParse('x').success).toBe(true);
+    expect(s.safeParse(3).success).toBe(true);
+    expect(s.safeParse(true).success).toBe(false);
+    const wire = wireOf(s);
+    expect(Array.isArray(wire['oneOf'])).toBe(true);
+    expect(wire['anyOf']).toBeUndefined();
+  });
+
+  it('request: a const discriminator required in every branch uses oneOf', () => {
+    const s = ok(convertSchema({ oneOf: [card, bank], discriminator: { propertyName: 'kind' } }));
+    expect(s.safeParse({ kind: 'card', number: '4' }).success).toBe(true);
+    expect(s.safeParse({ kind: 'bank', iban: 'DE' }).success).toBe(true);
+    expect(s.safeParse({ kind: 'cash' }).success).toBe(false);
+    expect(Array.isArray(wireOf(s)['oneOf'])).toBe(true);
+  });
+
+  it('request: distinct enums and disjoint required keys of closed objects use oneOf', () => {
+    const enums = ok(convertSchema({ oneOf: [{ enum: ['a', 'b'] }, { enum: ['c'] }] }));
+    expect(Array.isArray(wireOf(enums)['oneOf'])).toBe(true);
+    const closed = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'object', required: ['a'], properties: { a: { type: 'string' } } },
+          { type: 'object', required: ['b'], properties: { b: { type: 'string' } } },
+        ],
+      }),
+    );
+    expect(closed.safeParse({ a: 'x' }).success).toBe(true);
+    expect(closed.safeParse({ b: 'x' }).success).toBe(true);
+    expect(Array.isArray(wireOf(closed)['oneOf'])).toBe(true);
+  });
+
+  it('request: overlapping branches fall back to the inclusive union (number vs integer)', () => {
+    const s = ok(convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }));
+    expect(s.safeParse(3).success).toBe(true);
+    expect(s.safeParse(3.5).success).toBe(true);
+    expect(s.safeParse('x').success).toBe(false);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+
+  it('request: an "id or slug" parameter whose branches differ only by pattern stays callable', () => {
+    // `pattern` is advertised, never enforced, so z.xor would reject EVERY
+    // value (both branches match any string): an uncallable tool.
+    const s = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'string', pattern: '^[0-9]+$' },
+          { type: 'string', pattern: '^[a-z-]+$' },
+        ],
+      }),
+    );
+    expect(s.safeParse('123').success).toBe(true);
+    expect(s.safeParse('my-repo').success).toBe(true);
+    expect(s.safeParse(1).success).toBe(false);
+  });
+
+  it('request: branches that differ only by format stay callable', () => {
+    const s = ok(
+      convertSchema({
+        oneOf: [
+          { type: 'string', format: 'email' },
+          { type: 'string', format: 'uuid' },
+        ],
+      }),
+    );
+    expect(s.safeParse('a@b.co').success).toBe(true);
+    expect(s.safeParse('123e4567-e89b-12d3-a456-426614174000').success).toBe(true);
+  });
+
+  it('request: a nullable branch that overlaps a null branch is not treated as disjoint', () => {
+    const s = ok(
+      convertSchema(
+        {
+          oneOf: [
+            { type: 'string', nullable: true },
+            { type: 'boolean', nullable: true },
+          ],
+        },
+        '3.0',
+      ),
+    );
+    expect(s.safeParse(null).success).toBe(true);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+
+  it('response: a discriminator-mapping oneOf (no const) accepts a valid payload', () => {
+    // Cat/Dog share `petType` and `name`; only `discriminator.mapping` tells
+    // them apart. Response objects are open (#33), so a Dog matches both.
+    const pet = {
+      oneOf: [
+        {
+          type: 'object',
+          required: ['petType'],
+          properties: {
+            petType: { type: 'string' },
+            name: { type: 'string' },
+            hunts: { type: 'boolean' },
+          },
+        },
+        {
+          type: 'object',
+          required: ['petType'],
+          properties: {
+            petType: { type: 'string' },
+            name: { type: 'string' },
+            bark: { type: 'boolean' },
+          },
+        },
+      ],
+      discriminator: {
+        propertyName: 'petType',
+        mapping: { cat: '#/components/schemas/Cat', dog: '#/components/schemas/Dog' },
+      },
+    };
+    const s = ok(convertSchema(pet, '3.1', 0, 'response'));
+    expect(s.safeParse({ petType: 'dog', name: 'Rex', bark: true }).success).toBe(true);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+
+  it('response: always inclusive, even for disjoint branches', () => {
+    const s = ok(
+      convertSchema({ oneOf: [{ type: 'number' }, { type: 'integer' }] }, '3.1', 0, 'response'),
+    );
+    expect(s.safeParse(3).success).toBe(true);
+    const disjoint = ok(convertSchema({ oneOf: [card, bank] }, '3.1', 0, 'response'));
+    expect(wireOf(disjoint)['oneOf']).toBeUndefined();
+  });
+
+  it('leaves anyOf inclusive', () => {
+    const s = ok(convertSchema({ anyOf: [{ type: 'string' }, { type: 'string', maxLength: 3 }] }));
+    expect(s.safeParse('ab').success).toBe(true);
+    expect(wireOf(s)['oneOf']).toBeUndefined();
+  });
+});
+
 // #39 / D11: a response `pattern` with nested quantifiers is unrepresentable.
 describe('convertSchema — response pattern safety (#39)', () => {
   it('response mode: a nested-quantifier pattern is unrepresentable', () => {
@@ -1006,5 +1273,95 @@ describe('convertSchema — response pattern safety (#39)', () => {
     expect((z.toJSONSchema(s) as Record<string, unknown>)['pattern']).toBe(
       '^(\\d{1,3}\\.){3}\\d{1,3}$',
     );
+  });
+});
+
+// #71: keywords that can be enforced EXACTLY are supported instead of
+// omitting the operation (JSON Schema Validation 2020-12 §6.4.3 uniqueItems,
+// §6.5.1/§6.5.2 maxProperties/minProperties).
+describe('convertSchema — uniqueItems / minProperties / maxProperties (#71)', () => {
+  it('uniqueItems: rejects duplicates by JSON instance equality, accepts distinct items', () => {
+    const s = ok(convertSchema({ type: 'array', items: { type: 'string' }, uniqueItems: true }));
+    expect(s.safeParse(['a', 'b']).success).toBe(true);
+    expect(s.safeParse(['a', 'a']).success).toBe(false);
+    expect((z.toJSONSchema(s) as { uniqueItems?: boolean }).uniqueItems).toBe(true);
+  });
+
+  it('uniqueItems: deep equality ignores object key order; equal numbers are duplicates', () => {
+    const s = ok(
+      convertSchema({
+        type: 'array',
+        items: { type: 'object', additionalProperties: true },
+        uniqueItems: true,
+      }),
+    );
+    expect(
+      s.safeParse([
+        { a: 1, b: 2 },
+        { b: 2, a: 1 },
+      ]).success,
+    ).toBe(false);
+    expect(s.safeParse([{ a: 1 }, { a: 2 }]).success).toBe(true);
+    const numbers = ok(
+      convertSchema({ type: 'array', items: { type: 'number' }, uniqueItems: true }),
+    );
+    expect(numbers.safeParse([1, 1]).success).toBe(false);
+    expect(numbers.safeParse([0, -0]).success).toBe(false);
+    expect(numbers.safeParse([1, 1.5]).success).toBe(true);
+  });
+
+  it('uniqueItems: an item too deep to encode fails with its own message, not "must be unique"', () => {
+    const s = ok(convertSchema({ type: 'array', uniqueItems: true }));
+    let deep: unknown = [];
+    for (let level = 0; level < 200_000; level += 1) {
+      deep = [deep];
+    }
+    const result = s.safeParse([deep, 1]);
+    expect(result.success).toBe(false);
+    const messages = result.error?.issues.map((issue) => issue.message) ?? [];
+    expect(messages.join(' ')).toMatch(/nested too deeply/u);
+    expect(messages.join(' ')).not.toMatch(/must be unique/u);
+  });
+
+  it('uniqueItems:false is a no-op', () => {
+    const s = ok(convertSchema({ type: 'array', items: { type: 'string' }, uniqueItems: false }));
+    expect(s.safeParse(['a', 'a']).success).toBe(true);
+  });
+
+  it('minProperties / maxProperties count own properties and are advertised', () => {
+    const s = ok(convertSchema({ type: 'object', minProperties: 1, maxProperties: 2 }));
+    expect(s.safeParse({}).success).toBe(false);
+    expect(s.safeParse({ a: 1 }).success).toBe(true);
+    expect(s.safeParse({ a: 1, b: 2, c: 3 }).success).toBe(false);
+    const wire = z.toJSONSchema(s) as { minProperties?: number; maxProperties?: number };
+    expect(wire.minProperties).toBe(1);
+    expect(wire.maxProperties).toBe(2);
+  });
+
+  it('minProperties applies to declared optional properties too', () => {
+    const s = ok(
+      convertSchema({
+        type: 'object',
+        properties: { a: { type: 'string' }, b: { type: 'string' } },
+        minProperties: 1,
+      }),
+    );
+    expect(s.safeParse({}).success).toBe(false);
+    expect(s.safeParse({ b: 'x' }).success).toBe(true);
+  });
+
+  it('works in response mode (advertised for Ajv)', () => {
+    const s = ok(convertSchema({ type: 'object', minProperties: 1 }, '3.1', 0, 'response'));
+    expect((z.toJSONSchema(s) as { minProperties?: number }).minProperties).toBe(1);
+  });
+
+  it.each([
+    ['uniqueItems: "yes"', { type: 'array', items: { type: 'string' }, uniqueItems: 'yes' }],
+    ['minProperties: -1', { type: 'object', minProperties: -1 }],
+    ['maxProperties: 1.5', { type: 'object', maxProperties: 1.5 }],
+    ['minProperties on a typeless schema', { minProperties: 1 }],
+    ['uniqueItems beside an enum', { enum: [['a']], uniqueItems: true }],
+  ])('still omits a malformed or unattached keyword: %s', (_label, node) => {
+    expect('unrepresentable' in convertSchema(node)).toBe(true);
   });
 });
