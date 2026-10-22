@@ -173,8 +173,10 @@ export {
   createDispatcher,
   createExecutor,
   createMetaExecutor,
+  createOAuthResourceServer,
   createRateLimiter,
   DEFAULT_RATE_LIMIT,
+  evaluateHostOrigin,
   evaluateRequest,
   extractBearerToken,
   isAuthorized,
@@ -193,12 +195,17 @@ export type {
   ExecutorConfig,
   ExecutorDeps,
   GuardDecision,
+  HostOriginOptions,
   IncomingHeaders,
   JwtFailure,
   JwtVerifyResult,
   KeySet,
   MetaExecutor,
   MetaSummary,
+  OAuthDecision,
+  OAuthDeps,
+  OAuthResourceServer,
+  OAuthResourceServerConfig,
   RateLimiter,
   RateLimiterOptions,
   RequestGuardOptions,
@@ -217,6 +224,7 @@ export { createProtocolSession } from './server/sdk/protocol.ts';
 export type { ProtocolSessionOptions } from './server/sdk/protocol.ts';
 export { createStreamableHttpServer } from './server/sdk/streamable-http.ts';
 export type {
+  OAuthGuardOptions,
   StreamableHttpOptions,
   StreamableHttpServerHandle,
 } from './server/sdk/streamable-http.ts';

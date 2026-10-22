@@ -2,9 +2,11 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createMcpHandler, isJsonContentType } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
+import { usageError } from '../../errors.ts';
 import type { DispatcherDeps } from '../dispatch.ts';
-import { evaluateRequest } from '../http/request-guard.ts';
-import type { RequestGuardOptions } from '../http/request-guard.ts';
+import type { OAuthResourceServer } from '../http/oauth.ts';
+import { evaluateHostOrigin, evaluateRequest, singleHeader } from '../http/request-guard.ts';
+import type { HostOriginOptions, RequestGuardOptions } from '../http/request-guard.ts';
 import type { ServerSnapshot } from '../types.ts';
 import { createProtocolSession } from './protocol.ts';
 
@@ -29,13 +31,26 @@ const SHUTDOWN_FORCE_MS = 5000;
 // oxlint-disable-next-line no-null -- `undefined` is precisely the value that means "nothing pre-parsed, read the stream yourself", which is the behavior being suppressed here
 const CONSUMED_BODY_SENTINEL = null;
 
+// OAuth resource-server mode: the same Host/Origin checks, then a token
+// validated by the resource server instead of the static bearer.
+export type OAuthGuardOptions = HostOriginOptions & { oauth: OAuthResourceServer };
+
+// The address bound when none is given. Anything else is accepted only in
+// OAuth mode: the static bearer is one shared, non-expiring secret sized
+// for a single local client, never a credential to expose on a network.
+const LOOPBACK_BIND = '127.0.0.1';
+const LOOPBACK_BINDS = new Set([LOOPBACK_BIND, '::1', 'localhost']);
+
 export type StreamableHttpOptions = {
   name: string;
   version: string;
   snapshot: ServerSnapshot;
   dispatcherDeps: Omit<DispatcherDeps, 'snapshot'>;
-  guard: RequestGuardOptions;
+  guard: RequestGuardOptions | OAuthGuardOptions;
   port: number;
+  // Bind address; defaults to 127.0.0.1. A non-loopback address requires
+  // OAuth mode (`guard.oauth`) and is refused otherwise.
+  hostname?: string;
   // Out-of-band errors: everything that fails with no JSON-RPC reply to
   // attach it to — a rejected/unservable request, an adapter-level
   // conversion failure, or a body read that died with the client. Optional
@@ -143,9 +158,43 @@ const parseJsonBody = (buffer: Buffer): ParsedBodyResult => {
   }
 };
 
+// Serves the RFC 9728 Protected Resource Metadata document. Answered before
+// authentication — it is the document an unauthenticated client needs to
+// find the authorization server — but after the Host/Origin checks, like
+// every other request. Returns false when the path is not the metadata path.
+const serveProtectedResourceMetadata = (
+  req: IncomingMessage,
+  res: ServerResponse,
+  oauth: OAuthResourceServer,
+): boolean => {
+  let path: string;
+  try {
+    ({ pathname: path } = new URL(req.url ?? '/', 'http://localhost'));
+  } catch {
+    return false;
+  }
+  if ((path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path) !== oauth.metadataPath) {
+    return false;
+  }
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { allow: 'GET, HEAD' }).end();
+    return true;
+  }
+  const body = JSON.stringify(oauth.metadataDocument);
+  res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'max-age=3600' });
+  res.end(req.method === 'HEAD' ? undefined : body);
+  return true;
+};
+
 export const createStreamableHttpServer = (
   opts: StreamableHttpOptions,
 ): StreamableHttpServerHandle => {
+  const hostname = opts.hostname ?? LOOPBACK_BIND;
+  // Enforced here as well as in the CLI, so no caller of this module can
+  // put the static bearer on a non-loopback interface.
+  if (!LOOPBACK_BINDS.has(hostname) && !('oauth' in opts.guard)) {
+    throw usageError(`binding ${hostname} requires OAuth resource-server mode`);
+  }
   // ONE sink, handed to every hook that can produce an out-of-band error, so
   // a caller wires the transport's error reporting once instead of per layer.
   // Normalizing to Error here (rather than at each call site) keeps the
@@ -232,17 +281,40 @@ export const createStreamableHttpServer = (
     // duplicate-header rejection. `.headersDistinct.<name>` always returns
     // every value actually sent as `string[] | undefined`, which is what that
     // rejection logic needs to see.
-    const decision = evaluateRequest(opts.guard, {
+    const headers = {
       // Bracket notation: `headersDistinct` is `NodeJS.Dict<string[]>` (an
       // index-signature type), which this project's tsconfig
       // (noPropertyAccessFromIndexSignature) requires accessing this way.
       host: req.headersDistinct['host'],
       origin: req.headersDistinct['origin'],
       authorization: req.headersDistinct['authorization'],
-    });
-    if (decision.outcome === 'deny') {
-      res.writeHead(decision.status).end();
-      return;
+    };
+    if ('oauth' in opts.guard) {
+      const { oauth } = opts.guard;
+      const hostOrigin = evaluateHostOrigin(opts.guard, headers);
+      if (hostOrigin.outcome === 'deny') {
+        res.writeHead(hostOrigin.status).end();
+        return;
+      }
+      if (serveProtectedResourceMetadata(req, res, oauth)) {
+        return;
+      }
+      // A duplicated Authorization header collapses to "absent" exactly as
+      // in static mode, and is answered with the 401 challenge.
+      const auth = await oauth.authenticate(singleHeader(headers.authorization));
+      if (auth.outcome === 'deny') {
+        if (auth.reason !== undefined) {
+          reportError(new Error(`oauth: ${auth.reason}`));
+        }
+        res.writeHead(auth.status, auth.headers).end(auth.body);
+        return;
+      }
+    } else {
+      const decision = evaluateRequest(opts.guard, headers);
+      if (decision.outcome === 'deny') {
+        res.writeHead(decision.status).end();
+        return;
+      }
     }
     // The METHOD GATE. Serving here is a SINGLE POST endpoint, so every other
     // method is answered 405 by this module itself, BEFORE any body handling
@@ -333,7 +405,9 @@ export const createStreamableHttpServer = (
   // threat model: a semaphore around body reads (a real aggregate bound) and
   // `maxConnections` (a coarse TCP cap) were both deliberately NOT added — the
   // former adds a new rejection failure mode for a trusted-localhost server,
-  // the latter risks rejecting a legitimate burst. Both values stay safely
+  // the latter risks rejecting a legitimate burst. In OAuth mode the same
+  // holds per AUTHENTICATED client: no body is read before the token has
+  // validated. Both values stay safely
   // ABOVE SHUTDOWN_FORCE_MS (5000ms) so neither interferes with the bounded
   // graceful-shutdown path below.
   httpServer.requestTimeout = 30_000;
@@ -359,7 +433,7 @@ export const createStreamableHttpServer = (
         };
         httpServer.once('error', onError);
         httpServer.once('listening', onListening);
-        httpServer.listen(opts.port, '127.0.0.1');
+        httpServer.listen(opts.port, hostname);
       }),
     close: async () => {
       // Tear the serving entry down FIRST, then the listener: an in-flight
