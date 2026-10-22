@@ -769,4 +769,31 @@ describe('buildLayout — JSON media-type variants (#54, D5)', () => {
   ])('still omits a non-JSON or malformed media type key %j', (key) => {
     expect('unrepresentable' in withContent({ [key]: { schema: objectSchema } })).toBe(true);
   });
+
+  it.each([
+    'application/x-www-form-urlencoded; charset=utf-8',
+    'application/x-www-form-urlencoded;charset="UTF-8"',
+    'Application/X-WWW-Form-Urlencoded',
+  ])('exposes a form body declared as %j and keeps the declared media type', (key) => {
+    const l = layout(withContent({ [key]: { schema: objectSchema } }));
+    expect(l.mapper.bodyMode).toBe('flattened');
+    expect(l.mapper.bodyContentType).toBe(key);
+  });
+
+  it('prefers the bare form key over a parameterised one', () => {
+    const l = layout(
+      withContent({
+        'application/x-www-form-urlencoded; charset=utf-8': { schema: objectSchema },
+        'application/x-www-form-urlencoded': { schema: objectSchema },
+      }),
+    );
+    expect(l.mapper.bodyContentType).toBe('application/x-www-form-urlencoded');
+  });
+
+  it.each([
+    'application/x-www-form-urlencoded; charset=iso-8859-1',
+    'application/x-www-form-urlencoded; charset=utf-8; foo=bar',
+  ])('omits a form key %j whose parameters the UTF-8 encoder cannot honour', (key) => {
+    expect('unrepresentable' in withContent({ [key]: { schema: objectSchema } })).toBe(true);
+  });
 });
