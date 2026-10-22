@@ -42,3 +42,9 @@
   `headers:` block of a text result. A header whose name or value contains a registered
   secret is dropped. On a 429/503, `Retry-After` is reported as
   `_meta["openapi-mcp/upstreamRetryAfterMs"]`.
+
+- **Next-page hints for paginated tools (#61).** A `GET` with a page or cursor parameter
+  (`cursor`, `page_token`, `after`, `starting_after`, `page`) or a declared `Link` header
+  returns `pagination.next`: the arguments for the next call (never a URL), decoded to the
+  tool's own parameter types, or `null` when no next page is known (not proof that the data
+  is exhausted). Its output schema gains an optional `pagination` property.
