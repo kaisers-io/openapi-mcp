@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assignToolNames,
   buildTools,
+  convertSchema,
   createDereferencer,
   normalizeSpec,
   SYSTEM_HEADERS,
@@ -179,14 +180,20 @@ describe('$ref siblings — OpenAPI 3.1 applies them', () => {
   });
 
   it('merges uniqueItems (either side) and the item-count bounds', () => {
-    // At the merge level: the converter on this base does not support
-    // uniqueItems yet (#112 adds it), so no tool is built from it here
     const merged = mergeSchemaSiblings(
       { type: 'array', items: { type: 'string' }, uniqueItems: false, maxItems: 5 },
       { uniqueItems: true, maxItems: 3, minItems: 1 },
     );
     expect(merged['allOf']).toBeUndefined();
     expect({ ...merged }).toMatchObject({ uniqueItems: true, maxItems: 3, minItems: 1 });
+    // #112: the converter enforces the merged keywords (OR of uniqueItems)
+    const converted = convertSchema({ ...merged }, '3.1');
+    if (!('ok' in converted)) {
+      throw new Error(converted.unrepresentable);
+    }
+    expect(converted.ok.safeParse(['a', 'b']).success).toBe(true);
+    expect(converted.ok.safeParse(['a', 'a']).success).toBe(false);
+    expect(converted.ok.safeParse(['a', 'b', 'c', 'd']).success).toBe(false);
   });
 
   it('never widens a differing non-monotone assertion: the operation is omitted instead', () => {
@@ -289,6 +296,20 @@ describe('mergeSchemaSiblings — exact intersection (3.1)', () => {
       maxProperties: 4,
       const: { x: 1, y: 2 },
     });
+  });
+
+  it('feeds the converter the intersected property-count bounds (#112: max of mins, min of maxes)', () => {
+    const merged = mergeSchemaSiblings(
+      { type: 'object', additionalProperties: true, minProperties: 1, maxProperties: 9 },
+      { minProperties: 2, maxProperties: 3 },
+    );
+    const converted = convertSchema({ ...merged }, '3.1');
+    if (!('ok' in converted)) {
+      throw new Error(converted.unrepresentable);
+    }
+    expect(converted.ok.safeParse({ a: 1 }).success).toBe(false);
+    expect(converted.ok.safeParse({ a: 1, b: 2 }).success).toBe(true);
+    expect(converted.ok.safeParse({ a: 1, b: 2, c: 3, d: 4 }).success).toBe(false);
   });
 
   it('keeps target and siblings apart for a differing const or a malformed bound', () => {

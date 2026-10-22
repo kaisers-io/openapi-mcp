@@ -328,13 +328,13 @@ describe('convertSchema — enum, const, null', () => {
 
 describe('convertSchema — keyword allowlist (fail-closed)', () => {
   it.each([
-    ['uniqueItems', { type: 'array', items: { type: 'string' }, uniqueItems: true }],
+    ['propertyNames', { type: 'object', propertyNames: { pattern: '^a' } }],
     ['not', { not: { type: 'string' } }],
     ['patternProperties', { type: 'object', patternProperties: {} }],
     // oxlint-disable-next-line unicorn/no-thenable -- `then:` here is a literal JSON-Schema if/then keyword fixture, not a thenable
     ['if', { if: { type: 'string' }, then: {} }],
     ['prefixItems', { prefixItems: [{ type: 'string' }] }],
-    ['minProperties', { type: 'object', minProperties: 2 }],
+    ['dependentRequired', { type: 'object', dependentRequired: { a: ['b'] } }],
     ['contains', { type: 'array', contains: { type: 'string' } }],
     ['$ref', { $ref: '#/x' }],
   ])('omits on the unsupported keyword %s', (_label, node) => {
@@ -1273,5 +1273,95 @@ describe('convertSchema — response pattern safety (#39)', () => {
     expect((z.toJSONSchema(s) as Record<string, unknown>)['pattern']).toBe(
       '^(\\d{1,3}\\.){3}\\d{1,3}$',
     );
+  });
+});
+
+// #71: keywords that can be enforced EXACTLY are supported instead of
+// omitting the operation (JSON Schema Validation 2020-12 §6.4.3 uniqueItems,
+// §6.5.1/§6.5.2 maxProperties/minProperties).
+describe('convertSchema — uniqueItems / minProperties / maxProperties (#71)', () => {
+  it('uniqueItems: rejects duplicates by JSON instance equality, accepts distinct items', () => {
+    const s = ok(convertSchema({ type: 'array', items: { type: 'string' }, uniqueItems: true }));
+    expect(s.safeParse(['a', 'b']).success).toBe(true);
+    expect(s.safeParse(['a', 'a']).success).toBe(false);
+    expect((z.toJSONSchema(s) as { uniqueItems?: boolean }).uniqueItems).toBe(true);
+  });
+
+  it('uniqueItems: deep equality ignores object key order; equal numbers are duplicates', () => {
+    const s = ok(
+      convertSchema({
+        type: 'array',
+        items: { type: 'object', additionalProperties: true },
+        uniqueItems: true,
+      }),
+    );
+    expect(
+      s.safeParse([
+        { a: 1, b: 2 },
+        { b: 2, a: 1 },
+      ]).success,
+    ).toBe(false);
+    expect(s.safeParse([{ a: 1 }, { a: 2 }]).success).toBe(true);
+    const numbers = ok(
+      convertSchema({ type: 'array', items: { type: 'number' }, uniqueItems: true }),
+    );
+    expect(numbers.safeParse([1, 1]).success).toBe(false);
+    expect(numbers.safeParse([0, -0]).success).toBe(false);
+    expect(numbers.safeParse([1, 1.5]).success).toBe(true);
+  });
+
+  it('uniqueItems: an item too deep to encode fails with its own message, not "must be unique"', () => {
+    const s = ok(convertSchema({ type: 'array', uniqueItems: true }));
+    let deep: unknown = [];
+    for (let level = 0; level < 200_000; level += 1) {
+      deep = [deep];
+    }
+    const result = s.safeParse([deep, 1]);
+    expect(result.success).toBe(false);
+    const messages = result.error?.issues.map((issue) => issue.message) ?? [];
+    expect(messages.join(' ')).toMatch(/nested too deeply/u);
+    expect(messages.join(' ')).not.toMatch(/must be unique/u);
+  });
+
+  it('uniqueItems:false is a no-op', () => {
+    const s = ok(convertSchema({ type: 'array', items: { type: 'string' }, uniqueItems: false }));
+    expect(s.safeParse(['a', 'a']).success).toBe(true);
+  });
+
+  it('minProperties / maxProperties count own properties and are advertised', () => {
+    const s = ok(convertSchema({ type: 'object', minProperties: 1, maxProperties: 2 }));
+    expect(s.safeParse({}).success).toBe(false);
+    expect(s.safeParse({ a: 1 }).success).toBe(true);
+    expect(s.safeParse({ a: 1, b: 2, c: 3 }).success).toBe(false);
+    const wire = z.toJSONSchema(s) as { minProperties?: number; maxProperties?: number };
+    expect(wire.minProperties).toBe(1);
+    expect(wire.maxProperties).toBe(2);
+  });
+
+  it('minProperties applies to declared optional properties too', () => {
+    const s = ok(
+      convertSchema({
+        type: 'object',
+        properties: { a: { type: 'string' }, b: { type: 'string' } },
+        minProperties: 1,
+      }),
+    );
+    expect(s.safeParse({}).success).toBe(false);
+    expect(s.safeParse({ b: 'x' }).success).toBe(true);
+  });
+
+  it('works in response mode (advertised for Ajv)', () => {
+    const s = ok(convertSchema({ type: 'object', minProperties: 1 }, '3.1', 0, 'response'));
+    expect((z.toJSONSchema(s) as { minProperties?: number }).minProperties).toBe(1);
+  });
+
+  it.each([
+    ['uniqueItems: "yes"', { type: 'array', items: { type: 'string' }, uniqueItems: 'yes' }],
+    ['minProperties: -1', { type: 'object', minProperties: -1 }],
+    ['maxProperties: 1.5', { type: 'object', maxProperties: 1.5 }],
+    ['minProperties on a typeless schema', { minProperties: 1 }],
+    ['uniqueItems beside an enum', { enum: [['a']], uniqueItems: true }],
+  ])('still omits a malformed or unattached keyword: %s', (_label, node) => {
+    expect('unrepresentable' in convertSchema(node)).toBe(true);
   });
 });
