@@ -7,6 +7,7 @@ import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
 import { retryableErrorOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
+import { DEFAULT_RESPONSE_IS_ERROR_FLAG } from '../../toolgen/output-schema.ts';
 import type { SnapshotTool } from '../types.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
@@ -310,6 +311,9 @@ const runUpstreamCall = async (
     outputSchema: tool.wireTool.outputSchema,
     redactor: config.redactor,
     ...(firstSecretHeader === undefined ? {} : { envVarHint: firstSecretHeader.envVar }),
+    ...(tool.generated?.outputSchemaAssumesDefaultIsError === true
+      ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
+      : {}),
     maxTextBytes: DISPLAY_TEXT_MAX,
   });
 };

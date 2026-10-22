@@ -1,6 +1,7 @@
 import type { Command } from '@commander-js/extra-typings';
 import {
   HEADER_NAME_RE,
+  NON_LATIN1_RE,
   parseByteSize,
   parseDuration,
   parseHeaderEnvMapping,
@@ -161,7 +162,7 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     )
     .option(
       '--max-response-bytes <size>',
-      'cap the decompressed upstream response body (<int><B|KB|MB> or a plain byte count)',
+      'cap the decompressed upstream response body and the outgoing request body (<int><B|KB|MB> or a plain byte count)',
       '10MB',
     )
     .option(
@@ -214,7 +215,7 @@ const trimOptionalSpace = (value: string): string => value.replace(/^ +/u, '').r
 
 // Imperative on purpose: `seen` accumulates across iterations (duplicate
 // detection depends on every prior entry, not just the current one) and each
-// of the seven checks below throws in encounter order — a map/filter
+// of the checks below throws in encounter order — a map/filter
 // pipeline would evaluate every entry before any throw could surface,
 // changing which malformed --header the operator sees first.
 const parseStaticHeaders = (raw: readonly string[]): { name: string; value: string }[] => {
@@ -243,6 +244,11 @@ const parseStaticHeaders = (raw: readonly string[]): { name: string; value: stri
     }
     if (CONTROL_CHAR_RE.test(value)) {
       throw usageError(`value of header "${name}" contains control characters`);
+    }
+    if (NON_LATIN1_RE.test(value)) {
+      throw usageError(
+        `value of header "${name}" contains a character above U+00FF, which an HTTP header cannot carry — use ASCII or Latin-1 text (e.g. percent-encode it if the API expects that)`,
+      );
     }
     assertHeaderSizeBudget(name, value, false);
     if (seen.has(lower)) {

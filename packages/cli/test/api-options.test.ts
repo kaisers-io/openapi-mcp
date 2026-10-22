@@ -97,6 +97,21 @@ describe('resolveApiConfig — --header-env (secret)', () => {
     expect((caught as OpenapiMcpError).message).not.toContain('injected');
   });
 
+  it('fails on a character above U+00FF in the resolved value, never echoing it', () => {
+    const secret = 'Bearer tök€n-value';
+    let caught: unknown;
+    try {
+      resolve(['--header-env', 'Authorization=API_KEY'], { API_KEY: secret });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(OpenapiMcpError);
+    expect((caught as OpenapiMcpError).code).toBe('usage');
+    expect((caught as OpenapiMcpError).message).toContain('API_KEY');
+    expect((caught as OpenapiMcpError).message).toContain('above U+00FF');
+    expect((caught as OpenapiMcpError).message).not.toContain('tök');
+  });
+
   it('rejects case-insensitive duplicates within the --header-env group', () => {
     expectUsageError(
       () =>
@@ -149,6 +164,19 @@ describe('resolveApiConfig — --header (static)', () => {
   it('rejects a control character in the value', () => {
     const hostile = `v${String.fromCodePoint(10)}injected`;
     expectUsageError(() => resolve(['--header', `X-Trace:${hostile}`]), 'X-Trace');
+  });
+
+  // A header value travels as bytes; undici refuses a code point above U+00FF
+  // only when the request is sent, as an opaque transport failure on every
+  // tool call. Refused at startup instead, naming the header and the rule.
+  it('rejects a value with a character above U+00FF at startup, naming the rule', () => {
+    expectUsageError(() => resolve(['--header', 'X-Team: Zürich-€']), 'X-Team');
+    expectUsageError(() => resolve(['--header', 'X-Team: Zürich-€']), 'above U+00FF');
+  });
+
+  it('still accepts a Latin-1 value (U+0080..U+00FF are valid header bytes)', () => {
+    const config = resolve(['--header', 'X-Team: Zürich']);
+    expect(config.staticHeaders).toContainEqual({ name: 'X-Team', value: 'Zürich' });
   });
 
   it.each([

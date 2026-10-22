@@ -1,7 +1,9 @@
+import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
 import {
   compileEnvelopeValidator,
   createRedactor,
+  deriveOutputSchema,
   mapResponse,
   TRUNCATION_MARKER,
 } from '../src/index.ts';
@@ -215,6 +217,56 @@ describe('mapResponse — HTTP error status (>=400)', () => {
     const text = isError(mapResponse(defaultOpts({ outcome, redactor: forcedResidue })));
     expect(text).toBe('upstream request failed with status 500');
   });
+
+  // Issue #58: secrets are registered as whole header values, so these
+  // bodies — which echo only the credential, a decoded Basic part, or an
+  // encoding the redactor did not know — used to come back verbatim.
+  describe('echoed credentials derived from an Authorization value (#58)', () => {
+    const token = 'example-token-not-a-secret';
+    const basicHeader = `Basic ${Buffer.from('alice:example/pass word-not-a-secret').toString('base64')}`;
+
+    it.each([
+      ['a bare Bearer token', `Bearer ${token}`, `{"error":"invalid api key ${token}"}`, token],
+      [
+        'a decoded Basic user:pass',
+        basicHeader,
+        'login failed for alice:example/pass word-not-a-secret',
+        'pass word',
+      ],
+      [
+        'a decoded Basic password',
+        basicHeader,
+        'bad password example/pass word-not-a-secret',
+        'pass word',
+      ],
+      [
+        'a lowercase %xx password',
+        basicHeader,
+        'pw=example%2fpass%20word-not-a-secret',
+        'pass%20word',
+      ],
+      ['a form-encoded password', basicHeader, 'pw=example%2Fpass+word-not-a-secret', 'pass+word'],
+      [
+        'a JSON \\/-escaped password',
+        basicHeader,
+        String.raw`{"pw":"example\/pass word-not-a-secret"}`,
+        'pass word',
+      ],
+    ])('500 text/plain echoing %s is redacted', (_label, headerValue, body, fragment) => {
+      const redactor = createRedactor([headerValue]);
+      const outcome = response(500, 'text/plain', body);
+      const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
+      expect(text).toMatch(/^upstream request failed with status 500: .*\[redacted\]/u);
+      expect(text).not.toContain(fragment);
+    });
+
+    it('500 application/json echoing a bare Bearer token never leaks', () => {
+      const redactor = createRedactor([`Bearer ${token}`]);
+      const outcome = response(500, 'application/json', `{"error":"invalid api key ${token}"}`);
+      const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
+      expect(text).not.toContain(token);
+    });
+  });
 });
 
 describe('mapResponse — no outputSchema (validator undefined)', () => {
@@ -282,6 +334,14 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     const result = mapResponse(defaultOpts({ outcome }));
     expect(result.isError).toBe(false);
     expect(result.content[0]?.text).toBe('hello world');
+  });
+
+  it('a 200 text/* body echoing a bare Bearer credential is returned redacted (#58)', () => {
+    const redactor = createRedactor(['Bearer example-token-not-a-secret']);
+    const outcome = response(200, 'text/plain', 'your key is example-token-not-a-secret');
+    const result = mapResponse(defaultOpts({ outcome, redactor }));
+    expect(result.isError).toBe(false);
+    expect(result.content[0]?.text).toBe('your key is [redacted]');
   });
 
   it('a body over maxTextBytes is truncated with an explicit marker', () => {
@@ -571,5 +631,79 @@ describe('mapResponse — outputSchema present (validator defined)', () => {
     const validator = compileEnvelopeValidator(sampleOutputSchema()) as EnvelopeValidator;
     const text = isError(mapResponse(defaultOpts({ outcome, validator, outputSchema: undefined })));
     expect(text.length).toBeGreaterThan(0);
+  });
+});
+
+// #33: end-to-end through the real generated outputSchema — an upstream that
+// adds an undocumented response field must still yield structured output.
+describe('mapResponse — generated outputSchema with an undocumented field (#33)', () => {
+  it('returns structuredContent, not an output-schema error', () => {
+    const outputSchema = deriveOutputSchema(
+      {
+        method: 'get',
+        path: '/x',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        responses: {
+          '200': {
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { id: { type: 'string' } } },
+              },
+            },
+          },
+        },
+      },
+      '3.1',
+    );
+    const validator = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+    const outcome = response(200, 'application/json', '{"id":"a","created":1}');
+    const result = mapResponse(defaultOpts({ outcome, outputSchema, validator }));
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 'a', created: 1 },
+    });
+  });
+});
+
+// #72: with --default-response-is-error, an undocumented 2xx names the flag.
+describe('mapResponse — undocumented 2xx under the default-is-error assumption (#72)', () => {
+  const outputSchema = sampleOutputSchema();
+  const validator = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+  const hint = '--default-response-is-error';
+
+  it('names the flag when the hint is set', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toContain('201');
+    expect(text).toContain(hint);
+  });
+
+  it('says the upstream reported success and warns against a blind retry (D13)', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toMatch(/^the upstream reported success \(status 201\)/u);
+    expect(text).toContain('likely applied');
+    expect(text).toContain('do not retry it blindly');
+  });
+
+  it('keeps the existing message without the hint', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const text = isError(mapResponse(defaultOpts({ outcome, outputSchema, validator })));
+    expect(text).toContain('did not match a declared output branch');
+    expect(text).not.toContain(hint);
+  });
+
+  it('still maps a 4xx through the HTTP error path', () => {
+    const outcome = response(404, 'application/json', '{"error":{}}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toContain('404');
+    expect(text).not.toContain(hint);
   });
 });
