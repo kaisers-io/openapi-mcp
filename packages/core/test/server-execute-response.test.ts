@@ -166,6 +166,28 @@ describe('createEnvelopeCompiler — one compiler context per snapshot (issue #4
     const second = createEnvelopeCompiler();
     expect((second(withId) as EnvelopeValidator)(wrap({ id: 2 }))).toBe(true);
   });
+
+  it('keeps a NESTED shared $id per tool: each validator checks its own subschema, none resolves another tool’s', () => {
+    // A component schema with $id is inlined under `data` in many envelopes
+    const nested = (pet: Record<string, unknown>): Record<string, unknown> =>
+      envelope({
+        $defs: { pet: { $id: 'https://x.test/Pet', ...pet } },
+        $ref: 'https://x.test/Pet',
+      });
+    const compile = createEnvelopeCompiler();
+    const byId = compile(
+      nested({ type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] }),
+    ) as EnvelopeValidator;
+    const byName = compile(
+      nested({ type: 'object', properties: { name: { type: 'string' } }, required: ['name'] }),
+    ) as EnvelopeValidator;
+    expect(byId(wrap({ id: 1 }))).toBe(true);
+    expect(byId(wrap({ name: 'x' }))).toBe(false);
+    expect(byName(wrap({ name: 'x' }))).toBe(true);
+    expect(byName(wrap({ id: 1 }))).toBe(false);
+    // An id defined only in another tool's schema does not leak through
+    expect(() => compile(envelope({ $ref: 'https://x.test/Pet' }))).toThrow(/resolve/u);
+  });
 });
 
 describe('mapResponse — PinnedOutcome errors', () => {
