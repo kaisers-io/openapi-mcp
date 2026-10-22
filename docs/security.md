@@ -122,9 +122,23 @@ callers — any other local process could otherwise reach tools that carry your 
 credentials — so:
 
 - `--http-token-env <ENV>` is **mandatory** with `--http`; startup fails closed without it.
-  The token must be at least 32 ASCII characters from the Base64/Base64URL alphabet (the
-  README's example generates one with `openssl rand -base64 32`); shorter, non-ASCII, or
-  header-hostile values are rejected at startup.
+  The token must encode exactly 32 bytes (256 bits), in one of two forms:
+  - 44 characters of padded standard Base64 — alphabet `A-Z a-z 0-9 + /`, ending in exactly
+    one `=` (the output of `openssl rand -base64 32`), or
+  - 43 characters of unpadded Base64URL — alphabet `A-Z a-z 0-9 - _`, no `=`.
+
+  Everything else is rejected at startup: other lengths, hex strings (`openssl rand -hex 32`),
+  missing or extra padding, mixing the two alphabets, and surrounding whitespace or newlines.
+  The format check cannot tell a random token from a guessable one, so generate it with a
+  cryptographically secure random source — never a password, a hand-typed string, or a
+  derivation of other data:
+
+  ```bash
+  export TOKEN=$(openssl rand -base64 32)
+  # or, without openssl:
+  export TOKEN=$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")
+  ```
+
 - Clients authenticate with `Authorization: Bearer <token>`, compared using a constant-time
   digest comparison (both sides hashed, length-safe, no early exit on a length mismatch) to
   avoid timing side channels.
@@ -162,3 +176,31 @@ choose `--allow` patterns deliberately rather than exposing write operations by 
 review a spec's diff before running `cache promote`; and treat any `--base-url` you set as an
 explicit, trusted operator decision, since it bypasses the private-range deny-by-default
 check that applies to spec-derived origins.
+
+## Dependency audit (maintainers)
+
+`pnpm audit --audit-level=high` checks the whole lockfile against the live advisory database. It
+covers dev dependencies too, because the CLI bundles its runtime dependencies from them. The check
+runs in `.github/workflows/audit.yml`:
+
+- weekly on `main` (Mondays, 06:17 UTC),
+- on demand (Actions → audit → Run workflow),
+- on pull requests that change `pnpm-lock.yaml`, `pnpm-workspace.yaml` or a `package.json`.
+
+It is not part of `ci.yml` and must not be a required status check. A new advisory against an
+unrelated transitive package would otherwise turn every open PR red without any change in the PR.
+
+When a run fails:
+
+1. **Read the advisory.** Check whether the vulnerable code path is reachable here: is it in the
+   shipped bundle (`packages/cli/dist`), or only in dev tooling?
+2. **Fix by upgrading.** This is the normal case. Bump the direct dependency that pulls the
+   vulnerable package in. If that is not possible yet, run `pnpm audit --fix update` (re-resolves
+   the lockfile) or `pnpm audit --fix override` (pins a fixed version through `overrides` in
+   `pnpm-workspace.yaml`). Open a PR. The audit runs on it because it changes the lockfile.
+3. **Accept only with a record.** Accept an advisory only when no fixed version exists and the
+   code path is not reachable. Add `--ignore GHSA-xxxx-xxxx-xxxx` to the audit step in
+   `audit.yml` with a comment giving the reason and a review-by date. Remove the ignore once a
+   fix ships, or when the date passes.
+4. **Shipped code affected.** If the vulnerable code is in the shipped bundle and reachable,
+   treat it as a release blocker: fix it, then cut a patch release.
