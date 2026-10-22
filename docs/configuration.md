@@ -55,7 +55,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
-| `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
+| `--max-response-bytes <size>` | no | cap the decompressed upstream response body **and** the outgoing request body (see below) | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
@@ -66,6 +66,9 @@ Notes:
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.
+- `--max-response-bytes` also caps every outgoing request body, measured after encoding
+  (for an `application/octet-stream` upload: the decoded bytes). The base64 tool argument
+  that carries an upload is about 4/3 of that size inside the JSON-RPC message.
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
@@ -118,6 +121,21 @@ Example:
 ```bash
 openapi-mcp tools --spec https://api.example.com/openapi.json --allow "read*"
 ```
+
+### Query parameter styles
+
+Query parameters support the OAS 3.1.1 §4.8.12.4 styles that the spec defines for their
+shape. An operation that uses an undefined combination is listed as omitted, with the reason:
+
+- `form` (the default), with or without `explode`.
+- `deepObject` needs `explode: true` **set explicitly**. `explode` defaults to `true` only
+  for `form`, so a spec that leaves it out on a `deepObject` parameter has that operation
+  omitted (Stripe-style specs often do). The value must be an object of scalars. At call
+  time a key containing `[` or `]` is rejected, because it would read as nesting
+  (`filter[a][b]`) on the server.
+- `spaceDelimited` and `pipeDelimited` need `explode: false` (the only defined form). The
+  value is an array or an object of scalars. An item containing its own delimiter is
+  rejected as ambiguous, and an empty array or object sends nothing, like `form`.
 
 ## `cache`
 

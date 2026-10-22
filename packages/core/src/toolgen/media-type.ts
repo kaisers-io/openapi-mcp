@@ -42,9 +42,14 @@ export const FORM_URLENCODED = 'application/x-www-form-urlencoded';
 
 export const OCTET_STREAM = 'application/octet-stream';
 
-// Strict RFC 4648 §4 base64 (standard alphabet, canonical `=` padding, no
-// whitespace or line breaks). A linear, anchored, fixed pattern — not
-// spec-supplied — so there is no ReDoS surface. Used both to validate the
-// tool input and, defensively, again before decoding it.
-const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u;
-export const isStrictBase64 = (value: string): boolean => BASE64_RE.test(value);
+// Strict RFC 4648 §4 base64: standard alphabet, canonical `=` padding, no
+// whitespace or line breaks, and canonical trailing bits (§3.5: `QR==`, which
+// decodes to the same byte as `QQ==`, is rejected). Checked by a round trip:
+// Node's decoder is lenient (it skips invalid characters and whitespace), so
+// any input it had to skip or reinterpret re-encodes differently. Linear in
+// the input with constant stack depth — a regex with a quantified group
+// overflowed V8's stack above ~4.47M characters (~3.2 MiB decoded), well
+// under the default 10 MB body budget. Used both to validate the tool input
+// and, defensively, again before decoding it.
+export const isStrictBase64 = (value: string): boolean =>
+  value.length % 4 === 0 && Buffer.from(value, 'base64').toString('base64') === value;

@@ -1032,6 +1032,21 @@ describe('buildRequest — query deepObject / spaceDelimited / pipeDelimited (#5
   it('delimited: other reserved characters are still encoded', () => {
     expect(ok(run('pipeDelimited', false, ['a&b', 'c=#'])).query).toBe('created=a%26b%7Cc%3D%23');
   });
+
+  it.each(['a][b', 'a[0]', ']', '[', 'a['])(
+    'deepObject: a key %j containing a bracket is rejected as ambiguous with nesting',
+    (key) => {
+      expect(err(run('deepObject', true, { [key]: 'v', ok: 1 }))).toMatch(
+        /key containing "\[" or "\]"/u,
+      );
+    },
+  );
+
+  it('delimited: an empty array or object is omitted, like form', () => {
+    expect(ok(run('pipeDelimited', false, [])).query).toBe('');
+    expect(ok(run('spaceDelimited', false, [])).query).toBe('');
+    expect(ok(run('pipeDelimited', false, {})).query).toBe('');
+  });
 });
 
 // #40: a REQUIRED body whose flattened properties are all optional and all
@@ -1097,5 +1112,23 @@ describe('buildRequest — application/octet-stream body (#71)', () => {
   it('counts the DECODED bytes against the body budget', () => {
     const big = Buffer.alloc(budgets.maxBodyBytes + 1).toString('base64');
     expect(err(buildRequest(mapper, 'post', '/upload', { body: big }, budgets))).toMatch(/budget/u);
+  });
+
+  it('sends a multi-MiB upload (the regex check overflowed the stack above ~3.2 MiB)', () => {
+    const bytes = Buffer.alloc(6 * 1024 * 1024, 0xab);
+    const large = { ...budgets, maxBodyBytes: 10 * 1024 * 1024 };
+    const built = ok(
+      buildRequest(mapper, 'post', '/upload', { body: bytes.toString('base64') }, large),
+    );
+    expect(built.body?.byteLength).toBe(bytes.byteLength);
+  });
+
+  it('rejects non-canonical trailing bits and embedded whitespace', () => {
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: 'QR==' }, budgets))).toMatch(
+      /base64/u,
+    );
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: 'aGVs bG8=' }, budgets))).toMatch(
+      /base64/u,
+    );
   });
 });
