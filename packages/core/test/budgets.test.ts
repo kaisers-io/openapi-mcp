@@ -12,6 +12,7 @@ describe('SPEC_BUDGETS', () => {
       maxRefDepth: 64,
       maxToolCount: 512,
       maxTextLength: 4096,
+      maxServerUrlBytes: 2048,
     });
   });
 });

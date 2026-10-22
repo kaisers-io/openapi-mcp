@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeSpec } from '../src/index.ts';
+import { normalizeSpec, SPEC_BUDGETS } from '../src/index.ts';
 
 const doc = (
   paths: Record<string, unknown>,
@@ -358,5 +358,86 @@ describe('normalizeSpec — server URL extraction', () => {
     const elapsedMs = performance.now() - start;
     expect(spec.serverUrl).toBeUndefined();
     expect(elapsedMs).toBeLessThan(1000);
+  });
+});
+
+describe('normalizeSpec — expanded server URL budget (issue #37)', () => {
+  const budget = SPEC_BUDGETS.maxServerUrlBytes;
+  const withServer = (url: string, variables: Record<string, unknown> = {}): unknown =>
+    normalizeSpec(
+      doc({ '/pets': { get: { responses: okResponses } } }, { servers: [{ url, variables }] }),
+      '3.1',
+    );
+  const rejection = (run: () => unknown): unknown => {
+    try {
+      run();
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  };
+
+  it('rejects the 11 kB spec that expanded to a 10,000,020-character URL, with a short message', () => {
+    const error = rejection(() =>
+      withServer(`https://a.example/${'{x}'.repeat(2000)}`, { x: { default: 'y'.repeat(5000) } }),
+    );
+    expect(error).toMatchObject({ code: 'validation', exitCode: 3 });
+    const { message } = error as Error;
+    expect(message).toContain(`exceeds the ${String(budget)}-byte budget`);
+    // Bounded and redacted: neither the template nor a default is echoed
+    expect(message.length).toBeLessThan(300);
+    expect(message).not.toContain('yyyy');
+    expect(message).not.toContain('a.example');
+  });
+
+  it('accepts a result of exactly the budget and rejects one byte more', () => {
+    const prefix = 'https://a.example/';
+    const fill = budget - prefix.length;
+    const exact = withServer(`${prefix}{x}`, { x: { default: 'y'.repeat(fill) } });
+    expect(exact).toMatchObject({ serverUrl: `${prefix}${'y'.repeat(fill)}` });
+    expect(
+      rejection(() => withServer(`${prefix}{x}`, { x: { default: 'y'.repeat(fill + 1) } })),
+    ).toMatchObject({ code: 'validation' });
+  });
+
+  it('counts UTF-8 bytes, not UTF-16 code units', () => {
+    const prefix = 'https://a.example/';
+    // 'é' is one code unit but two UTF-8 bytes: within budget by length,
+    // over it by bytes
+    const chars = Math.floor((budget - prefix.length) / 2) + 1;
+    expect(`${prefix}${'é'.repeat(chars)}`.length).toBeLessThanOrEqual(budget);
+    expect(
+      rejection(() => withServer(`${prefix}{x}`, { x: { default: 'é'.repeat(chars) } })),
+    ).toMatchObject({ code: 'validation' });
+  });
+
+  it('sums every variable and every occurrence', () => {
+    const quarter = Math.floor(budget / 4);
+    const variables = { a: { default: 'a'.repeat(quarter) }, b: { default: 'b'.repeat(quarter) } };
+    expect(withServer('{a}{b}', variables)).toMatchObject({
+      serverUrl: `${'a'.repeat(quarter)}${'b'.repeat(quarter)}`,
+    });
+    expect(rejection(() => withServer('{a}{b}{a}{b}{a}', variables))).toMatchObject({
+      code: 'validation',
+    });
+  });
+
+  it('rejects an over-budget literal URL without placeholders too', () => {
+    expect(rejection(() => withServer(`https://a.example/${'y'.repeat(budget)}`))).toMatchObject({
+      code: 'validation',
+    });
+  });
+
+  it('keeps an unresolvable template fail-closed (serverUrl undefined, no throw), however long', () => {
+    const spec = withServer(`https://a.example/${'{x}'.repeat(2000)}{missing}`, {
+      x: { default: 'y'.repeat(5000) },
+    });
+    expect(spec).toMatchObject({ operations: [{ path: '/pets' }] });
+    expect((spec as { serverUrl?: string }).serverUrl).toBeUndefined();
+  });
+
+  it('still expands non-recursively: a default that injects a placeholder is not re-expanded', () => {
+    const spec = withServer('https://a.example/{x}', { x: { default: '{x}' } });
+    expect((spec as { serverUrl?: string }).serverUrl).toBeUndefined();
   });
 });
