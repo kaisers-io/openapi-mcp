@@ -41,6 +41,13 @@ export const isJsonEssence = (essence: string): boolean => JSON_ESSENCE_RE.test(
 export const FORM_URLENCODED = 'application/x-www-form-urlencoded';
 
 export const OCTET_STREAM = 'application/octet-stream';
+export const MULTIPART_FORM_DATA = 'multipart/form-data';
+
+// A multipart part name goes into a quoted `Content-Disposition` parameter
+// (RFC 7578 §4.2). Only visible ASCII and space, without `"` or `\`, can be
+// written there unambiguously without an escaping convention the receiver
+// may not share — anything else is rejected (fail-closed).
+export const isSafePartName = (name: string): boolean => /^[ !#-[\]-~]+$/u.test(name);
 
 // Strict RFC 4648 §4 base64: standard alphabet, canonical `=` padding, no
 // whitespace or line breaks, and canonical trailing bits (§3.5: `QR==`, which

@@ -6,7 +6,9 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 import {
   FORM_URLENCODED,
   isJsonEssence,
+  isSafePartName,
   isStrictBase64,
+  MULTIPART_FORM_DATA,
   OCTET_STREAM,
   parseMediaType,
 } from './media-type.ts';
@@ -31,7 +33,16 @@ export type FieldMapping =
       explode: boolean;
       required: boolean;
     }
-  | { destination: 'body'; bodyPath: readonly string[]; required: boolean };
+  | {
+      destination: 'body';
+      bodyPath: readonly string[];
+      required: boolean;
+      // A multipart/form-data part carrying raw bytes, supplied as base64 (#71).
+      binary?: true;
+      // The part's Content-Type: the property's declared concrete
+      // `contentMediaType` (e.g. `image/png`), else application/octet-stream.
+      partContentType?: string;
+    };
 
 export type QueryStyle = 'form' | 'deepObject' | 'spaceDelimited' | 'pipeDelimited';
 
@@ -363,6 +374,23 @@ const selectMedia = (
       entry: content[chosenForm.contentType] as Record<string, unknown>,
     };
   }
+  // 3b. `multipart/form-data` (#71). A declared key with parameters is not
+  //     selected: the boundary parameter is generated per request.
+  const multipart = Object.keys(content).filter((contentType) => {
+    const parsed = parseMediaType(contentType);
+    return (
+      parsed?.essence === MULTIPART_FORM_DATA &&
+      !parsed.hasParameters &&
+      isRecord(content[contentType])
+    );
+  });
+  if (multipart.length > 1) {
+    return { ambiguous: `several multipart media types (${multipart.join(', ')})` };
+  }
+  const [multipartKey] = multipart;
+  if (multipartKey !== undefined) {
+    return { contentType: multipartKey, entry: content[multipartKey] as Record<string, unknown> };
+  }
   // 4. `application/octet-stream` (#71), last: a structured alternative is
   //    always preferred over raw bytes. Same tie rule as the JSON tiers.
   const binary: MediaCandidate[] = Object.keys(content).flatMap((contentType) => {
@@ -401,6 +429,58 @@ const BINARY_SCHEMA_KEYS: ReadonlySet<string> = new Set([
   'examples',
   '$comment',
 ]);
+// A multipart part schema that DECLARES raw bytes: OAS 3.0 `{type: string,
+// format: binary}`, or OAS 3.1 `{type: string, contentMediaType: …}`
+// (§4.8.14.4 "Encoding multipart Media Types"). Must be explicit — a plain
+// string property stays a text part.
+const declaresBinaryPart = (schema: unknown): schema is Record<string, unknown> =>
+  isRecord(schema) &&
+  (schema['format'] === 'binary' || typeof schema['contentMediaType'] === 'string');
+
+// Request-side annotations that do not change the part's bytes.
+const PART_ANNOTATION_KEYS: ReadonlySet<string> = new Set(['writeOnly', 'deprecated']);
+
+// A declared binary part this server can transport faithfully: a string with
+// only the keywords an octet-stream body accepts (plus annotations). Anything
+// else (`maxLength`, `nullable`, `enum`, ...) cannot be applied to raw bytes
+// and must not silently turn the file into a text part — the caller omits it.
+const isBinaryPartSchema = (schema: Record<string, unknown>): boolean =>
+  schema['type'] === 'string' &&
+  isBinarySchema(
+    Object.fromEntries(Object.entries(schema).filter(([key]) => !PART_ANNOTATION_KEYS.has(key))),
+  );
+
+// The declared `contentMediaType` of a binary part, when it names one
+// concrete, well-formed media type (sent verbatim as the part's
+// Content-Type); a range such as `image/*` or anything malformed falls back to
+// application/octet-stream.
+const partMediaType = (schema: Record<string, unknown>): string => {
+  const declared = schema['contentMediaType'];
+  if (typeof declared !== 'string') {
+    return OCTET_STREAM;
+  }
+  const parsed = parseMediaType(declared);
+  return parsed === undefined || parsed.essence.includes('*') ? OCTET_STREAM : declared;
+};
+
+// A non-binary multipart part must be ONE scalar that is never null: the
+// serializer writes it as the part's text. Arrays (repeated parts), objects
+// (JSON parts) and null are not encoded (decision for #120: unrepresentable),
+// so a tool must not accept a value that can only fail at call time.
+const isTextPartSchema = (schema: unknown): boolean => {
+  if (!isRecord(schema) || !isScalarSchema(schema) || schema['nullable'] === true) {
+    return false;
+  }
+  const { type } = schema;
+  if (Array.isArray(type) && type.includes('null')) {
+    return false;
+  }
+  const values = Array.isArray(schema['enum']) ? schema['enum'] : [schema['const']];
+  return 'enum' in schema || 'const' in schema
+    ? values.every((value) => value !== null && value !== undefined)
+    : true;
+};
+
 const isBinarySchema = (schema: unknown): boolean =>
   schema === undefined ||
   (isRecord(schema) &&
@@ -413,12 +493,12 @@ const isBinarySchema = (schema: unknown): boolean =>
 // decodes it. Validated strictly here, advertised with the JSON Schema
 // content vocabulary (2020-12 Validation §8.3 contentEncoding, §8.4
 // contentMediaType) so a client knows how to encode it.
-const binaryBodySchema = (contentType: string): z.ZodType =>
+const binaryBodySchema = (contentType: string, subject = 'The request body'): z.ZodType =>
   z
     .string()
     .refine((value) => isStrictBase64(value), { message: 'must be valid base64 (RFC 4648)' })
     .meta({ contentEncoding: 'base64', contentMediaType: contentType })
-    .describe(`The request body as base64-encoded bytes (${contentType}).`);
+    .describe(`${subject} as base64-encoded bytes (${contentType}).`);
 
 const isFlattenableRoot = (root: unknown): root is Record<string, unknown> => {
   if (!isRecord(root)) {
@@ -461,7 +541,7 @@ const bodyFields = (
   if (media === undefined) {
     return {
       unrepresentable:
-        'the request body has no JSON, form-urlencoded or application/octet-stream content',
+        'the request body has no JSON, form-urlencoded, multipart/form-data or application/octet-stream content',
     };
   }
   if ('ambiguous' in media) {
@@ -495,6 +575,12 @@ const bodyFields = (
         ...(bodyRequired ? { required: true as const } : {}),
       },
     };
+  }
+  const isMultipart = parseMediaType(media.contentType)?.essence === MULTIPART_FORM_DATA;
+  if (isMultipart && !isFlattenableRoot(root)) {
+    // Multipart parts are the properties of an object root; any other shape
+    // has no defined part layout.
+    return { unrepresentable: 'the multipart/form-data body schema is not a plain object' };
   }
   if (isFlattenableRoot(root)) {
     const properties = root['properties'] as Record<string, unknown>;
@@ -540,11 +626,43 @@ const bodyFields = (
       if (isRecord(child) && child['readOnly'] === true) {
         continue;
       }
+      if (isMultipart && !isSafePartName(prop)) {
+        return { unrepresentable: `multipart part name "${prop}" cannot be encoded safely` };
+      }
+      const propRequired = requiredProps.has(prop);
+      if (isMultipart && declaresBinaryPart(child)) {
+        if (!isBinaryPartSchema(child)) {
+          return {
+            unrepresentable: `multipart file part "${prop}" uses keywords that cannot apply to raw bytes`,
+          };
+        }
+        const partContentType = partMediaType(child);
+        fields.push({
+          preferred: prop,
+          name: prop,
+          location: 'body',
+          schema: binaryBodySchema(partContentType, 'This multipart file part'),
+          required: propRequired && bodyRequired,
+          mapping: {
+            destination: 'body',
+            bodyPath: [prop],
+            required: propRequired && bodyRequired,
+            binary: true,
+            ...(partContentType === OCTET_STREAM ? {} : { partContentType }),
+          },
+          ...(bodyRequired ? {} : { bodyGroup: { requiredWhenPresent: propRequired } }),
+        });
+        continue;
+      }
+      if (isMultipart && !isTextPartSchema(child)) {
+        return {
+          unrepresentable: `multipart part "${prop}" is not a single non-null scalar or file (arrays, objects and null parts are not supported)`,
+        };
+      }
       const converted = convertSchema(child, version, 1, 'request');
       if (!('ok' in converted)) {
         return { unrepresentable: `body property "${prop}": ${converted.unrepresentable}` };
       }
-      const propRequired = requiredProps.has(prop);
       fields.push({
         preferred: prop,
         name: prop,
@@ -554,6 +672,12 @@ const bodyFields = (
         mapping: { destination: 'body', bodyPath: [prop], required: propRequired && bodyRequired },
         ...(bodyRequired ? {} : { bodyGroup: { requiredWhenPresent: propRequired } }),
       });
+    }
+    // RFC 2046 §5.1.1: a multipart body has at least one part. A required
+    // multipart body with nothing that could become a part could never be
+    // sent validly.
+    if (isMultipart && bodyRequired && fields.length === 0) {
+      return { unrepresentable: 'a required multipart/form-data body declares no parts' };
     }
     return {
       ok: {

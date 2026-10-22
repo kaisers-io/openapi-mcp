@@ -222,6 +222,22 @@ shape. An operation that uses an undefined combination is listed as omitted, wit
   value is an array or an object of scalars. An item containing its own delimiter is
   rejected as ambiguous, and an empty array or object sends nothing, like `form`.
 
+### `multipart/form-data` bodies
+
+Each property of the body object becomes one part:
+
+- A file part (`{type: string, format: binary}`, or 3.1 `contentMediaType`) is a base64
+  tool argument, sent as raw bytes with `filename="<part name>"`. Its `Content-Type` is the
+  declared `contentMediaType` when that names one concrete type (`image/png`), otherwise
+  `application/octet-stream`. A file part with other keywords (`maxLength`, `nullable`,
+  `enum`, …) omits the operation rather than being sent as text.
+- Any other part must be a single non-null scalar (string, number, integer, boolean, or an
+  enum/const of those). Arrays (repeated parts or several files), objects (JSON parts) and
+  nullable parts omit the operation.
+- RFC 2046 requires at least one part. A call to a required multipart body with every part
+  absent is refused with a message naming the parts, instead of sending an empty body that
+  strict servers reject.
+
 ## `cache`
 
 Inspect and manage the on-disk spec cache (`~/.kaisers-io/openapi-mcp/cache/`). Has no flags

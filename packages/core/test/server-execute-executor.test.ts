@@ -402,6 +402,52 @@ describe('createExecutor — header assembly', () => {
     expect([...sent]).toEqual([0, 1, 2, 255]);
   });
 
+  it('sends a parseable multipart/form-data body with a generated boundary (#71)', async () => {
+    const formOp: NamedOperation = {
+      toolName: 'uploadForm',
+      operation: {
+        method: 'post',
+        path: '/upload',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['file'],
+                properties: {
+                  file: { type: 'string', format: 'binary' },
+                  note: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([formOp]);
+    const tool = snapshot.toolsByName['uploadForm'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { file: 'aGk=', note: 'n' }, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    const contentType = headers['content-type'] ?? '';
+    expect(contentType).toMatch(/^multipart\/form-data; boundary=/u);
+    const sent = calls[0]?.init.body as Uint8Array;
+    const form = await new globalThis.Request('http://example.test/', {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body: sent,
+    }).formData();
+    expect(form.get('note')).toBe('n');
+    expect(await (form.get('file') as File).text()).toBe('hi');
+  });
+
   it('rejects a tool argument whose header name collides with a reserved header (defensive re-check)', async () => {
     const snapshot = buildToolSnapshot([forcedHeaderOp]);
     const tool = snapshot.toolsByName['forcedHeaderThing'] as SnapshotTool;
