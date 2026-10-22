@@ -57,7 +57,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
-| `--request-timeout <duration>` | no | deadline for each upstream API request (independent of `--timeout`, which covers the spec fetch) | `30s` |
+| `--request-timeout <duration>` | no | time budget for each upstream tool call, queue wait included (independent of `--timeout`, which covers the spec fetch) | `30s` |
 | `--retries <n>` | no | retry a transient upstream failure up to `n` times (0–3), only for retry-safe requests (see below) | `0` |
 | `--no-trace-propagation` | no | do not forward a call's W3C trace context (`_meta.traceparent`/`tracestate`) to the upstream API | forwarded |
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
@@ -74,9 +74,20 @@ Notes:
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
+- `--request-timeout` replaces `--timeout` for upstream API calls. **Upgrading:** if you raised
+  `--timeout` to make slow API calls work, set `--request-timeout` instead; `--timeout` now
+  covers only the spec fetch.
+- `Accept` is derived from the operation's declared 2xx media types (JSON first, `*/*;q=0.1`
+  last). A header parameter named `Accept` in the spec is ignored (OpenAPI says so), so an API
+  that needs a vendor media type expressed only there (e.g. a GitHub preview
+  `application/vnd.github.<preview>+json`) gets its default representation. Pass
+  `--header Accept:<media type>` to override.
 - Concurrency and rate limits apply to the whole process (stdio and HTTP alike). A call that
   finds `--max-concurrency` calls already in flight waits for a slot, first come first served.
-  At most 4 × `--max-concurrency` calls can wait, and each waits no longer than `--request-timeout`.
+  At most 4 × `--max-concurrency` calls can wait. The wait and the upstream request share one
+  budget of `--request-timeout`: a call waits at most half of it for a slot, and its request
+  gets what is left, so a tool call never takes longer than `--request-timeout` end-to-end
+  (plus response processing). Keep `--request-timeout` below your MCP host's own `tools/call` timeout.
   A refused call returns a tool error whose text ends in `retry after <n>s`, and whose result
   `_meta` holds `"openapi-mcp/error"` and `"openapi-mcp/retryAfterMs"`. The error is
   `"overloaded"` with a fixed 1000 ms when the queue is full or the wait timed out. It is
@@ -94,23 +105,34 @@ Notes:
   configured secret is dropped. On a `429` or `503`, a valid `Retry-After` is also reported
   as `_meta["openapi-mcp/upstreamRetryAfterMs"]`.
 - Pagination: a `GET` tool is paginated when it has a query parameter named `cursor`,
-  `page_token`/`pageToken`, `after`, `starting_after`, `page`, `offset`, `limit`, `per_page`
-  or `page_size`/`pageSize`, or when it declares a `Link` response header. For such a tool,
-  each successful result carries `pagination.next`, the arguments for the next call, or
-  `null` when no next page is known. A `Link: <…>; rel="next"` header is used only if it has
-  the same origin and path as the request and all of its query parameters map onto the
-  tool's own query parameters. Otherwise a body cursor is used: `next_cursor`/`nextCursor`
-  maps to `cursor`, `next_page_token` to `page_token`, `nextPageToken` to `pageToken`, and
-  Stripe-style `has_more` with the last item's `id` maps to `starting_after`. The hint never
-  contains a raw URL.
+  `page_token`/`pageToken`, `after`, `starting_after` or `page`, or when it declares a `Link`
+  response header. Size or position parameters alone (`limit`, `offset`, `per_page`,
+  `page_size`) do not make it paginated. For such a tool, each successful result carries
+  `pagination.next`: the arguments for the next call, including the call's other arguments.
+  `null` means no next page is known: the last page, or the upstream gave no usable hint. It
+  does not prove the data is exhausted (e.g. an `offset` API without a `Link` header). A
+  `Link: <…>; rel="next"` header is used only if it has the same origin and the same
+  (byte-identical) path as the request, and all of its query parameters map onto the tool's
+  own query parameters. Values are decoded by the parameter's declared type and form style
+  (booleans, numbers, comma-joined or repeated arrays). Otherwise a body cursor is used:
+  `next_cursor`/`nextCursor` maps to `cursor`, `next_page_token` to `page_token`,
+  `nextPageToken` to `pageToken`, and Stripe-style `has_more` with the last item's `id` maps to
+  `starting_after`. A body cursor needs a structured result (an output schema), so a
+  text-only result gets only the `Link` hint. A hint the tool's own input schema would reject
+  becomes `null`. The hint never contains a raw URL.
 - Retries (`--retries`, off by default): a failed upstream call is retried only for
   `GET`, `HEAD`, `PUT` and `DELETE` requests. A `POST` or `PATCH` is retried only when its
   operation declares an `Idempotency-Key` header. The server then sends one key, the
-  caller's value or a generated UUID, on every attempt. Only `429`, `502`, `503`, `504`, and
-  connection errors that happen before any response arrived are retried. Backoff is
-  exponential with full jitter (250 ms base, 5 s cap), or the upstream's `Retry-After` when
-  it sends one. Retries stay within `--request-timeout`, the call's concurrency slot and its
-  single rate-limit charge.
+  caller's value or a generated UUID, on every attempt, and returns it as
+  `_meta["openapi-mcp/idempotencyKey"]`: if the call still fails, repeat it with that key so
+  the upstream can deduplicate. Only `429`, `502`, `503`, `504`, and connection errors that
+  happen before any response arrived are retried. A `DELETE` is not retried after such a
+  connection error: the upstream may already have deleted the resource, and the retry would
+  then report `404`. Backoff is exponential with full jitter (250 ms base, 5 s cap), or the
+  upstream's `Retry-After` on a `429` or `503`. Retries stay within `--request-timeout`, the
+  call's concurrency slot and its single rate-limit charge. The slot is held during backoff,
+  so under an upstream `Retry-After` storm queued calls wait (and may time out waiting for a
+  slot) rather than add load.
 - Trace context: when a `tools/call` carries a valid W3C `traceparent` (and optionally
   `tracestate`) in `_meta`, it is sent to the upstream as the same-named headers, on
   same-origin hops only. An invalid value is dropped. Tool arguments can never set these

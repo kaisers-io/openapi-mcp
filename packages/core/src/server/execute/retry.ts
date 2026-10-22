@@ -8,12 +8,16 @@ import type { PinnedOutcome } from '../../http/pinned-dispatcher.ts';
 //   `Idempotency-Key` header, which the executor then pins to ONE value
 //   for every attempt of the call;
 // - the failure is transient: a 429/502/503/504 response, or a network
-//   error that happened before any response arrived;
+//   error that happened before any response arrived — except for DELETE:
+//   such an error is ambiguous (the upstream may have processed the request
+//   and lost the connection while answering), and a retried DELETE would
+//   then report 404 for a resource the first attempt removed;
 // - the caller has not cancelled, and the backoff still fits inside the
 //   call's overall deadline.
 // Redirect, egress, size and every other 4xx/5xx outcome are final.
 // Backoff is exponential with full jitter; an upstream Retry-After (seconds
-// or HTTP-date) replaces the jittered delay. Every attempt stays inside the
+// or HTTP-date) on a 429/503 replaces the jittered delay (the statuses for
+// which it is reported as upstreamRetryAfterMs too). Every attempt stays inside the
 // one concurrency slot and the one rate-limit charge of the tool call.
 
 export const MAX_RETRIES = 3;
@@ -26,10 +30,18 @@ export const isRetryableMethod = (method: string, hasIdempotencyKey: boolean): b
   IDEMPOTENT_METHODS.has(method) ||
   ((method === 'POST' || method === 'PATCH') && hasIdempotencyKey);
 
-const isTransient = (outcome: PinnedOutcome): boolean =>
+// The statuses whose Retry-After is honoured (RFC 9110 §10.2.3: 503; 429
+// per RFC 6585) — the same set forwarded-headers.ts reports.
+const RETRY_AFTER_STATUSES: ReadonlySet<number> = new Set([429, 503]);
+
+// Whether a connection error before any response may be retried: never for
+// DELETE (see above).
+export const retriesConnectionErrors = (method: string): boolean => method !== 'DELETE';
+
+const isTransient = (outcome: PinnedOutcome, connectionErrors: boolean): boolean =>
   outcome.kind === 'response'
     ? RETRYABLE_STATUSES.has(outcome.status)
-    : outcome.reason === 'network' && outcome.beforeResponse === true;
+    : connectionErrors && outcome.reason === 'network' && outcome.beforeResponse === true;
 
 export type RetryDeps = {
   // Resolves after `ms`, or rejects/resolves early when `signal` aborts.
@@ -42,6 +54,8 @@ export type RetryOptions = {
   retries: number;
   // The call's overall deadline, shared by every attempt and backoff.
   timeoutMs: number;
+  // Whether a network error before any response is retried (not for DELETE).
+  connectionErrors: boolean;
   signal: AbortSignal;
 };
 
@@ -50,7 +64,9 @@ export type RetryOptions = {
 // exponentially growing, capped window.
 const backoffMs = (outcome: PinnedOutcome, attempt: number, deps: RetryDeps): number => {
   const retryAfter =
-    outcome.kind === 'response' && outcome.headers['retry-after'] !== undefined
+    outcome.kind === 'response' &&
+    RETRY_AFTER_STATUSES.has(outcome.status) &&
+    outcome.headers['retry-after'] !== undefined
       ? parseRetryAfter(outcome.headers['retry-after'], deps.now())
       : undefined;
   if (retryAfter !== undefined) {
@@ -74,7 +90,7 @@ export const withRetries = async (
   let attempts = 1;
   // Imperative on purpose: each iteration depends on the previous attempt's
   // outcome and on the time it consumed.
-  while (attempts <= options.retries && isTransient(outcome)) {
+  while (attempts <= options.retries && isTransient(outcome, options.connectionErrors)) {
     const delay = backoffMs(outcome, attempts - 1, deps);
     if (deps.now() + delay >= deadline) {
       break;

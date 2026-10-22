@@ -246,6 +246,11 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     // STDOUT, and stdout is MCP-JSON-only for the entire life of this
     // process. Startup failures always render as plain text on stderr.
     const errorOpts = { json: false, verbose: false };
+    // Set once the executor exists. Closed in `finally` so a throw anywhere
+    // after the first upstream call (e.g. httpServer.close()) still releases
+    // pooled keep-alive sockets and retiring agents instead of leaving them
+    // to process exit.
+    let closeExecutor: (() => Promise<void>) | undefined;
     try {
       // HTTP-specific options are validated FIRST — BEFORE any spec/cache/
       // network processing — so a bad --port or --http-token-env fails
@@ -365,6 +370,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // ONE executor instance, shared by the stdio AND HTTP branches below,
       // so the global outbound-concurrency semaphore is genuinely shared.
       const executor = createExecutor(executorConfig, { transport: ctx.transport });
+      closeExecutor = () => executor.close();
       const dispatcherDeps = {
         limiter: createRateLimiter(apiConfig.rateLimit),
         now: ctx.now,
@@ -452,13 +458,15 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         process.removeListener('SIGTERM', onShutdownSignal);
         await httpServer.close();
       }
-      // After the transport is gone: no further call can borrow a pooled
-      // upstream connection, and an idle keep-alive socket must not hold the
-      // process open past stdin EOF or a shutdown signal.
-      await executor.close();
       state.exitCode = EXIT.OK;
     } catch (error) {
       state.exitCode = emitError(ctx, errorOpts, error);
+    } finally {
+      // After the transport is gone (or failed): no further call can borrow a
+      // pooled upstream connection, and an idle keep-alive socket must not
+      // hold the process open past stdin EOF, a shutdown signal or an error.
+      // Best effort — a close failure must not mask the exit code above.
+      await closeExecutor?.().catch(() => {});
     }
   });
 };
