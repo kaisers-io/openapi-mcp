@@ -159,7 +159,13 @@
     // exception stays global.
     "no-continue": "off"
   },
-  "ignorePatterns": ["**/dist/**", "**/node_modules/**", "**/coverage/**", "packages/*/bin/**"],
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/coverage/**",
+    "packages/*/bin/**",
+    "packages/core/src/spec/generated/**"
+  ],
   "overrides": [
     {
       "files": ["packages/core/**/*.ts", "packages/cli/**/*.ts", "scripts/bench/**/*.ts"],
@@ -415,6 +421,17 @@
       }
     },
     {
+      "files": ["packages/core/src/server/execute/executor.ts"],
+      "rules": {
+        // Off: executor.ts is the composition root of one upstream tool
+        // call -- request building, the pinned transport and its agent pool,
+        // the admission queue, retries, Accept, trace context, pagination,
+        // projection, telemetry and response mapping meet here, and each
+        // guard is re-checked right before a byte leaves the process.
+        "import/max-dependencies": "off"
+      }
+    },
+    {
       "files": ["packages/core/src/cache/store.ts"],
       "rules": {
         // Off: store.ts is the transactional cache-store core -- schema
@@ -588,7 +605,12 @@
         // header-precedence write order both depend on seeing the full call
         // sequence in one place; splitting either out would separate that
         // ordering invariant from the code that must respect it.
-        "max-lines": "off"
+        "max-lines": "off",
+        // Off for the same reason: as the integration point it imports one
+        // module per stage it wires (request, transport + connection pool,
+        // admission queue, response mapping, redaction, sanitizing, result
+        // types) -- 11 against a cap of 10.
+        "import/max-dependencies": "off"
       }
     },
     {
@@ -632,15 +654,26 @@
       }
     },
     {
-      "files": ["packages/cli/src/commands/serve.ts"],
+      "files": ["packages/cli/src/commands/serve-action.ts"],
       "rules": {
-        // Off: serve.ts's startup action resolves the API base URL, builds
-        // the process-wide redactor, eager-compiles the per-tool output
+        // Off: serve-action.ts (the serve command's body, loaded on demand)
+        // resolves the API base URL, builds the process-wide redactor,
+        // eager-compiles the per-tool output
         // validators, and constructs the one shared createExecutor instance
         // in a fixed order (base-url resolution before the executor,
         // apiConfig before buildTools); moving these into a separate module
         // would hide that ordering dependency from readers instead of
         // keeping it visible in the one place it's enforced.
+        "max-lines": "off"
+      }
+    },
+    {
+      "files": ["packages/core/src/index.ts"],
+      "rules": {
+        // Off: index.ts is the package's public barrel -- only re-exports,
+        // one name per line as the formatter lays them out. Its length
+        // tracks the size of the public API, not the complexity of any code,
+        // and splitting it would only add a second barrel to keep in sync.
         "max-lines": "off"
       }
     }

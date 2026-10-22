@@ -1,8 +1,18 @@
 import { z } from 'zod';
 import { SPEC_BUDGETS } from '../spec/budgets.ts';
+import { declaresJsonSuccess, PROJECTION_FIELD, PROJECTION_FIELDS_SCHEMA } from './projection.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import {
+  FORM_URLENCODED,
+  isJsonEssence,
+  isSafePartName,
+  isStrictBase64,
+  MULTIPART_FORM_DATA,
+  OCTET_STREAM,
+  parseMediaType,
+} from './media-type.ts';
 import { convertSchema, isDangerousKey } from './schema.ts';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -10,7 +20,13 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 export type FieldMapping =
   | { destination: 'path'; wireName: string; style: 'simple'; explode: boolean; required: true }
-  | { destination: 'query'; wireName: string; style: 'form'; explode: boolean; required: boolean }
+  | {
+      destination: 'query';
+      wireName: string;
+      style: QueryStyle;
+      explode: boolean;
+      required: boolean;
+    }
   | {
       destination: 'header';
       wireName: string;
@@ -18,11 +34,36 @@ export type FieldMapping =
       explode: boolean;
       required: boolean;
     }
-  | { destination: 'body'; bodyPath: readonly string[]; required: boolean };
+  | {
+      destination: 'body';
+      bodyPath: readonly string[];
+      required: boolean;
+      // A multipart/form-data part carrying raw bytes, supplied as base64 (#71).
+      binary?: true;
+      // The part's Content-Type: the property's declared concrete
+      // `contentMediaType` (e.g. `image/png`), else application/octet-stream.
+      partContentType?: string;
+    };
+
+export type QueryStyle = 'form' | 'deepObject' | 'spaceDelimited' | 'pipeDelimited';
 
 export type RequestMapper = {
   bodyMode: 'flattened' | 'single' | 'none';
-  bodyContentType?: 'application/json' | 'application/x-www-form-urlencoded';
+  // The request body's media type exactly as the spec declares it (parameters
+  // included, decision D5): `application/json`, any `application/*+json`
+  // variant, or `application/x-www-form-urlencoded`. Sent verbatim as the
+  // Content-Type; buildRequest picks the encoding from its essence.
+  bodyContentType?: string;
+  // `requestBody.required: true` (OAS 3.1.1 §4.8.13.1). Body PRESENCE is part
+  // of the contract and cannot be inferred from which flattened fields are
+  // populated: a required body whose properties are all optional must still
+  // be sent (as `{}`) when every field is absent (#40).
+  // Encoding is deliberately asymmetric: the key is present (and `true`) only
+  // for a required body, and ABSENT — never `false` — for an optional one, so
+  // a mapper for an optional body stays byte-identical to the pre-#40 shape.
+  // Anything that serializes, compares or memoizes mappers must treat a
+  // missing key as "optional", not as "unknown".
+  bodyRequired?: true;
   fields: Record<string, FieldMapping>;
 };
 
@@ -41,6 +82,84 @@ const STYLE_SUPPORT: Readonly<Record<'path' | 'query' | 'header', 'simple' | 'fo
   query: 'form',
   header: 'simple',
 };
+
+const SCALAR_TYPES: ReadonlySet<unknown> = new Set(['string', 'number', 'integer', 'boolean']);
+
+// A schema whose instances are scalars: a scalar `type` (3.1 `[T,'null']`
+// included), or a typeless enum/const. Anything else — an object, an array, a
+// composition, an unconstrained `{}` — is not provably scalar.
+const isScalarSchema = (node: unknown): boolean => {
+  if (!isRecord(node)) {
+    return false;
+  }
+  const { type } = node;
+  if (typeof type === 'string') {
+    return SCALAR_TYPES.has(type);
+  }
+  if (Array.isArray(type)) {
+    return (
+      type.some((name) => SCALAR_TYPES.has(name)) &&
+      type.every((name) => SCALAR_TYPES.has(name) || name === 'null')
+    );
+  }
+  return type === undefined && (Array.isArray(node['enum']) || 'const' in node);
+};
+
+// An object whose declared property values (and additionalProperties schema,
+// if any) are scalars — the only object shape deepObject and the delimited
+// styles define ("Allows objects with scalar properties"; "The representation
+// of array or object properties is not defined", OAS 3.1.1 §4.8.12.3). A
+// free-form object (no declared properties) is accepted: its values are only
+// known at call time, where buildRequest rejects a nested value fail-closed.
+const isScalarObjectSchema = (node: Record<string, unknown>): boolean => {
+  if (node['type'] !== 'object' && !isRecord(node['properties'])) {
+    return false;
+  }
+  const properties = isRecord(node['properties']) ? Object.values(node['properties']) : [];
+  const ap = node['additionalProperties'];
+  const apScalar = ap === undefined || typeof ap === 'boolean' || isScalarSchema(ap);
+  return apScalar && properties.every((child) => isScalarSchema(child));
+};
+
+// Query styles beyond `form`, restricted to the cells OAS 3.1.1 §4.8.12.4
+// (Style Examples) defines — every `n/a` cell omits (fail-closed):
+//   - deepObject: object of scalars, explode MUST be true (explode=false is
+//     n/a; the spec default for non-form styles is false, so it must be
+//     declared explicitly);
+//   - spaceDelimited / pipeDelimited: array of scalars or object of scalars,
+//     explode=false only (explode=true is n/a).
+const queryStyleProblem = (
+  style: QueryStyle,
+  explode: boolean,
+  schema: unknown,
+): string | undefined => {
+  if (style === 'form') {
+    return undefined;
+  }
+  const node = isRecord(schema) ? schema : {};
+  if (style === 'deepObject') {
+    if (!explode) {
+      return 'deepObject requires explode: true';
+    }
+    return isScalarObjectSchema(node)
+      ? undefined
+      : 'deepObject requires an object of scalar values';
+  }
+  if (explode) {
+    return `${style} is only defined with explode: false`;
+  }
+  const scalarArray = node['type'] === 'array' && isScalarSchema(node['items']);
+  return scalarArray || isScalarObjectSchema(node)
+    ? undefined
+    : `${style} requires an array or object of scalar values`;
+};
+
+const QUERY_STYLES: ReadonlySet<unknown> = new Set([
+  'form',
+  'deepObject',
+  'spaceDelimited',
+  'pipeDelimited',
+]);
 
 export const paramFields = (
   operation: OperationRecord,
@@ -80,10 +199,18 @@ export const paramFields = (
       return { unrepresentable: `parameter "${name}" uses content instead of schema` };
     }
     const style = typeof param['style'] === 'string' ? param['style'] : STYLE_SUPPORT[location];
-    if (style !== STYLE_SUPPORT[location]) {
+    const styleSupported =
+      location === 'query' ? QUERY_STYLES.has(style) : style === STYLE_SUPPORT[location];
+    if (!styleSupported) {
       return { unrepresentable: `parameter "${name}" uses the unsupported style "${style}"` };
     }
     const explode = typeof param['explode'] === 'boolean' ? param['explode'] : style === 'form';
+    if (location === 'query') {
+      const problem = queryStyleProblem(style as QueryStyle, explode, param['schema']);
+      if (problem !== undefined) {
+        return { unrepresentable: `parameter "${name}": ${problem}` };
+      }
+    }
     const converted = convertSchema(param['schema'] ?? {}, version);
     if (!('ok' in converted)) {
       return { unrepresentable: `parameter "${name}": ${converted.unrepresentable}` };
@@ -114,7 +241,13 @@ export const paramFields = (
           return { destination: 'path', wireName: name, style: 'simple', explode, required: true };
         }
         case 'query': {
-          return { destination: 'query', wireName: name, style: 'form', explode, required };
+          return {
+            destination: 'query',
+            wireName: name,
+            style: style as QueryStyle,
+            explode,
+            required,
+          };
         }
         default: {
           return { destination: 'header', wireName: name, style: 'simple', explode, required };
@@ -129,14 +262,16 @@ export const paramFields = (
 export type LayoutResult = {
   inputSchema: z.ZodType;
   mapper: RequestMapper;
+  // True when the optional `_fields` projection argument was added (see
+  // toolgen/projection.ts) — never mapped onto the request.
+  projection: boolean;
 };
-
-type BodyContentType = 'application/json' | 'application/x-www-form-urlencoded';
 
 type BodyResult = {
   fields: Field[];
   mode: 'flattened' | 'single' | 'none';
-  contentType?: BodyContentType;
+  contentType?: string;
+  required?: true;
 };
 
 // Keys allowed on a body object-root for it to be FLATTENED. Anything else
@@ -161,17 +296,213 @@ const FLATTEN_ROOT_KEYS: ReadonlySet<string> = new Set([
   '$schema',
 ]);
 
+type MediaCandidate = { contentType: string; essence: string; hasParameters: boolean };
+
+// A form key whose only parameter is `charset=utf-8` (any case, optionally
+// quoted) — the charset the body is actually encoded in.
+const UTF8_FORM_KEY_RE =
+  /^application\/x-www-form-urlencoded[ \t]*;[ \t]*charset=(?:utf-8|"utf-8")[ \t]*$/iu;
+const isUtf8FormKey = (contentType: string): boolean => UTF8_FORM_KEY_RE.test(contentType);
+type SelectedMedia = { contentType: string; entry: Record<string, unknown> };
+
+// Among candidates of one tier: the only one, else the only one without
+// parameters (`application/json` beats `application/json; charset=utf-8`),
+// else no deterministic winner.
+const pickOne = (candidates: readonly MediaCandidate[]): MediaCandidate | undefined => {
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+  const bare = candidates.filter((candidate) => !candidate.hasParameters);
+  return bare.length === 1 ? bare[0] : undefined;
+};
+
+const jsonTier = (json: readonly MediaCandidate[]): readonly MediaCandidate[] => {
+  const exact = json.filter((candidate) => candidate.essence === 'application/json');
+  if (exact.length > 0) {
+    return exact;
+  }
+  const mergePatch = json.filter(
+    (candidate) => candidate.essence === 'application/merge-patch+json',
+  );
+  return mergePatch.length > 0 ? mergePatch : json;
+};
+
+// Picks the request body media type deterministically (#54, decision D5):
+//   1. `application/json` (any case, with or without parameters);
+//   2. otherwise one `application/*+json` variant — if several are declared,
+//      `application/merge-patch+json` (RFC 7396) wins: it is the
+//      object-shaped patch format (Kubernetes declares json-patch+json,
+//      merge-patch+json and strategic-merge-patch+json on every PATCH, all
+//      with the same schema); any other tie omits — never an arbitrary pick;
+//   3. otherwise `application/x-www-form-urlencoded`, bare or with
+//      `charset=utf-8` (the bare key wins if both are declared). The body is
+//      always encoded as UTF-8 (WHATWG URL §5.2), so a key naming another
+//      charset is not selected (fail-closed: that key is never used).
+// The declared key is returned verbatim; a key that is not a well-formed
+// media type is never selected (see media-type.ts).
 const selectMedia = (
   content: Record<string, unknown>,
-): { contentType: BodyContentType; entry: Record<string, unknown> } | undefined => {
-  for (const contentType of ['application/json', 'application/x-www-form-urlencoded'] as const) {
-    const entry = content[contentType];
-    if (isRecord(entry)) {
-      return { contentType, entry };
+): SelectedMedia | { ambiguous: string } | undefined => {
+  const json: MediaCandidate[] = Object.keys(content).flatMap((contentType) => {
+    const parsed = parseMediaType(contentType);
+    return parsed !== undefined && isJsonEssence(parsed.essence) && isRecord(content[contentType])
+      ? [{ contentType, ...parsed }]
+      : [];
+  });
+  const tier = jsonTier(json);
+  if (tier.length > 0) {
+    const chosen = pickOne(tier);
+    if (chosen === undefined) {
+      return {
+        ambiguous: `several JSON media types (${tier.map((candidate) => candidate.contentType).join(', ')})`,
+      };
     }
+    return {
+      contentType: chosen.contentType,
+      entry: content[chosen.contentType] as Record<string, unknown>,
+    };
   }
-  return undefined;
+  const form = Object.keys(content).flatMap((contentType) => {
+    const parsed = parseMediaType(contentType);
+    return parsed !== undefined &&
+      parsed.essence === FORM_URLENCODED &&
+      (!parsed.hasParameters || isUtf8FormKey(contentType)) &&
+      isRecord(content[contentType])
+      ? [{ contentType, ...parsed }]
+      : [];
+  });
+  const chosenForm = pickOne(form);
+  if (chosenForm !== undefined) {
+    return {
+      contentType: chosenForm.contentType,
+      entry: content[chosenForm.contentType] as Record<string, unknown>,
+    };
+  }
+  // 3b. `multipart/form-data` (#71). A declared key with parameters is not
+  //     selected: the boundary parameter is generated per request.
+  const multipart = Object.keys(content).filter((contentType) => {
+    const parsed = parseMediaType(contentType);
+    return (
+      parsed?.essence === MULTIPART_FORM_DATA &&
+      !parsed.hasParameters &&
+      isRecord(content[contentType])
+    );
+  });
+  if (multipart.length > 1) {
+    return { ambiguous: `several multipart media types (${multipart.join(', ')})` };
+  }
+  const [multipartKey] = multipart;
+  if (multipartKey !== undefined) {
+    return { contentType: multipartKey, entry: content[multipartKey] as Record<string, unknown> };
+  }
+  // 4. `application/octet-stream` (#71), last: a structured alternative is
+  //    always preferred over raw bytes. Same tie rule as the JSON tiers.
+  const binary: MediaCandidate[] = Object.keys(content).flatMap((contentType) => {
+    const parsed = parseMediaType(contentType);
+    return parsed?.essence === OCTET_STREAM && isRecord(content[contentType])
+      ? [{ contentType, ...parsed }]
+      : [];
+  });
+  if (binary.length === 0) {
+    return undefined;
+  }
+  const chosen = pickOne(binary);
+  return chosen === undefined
+    ? {
+        ambiguous: `several octet-stream media types (${binary.map((candidate) => candidate.contentType).join(', ')})`,
+      }
+    : {
+        contentType: chosen.contentType,
+        entry: content[chosen.contentType] as Record<string, unknown>,
+      };
 };
+
+// The schema of an octet-stream body describes raw bytes, not JSON: OAS 3.0
+// writes `{type: string, format: binary}` (§4.7.14 "Considerations for File
+// Uploads"), OAS 3.1 omits the schema or uses `contentMediaType` (§4.8.14.3
+// "Binary Streams"). Only those shapes are accepted; anything else — an
+// object schema, `format: byte` (base64 TEXT), or a 3.1 `contentEncoding`
+// (the bytes on the wire are themselves encoded) — omits fail-closed.
+const BINARY_SCHEMA_KEYS: ReadonlySet<string> = new Set([
+  'type',
+  'format',
+  'contentMediaType',
+  'title',
+  'description',
+  'example',
+  'examples',
+  '$comment',
+]);
+// A multipart part schema that DECLARES raw bytes: OAS 3.0 `{type: string,
+// format: binary}`, or OAS 3.1 `{type: string, contentMediaType: …}`
+// (§4.8.14.4 "Encoding multipart Media Types"). Must be explicit — a plain
+// string property stays a text part.
+const declaresBinaryPart = (schema: unknown): schema is Record<string, unknown> =>
+  isRecord(schema) &&
+  (schema['format'] === 'binary' || typeof schema['contentMediaType'] === 'string');
+
+// Request-side annotations that do not change the part's bytes.
+const PART_ANNOTATION_KEYS: ReadonlySet<string> = new Set(['writeOnly', 'deprecated']);
+
+// A declared binary part this server can transport faithfully: a string with
+// only the keywords an octet-stream body accepts (plus annotations). Anything
+// else (`maxLength`, `nullable`, `enum`, ...) cannot be applied to raw bytes
+// and must not silently turn the file into a text part — the caller omits it.
+const isBinaryPartSchema = (schema: Record<string, unknown>): boolean =>
+  schema['type'] === 'string' &&
+  isBinarySchema(
+    Object.fromEntries(Object.entries(schema).filter(([key]) => !PART_ANNOTATION_KEYS.has(key))),
+  );
+
+// The declared `contentMediaType` of a binary part, when it names one
+// concrete, well-formed media type (sent verbatim as the part's
+// Content-Type); a range such as `image/*` or anything malformed falls back to
+// application/octet-stream.
+const partMediaType = (schema: Record<string, unknown>): string => {
+  const declared = schema['contentMediaType'];
+  if (typeof declared !== 'string') {
+    return OCTET_STREAM;
+  }
+  const parsed = parseMediaType(declared);
+  return parsed === undefined || parsed.essence.includes('*') ? OCTET_STREAM : declared;
+};
+
+// A non-binary multipart part must be ONE scalar that is never null: the
+// serializer writes it as the part's text. Arrays (repeated parts), objects
+// (JSON parts) and null are not encoded (decision for #120: unrepresentable),
+// so a tool must not accept a value that can only fail at call time.
+const isTextPartSchema = (schema: unknown): boolean => {
+  if (!isRecord(schema) || !isScalarSchema(schema) || schema['nullable'] === true) {
+    return false;
+  }
+  const { type } = schema;
+  if (Array.isArray(type) && type.includes('null')) {
+    return false;
+  }
+  const values = Array.isArray(schema['enum']) ? schema['enum'] : [schema['const']];
+  return 'enum' in schema || 'const' in schema
+    ? values.every((value) => value !== null && value !== undefined)
+    : true;
+};
+
+const isBinarySchema = (schema: unknown): boolean =>
+  schema === undefined ||
+  (isRecord(schema) &&
+    (schema['type'] === undefined || schema['type'] === 'string') &&
+    (schema['format'] === undefined || schema['format'] === 'binary') &&
+    Object.keys(schema).every((key) => key.startsWith('x-') || BINARY_SCHEMA_KEYS.has(key)));
+
+// A binary body travels through the JSON-RPC tool call as ONE base64 string
+// (tool arguments are JSON — they cannot carry raw bytes) and buildRequest
+// decodes it. Validated strictly here, advertised with the JSON Schema
+// content vocabulary (2020-12 Validation §8.3 contentEncoding, §8.4
+// contentMediaType) so a client knows how to encode it.
+const binaryBodySchema = (contentType: string, subject = 'The request body'): z.ZodType =>
+  z
+    .string()
+    .refine((value) => isStrictBase64(value), { message: 'must be valid base64 (RFC 4648)' })
+    .meta({ contentEncoding: 'base64', contentMediaType: contentType })
+    .describe(`${subject} as base64-encoded bytes (${contentType}).`);
 
 const isFlattenableRoot = (root: unknown): root is Record<string, unknown> => {
   if (!isRecord(root)) {
@@ -212,13 +543,49 @@ const bodyFields = (
   const content = isRecord(requestBody['content']) ? requestBody['content'] : undefined;
   const media = content === undefined ? undefined : selectMedia(content);
   if (media === undefined) {
-    return { unrepresentable: 'the request body has no JSON or form-urlencoded content' };
+    return {
+      unrepresentable:
+        'the request body has no JSON, form-urlencoded, multipart/form-data or application/octet-stream content',
+    };
+  }
+  if ('ambiguous' in media) {
+    return {
+      unrepresentable: `the request body declares ${media.ambiguous} with no deterministic choice`,
+    };
   }
   if (isRecord(media.entry['encoding']) && Object.keys(media.entry['encoding']).length > 0) {
     return { unrepresentable: 'a request body encoding object is not supported' };
   }
   const bodyRequired = requestBody['required'] === true;
   const root = media.entry['schema'];
+  if (parseMediaType(media.contentType)?.essence === OCTET_STREAM) {
+    if (!isBinarySchema(root)) {
+      return { unrepresentable: 'the application/octet-stream body schema is not a binary string' };
+    }
+    return {
+      ok: {
+        fields: [
+          {
+            preferred: 'body',
+            name: 'body',
+            location: 'body',
+            schema: binaryBodySchema(media.contentType),
+            required: bodyRequired,
+            mapping: { destination: 'body', bodyPath: [], required: bodyRequired },
+          },
+        ],
+        mode: 'single',
+        contentType: media.contentType,
+        ...(bodyRequired ? { required: true as const } : {}),
+      },
+    };
+  }
+  const isMultipart = parseMediaType(media.contentType)?.essence === MULTIPART_FORM_DATA;
+  if (isMultipart && !isFlattenableRoot(root)) {
+    // Multipart parts are the properties of an object root; any other shape
+    // has no defined part layout.
+    return { unrepresentable: 'the multipart/form-data body schema is not a plain object' };
+  }
   if (isFlattenableRoot(root)) {
     const properties = root['properties'] as Record<string, unknown>;
     // The flatten path never runs the root through convertSchema, so the root's
@@ -253,11 +620,53 @@ const bodyFields = (
     // short-circuit into forced conversion work for every property on
     // hostile input, even past the first failure.
     for (const [prop, child] of Object.entries(properties)) {
-      const converted = convertSchema(child, version, 1);
+      // A readOnly property is response-only (OAS 3.0.3 §4.7.24.2: it "SHOULD
+      // NOT be sent as part of the request", and `required` on it "will take
+      // effect on the response only"). It never becomes a tool input, so the
+      // model is not forced to invent a server-assigned `id`, and the strict
+      // input object rejects it if sent. Mirrors convertSchema's request mode
+      // for nested objects. If every property is readOnly the operation is
+      // kept with no body fields.
+      if (isRecord(child) && child['readOnly'] === true) {
+        continue;
+      }
+      if (isMultipart && !isSafePartName(prop)) {
+        return { unrepresentable: `multipart part name "${prop}" cannot be encoded safely` };
+      }
+      const propRequired = requiredProps.has(prop);
+      if (isMultipart && declaresBinaryPart(child)) {
+        if (!isBinaryPartSchema(child)) {
+          return {
+            unrepresentable: `multipart file part "${prop}" uses keywords that cannot apply to raw bytes`,
+          };
+        }
+        const partContentType = partMediaType(child);
+        fields.push({
+          preferred: prop,
+          name: prop,
+          location: 'body',
+          schema: binaryBodySchema(partContentType, 'This multipart file part'),
+          required: propRequired && bodyRequired,
+          mapping: {
+            destination: 'body',
+            bodyPath: [prop],
+            required: propRequired && bodyRequired,
+            binary: true,
+            ...(partContentType === OCTET_STREAM ? {} : { partContentType }),
+          },
+          ...(bodyRequired ? {} : { bodyGroup: { requiredWhenPresent: propRequired } }),
+        });
+        continue;
+      }
+      if (isMultipart && !isTextPartSchema(child)) {
+        return {
+          unrepresentable: `multipart part "${prop}" is not a single non-null scalar or file (arrays, objects and null parts are not supported)`,
+        };
+      }
+      const converted = convertSchema(child, version, 1, 'request');
       if (!('ok' in converted)) {
         return { unrepresentable: `body property "${prop}": ${converted.unrepresentable}` };
       }
-      const propRequired = requiredProps.has(prop);
       fields.push({
         preferred: prop,
         name: prop,
@@ -268,7 +677,20 @@ const bodyFields = (
         ...(bodyRequired ? {} : { bodyGroup: { requiredWhenPresent: propRequired } }),
       });
     }
-    return { ok: { fields, mode: 'flattened', contentType: media.contentType } };
+    // RFC 2046 §5.1.1: a multipart body has at least one part. A required
+    // multipart body with nothing that could become a part could never be
+    // sent validly.
+    if (isMultipart && bodyRequired && fields.length === 0) {
+      return { unrepresentable: 'a required multipart/form-data body declares no parts' };
+    }
+    return {
+      ok: {
+        fields,
+        mode: 'flattened',
+        contentType: media.contentType,
+        ...(bodyRequired ? { required: true as const } : {}),
+      },
+    };
   }
   const converted = convertSchema(root ?? {}, version, 0);
   if (!('ok' in converted)) {
@@ -288,6 +710,7 @@ const bodyFields = (
       ],
       mode: 'single',
       contentType: media.contentType,
+      ...(bodyRequired ? { required: true as const } : {}),
     },
   };
 };
@@ -393,6 +816,11 @@ export const buildLayout = (
   operation: OperationRecord,
   reservedHeaders: ReadonlySet<string>,
   version: OpenapiVersion = '3.1',
+  // Offer the optional `_fields` projection argument (serve
+  // --response-projection). Added only when a JSON success response is
+  // declared; skipped — the operation is kept, without projection — when one
+  // of its own fields already has that name.
+  projectable = false,
 ): { ok: LayoutResult } | { unrepresentable: string } => {
   const params = paramFields(operation, reservedHeaders, version);
   if (!('ok' in params)) {
@@ -460,6 +888,13 @@ export const buildLayout = (
       (field) => [field.name, field.required ? field.schema : field.schema.optional()] as const,
     ),
   );
+  const projection =
+    projectable &&
+    declaresJsonSuccess(operation) &&
+    !resolved.ok.some((field) => field.name === PROJECTION_FIELD);
+  if (projection) {
+    shape[PROJECTION_FIELD] = PROJECTION_FIELDS_SCHEMA.optional();
+  }
   const strictSchema = z.strictObject(shape);
   const group = resolved.ok.filter((field) => field.bodyGroup !== undefined);
   const requiredNames = group
@@ -491,7 +926,8 @@ export const buildLayout = (
   const mapper: RequestMapper = {
     bodyMode: body.ok.mode,
     ...(body.ok.contentType === undefined ? {} : { bodyContentType: body.ok.contentType }),
+    ...(body.ok.required === true ? { bodyRequired: true as const } : {}),
     fields,
   };
-  return { ok: { inputSchema, mapper } };
+  return { ok: { inputSchema, mapper, projection } };
 };

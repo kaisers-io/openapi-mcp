@@ -1,16 +1,41 @@
+import { randomUUID } from 'node:crypto';
 import { isIP } from 'node:net';
+import { createPinnedAgentPool } from '../../http/agent-pool.ts';
 import { pinnedRequest } from '../../http/pinned-dispatcher.ts';
-import type { HopHeaders, PinnedDeps, PinnedRequestOptions } from '../../http/pinned-dispatcher.ts';
+import type {
+  HopHeaders,
+  PinnedDeps,
+  PinnedErrorReason,
+  PinnedOutcome,
+  PinnedRequestOptions,
+} from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
-import { textOutcome } from '../result.ts';
+import { retryableErrorOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
+import { DEFAULT_RESPONSE_IS_ERROR_FLAG } from '../../toolgen/output-schema.ts';
+import type { CallOutcomeKind, CallTelemetry } from '../telemetry.ts';
+import type { TraceContext } from '../trace.ts';
 import type { SnapshotTool } from '../types.ts';
+import { deriveAccept } from './accept.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
 import { mapResponse } from './response.ts';
 import type { EnvelopeValidator } from './response.ts';
+import type { PageInput } from './forwarded-headers.ts';
+import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
+import { PROJECTION_FIELD } from '../../toolgen/projection.ts';
+import type { PaginationPlan } from '../../toolgen/pagination.ts';
+import {
+  isRetryableMethod,
+  MAX_RETRIES,
+  realSleep,
+  retriesConnectionErrors,
+  withRetries,
+} from './retry.ts';
+import type { RetryDeps } from './retry.ts';
+import { createSlotQueue } from './slots.ts';
 
 // The integration point wiring request-building, the pinned transport,
 // response-mapping, redaction, and a global outbound-concurrency semaphore
@@ -37,14 +62,42 @@ export type ExecutorConfig = {
   outboundBudgets: OutboundBudgets;
   // Global outbound-concurrency cap (default 16).
   maxConcurrent: number;
+  // Calls allowed to WAIT for a slot once maxConcurrent are in flight
+  // (default 4 x maxConcurrent); a call beyond that is refused at once.
+  maxQueued?: number;
+  // Extra attempts for a transient failure of a retry-safe request
+  // (--retries; default 0 = never retry; see retry.ts).
+  retries?: number;
+  // Forward a call's validated W3C trace context (from `_meta`) upstream as
+  // traceparent/tracestate headers, same-origin hops only. Off unless set
+  // (serve turns it on; --no-trace-propagation turns it off).
+  propagateTraceContext?: boolean;
   // By tool name; compiled eagerly once at server startup — this module only
   // looks the map up per call.
   validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
+  // OAuth2 client-credentials (--upstream-oauth-*): every call carries
+  // `Authorization: Bearer <token>` from this source, and an upstream 401
+  // invalidates the token and replays the request ONCE with a fresh one.
+  // `envVarHint` names the client id/secret env vars for error hints.
+  // `tokens` is structurally http/oauth-client-credentials.ts's TokenSource
+  // (spelled out here to keep this module's dependency set unchanged).
+  oauth?: {
+    tokens: {
+      getToken: () => Promise<{ ok: string } | { error: string }>;
+      invalidate: (token: string) => boolean;
+    };
+    envVarHint: string;
+  };
 };
 
 export type ExecutorDeps = {
   // { fetch, resolve, timeoutSignal } — the narrow project-owned interface.
   transport: PinnedDeps;
+  // Retry clock/sleep/jitter, injectable for tests.
+  retry?: Partial<RetryDeps>;
+  // Clock (ms) used to charge the queue wait against the call's time
+  // budget and to time the queue; defaults to the retry clock.
+  now?: () => number;
 };
 
 const textEncoder = new TextEncoder();
@@ -58,6 +111,38 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 // library-internal message never meant for a tool-call response.
 const isError = (message: string): ToolCallOutcome =>
   textOutcome(`tool execution failed: ${message}`, true);
+
+// The observability outcome for a call that reached the transport.
+const PINNED_OUTCOME: Readonly<Record<PinnedErrorReason, CallOutcomeKind>> = {
+  timeout: 'timeout',
+  cancelled: 'cancelled',
+  egress: 'egress_denied',
+  network: 'network_error',
+  'too-large': 'response_error',
+  'redirect-loop': 'response_error',
+  'redirect-write-method': 'response_error',
+  'redirect-invalid': 'response_error',
+};
+
+const classifyUpstream = (outcome: PinnedOutcome, mapped: ToolCallOutcome): CallOutcomeKind => {
+  if (outcome.kind === 'error') {
+    return PINNED_OUTCOME[outcome.reason];
+  }
+  if (outcome.status >= 300) {
+    return 'http_error';
+  }
+  return mapped.isError ? 'response_error' : 'ok';
+};
+
+// An overloaded executor cannot know when a slot frees up (that depends on
+// upstream latency), so the refusal suggests a short, fixed back-off.
+export const OVERLOADED_RETRY_AFTER_MS = 1000;
+
+const overloaded = (message: string): ToolCallOutcome =>
+  retryableErrorOutcome(`tool execution failed: ${message}`, {
+    error: 'overloaded',
+    retryAfterMs: OVERLOADED_RETRY_AFTER_MS,
+  });
 
 // URL.hostname keeps brackets around an IPv6 literal; strip them before
 // classifying (mirrors egress.ts's/pinned-dispatcher.ts's own hostnameOf).
@@ -85,7 +170,7 @@ const isLoopbackHost = (hostname: string): boolean => {
 // entirely (no request is ever sent) unless the operator explicitly opted in
 // via --allow-insecure-http.
 const cleartextBlocked = (config: ExecutorConfig, base: URL): boolean =>
-  config.secretHeaders.length > 0 &&
+  (config.secretHeaders.length > 0 || config.oauth !== undefined) &&
   base.protocol === 'http:' &&
   !config.allowInsecureHttp &&
   !isLoopbackHost(base.hostname);
@@ -115,21 +200,24 @@ const withinBasePath = (finalPath: string, basePath: string): boolean =>
   finalPath.startsWith(basePath.endsWith('/') ? basePath : `${basePath}/`);
 
 // Assembles the two HopHeaders sets pinnedRequest needs: same-origin carries
-// content-type (only when a body is sent) + every operator-configured
-// static/secret header + whatever headers the tool's own arguments mapped to;
-// cross-origin carries only content-type — the minimal safe set for a
+// the derived accept + content-type (only when a body is sent) + every
+// operator-configured static/secret header + whatever headers the tool's own
+// arguments mapped to; cross-origin carries only accept and content-type —
+// the minimal safe set for a
 // redirect that has left the base origin (pinnedRequest itself enforces the
 // monotonic origin-crossing switch; this module only supplies the two sets).
 // Write order fixes precedence on a name collision (later write wins):
-// content-type/tool-arg headers FIRST, then --header, then --header-env
-// LAST — content < tool < --header < --header-env. Unreachable while the
+// accept/content-type/tool-arg headers FIRST, then --header, then
+// --header-env LAST — derived < tool < --header < --header-env. Unreachable while the
 // reserved-name gate in runUpstreamCall holds (a tool argument can never map
 // onto a reserved name), but this ordering makes the fallback correct rather
 // than inverted should that gate ever regress.
 const assembleHeaders = (
   config: ExecutorConfig,
+  accept: string,
   contentType: string | undefined,
   toolHeaders: Readonly<Record<string, string>>,
+  bearer: string | undefined,
 ): HopHeaders => {
   // Kept as sequential bracket assignments (not a spread build): the write
   // ORDER is the precedence contract, and bracket assignment on a plain
@@ -138,7 +226,9 @@ const assembleHeaders = (
   // build would create it as an own property and change what goes on the
   // wire. Preserving that exact key semantics matters more here than the
   // functional shape.
-  const sameOriginHeaders: Record<string, string> = {};
+  // Accept is written FIRST, so an operator's --header Accept:... wins; a
+  // tool argument can never reach it (`accept` is a reserved name).
+  const sameOriginHeaders: Record<string, string> = { accept };
   if (contentType !== undefined) {
     sameOriginHeaders['content-type'] = contentType;
   }
@@ -151,8 +241,15 @@ const assembleHeaders = (
   for (const header of config.secretHeaders) {
     sameOriginHeaders[header.name.toLowerCase()] = header.value;
   }
+  // The OAuth2 access token, last of all. --header-env Authorization is a
+  // startup usage error alongside --upstream-oauth-*, so nothing is overwritten.
+  if (bearer !== undefined) {
+    sameOriginHeaders['authorization'] = `Bearer ${bearer}`;
+  }
+  // Accept is content negotiation, not a credential: it survives a
+  // cross-origin redirect (as browsers keep it too).
   const crossOriginHeaders: Record<string, string> =
-    contentType === undefined ? {} : { 'content-type': contentType };
+    contentType === undefined ? { accept } : { accept, 'content-type': contentType };
   return { sameOriginHeaders, crossOriginHeaders };
 };
 
@@ -178,12 +275,22 @@ const overFinalBudget = (
   return headerBytes > budgets.maxHeaderBytes;
 };
 
+// The executor's ToolExecutor plus the lifecycle of the pooled upstream
+// connections it owns: `close()` must run on server shutdown so no pooled
+// socket keeps the process alive.
+export type UpstreamExecutor = ToolExecutor & { close: () => Promise<void> };
+
 const runUpstreamCall = async (
   config: ExecutorConfig,
-  deps: ExecutorDeps,
+  transport: PinnedDeps,
+  retryDeps: RetryDeps,
   tool: SnapshotTool,
   args: unknown,
   signal: AbortSignal,
+  trace: TraceContext | undefined,
+  report: (telemetry: CallTelemetry) => void,
+  // What is left of the call's time budget after any queue wait.
+  timeoutMs: number,
 ): Promise<ToolCallOutcome> => {
   const { generated } = tool;
   if (generated === undefined) {
@@ -191,6 +298,7 @@ const runUpstreamCall = async (
     // defensive, unreachable in the real wiring (the caller constructs
     // exactly one createExecutor and passes it only as the upstream
     // ToolExecutor).
+    report({ outcome: 'internal_error' });
     return isError('this tool has no upstream operation to execute');
   }
   // Validators FAIL-CLOSED, mandatory: a missing map entry is a wiring bug
@@ -198,6 +306,7 @@ const runUpstreamCall = async (
   // genuine no-outputSchema tool) — never fall through to a silent
   // unvalidated text path.
   if (!config.validators.has(tool.name)) {
+    report({ outcome: 'internal_error' });
     return isError('no response validator is registered for this tool');
   }
   const validator = config.validators.get(tool.name);
@@ -212,9 +321,16 @@ const runUpstreamCall = async (
     base = new URL(config.baseUrl);
   } catch {
     // Defensive: baseUrl is resolved and validated before this point.
+    report({ outcome: 'internal_error' });
     return isError('the configured base URL is invalid');
   }
   if (cleartextBlocked(config, base)) {
+    // Operator policy, not a bad argument: counted as `refused`.
+    report({
+      outcome: 'refused',
+      method: generated.operation.method.toUpperCase(),
+      pathTemplate: generated.operation.path,
+    });
     return isError(
       'refusing to send a secret header in cleartext over a non-loopback http:// origin (pass --allow-insecure-http to override)',
     );
@@ -263,55 +379,269 @@ const runUpstreamCall = async (
   if (finalUrl.origin !== base.origin || !withinBasePath(finalUrl.pathname, base.pathname)) {
     return isError('the final request URL escaped the configured base URL');
   }
-  const headers = assembleHeaders(config, built.ok.contentType, built.ok.headers);
-  if (overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)) {
-    return isError('the final request exceeds the outbound resource budget');
-  }
-  const requestOptions: PinnedRequestOptions = {
-    method,
-    headers,
-    ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
-    baseTrusted: config.baseTrusted,
-    allowPrivateNetwork: config.allowPrivateNetwork,
-    timeoutMs: config.timeoutMs,
-    maxResponseBytes: config.maxResponseBytes,
-    signal,
+  const accept = deriveAccept(generated.operation.responses);
+  const retries = Math.min(config.retries ?? 0, MAX_RETRIES);
+  const idempotencyKeyField = Object.values(generated.mapper.fields).some(
+    (mapping) =>
+      mapping.destination === 'header' && mapping.wireName.toLowerCase() === 'idempotency-key',
+  );
+  const keyed = retries > 0 && idempotencyKeyField && (method === 'POST' || method === 'PATCH');
+  // ONE key per tool call, identical on every attempt (a 401 token replay
+  // included) — the caller's own value when it passed one, else this fresh
+  // UUID — so the upstream can deduplicate a retried write.
+  const generatedKey = keyed ? randomUUID() : undefined;
+  // The wire headers for one send with the given bearer token (none without
+  // --upstream-oauth-*), or undefined when they exceed the final budgets —
+  // re-checked per send, since a refreshed token can differ in length.
+  const headersFor = (bearer: string | undefined): HopHeaders | undefined => {
+    const headers = assembleHeaders(config, accept, built.ok.contentType, built.ok.headers, bearer);
+    if (config.propagateTraceContext === true && trace !== undefined) {
+      // Same-origin set only: a trace id is client correlation data, and a
+      // redirect to a foreign origin must not receive it. `traceparent` and
+      // `tracestate` are reserved tool-header names, so only an operator's
+      // own --header could already hold them — and that one wins.
+      for (const [name, value] of Object.entries(trace)) {
+        headers.sameOriginHeaders[name] ??= value;
+      }
+    }
+    if (generatedKey !== undefined) {
+      headers.sameOriginHeaders['idempotency-key'] ??= generatedKey;
+    }
+    return overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)
+      ? undefined
+      : headers;
   };
-  const outcome = await pinnedRequest(finalUrl, requestOptions, deps.transport);
+  const operationFacts = { method, pathTemplate: generated.operation.path };
+  const overBudget = (): ToolCallOutcome => {
+    report({ outcome: 'refused', ...operationFacts });
+    return isError('the final request exceeds the outbound resource budget');
+  };
+  const { oauth } = config;
+  // A token failure is a tool error naming the env vars to check; its text
+  // never carries endpoint-supplied prose (see oauth-client-credentials.ts).
+  // No API request was sent.
+  const tokenError = (error: string): ToolCallOutcome => {
+    report({ outcome: 'token_error', ...operationFacts });
+    return isError(`${error} (check the ${oauth?.envVarHint ?? ''} environment variables)`);
+  };
+  // The call's time budget runs from here: the token request (when one is
+  // needed) and every upstream attempt share it.
+  const upstreamStarted = retryDeps.now();
+  const remainingMs = (): number =>
+    Math.max(Math.floor(timeoutMs - (retryDeps.now() - upstreamStarted)), 1);
+  const send = async (
+    headers: HopHeaders,
+    retriesLeft: number,
+  ): Promise<{ outcome: PinnedOutcome; attempts: number }> => {
+    const requestOptions: PinnedRequestOptions = {
+      method,
+      headers,
+      ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
+      baseTrusted: config.baseTrusted,
+      allowPrivateNetwork: config.allowPrivateNetwork,
+      timeoutMs,
+      maxResponseBytes: config.maxResponseBytes,
+      signal,
+    };
+    return await withRetries(
+      (attemptMs) =>
+        pinnedRequest(finalUrl, { ...requestOptions, timeoutMs: attemptMs }, transport),
+      {
+        retries: retriesLeft,
+        timeoutMs: remainingMs(),
+        connectionErrors: retriesConnectionErrors(method),
+        signal,
+      },
+      retryDeps,
+    );
+  };
+  const first = oauth === undefined ? undefined : await oauth.tokens.getToken();
+  if (first !== undefined && 'error' in first) {
+    return tokenError(first.error);
+  }
+  const firstHeaders = headersFor(first?.ok);
+  if (firstHeaders === undefined) {
+    return overBudget();
+  }
+  const idempotencyKey =
+    generatedKey === undefined ? undefined : firstHeaders.sameOriginHeaders['idempotency-key'];
+  const allowedRetries = isRetryableMethod(method, idempotencyKeyField) ? retries : 0;
+  const sent = await send(firstHeaders, allowedRetries);
+  let { outcome, attempts } = sent;
+  // At most one replay on 401: the request was not authorized, so it had no
+  // effect — replaying it once (writes included) with a fresh token is safe.
+  // No replay when the token source keeps the token (it was minted moments
+  // ago, so a new one would be rejected the same way). A second 401 is
+  // returned like any other.
+  // The replay and --retries are separate budgets: a 401 is never a
+  // transient failure, so withRetries never re-sends one; retries spent on
+  // transient failures before the 401 do not prevent the replay, and the
+  // replay does not use up a retry (it gets the ones the first send left).
+  if (
+    oauth !== undefined &&
+    first !== undefined &&
+    outcome.kind === 'response' &&
+    outcome.status === 401 &&
+    oauth.tokens.invalidate(first.ok)
+  ) {
+    const fresh = await oauth.tokens.getToken();
+    if ('error' in fresh) {
+      return tokenError(fresh.error);
+    }
+    const replayHeaders = headersFor(fresh.ok);
+    if (replayHeaders === undefined) {
+      return overBudget();
+    }
+    const replay = await send(replayHeaders, Math.max(allowedRetries - (attempts - 1), 0));
+    ({ outcome } = replay);
+    attempts += replay.attempts;
+  }
+  const upstreamMs = Math.max(0, retryDeps.now() - upstreamStarted);
   const [firstSecretHeader] = config.secretHeaders;
-  return mapResponse({
+  const envVarHint = oauth?.envVarHint ?? firstSecretHeader?.envVar;
+  const mapped = mapResponse({
     outcome,
     validator,
     outputSchema: tool.wireTool.outputSchema,
     redactor: config.redactor,
-    ...(firstSecretHeader === undefined ? {} : { envVarHint: firstSecretHeader.envVar }),
+    ...(envVarHint === undefined ? {} : { envVarHint }),
+    ...(tool.generated?.outputSchemaAssumesDefaultIsError === true
+      ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
+      : {}),
     maxTextBytes: DISPLAY_TEXT_MAX,
+    baseUrl: config.baseUrl,
+    // `_fields` was validated by the tool's input schema (toolgen/projection.ts)
+    // and is never mapped onto the request (buildRequest only reads mapped
+    // fields).
+    ...(generated.projection === true ? { projectable: true } : {}),
+    ...(generated.projection === true && Array.isArray(data[PROJECTION_FIELD])
+      ? { fields: data[PROJECTION_FIELD] as string[] }
+      : {}),
+    ...(generated.pagination === undefined
+      ? {}
+      : {
+          paginate: (page: PageInput) => {
+            const hint = nextPageHint(generated.pagination as PaginationPlan, {
+              ...page,
+              requestUrl: finalUrl.href,
+              args: data,
+            });
+            // A hint is only worth giving if the next call can actually be
+            // made with it: one the tool's own input schema would reject
+            // becomes "no next page known" rather than a dead end.
+            return hint.next !== NO_NEXT_PAGE && !generated.inputSchema.safeParse(hint.next).success
+              ? { next: NO_NEXT_PAGE }
+              : hint;
+          },
+        }),
   });
+  report({
+    outcome: classifyUpstream(outcome, mapped),
+    method,
+    pathTemplate: generated.operation.path,
+    upstreamMs,
+    attempts,
+    ...(outcome.kind === 'response'
+      ? { status: outcome.status, responseBytes: outcome.bodyBytes.byteLength }
+      : {}),
+  });
+  // The key the write was sent with, so a caller whose call still failed
+  // (e.g. a timeout after a retry) can repeat it with the SAME key and let
+  // the upstream deduplicate, instead of a fresh call getting a new key.
+  return idempotencyKey === undefined
+    ? mapped
+    : { ...mapped, meta: { ...mapped.meta, 'openapi-mcp/idempotencyKey': idempotencyKey } };
 };
 
-export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): ToolExecutor => {
-  // A closure counter, NOT a module-level singleton: the caller constructs
-  // exactly one createExecutor and shares it between the stdio and HTTP
-  // transports, so this one counter bounds concurrency across BOTH.
-  // Imperative on purpose: `inFlight` is genuinely mutable shared state (a
-  // semaphore) — incremented before the guarded call and decremented in
-  // `finally` regardless of success, failure, or abort. The acquire/release
-  // pair must stay a plain mutable counter, not a derived pure value.
-  let inFlight = 0;
-  return async (tool, args, signal) => {
-    if (inFlight >= config.maxConcurrent) {
-      return isError('too many concurrent upstream requests are already in flight');
+export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {
+  // A closure-owned admission queue, NOT a module-level singleton: the
+  // caller constructs exactly one createExecutor and shares it between the
+  // stdio and HTTP transports, so this one queue bounds concurrency across
+  // BOTH. Calls past maxConcurrent wait in FIFO order (bounded by maxQueued
+  // and by half the call timeout) instead of failing straight away.
+  const slots = createSlotQueue(config.maxConcurrent, config.maxQueued ?? 4 * config.maxConcurrent);
+  // Long-lived pinned Agents, pooled per (origin, trust policy) for the
+  // executor's lifetime, so consecutive calls reuse upstream connections.
+  // Per-Agent connections are capped at the same global concurrency limit
+  // (more could never be in use at once); a DNS lookup gets the call
+  // timeout as its own deadline, since a pooled Agent outlives any one call.
+  const agents = createPinnedAgentPool({
+    resolve: deps.transport.resolve,
+    timeoutSignal: deps.transport.timeoutSignal,
+    lookupTimeoutMs: config.timeoutMs,
+    connections: config.maxConcurrent,
+  });
+  const transport: PinnedDeps = { ...deps.transport, agents };
+  // One clock for the queue wait, the call budget and the timings: an
+  // injected `now` also drives the per-call budget inside runUpstreamCall,
+  // unless the retry clock is injected on its own.
+  const retryDeps: RetryDeps = {
+    sleep: realSleep,
+    random: Math.random,
+    now: deps.now ?? Date.now,
+    ...deps.retry,
+  };
+  const now = deps.now ?? retryDeps.now;
+  // ONE time budget per call, shared by the queue wait and the upstream
+  // request, so a queued call cannot take queue wait + a full timeout
+  // (~2x the timeout end-to-end, past many hosts' own tools/call limit).
+  // The wait is capped at half the budget, so a call that does get a slot
+  // still has at least the other half for the upstream request.
+  const maxQueueWaitMs = Math.ceil(config.timeoutMs / 2);
+  const execute: ToolExecutor = async (tool, args, signal, trace, report) => {
+    const queuedAt = now();
+    const slot = await slots.acquire(signal, () => deps.transport.timeoutSignal(maxQueueWaitMs));
+    const queuedMs = Math.max(0, now() - queuedAt);
+    if (slot !== 'acquired') {
+      report?.({ outcome: slot === 'cancelled' ? 'cancelled' : 'overloaded', queuedMs });
     }
-    inFlight += 1;
+    if (slot === 'cancelled') {
+      return isError('the request was cancelled');
+    }
+    if (slot === 'overloaded') {
+      return overloaded('too many upstream requests are already in flight or queued');
+    }
+    if (slot === 'timeout') {
+      return overloaded('timed out waiting for a free upstream request slot');
+    }
+    // A call stopped by its arguments before any request was sent (argument
+    // mapping, a reserved-header collision, a URL that escapes the base)
+    // reports nothing itself: it is recorded as a validation error. Policy
+    // refusals (cleartext gate, budgets) report `refused`.
+    let reported = false;
+    const upstreamReport = (telemetry: CallTelemetry): void => {
+      reported = true;
+      report?.({ ...telemetry, queuedMs });
+    };
     try {
-      return await runUpstreamCall(config, deps, tool, args, signal);
+      const remainingMs = Math.max(
+        Math.floor(config.timeoutMs - Math.min(queuedMs, maxQueueWaitMs)),
+        1,
+      );
+      const outcome = await runUpstreamCall(
+        config,
+        transport,
+        retryDeps,
+        tool,
+        args,
+        signal,
+        trace,
+        upstreamReport,
+        remainingMs,
+      );
+      if (!reported) {
+        report?.({ outcome: outcome.isError ? 'validation_error' : 'ok', queuedMs });
+      }
+      return outcome;
     } catch {
       // Belt-and-suspenders: the dispatcher also catches, but this module
       // never lets a raw throw (a library-internal message, a stack, a
       // reflected secret) escape its own boundary either.
+      report?.({ outcome: 'internal_error', queuedMs });
       return isError('an unexpected error occurred');
     } finally {
-      inFlight -= 1;
+      slots.release();
     }
   };
+  return Object.assign(execute, { close: agents.close });
 };

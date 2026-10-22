@@ -7,6 +7,7 @@ import {
   closestMatch,
   matchesOperation,
   parseFilterPattern,
+  SPEC_BUDGETS,
 } from '../src/index.ts';
 import type { FilterPattern, HttpMethod, NamedOperation, OperationRecord } from '../src/index.ts';
 
@@ -82,13 +83,13 @@ describe('matchesOperation', () => {
   });
 
   it('matches raw spec values, not sanitized tool names', () => {
-    // AssignToolNames rewrites "list-pets!" to "list-pets_"; the filter must
+    // AssignToolNames rewrites "repos.get" to "repos_get"; the filter must
     // still see the original, or a deny pattern would miss its target
-    const op = record('get', '/pets', 'list-pets!');
-    expect(named([op])[0]!.toolName).toBe('list-pets_');
-    expect(matchesOperation(parseFilterPattern('list-pets!'), op)).toBe(true);
-    expect(matchesOperation(parseFilterPattern('list*'), op)).toBe(true);
-    expect(matchesOperation(parseFilterPattern('list-pets_'), op)).toBe(false);
+    const op = record('get', '/pets', 'repos.get');
+    expect(named([op])[0]!.toolName).toBe('repos_get');
+    expect(matchesOperation(parseFilterPattern('repos.get'), op)).toBe(true);
+    expect(matchesOperation(parseFilterPattern('repos*'), op)).toBe(true);
+    expect(matchesOperation(parseFilterPattern('repos_get'), op)).toBe(false);
   });
 });
 
@@ -340,6 +341,40 @@ describe('applyFilters — aggregate work budget', () => {
     const budget = createMatchBudget();
     applyFilters(named(fixture), patterns('**'), [], budget);
     expect(FILTER_MAX_MATCH_STEPS - budget.remaining).toBeLessThan(10_000);
+  });
+
+  it('keeps headroom for 256 patterns over a spec at the raw operation cap', () => {
+    // Issue #32 moved the tool budget after filtering, so filters now run over
+    // up to SPEC_BUDGETS.maxOperationCount operations instead of 512. Worst
+    // realistic shape: 127 allow patterns that match nothing (all three forms,
+    // one with a leading wildcard) before a final "**", and 128 deny patterns,
+    // so every operation is checked against every pattern, plus the
+    // dead-pattern pass. Measured: 28,858,075 steps (14.4% of the cap) at
+    // 4096 operations, about 0.2-0.7 s; 3,960,757 at 512.
+    const resources = ['users', 'repos', 'orders', 'invoices', 'customers', 'payments'];
+    const methods: readonly HttpMethod[] = ['get', 'put', 'post', 'delete', 'patch'];
+    const operations = Array.from({ length: SPEC_BUDGETS.maxOperationCount }, (_, index) => {
+      const resource = resources[index % resources.length] ?? 'users';
+      const method = methods[index % methods.length] ?? 'get';
+      return record(
+        method,
+        `/v1/${resource}/{${resource}Id}/items${index}/{itemId}`,
+        `${method}${resource}Item${index}`,
+        [resource, `${resource}-admin`],
+      );
+    });
+    const allowForms = (index: number): string =>
+      [`list${index}*`, `GET /v2/r${index}/**`, `tag:other${index}*`, `*Nope${index}`][index % 4] ??
+      '';
+    const denyForms = (index: number): string =>
+      [`delete${index}*`, `DELETE /v2/r${index}/**`, `tag:nobody${index}`, `*Gone${index}`][
+        index % 4
+      ] ?? '';
+    const allow = [...Array.from({ length: 127 }, (_, index) => allowForms(index)), '**'];
+    const deny = Array.from({ length: 128 }, (_, index) => denyForms(index));
+    const budget = createMatchBudget();
+    applyFilters(named(operations), patterns(...allow), patterns(...deny), budget);
+    expect(FILTER_MAX_MATCH_STEPS - budget.remaining).toBeLessThan(FILTER_MAX_MATCH_STEPS / 4);
   });
 
   // The closestMatch's boundedDistance ran unbudgeted, so the dead-pattern
