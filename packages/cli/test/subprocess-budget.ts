@@ -30,6 +30,7 @@ export const SUBPROCESS_E2E_FILES = [
   'test/bin.test.ts',
   'test/bin-compile-cache.test.ts',
   'test/cache-concurrency.test.ts',
+  'test/coverage-subprocess.test.ts',
   'test/serve.test.ts',
   'test/serve-http.test.ts',
   'test/serve-http-oauth.test.ts',

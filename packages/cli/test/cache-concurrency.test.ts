@@ -4,13 +4,11 @@ import type { Server } from 'node:http';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CACHE_META_SCHEMA_VERSION, EXIT } from '@kaisers-io/openapi-mcp-core';
 import { realContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
-
-const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
+import { CLI_ENTRY } from './cli-subprocess.ts';
 
 const specOf = (version: string, extra: boolean): string =>
   JSON.stringify({
@@ -73,7 +71,7 @@ describe('cross-process cache races and the authenticated bypass (real filesyste
 
   const runProcess = (args: readonly string[]): Promise<{ code: number; stderr: string }> =>
     new Promise((resolve) => {
-      const child = spawn(process.execPath, [bin, ...args], {
+      const child = spawn(process.execPath, [CLI_ENTRY, ...args], {
         env: {
           ...process.env,
           HOME: fixture.home,

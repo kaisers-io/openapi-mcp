@@ -5,12 +5,11 @@ import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CLI_ENTRY, FIXTURES_DIR, stopChild } from './cli-subprocess.ts';
 import { SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
-const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
-const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
+const fixturesDir = FIXTURES_DIR;
 // A real 43-char unpadded Base64URL token decoding to exactly 32 bytes (256
 // bits) — the shape `isValidBearerToken` requires; a bare ">=32 chars"
 // string such as 'A'.repeat(32) does not decode to 32 bytes and is REJECTED
@@ -141,7 +140,7 @@ const spawnServeHttp = async (
     const proc = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'petstore.json',
@@ -255,21 +254,12 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     if (child !== undefined) {
       const proc = child;
       child = undefined;
-      // A process that already exited on its own (e.g. a usage-error test
-      // whose child exits before this hook ever runs) has already fired its
-      // ONE 'exit' event — attaching a fresh listener now would wait
-      // forever, so only await exit for a proc that is still alive.
-      if (proc.exitCode === null && proc.signalCode === null) {
-        const exited = new Promise<void>((resolve) => {
-          proc.once('exit', () => {
-            resolve();
-          });
-        });
-        proc.kill('SIGKILL');
-        await exited;
-      } else {
-        proc.kill('SIGKILL');
-      }
+      // StopChild skips a process that already exited on its own (e.g. a
+      // usage-error test whose child exits before this hook ever runs): it
+      // has already fired its ONE 'exit' event, so a fresh listener would
+      // wait forever. A live one is asked to shut down gracefully, so it
+      // also writes its coverage (cli-subprocess.ts).
+      await stopChild(proc);
     }
     const homes = activeTempHomes.splice(0);
     await Promise.all(homes.map((home) => rm(home, { recursive: true, force: true })));
@@ -640,7 +630,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
   });
 
   it('rejects --http without --http-token-env at startup (usage error)', async () => {
-    child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json', '--http'], {
+    child = spawn(process.execPath, [CLI_ENTRY, 'serve', '--spec', 'petstore.json', '--http'], {
       cwd: fixturesDir,
     });
     const code = await new Promise<number | null>((resolve) => {
@@ -654,7 +644,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     activeTempHomes.push(home);
     child = spawn(
       process.execPath,
-      [bin, 'serve', '--spec', 'petstore.json', '--http-token-env', 'MCP_TOKEN'],
+      [CLI_ENTRY, 'serve', '--spec', 'petstore.json', '--http-token-env', 'MCP_TOKEN'],
       {
         cwd: fixturesDir,
         env: { ...process.env, HOME: home, USERPROFILE: home, MCP_TOKEN: TOKEN },
@@ -671,9 +661,13 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
   });
 
   it('rejects a non-default --port without --http at startup (usage error)', async () => {
-    child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json', '--port', '4000'], {
-      cwd: fixturesDir,
-    });
+    child = spawn(
+      process.execPath,
+      [CLI_ENTRY, 'serve', '--spec', 'petstore.json', '--port', '4000'],
+      {
+        cwd: fixturesDir,
+      },
+    );
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
     });
@@ -681,9 +675,13 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
   });
 
   it('rejects an EXPLICIT --port matching the default (3044) without --http — proves getOptionValueSource provenance, not a value comparison against the default', async () => {
-    child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json', '--port', '3044'], {
-      cwd: fixturesDir,
-    });
+    child = spawn(
+      process.execPath,
+      [CLI_ENTRY, 'serve', '--spec', 'petstore.json', '--port', '3044'],
+      {
+        cwd: fixturesDir,
+      },
+    );
     const code = await new Promise<number | null>((resolve) => {
       child?.once('exit', (exitCode) => resolve(exitCode));
     });
@@ -696,7 +694,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         'does-not-exist.json',
