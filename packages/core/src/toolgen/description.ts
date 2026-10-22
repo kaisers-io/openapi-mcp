@@ -40,7 +40,10 @@ const documentedErrors = (responses: Record<string, unknown>): string[] =>
       return description === undefined ? status : `${status}: ${description}`;
     });
 
-export const composeDescription = (operation: OperationRecord): string => {
+// `note` is fixed server text (never spec text) about the tool itself, e.g.
+// why it has no output schema (#39). It is listed right after `[DEPRECATED]`,
+// before the cap, so a long spec description cannot truncate it away.
+export const composeDescription = (operation: OperationRecord, note?: string): string => {
   const errors = documentedErrors(operation.responses);
   // `[DEPRECATED]` is listed FIRST, before sanitizeSpecText's cap runs below —
   // appending it after the cap (the original bug) could push the composed
@@ -51,6 +54,7 @@ export const composeDescription = (operation: OperationRecord): string => {
   // inserts a separator after the last element.
   const parts = [
     operation.deprecated ? '[DEPRECATED]' : undefined,
+    note,
     operation.summary,
     operation.description === operation.summary ? undefined : operation.description,
     errors.length > 0 ? `Errors: ${errors.join('; ')}` : undefined,
