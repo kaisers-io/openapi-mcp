@@ -79,6 +79,11 @@ export type MapResponseOptions = {
   baseUrl?: string;
   // Clock for an HTTP-date Retry-After; Date.now by default.
   now?: () => number;
+  // Set (to the CLI flag name) when this tool's outputSchema exists only
+  // because the operator assumed `default` documents errors (#72): an
+  // undocumented 2xx then names that assumption, so the operator can tell a
+  // spec gap from a server bug.
+  undeclaredSuccessHint?: string;
   // For a paginated tool: computes the `pagination` hint for a successful
   // response from its parsed Link header and (structured path only) its
   // parsed data. The hint is secret-checked here before it is used.
@@ -365,19 +370,45 @@ export const envelopeHasSecret = (
   return scanSafely(redactor, rawJson) || scanSafely(redactor, rest);
 };
 
-const mapSchemaSuccess = (
-  status: number,
-  contentType: string | undefined,
-  bodyBytes: Uint8Array,
-  outputSchema: Record<string, unknown>,
-  validator: EnvelopeValidator,
-  redactor: Redactor,
-  maxTextBytes: number,
-  forwarded: Readonly<Record<string, string>>,
-  page: ((data?: unknown) => PageHint) | undefined,
-): ToolCallOutcome => {
+// The mapSchemaSuccess helper takes one options object (the caller's MapResponseOptions
+// plus the narrowed response fields) rather than positional parameters, so
+// options added later cannot be passed in the wrong slot.
+type SchemaSuccessOptions = Omit<MapResponseOptions, 'outcome' | 'outputSchema' | 'validator'> & {
+  status: number;
+  contentType: string | undefined;
+  bodyBytes: Uint8Array;
+  outputSchema: Record<string, unknown>;
+  validator: EnvelopeValidator;
+  // Allowlisted upstream response headers, already secret-checked.
+  forwarded: Readonly<Record<string, string>>;
+  // The pagination hint for this response (paginated tools only).
+  page: ((data?: unknown) => PageHint) | undefined;
+};
+
+const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
+  const { status, contentType, bodyBytes, outputSchema, validator, redactor } = opts;
+  const { undeclaredSuccessHint, maxTextBytes, forwarded, page } = opts;
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
+  if (
+    branch === undefined &&
+    undeclaredSuccessHint !== undefined &&
+    !branchesOf(outputSchema).some((candidate) => candidate.status === status)
+  ) {
+    // An undocumented success STATUS under the operator's "default = errors
+    // only" assumption: still fail closed (the declared outputSchema must
+    // never be violated), but say why, naming the flag. Decision D13: the
+    // upstream REPORTED SUCCESS, so the message must not read like a plain
+    // failure — an agent that retries a POST here could apply it twice. The
+    // hint is operator-supplied CLI text, never upstream data.
+    return textOutcome(
+      `the upstream reported success (status ${status}), so the request was likely applied; ` +
+        'do not retry it blindly. No structured result is returned: this status is not documented ' +
+        `for the operation, and its output schema assumes the spec's "default" response covers ` +
+        `errors only (${undeclaredSuccessHint})`,
+      true,
+    );
+  }
   if (branch === undefined) {
     // Same upstream-controlled-essence redaction as mapNoSchemaSuccess's
     // unsupported-media-type message above.
@@ -470,17 +501,16 @@ const mapBody = (
       true,
     );
   }
-  return mapSchemaSuccess(
+  return mapSchemaSuccess({
+    ...opts,
     status,
     contentType,
     bodyBytes,
-    opts.outputSchema,
-    opts.validator,
-    opts.redactor,
-    opts.maxTextBytes,
+    outputSchema: opts.outputSchema,
+    validator: opts.validator,
     forwarded,
     page,
-  );
+  });
 };
 
 export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {

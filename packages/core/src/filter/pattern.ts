@@ -152,6 +152,13 @@ export const compileGlob = (glob: string): CompiledGlob => {
 // headroom while a pathological pattern still runs for about 1.4 s before
 // being cut off. That trade is deliberate: refusing a legitimate filter set
 // is a worse failure than a slow refusal of a hostile one.
+//
+// Since the tool budget moved after filtering (issue #32), filters run over up
+// to SPEC_BUDGETS.maxOperationCount (4096) operations rather than 512. A
+// worst realistic configuration there (256 patterns of all three forms, none
+// matching early, plus the dead-pattern pass) measures 28.9M steps, 14.4% of
+// this cap, so the cap and with it the hostile cut-off time stay unchanged
+// (filter-engine.test.ts pins the headroom).
 export const FILTER_MAX_MATCH_STEPS = 200_000_000;
 
 export type MatchBudget = {

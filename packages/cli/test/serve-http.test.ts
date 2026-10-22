@@ -1,11 +1,13 @@
 import { spawn } from 'node:child_process';
 import { Buffer } from 'node:buffer';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
 const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
@@ -93,7 +95,7 @@ const postModern = (
 const waitForPortOrExit = (
   proc: ReturnType<typeof spawn>,
   port: number,
-  timeoutMs = 5000,
+  timeoutMs = SUBPROCESS_WAIT_MS,
 ): Promise<boolean> => {
   const exited = new Promise<false>((resolve) => {
     proc.once('exit', () => resolve(false));
@@ -219,7 +221,10 @@ const rawRequest = (
 // child's stderr pipe delivering a line it wrote after answering a request),
 // rather than sleeping a fixed amount and hoping. Returns the condition's
 // final value so the caller asserts on CONTENT and fails on the deadline.
-const waitUntil = async (predicate: () => boolean, timeoutMs = 5000): Promise<boolean> => {
+const waitUntil = async (
+  predicate: () => boolean,
+  timeoutMs = SUBPROCESS_WAIT_MS,
+): Promise<boolean> => {
   const start = Date.now();
   while (Date.now() - start <= timeoutMs) {
     if (predicate()) {
@@ -313,7 +318,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     expect(called.result?.resultType).toBe('complete');
 
     child.kill('SIGTERM');
-  }, 20_000);
+  });
 
   it('requires the bearer on every request (401) and 403s a present, non-allowlisted Origin', async () => {
     const spawned = await spawnServeHttp();
@@ -334,6 +339,39 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     });
     expect(badOrigin.status).toBe(403);
 
+    child.kill('SIGTERM');
+  });
+
+  it('accepts http://localhost:<port> as well as 127.0.0.1, and still 403s a foreign Host', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+    const body = JSON.stringify(modernBody(nextId(), 'tools/list'));
+    const viaLocalhost = await fetch(`http://localhost:${String(port)}/`, {
+      method: 'POST',
+      headers: modernHeaders('tools/list'),
+      body,
+    });
+    expect(viaLocalhost.status).toBe(200);
+    // The fetch() API always derives Host from the URL, so the foreign-Host probe
+    // goes through node:http, which sends the header exactly as given.
+    const foreignStatus = await new Promise<number | undefined>((resolve, reject) => {
+      const req = httpRequest(
+        {
+          host: '127.0.0.1',
+          port,
+          method: 'POST',
+          headers: { ...modernHeaders('tools/list'), host: `rebind.example:${String(port)}` },
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode);
+        },
+      );
+      req.on('error', reject);
+      req.end(body);
+    });
+    expect(foreignStatus).toBe(403);
     child.kill('SIGTERM');
   }, 15_000);
 
@@ -365,7 +403,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     });
     expect(del.status).toBe(405);
     expect(del.headers.get('allow')).toBe('POST');
-  }, 15_000);
+  });
 
   it('serves a claim-less 2025-era POST (no initialize, no _meta claim, bearer still required) — legacy stateless serving stays on', async () => {
     const spawned = await spawnServeHttp();
@@ -400,7 +438,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     expect(payload.result?.tools?.map((tool) => tool.name)).toContain(META_TOOL);
 
     child.kill('SIGTERM');
-  }, 15_000);
+  });
 
   it('ignores a stray Mcp-Session-Id header — single or duplicated, the request still succeeds and no session id comes back', async () => {
     const spawned = await spawnServeHttp();
@@ -426,7 +464,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
       duplicatedBody,
     );
     expect(duplicated).toBe(200);
-  }, 15_000);
+  });
 
   it('surfaces the header/body agreement ladder unswallowed: a missing Mcp-Method header 400s with -32020, and its REASON reaches sanitized stderr while stdout stays empty', async () => {
     const spawned = await spawnServeHttp();
@@ -466,7 +504,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     // there, and an error sink that logged to stdout would be the classic way
     // to corrupt a stdio client's stream.
     expect(Buffer.concat(stdoutChunks).toString('utf8')).toBe('');
-  }, 15_000);
+  });
 
   it('a duplicate Host header (one allowed value + one evil value) is rejected — proves the guard reads req.headersDistinct, not the collapsing req.headers', async () => {
     const spawned = await spawnServeHttp();
@@ -486,7 +524,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     // wrongly passing the Host guard and letting the request through;
     // req.headersDistinct.host sees BOTH values and fails closed (403).
     expect(status).toBe(403);
-  }, 15_000);
+  });
 
   it('enforces the 4 MB inbound body cap with a DELIBERATE 400 (not a socket reset/500) — and rejects invalid JSON with a 400 JSON-RPC parse error, not a 500', async () => {
     const spawned = await spawnServeHttp();
@@ -509,7 +547,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     });
     expect(badJson.status).toBe(400);
     expect(((await badJson.json()) as JsonRpcEnvelope).error?.code).toBe(-32_700);
-  }, 15_000);
+  });
 
   it('GLOBAL rate exhaustion is SHARED across requests (proves the limiter stayed process-wide even though every request is served by a FRESH server instance)', async () => {
     const spawned = await spawnServeHttp();
@@ -569,7 +607,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     // fallback would only exit at ~5000ms. A `< 10_000` bound would pass in
     // BOTH cases, leaving the graceful path unfalsified.
     expect(Date.now() - start).toBeLessThan(4000);
-  }, 15_000);
+  });
 
   it('a client that aborts a request mid-flight does not wedge the listener — the next request is served normally', async () => {
     const spawned = await spawnServeHttp();
@@ -599,7 +637,7 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
 
     const stillAlive = await postModern(port, 'tools/list', modernBody(nextId(), 'tools/list'));
     expect(stillAlive.status).toBe(200);
-  }, 15_000);
+  });
 
   it('rejects --http without --http-token-env at startup (usage error)', async () => {
     child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json', '--http'], {
