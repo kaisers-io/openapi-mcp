@@ -163,6 +163,11 @@ Run **one `openapi-mcp` server per API per environment** — dev/stage/prod are 
 entries with different spec URLs, credentials, and `--cache-key`s, not flags on a shared
 server.
 
+A refused call (`--max-concurrency` queue full or wait timed out, or over `--rate-limit`) is a
+tool error whose result `_meta` carries `"openapi-mcp/error"` (`overloaded` | `rate_limited`)
+and `"openapi-mcp/retryAfterMs"`. Keys under `openapi-mcp/` in `_meta` are part of the public
+contract; see [docs/configuration.md](docs/configuration.md).
+
 ## Filtering
 
 Tool exposure is controlled with repeatable `--allow`/`--deny` patterns, matched against

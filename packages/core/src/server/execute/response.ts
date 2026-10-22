@@ -332,20 +332,24 @@ const mapNoSchemaSuccess = (
 // the decoded text, JSON has no escape sequences, so every key and string
 // value appears in the raw text exactly as it does after parsing: one
 // substring scan of the raw text then finds every secret the recursive tree
-// walk would find (and possibly more — a needle spanning two tokens — which
-// only fails closed). With any backslash present, an escaped secret
-// (`\/`, `\uXXXX`) differs from its parsed form, so the tree walk runs
-// instead. The envelope's own contentType is spec-derived, so it is checked
-// separately; status is a number.
-const envelopeHasSecret = (
+// walk would find over `data` (and possibly more — a needle spanning two
+// tokens — which only fails closed). With any backslash present, an escaped
+// secret (`\/`, `\uXXXX`) differs from its parsed form, so the tree walk
+// runs over the whole envelope instead. Every OTHER envelope field (status,
+// contentType, and anything a later layer adds, such as forwarded headers or
+// pagination hints) is always tree-scanned: the raw text only stands in for
+// `data`, so a new field can never silently skip the scan.
+export const envelopeHasSecret = (
   redactor: Redactor,
   rawJson: string,
-  envelopeContentType: string,
   envelope: Record<string, unknown>,
-): boolean =>
-  rawJson.includes('\\')
-    ? scanSafely(redactor, envelope)
-    : scanSafely(redactor, rawJson) || scanSafely(redactor, envelopeContentType);
+): boolean => {
+  if (rawJson.includes('\\')) {
+    return scanSafely(redactor, envelope);
+  }
+  const { data: _data, ...rest } = envelope;
+  return scanSafely(redactor, rawJson) || scanSafely(redactor, rest);
+};
 
 const mapSchemaSuccess = (
   status: number,
@@ -390,7 +394,7 @@ const mapSchemaSuccess = (
   // isError — never a redacted-but-successful structuredContent. The
   // envelope's DATA is never itself rewritten: either it is secret-free and
   // returned verbatim, or the call is refused outright.
-  if (envelopeHasSecret(redactor, decoded.ok, branch.contentType, envelope)) {
+  if (envelopeHasSecret(redactor, decoded.ok, envelope)) {
     return textOutcome(GENERIC_UNSAFE_TEXT, true);
   }
   if (!validator(envelope)) {
