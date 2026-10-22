@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { envelopeHasSecret } from '../src/server/execute/response.ts';
 import {
   compileEnvelopeValidator,
   createRedactor,
@@ -665,6 +666,25 @@ describe('mapResponse — large structured results: one secret scan, bounded tex
     expect(JSON.stringify(JSON.parse(body))).toContain(SECRET);
     const text = isError(structured(body));
     expect(text).toBe('the upstream response could not be returned safely');
+  });
+
+  it.each([
+    ['without escapes (raw-text fast path)', '{"id":1}'],
+    ['with escapes (tree-scan fallback)', '{"path":"a\\/b"}'],
+  ])('tree-scans every non-data envelope field %s', (_label, body) => {
+    const redactor = createRedactor([SECRET]);
+    const data: unknown = JSON.parse(body);
+    const clean = { status: 200, contentType: 'application/json', data };
+    expect(envelopeHasSecret(redactor, body, clean)).toBe(false);
+    // A field a later layer adds (forwarded headers, a pagination hint) is
+    // covered without touching the fast path; so is the content type.
+    expect(envelopeHasSecret(redactor, body, { ...clean, headers: { [SECRET]: 'x' } })).toBe(true);
+    expect(envelopeHasSecret(redactor, body, { ...clean, pagination: { next: SECRET } })).toBe(
+      true,
+    );
+    expect(
+      envelopeHasSecret(redactor, body, { ...clean, contentType: `application/${SECRET}` }),
+    ).toBe(true);
   });
 
   it('accepts a secret-free body that contains escapes (tree-scan fallback, no false positive)', () => {
