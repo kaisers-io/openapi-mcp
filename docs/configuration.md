@@ -56,7 +56,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
-| `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
+| `--max-response-bytes <size>` | no | cap the decompressed upstream response body **and** the outgoing request body (see below) | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
@@ -68,6 +68,9 @@ Notes:
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.
+- `--max-response-bytes` also caps every outgoing request body, measured after encoding
+  (for an `application/octet-stream` upload: the decoded bytes). The base64 tool argument
+  that carries an upload is about 4/3 of that size inside the JSON-RPC message.
 - Header values (from `--header`, `--header-env` and `--spec-header-env`, and header parameters
   a tool caller passes) are sent as bytes. Control characters and characters above U+00FF are
   refused: operator headers at startup, tool arguments per call, before any request is sent.

@@ -3,7 +3,13 @@ import { SPEC_BUDGETS } from '../spec/budgets.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
-import { FORM_URLENCODED, isJsonEssence, parseMediaType } from './media-type.ts';
+import {
+  FORM_URLENCODED,
+  isJsonEssence,
+  isStrictBase64,
+  OCTET_STREAM,
+  parseMediaType,
+} from './media-type.ts';
 import { convertSchema, isDangerousKey } from './schema.ts';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -316,7 +322,7 @@ const jsonTier = (json: readonly MediaCandidate[]): readonly MediaCandidate[] =>
 //   3. otherwise `application/x-www-form-urlencoded`, bare or with
 //      `charset=utf-8` (the bare key wins if both are declared). The body is
 //      always encoded as UTF-8 (WHATWG URL §5.2), so a key naming another
-//      charset is not selected (fail-closed: the operation is omitted).
+//      charset is not selected (fail-closed: that key is never used).
 // The declared key is returned verbatim; a key that is not a well-formed
 // media type is never selected (see media-type.ts).
 const selectMedia = (
@@ -351,13 +357,68 @@ const selectMedia = (
       : [];
   });
   const chosenForm = pickOne(form);
-  return chosenForm === undefined
-    ? undefined
+  if (chosenForm !== undefined) {
+    return {
+      contentType: chosenForm.contentType,
+      entry: content[chosenForm.contentType] as Record<string, unknown>,
+    };
+  }
+  // 4. `application/octet-stream` (#71), last: a structured alternative is
+  //    always preferred over raw bytes. Same tie rule as the JSON tiers.
+  const binary: MediaCandidate[] = Object.keys(content).flatMap((contentType) => {
+    const parsed = parseMediaType(contentType);
+    return parsed?.essence === OCTET_STREAM && isRecord(content[contentType])
+      ? [{ contentType, ...parsed }]
+      : [];
+  });
+  if (binary.length === 0) {
+    return undefined;
+  }
+  const chosen = pickOne(binary);
+  return chosen === undefined
+    ? {
+        ambiguous: `several octet-stream media types (${binary.map((candidate) => candidate.contentType).join(', ')})`,
+      }
     : {
-        contentType: chosenForm.contentType,
-        entry: content[chosenForm.contentType] as Record<string, unknown>,
+        contentType: chosen.contentType,
+        entry: content[chosen.contentType] as Record<string, unknown>,
       };
 };
+
+// The schema of an octet-stream body describes raw bytes, not JSON: OAS 3.0
+// writes `{type: string, format: binary}` (§4.7.14 "Considerations for File
+// Uploads"), OAS 3.1 omits the schema or uses `contentMediaType` (§4.8.14.3
+// "Binary Streams"). Only those shapes are accepted; anything else — an
+// object schema, `format: byte` (base64 TEXT), or a 3.1 `contentEncoding`
+// (the bytes on the wire are themselves encoded) — omits fail-closed.
+const BINARY_SCHEMA_KEYS: ReadonlySet<string> = new Set([
+  'type',
+  'format',
+  'contentMediaType',
+  'title',
+  'description',
+  'example',
+  'examples',
+  '$comment',
+]);
+const isBinarySchema = (schema: unknown): boolean =>
+  schema === undefined ||
+  (isRecord(schema) &&
+    (schema['type'] === undefined || schema['type'] === 'string') &&
+    (schema['format'] === undefined || schema['format'] === 'binary') &&
+    Object.keys(schema).every((key) => key.startsWith('x-') || BINARY_SCHEMA_KEYS.has(key)));
+
+// A binary body travels through the JSON-RPC tool call as ONE base64 string
+// (tool arguments are JSON — they cannot carry raw bytes) and buildRequest
+// decodes it. Validated strictly here, advertised with the JSON Schema
+// content vocabulary (2020-12 Validation §8.3 contentEncoding, §8.4
+// contentMediaType) so a client knows how to encode it.
+const binaryBodySchema = (contentType: string): z.ZodType =>
+  z
+    .string()
+    .refine((value) => isStrictBase64(value), { message: 'must be valid base64 (RFC 4648)' })
+    .meta({ contentEncoding: 'base64', contentMediaType: contentType })
+    .describe(`The request body as base64-encoded bytes (${contentType}).`);
 
 const isFlattenableRoot = (root: unknown): root is Record<string, unknown> => {
   if (!isRecord(root)) {
@@ -398,7 +459,10 @@ const bodyFields = (
   const content = isRecord(requestBody['content']) ? requestBody['content'] : undefined;
   const media = content === undefined ? undefined : selectMedia(content);
   if (media === undefined) {
-    return { unrepresentable: 'the request body has no JSON or form-urlencoded content' };
+    return {
+      unrepresentable:
+        'the request body has no JSON, form-urlencoded or application/octet-stream content',
+    };
   }
   if ('ambiguous' in media) {
     return {
@@ -410,6 +474,28 @@ const bodyFields = (
   }
   const bodyRequired = requestBody['required'] === true;
   const root = media.entry['schema'];
+  if (parseMediaType(media.contentType)?.essence === OCTET_STREAM) {
+    if (!isBinarySchema(root)) {
+      return { unrepresentable: 'the application/octet-stream body schema is not a binary string' };
+    }
+    return {
+      ok: {
+        fields: [
+          {
+            preferred: 'body',
+            name: 'body',
+            location: 'body',
+            schema: binaryBodySchema(media.contentType),
+            required: bodyRequired,
+            mapping: { destination: 'body', bodyPath: [], required: bodyRequired },
+          },
+        ],
+        mode: 'single',
+        contentType: media.contentType,
+        ...(bodyRequired ? { required: true as const } : {}),
+      },
+    };
+  }
   if (isFlattenableRoot(root)) {
     const properties = root['properties'] as Record<string, unknown>;
     // The flatten path never runs the root through convertSchema, so the root's

@@ -39,3 +39,17 @@ const JSON_ESSENCE_RE = /^application\/(?:[\w.+-]+\+)?json$/u;
 export const isJsonEssence = (essence: string): boolean => JSON_ESSENCE_RE.test(essence);
 
 export const FORM_URLENCODED = 'application/x-www-form-urlencoded';
+
+export const OCTET_STREAM = 'application/octet-stream';
+
+// Strict RFC 4648 §4 base64: standard alphabet, canonical `=` padding, no
+// whitespace or line breaks, and canonical trailing bits (§3.5: `QR==`, which
+// decodes to the same byte as `QQ==`, is rejected). Checked by a round trip:
+// Node's decoder is lenient (it skips invalid characters and whitespace), so
+// any input it had to skip or reinterpret re-encodes differently. Linear in
+// the input with constant stack depth — a regex with a quantified group
+// overflowed V8's stack above ~4.47M characters (~3.2 MiB decoded), well
+// under the default 10 MB body budget. Used both to validate the tool input
+// and, defensively, again before decoding it.
+export const isStrictBase64 = (value: string): boolean =>
+  value.length % 4 === 0 && Buffer.from(value, 'base64').toString('base64') === value;

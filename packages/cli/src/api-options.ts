@@ -145,7 +145,7 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     )
     .option(
       '--max-response-bytes <size>',
-      'cap the decompressed upstream response body (<int><B|KB|MB> or a plain byte count)',
+      'cap the decompressed upstream response body and the outgoing request body (<int><B|KB|MB> or a plain byte count)',
       '10MB',
     )
     .option(

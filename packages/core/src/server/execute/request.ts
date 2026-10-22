@@ -1,5 +1,11 @@
 import { HEADER_NAME_RE, NON_LATIN1_RE } from '../../http/headers.ts';
-import { FORM_URLENCODED, isJsonEssence, parseMediaType } from '../../toolgen/media-type.ts';
+import {
+  FORM_URLENCODED,
+  isJsonEssence,
+  isStrictBase64,
+  OCTET_STREAM,
+  parseMediaType,
+} from '../../toolgen/media-type.ts';
 import { isDangerousKey } from '../../toolgen/schema.ts';
 import type { FieldMapping, RequestMapper } from '../../toolgen/layout.ts';
 
@@ -533,13 +539,25 @@ type SerializedBody = {
   contentType?: string;
 };
 
-const bodyEncoding = (contentType: string): 'json' | 'form' | undefined => {
+const bodyEncoding = (contentType: string): 'json' | 'form' | 'binary' | undefined => {
   const essence = parseMediaType(contentType)?.essence;
   if (essence !== undefined && isJsonEssence(essence)) {
     return 'json';
   }
+  if (essence === OCTET_STREAM) {
+    return 'binary';
+  }
   return essence === FORM_URLENCODED ? 'form' : undefined;
 };
+
+// An octet-stream body arrives as a base64 string (see layout.ts) and is sent
+// as the decoded bytes. Re-validated strictly here — Node's base64 decoder is
+// lenient (it skips invalid characters), so decoding unvalidated text could
+// silently send different bytes than the caller encoded.
+const binaryBody = (payload: unknown): { ok: Uint8Array } | { error: string } =>
+  typeof payload === 'string' && isStrictBase64(payload)
+    ? { ok: new Uint8Array(Buffer.from(payload, 'base64')) }
+    : { error: 'an application/octet-stream body must be a valid base64 string' };
 
 const serializeBody = (
   mapper: RequestMapper,
@@ -600,6 +618,13 @@ const serializeBody = (
       return { ok: {} };
     }
     payload = assembled.object;
+  }
+  if (encoding === 'binary') {
+    const decoded = binaryBody(payload);
+    if ('error' in decoded) {
+      return decoded;
+    }
+    return { ok: { body: decoded.ok, contentType } };
   }
   if (encoding === 'json') {
     const encoded = jsonBody(payload);
