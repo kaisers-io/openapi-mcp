@@ -327,6 +327,7 @@ const runUpstreamCall = async (
       ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
       : {}),
     maxTextBytes: DISPLAY_TEXT_MAX,
+    baseUrl: config.baseUrl,
   });
 };
 

@@ -1200,6 +1200,181 @@ describe('createExecutor — Accept derived from the declared response media typ
   });
 });
 
+describe('createExecutor — forwarded upstream response headers', () => {
+  const SECRET = 'example-token-not-a-secret-123';
+  const run = async (
+    op: NamedOperation,
+    response: () => Response,
+    args: Record<string, unknown> = {},
+  ) => {
+    const snapshot = buildToolSnapshot([op]);
+    const tool = snapshot.toolsByName[op.toolName] as SnapshotTool;
+    const { deps } = recordingTransport(response);
+    const executor = createExecutor(
+      baseConfig({
+        validators: validatorsFor(snapshot),
+        redactor: createRedactor([SECRET]),
+      }),
+      deps,
+    );
+    return { outcome: await executor(tool, args, freshSignal()), tool };
+  };
+
+  const pagedHeaders = {
+    'content-type': 'application/json',
+    link: '<https://api.example.test/things/1?page=2>; rel="next"',
+    'x-total-count': '42',
+    etag: '"v1"',
+    'x-ratelimit-remaining': '9',
+    'set-cookie': `session=${SECRET}`,
+    'x-request-id': 'not-forwarded',
+  };
+
+  it('puts allowlisted headers in the structured envelope, which still validates', async () => {
+    const { outcome, tool } = await run(
+      idPathOp,
+      () => new Response('{"id":1}', { status: 200, headers: pagedHeaders }),
+      { id: '1' },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+      headers: { 'x-total-count': '42', etag: '"v1"', 'x-ratelimit-remaining': '9' },
+    });
+    const validate = compileEnvelopeValidator(tool.wireTool.outputSchema);
+    expect(validate?.(outcome.structuredContent)).toBe(true);
+    // D4: the raw Link URL never reaches the model; Set-Cookie never at all.
+    expect(JSON.stringify(outcome)).not.toContain('page=2');
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+    expect(JSON.stringify(outcome)).not.toContain('not-forwarded');
+  });
+
+  it('leaves the envelope unchanged when the upstream sends none of them', async () => {
+    const { outcome } = await run(idPathOp, () => jsonResponse(200, { id: 1 }), { id: '1' });
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+    });
+  });
+
+  it('adds a trailing headers block to a text result', async () => {
+    const { outcome } = await run(
+      pingOp,
+      () =>
+        new Response('pong', {
+          status: 200,
+          headers: { ...pagedHeaders, 'content-type': 'text/plain' },
+        }),
+    );
+    expect(outcome.content.map((block) => block.text)).toEqual([
+      'pong',
+      'headers:\netag: "v1"\nx-ratelimit-remaining: 9\nx-total-count: 42',
+    ]);
+  });
+
+  it('drops a header whose value carries a registered secret, keeping the rest', async () => {
+    const { outcome } = await run(
+      pingOp,
+      () =>
+        new Response('pong', {
+          status: 200,
+          headers: { 'content-type': 'text/plain', etag: `"${SECRET}"`, 'x-total-count': '1' },
+        }),
+    );
+    expect(outcome.content.at(-1)?.text).toBe('headers:\nx-total-count: 1');
+  });
+
+  it('drops a header whose NAME carries a registered secret, in a structured result too', async () => {
+    const { outcome, tool } = await run(
+      idPathOp,
+      () =>
+        new Response('{"id":1}', {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            [`x-ratelimit-${SECRET}`]: '1',
+            'x-total-count': '1',
+          },
+        }),
+      { id: '1' },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+      headers: { 'x-total-count': '1' },
+    });
+    expect(compileEnvelopeValidator(tool.wireTool.outputSchema)?.(outcome.structuredContent)).toBe(
+      true,
+    );
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+  });
+
+  it('forwards a same-origin Location as a path, and drops a foreign one', async () => {
+    const created = await run(
+      createThingOp,
+      () =>
+        new Response(null, {
+          status: 201,
+          headers: { location: 'https://api.example.test/things/7?x=1' },
+        }),
+      { name: 'x' },
+    );
+    expect(created.outcome.content.at(-1)?.text).toBe('headers:\nlocation: /things/7?x=1');
+    const relative = await run(
+      createThingOp,
+      () => new Response(null, { status: 201, headers: { location: 'things/8' } }),
+      { name: 'x' },
+    );
+    expect(relative.outcome.content.at(-1)?.text).toBe('headers:\nlocation: /things/8');
+    const foreign = await run(
+      createThingOp,
+      () =>
+        new Response(null, { status: 201, headers: { location: 'https://evil.example/steal' } }),
+      { name: 'x' },
+    );
+    expect(JSON.stringify(foreign.outcome)).not.toContain('evil.example');
+    expect(foreign.outcome.content).toHaveLength(1);
+  });
+
+  it('reports upstreamRetryAfterMs for a 429 with Retry-After seconds', async () => {
+    const { outcome } = await run(
+      pingOp,
+      () =>
+        new Response('slow down', {
+          status: 429,
+          headers: { 'content-type': 'text/plain', 'retry-after': '3' },
+        }),
+    );
+    expect(outcome.isError).toBe(true);
+    expect(outcome.meta).toEqual({ 'openapi-mcp/upstreamRetryAfterMs': 3000 });
+    expect(outcome.content.at(-1)?.text).toBe('headers:\nretry-after: 3');
+  });
+
+  it('parses an HTTP-date Retry-After on a 503', async () => {
+    const at = new Date(Date.now() + 60_000).toUTCString();
+    const { outcome } = await run(
+      pingOp,
+      () => new Response('', { status: 503, headers: { 'retry-after': at } }),
+    );
+    const retry = outcome.meta?.['openapi-mcp/upstreamRetryAfterMs'] as number;
+    expect(retry).toBeGreaterThan(55_000);
+    expect(retry).toBeLessThanOrEqual(60_000);
+  });
+
+  it('does not report upstreamRetryAfterMs on a success', async () => {
+    const { outcome } = await run(
+      pingOp,
+      () => new Response('', { status: 200, headers: { 'retry-after': '3' } }),
+    );
+    expect(outcome.meta).toBeUndefined();
+  });
+});
+
 // #72: end to end with --default-response-is-error semantics.
 describe('createExecutor — default response treated as error (#72)', () => {
   const chargeOp: NamedOperation = {

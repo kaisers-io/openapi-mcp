@@ -35,6 +35,13 @@ const isJsonContentType = (contentType: string): boolean =>
   /^application\/(?:[\w.+-]+\+)?json$/u.test(contentType);
 
 const SUCCESS_STATUS_RE = /^2\d\d$/u;
+
+// Deliberately minimal: it is repeated in every success branch of every
+// tool, and tools/list size is paid in every session. Declaring it once per
+// tool (top-level property + `true` per branch) costs MORE for the common
+// single-branch tool; typing the values (always strings, produced by this
+// server) adds bytes without helping the caller.
+const RESPONSE_HEADERS_SCHEMA: JsonSchemaRecord = { type: 'object' };
 // A literal OpenAPI 3.1 status-code RANGE key ("2XX"/"2xx"), or the "default"
 // response — either is treated as "might cover a success we cannot bound".
 // With `defaultResponseIsError` (an explicit operator opt-in, #72) the
@@ -162,6 +169,11 @@ export const explainOutputSchema = (
         status: { const: Number(key) },
         contentType: { const: contentType },
         data: dataSchema,
+        // Allowlisted upstream response headers (pagination, rate limits,
+        // validators), present only when the upstream sent any — see
+        // server/execute/forwarded-headers.ts. Optional, so a result
+        // without them still conforms.
+        headers: RESPONSE_HEADERS_SCHEMA,
       },
       required: ['status', 'contentType', 'data'],
       additionalProperties: false,

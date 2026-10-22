@@ -104,6 +104,14 @@ Notes:
   `structuredContent`, because a tool's structured content must match its output schema.
   Both limits are always finite. There is no "unlimited" setting, because MCP servers must
   rate-limit tool calls.
+- Upstream response headers: a fixed allowlist is forwarded into tool results. It covers
+  `etag`, `last-modified`, `retry-after`, `x-total-count`, `x-ratelimit-*`, `ratelimit*`, and
+  `location`. A `location` header is forwarded only when it points to the same origin as the
+  base URL, and only as a path. Structured results carry these in the envelope's `headers`
+  object. Text results get a trailing `headers:` block. `Set-Cookie` and authentication
+  headers are never read. `Link` is not forwarded as a raw URL. A value that contains a
+  configured secret is dropped. On a `429` or `503`, a valid `Retry-After` is also reported
+  as `_meta["openapi-mcp/upstreamRetryAfterMs"]`.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly
