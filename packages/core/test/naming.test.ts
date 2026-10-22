@@ -22,7 +22,9 @@ describe('assignToolNames — bases', () => {
   });
 
   it('sanitizes invalid characters to underscores', () => {
-    expect(assignToolNames([record('get', '/pets', 'list pets!')])[0]?.toolName).toBe('list_pets_');
+    expect(assignToolNames([record('get', '/pets', 'list pets!now')])[0]?.toolName).toBe(
+      'list_pets_now',
+    );
   });
 
   it('caps long operationIds at the maximum length', () => {
@@ -35,10 +37,10 @@ describe('assignToolNames — bases', () => {
   });
 
   it('falls back to method_path when the operationId sanitizes to nothing', () => {
-    // Sanitizing '###' yields '___'; only characters outside the charset become
-    // underscores, so an all-underscore result never occurs from real input.
-    // An empty operationId is dropped by normalize; the empty-string branch
-    // guards direct core consumers.
+    // '###' has no character inside the charset, so nothing meaningful is
+    // left. An empty operationId is dropped by normalize; the record without
+    // one guards direct core consumers.
+    expect(assignToolNames([record('post', '/pets', '###')])[0]?.toolName).toBe('post_pets');
     expect(assignToolNames([record('post', '/pets')])[0]?.toolName).toBe('post_pets');
   });
 
@@ -103,5 +105,60 @@ describe('assignToolNames — collisions', () => {
       expect(entry.toolName.length).toBeLessThanOrEqual(TOOL_NAME_MAX_LENGTH);
     }
     expect(new Set(named.map((entry) => entry.toolName)).size).toBe(2);
+  });
+});
+
+describe('assignToolNames — non-ASCII, mixed segments and the provider charset (issue #67)', () => {
+  const nameOf = (method: HttpMethod, path: string, operationId?: string): string | undefined =>
+    assignToolNames([record(method, path, operationId)])[0]?.toolName;
+
+  it('strips diacritics instead of turning each accented letter into an underscore', () => {
+    expect(nameOf('get', '/x', 'Ünïcödé')).toBe('Unicode');
+    expect(nameOf('get', '/x', 'créerUtilisateur')).toBe('creerUtilisateur');
+  });
+
+  it('folds compatibility forms (full-width letters) to ASCII', () => {
+    expect(nameOf('get', '/x', 'ｇｅｔＵｓｅｒ')).toBe('getUser');
+  });
+
+  it('falls back to method_path when an operationId has no ASCII letter or digit left (CJK)', () => {
+    expect(nameOf('get', '/a', 'ユーザー取得')).toBe('get_a');
+    expect(nameOf('get', '/users/{id}', '获取用户')).toBe('get_users_by_id');
+  });
+
+  it('collapses a run of replaced characters into one underscore and trims them at the ends', () => {
+    expect(nameOf('get', '/x', '  list   pets!! ')).toBe('list_pets');
+    expect(nameOf('get', '/x', 'list pets!')).toBe('list_pets');
+  });
+
+  it('keeps underscores the spec author wrote', () => {
+    expect(nameOf('get', '/x', '__internal__list')).toBe('__internal__list');
+  });
+
+  it('maps dots to underscores: OpenAI and Anthropic tool names allow only [A-Za-z0-9_-]', () => {
+    expect(nameOf('get', '/x', 'repos.get')).toBe('repos_get');
+    expect(nameOf('get', '/x', 'v1.users.list')).toBe('v1_users_list');
+  });
+
+  it('names a segment that mixes a placeholder with static text', () => {
+    expect(nameOf('get', '/users/{id}.json')).toBe('get_users_by_id_json');
+    expect(nameOf('get', '/files/{name}.{ext}')).toBe('get_files_by_name_by_ext');
+    expect(nameOf('get', '/v1.2/items')).toBe('get_v1_2_items');
+  });
+
+  it('keeps names unique, stable and within the length cap after transliteration', () => {
+    const named = assignToolNames([
+      record('get', '/a', 'Ünïcödé'),
+      record('get', '/b', 'Unicode'),
+      record('get', '/c', 'é'.repeat(80)),
+    ]);
+    expect(named.map((entry) => entry.toolName)).toEqual([
+      `Unicode_${suffix('GET', '/a', 8)}`,
+      `Unicode_${suffix('GET', '/b', 8)}`,
+      'e'.repeat(TOOL_NAME_MAX_LENGTH),
+    ]);
+    for (const entry of named) {
+      expect(entry.toolName).toMatch(/^[A-Za-z0-9_-]{1,64}$/u);
+    }
   });
 });

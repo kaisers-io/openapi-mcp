@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeSpec } from '../src/index.ts';
+import { assignToolNames, buildTools, normalizeSpec, SYSTEM_HEADERS } from '../src/index.ts';
 
 const doc = (
   paths: Record<string, unknown>,
@@ -69,6 +69,89 @@ describe('normalizeSpec — extraction', () => {
     expect(params).toHaveLength(2);
     const verbose = params.find((param) => param['name'] === 'verbose');
     expect(verbose?.['schema']).toEqual({ type: 'string' });
+  });
+
+  it('lets an operation-level header override a path-level one that differs only in case (issue #67)', () => {
+    const spec = normalizeSpec(
+      doc({
+        '/x': {
+          parameters: [{ name: 'X-Req-Id', in: 'header', schema: { type: 'string' } }],
+          get: {
+            operationId: 'getX',
+            parameters: [{ name: 'x-req-id', in: 'header', schema: { type: 'integer' } }],
+            responses: okResponses,
+          },
+        },
+      }),
+      '3.1',
+    );
+    // HTTP header names are case-insensitive (RFC 9110 §5.1), so these name the
+    // same parameter and the operation-level definition replaces the other one.
+    expect(spec.operations[0]?.parameters).toEqual([
+      { name: 'x-req-id', in: 'header', schema: { type: 'integer' } },
+    ]);
+  });
+
+  it('exposes that operation as a tool with one header input instead of omitting it', () => {
+    const spec = normalizeSpec(
+      doc({
+        '/x': {
+          parameters: [{ name: 'X-Req-Id', in: 'header', schema: { type: 'string' } }],
+          get: {
+            operationId: 'getX',
+            parameters: [{ name: 'x-req-id', in: 'header', schema: { type: 'string' } }],
+            responses: okResponses,
+          },
+        },
+      }),
+      '3.1',
+    );
+    const { tools, omitted } = buildTools(assignToolNames(spec.operations), {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    expect(omitted).toEqual([]);
+    expect(tools.map((tool) => tool.toolName)).toEqual(['getX']);
+    expect(JSON.stringify(tools[0]?.wireSchema).match(/x-req-id/giu)).toHaveLength(1);
+  });
+
+  it('still omits an operation that declares the same header twice at ONE level', () => {
+    const spec = normalizeSpec(
+      doc({
+        '/x': {
+          get: {
+            parameters: [
+              { name: 'X-Req-Id', in: 'header', schema: { type: 'string' } },
+              { name: 'x-req-id', in: 'header', schema: { type: 'string' } },
+            ],
+            responses: okResponses,
+          },
+        },
+      }),
+      '3.1',
+    );
+    const { tools, omitted } = buildTools(assignToolNames(spec.operations), {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    expect(tools).toEqual([]);
+    expect(omitted[0]?.reason).toContain('duplicate header parameter');
+  });
+
+  it('keeps query and path parameters case-sensitive when merging', () => {
+    const spec = normalizeSpec(
+      doc({
+        '/x': {
+          parameters: [{ name: 'Page', in: 'query', schema: { type: 'string' } }],
+          get: {
+            parameters: [{ name: 'page', in: 'query', schema: { type: 'string' } }],
+            responses: okResponses,
+          },
+        },
+      }),
+      '3.1',
+    );
+    expect(spec.operations[0]?.parameters.map((param) => param['name'])).toEqual(['Page', 'page']);
   });
 
   it('keeps requestBody and responses as records', () => {

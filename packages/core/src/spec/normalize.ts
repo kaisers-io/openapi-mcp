@@ -1,4 +1,5 @@
 import { SPEC_BUDGETS } from './budgets.ts';
+import { mergeParameters } from './merge-parameters.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import type { OpenapiVersion } from './validate.ts';
 
@@ -46,27 +47,6 @@ export type NormalizedSpec = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
-
-const mergeParameters = (
-  pathLevel: readonly unknown[],
-  opLevel: readonly unknown[],
-): { parameters: Record<string, unknown>[]; unresolvable: boolean } => {
-  const merged = new Map<string, Record<string, unknown>>();
-  for (const source of [pathLevel, opLevel]) {
-    for (const param of source) {
-      if (
-        !isRecord(param) ||
-        typeof param['name'] !== 'string' ||
-        typeof param['in'] !== 'string'
-      ) {
-        // Covers cyclic { $ref } markers and malformed parameter shapes
-        return { parameters: [], unresolvable: true };
-      }
-      merged.set(`${param['in']} ${param['name']}`, param);
-    }
-  }
-  return { parameters: [...merged.values()], unresolvable: false };
-};
 
 const buildOperation = (
   method: HttpMethod,
