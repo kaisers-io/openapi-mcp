@@ -48,10 +48,11 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
 | `--timeout <duration>` | no | spec fetch timeout | `30s` |
-| `--ttl <duration>` | no | spec refresh interval | `1h` |
+| `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
+| `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
@@ -59,16 +60,41 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
-| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
+| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
+| `--tool-mode <mode>` | no | `per-operation`, `discover` or `auto` — see [Tool modes](#tool-modes) | `per-operation` |
 
 Notes:
 
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.
+- Header values (from `--header`, `--header-env` and `--spec-header-env`, and header parameters
+  a tool caller passes) are sent as bytes. Control characters and characters above U+00FF are
+  refused: operator headers at startup, tool arguments per call, before any request is sent.
+  Characters U+0080–U+00FF are allowed, are sent as single bytes, and the receiving server reads
+  them as Latin-1 (ISO-8859-1), not UTF-8. ASCII is the safe choice.
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
+- `--default-response-is-error` is opt-in. Without it, an operation that documents a
+  `default` response gets no output schema, because `default` may cover an undocumented
+  success status. With it, only the explicitly documented `2xx` responses form the output
+  schema; a `2XX` range key still disables it. An undocumented `2xx` at runtime then
+  returns a tool error naming the flag — never non-conforming structured output. `tools`
+  marks the affected tools (see [`tools`](#tools)).
+
+  **Trade-off.** The flag buys structured output at the cost of a possible false error: when
+  the upstream answers with an undocumented success status (say `201` or `202` where only
+  `200` is documented), the call is reported as a tool error even though the upstream
+  action happened. The error text says so: the upstream reported success (status N), the
+  request was likely applied, and the caller should not retry it blindly. For write-heavy
+  APIs whose specs under-document success statuses, leave the flag off.
+- Size limits: a spec may document at most 4096 operations (a hard stop before anything is
+  cached, whatever the filters), and at most 512 tools may be exposed after `--allow`/`--deny`
+  filtering. A larger API can be served by narrowing the exposed set with `--allow`/`--deny`;
+  a spec above 4096 operations has to be split. When a refreshed spec is stored as a
+  candidate that would expose more than 512 tools under the current filters, the run warns,
+  since the server would refuse to start after `cache promote`.
 
 Example:
 
@@ -93,6 +119,55 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
 
+### Tool modes
+
+`--tool-mode` decides how the exposed operations reach the model.
+
+- `per-operation` (default): one MCP tool per exposed operation, each with its full input
+  schema, output schema and description in `tools/list`. At most 512 operations may be
+  exposed.
+- `discover`: `tools/list` carries `openapi_mcp_status` plus three fixed tools, whatever the
+  number of operations:
+  - `search_operations` `{ query?, tags?, method?, limit? (1–25, default 10), detail?
+    ("names" | "summary") }` ranks the exposed operations by keyword (operation name, path,
+    tags, parameter names, summary, description). Local and deterministic: no embeddings, no
+    network. The query is capped at 500 characters and 32 distinct terms.
+  - `describe_operation` `{ name }` returns the operation's definition exactly as
+    `per-operation` would list it.
+  - `call_operation` `{ name, arguments }` calls it. `arguments` is validated by that
+    operation's own schema, with the same error messages, rate limit, redaction and upstream
+    request as a direct call. Omit `arguments` for an operation without inputs; `null` is
+    rejected (`arguments: invalid_type`).
+    Up to 4096 operations may be exposed.
+- `auto`: `discover` when more than 64 operations are exposed after filtering, otherwise
+  `per-operation`.
+
+`--allow`/`--deny` and the read-only default apply unchanged: an operation they exclude is
+neither searchable nor callable (`call_operation` reports it as an unknown operation).
+
+What `discover` costs: a model typically needs a search and a describe before each new
+operation, so a task takes more tool calls. And because one `call_operation` tool stands for
+every exposed operation, it carries the least safe annotations among them — `readOnlyHint:
+true` only when every exposed operation is a `GET`/`HEAD` (the read-only default),
+otherwise `destructiveHint: true` when any is. A host that asks for approval per tool, or
+decides it from annotations, sees one approval surface for all operations: approving
+`call_operation` once approves every exposed operation, writes included. `serve` warns at
+startup when `discover` exposes any non-read-only operation; narrow the set with
+`--allow`/`--deny` if that matters (see [security](security.md#discovery-tool-mode)).
+
+Startup cost: `serve` compiles one output validator per exposed operation before it answers,
+about 12 ms each with the current per-tool compilation, so a few thousand operations under
+`discover` take tens of seconds to start. Shared validator compilation (#137) removes most of
+that cost.
+
+Measured `tools/list` sizes (2026-07-28 stdio response, tokens ≈ bytes / 4):
+
+| Spec | Exposed | `per-operation` | `discover` |
+|---|---|---|---|
+| 400 generated `GET` operations | 400 | 273,824 bytes (~68k tokens) | 4,349 bytes (~1.1k tokens) |
+| DigitalOcean (read-only default) | 146 | 120,745 bytes (~30k tokens) | 4,349 bytes |
+| DigitalOcean (`--allow '**'`) | 265 | 355,878 bytes (~89k tokens) | 4,396 bytes |
+
 ## `tools`
 
 Preview the operation inventory an OpenAPI spec generates, with filters applied — no server
@@ -108,12 +183,22 @@ API-request or transport flags (no `--base-url`, `--header*`, `--max-response-by
 | `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
 | `--timeout <duration>` | no | spec fetch timeout | `30s` |
-| `--ttl <duration>` | no | spec refresh interval | `1h` |
+| `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
+| `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 
 Example:
+
+Output: one line per tool. A tool whose output schema exists only because of
+`--default-response-is-error` ends with `[output schema assumes default = error]`. With the
+global `--json` flag each tool is an object; besides `name`, `method`, `path`, `summary` and
+`deprecated` it carries `outputSchema` (`true`/`false`, JSON only) and, for the tools the text
+marker flags, `outputSchemaAssumesDefaultIsError: true`. A tool whose output schema was
+withheld because a response `pattern` has nested quantifiers (see
+[security.md](security.md#response-envelope-and-redacted-errors)) carries
+`outputSchemaWithheld` with the sentence its description starts with.
 
 ```bash
 openapi-mcp tools --spec https://api.example.com/openapi.json --allow "read*"
@@ -188,6 +273,19 @@ openapi-mcp cache promote --spec https://api.example.com/openapi.json --cache-ke
 Remove a stale writer lock left behind by a process that died. Stop other `openapi-mcp`
 processes on this entry first — removing a lock a live writer still holds re-admits a second
 writer.
+
+The lock records the owning process id and hostname. The conflict message and `cache unlock`
+report them, and for an owner on the same host whether that process is still running. A lock
+younger than 60 seconds still needs `--force`, even when its owner looks dead: a process in
+another PID namespace (a container sharing the cache directory) can look dead from here.
+
+A held lock only fails commands that change what is accepted (first use, a new candidate,
+`--trust-spec-updates`, `cache promote`, `cache clear`), and only after retrying: for as long as
+`--timeout` allows when a spec is loaded (at least about two seconds), about two seconds for
+`cache promote` and `cache clear`. A start whose spec is unchanged serves the verified baseline
+with a warning instead, and `serve` reports it in the `openapi_mcp_status` tool as
+`cacheLock: "held"` (another process is writing) or `cacheLock: "stale"` (the owner looks gone:
+run `cache unlock`).
 
 | Flag | Meaning | Default |
 |---|---|---|
