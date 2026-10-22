@@ -83,13 +83,13 @@ describe('matchesOperation', () => {
   });
 
   it('matches raw spec values, not sanitized tool names', () => {
-    // AssignToolNames rewrites "list-pets!" to "list-pets_"; the filter must
+    // AssignToolNames rewrites "repos.get" to "repos_get"; the filter must
     // still see the original, or a deny pattern would miss its target
-    const op = record('get', '/pets', 'list-pets!');
-    expect(named([op])[0]!.toolName).toBe('list-pets_');
-    expect(matchesOperation(parseFilterPattern('list-pets!'), op)).toBe(true);
-    expect(matchesOperation(parseFilterPattern('list*'), op)).toBe(true);
-    expect(matchesOperation(parseFilterPattern('list-pets_'), op)).toBe(false);
+    const op = record('get', '/pets', 'repos.get');
+    expect(named([op])[0]!.toolName).toBe('repos_get');
+    expect(matchesOperation(parseFilterPattern('repos.get'), op)).toBe(true);
+    expect(matchesOperation(parseFilterPattern('repos*'), op)).toBe(true);
+    expect(matchesOperation(parseFilterPattern('repos_get'), op)).toBe(false);
   });
 });
 

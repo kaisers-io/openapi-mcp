@@ -1,4 +1,6 @@
 import { SPEC_BUDGETS } from './budgets.ts';
+import { mergeParameters } from './merge-parameters.ts';
+import type { Resolve } from './merge-parameters.ts';
 import { isRecord, resolveShallowOrSelf } from './refs.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import { extractSecuritySchemes, parseSecurityRequirements } from './security.ts';
@@ -61,41 +63,8 @@ export type NormalizedSpec = {
 
 // Normalization reads the document BEFORE it is dereferenced (issue #89): a
 // path item or parameter `{ $ref }` is followed only as far as needed to read
-// it; contents stay raw until the pipeline dereferences exposed operations.
-type Resolve = (node: unknown) => unknown;
-
-const mergeParameters = (
-  pathLevel: readonly unknown[],
-  opLevel: readonly unknown[],
-  resolve: Resolve,
-): { parameters: Record<string, unknown>[]; unresolvable: boolean; cookie: boolean } => {
-  // Keyed by the RESOLVED name/in, but the parameter is kept as written (a
-  // `{ $ref }` stays one): keywords next to the $ref are applied when the
-  // operation is dereferenced (OpenAPI 3.1, issue #63), which resolving it
-  // here would lose
-  const merged = new Map<string, { written: Record<string, unknown>; inValue: string }>();
-  for (const source of [pathLevel, opLevel]) {
-    for (const written of source) {
-      const param = resolve(written);
-      if (
-        !isRecord(written) ||
-        !isRecord(param) ||
-        typeof param['name'] !== 'string' ||
-        typeof param['in'] !== 'string'
-      ) {
-        // Covers cyclic { $ref } markers and malformed parameter shapes
-        return { parameters: [], unresolvable: true, cookie: false };
-      }
-      merged.set(`${param['in']} ${param['name']}`, { written, inValue: param['in'] });
-    }
-  }
-  const entries = [...merged.values()];
-  return {
-    parameters: entries.map((entry) => entry.written),
-    unresolvable: false,
-    cookie: entries.some((entry) => entry.inValue === 'cookie'),
-  };
-};
+// it (the Resolve callback); contents stay raw until the pipeline
+// dereferences exposed operations.
 
 const buildOperation = (
   method: HttpMethod,
