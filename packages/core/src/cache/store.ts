@@ -14,8 +14,13 @@ import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import type { CacheFs } from './fs.ts';
 import { tryWithNamespaceLock, withNamespaceLock } from './lock.ts';
-import { STALE_REVISION_REASON, sameRevision, staleRevisionError } from './revision.ts';
-import type { ExpectedRevision } from './revision.ts';
+import {
+  STALE_REVISION_REASON,
+  expectedRevisionOf,
+  sameRevision,
+  staleRevisionError,
+} from './revision.ts';
+import type { RevisionCheck } from './revision.ts';
 import {
   CACHE_MAX_PERSISTED_BYTES,
   CACHE_META_MAX_BYTES,
@@ -701,7 +706,7 @@ const writeAcceptedImpl = async (
     etag?: string | undefined;
     lastModified?: string | undefined;
     // The revision this decision was made against (#34): see revision.ts
-    expected?: ExpectedRevision | undefined;
+    expected: RevisionCheck;
   },
 ): Promise<{ acceptedContentHash: string }> => {
   // The openapiVersion is DERIVED here, not supplied by the caller: accepting
@@ -737,7 +742,8 @@ const writeAcceptedImpl = async (
       await assertAcceptedObjectIntact(layout, fs, existing.meta);
     }
     const current = existing.kind === 'ok' ? existing.meta : undefined;
-    if (input.expected !== undefined && !sameRevision(input.expected.meta, current)) {
+    const expected = expectedRevisionOf(input.expected);
+    if (expected !== undefined && !sameRevision(expected.meta, current)) {
       // A concurrent writer already committed exactly this outcome (two
       // first-use loads of the same spec): nothing left to do, and nothing a
       // second commit could add
@@ -798,7 +804,7 @@ const writeCandidateImpl = async (
     etag?: string | undefined;
     lastModified?: string | undefined;
     // The revision this decision was made against (#34): see revision.ts
-    expected?: ExpectedRevision | undefined;
+    expected: RevisionCheck;
   },
 ): Promise<{ candidateContentHash: string }> => {
   if (input.title.length > CACHE_TEXT_MAX || input.specVersion.length > CACHE_TEXT_MAX) {
@@ -825,12 +831,13 @@ const writeCandidateImpl = async (
     // Meta.json alone is not enough: verify the accepted OBJECT it names is
     // still intact before recording a candidate beside it
     await assertAcceptedObjectIntact(layout, fs, existing.meta);
-    if (input.expected !== undefined && !sameRevision(input.expected.meta, existing.meta)) {
+    const expected = expectedRevisionOf(input.expected);
+    if (expected !== undefined && !sameRevision(expected.meta, existing.meta)) {
       // A concurrent run already recorded this very candidate against the
       // same accepted baseline: the outcome stands, and its newer-or-equal
       // bookkeeping is kept rather than rewound
       if (
-        input.expected.meta?.acceptedContentHash === existing.meta.acceptedContentHash &&
+        expected.meta?.acceptedContentHash === existing.meta.acceptedContentHash &&
         existing.meta.candidate?.contentHash === candidateContentHash
       ) {
         return { candidateContentHash };
@@ -916,15 +923,15 @@ const touchRevalidatedImpl = async (
   opts: {
     replaceValidators?: boolean;
     bestEffort?: boolean;
-    expected?: ExpectedRevision | undefined;
-  } = {},
+    expected: RevisionCheck;
+  },
 ): Promise<TouchResult> => {
   const touch = async (): Promise<TouchResult> => {
     const existing = await readMetaFile(layout, fs);
     if (existing.kind === 'corrupt') {
       throw corruptEntryError(existing.reason);
     }
-    const { expected } = opts;
+    const expected = expectedRevisionOf(opts.expected);
     if (
       expected !== undefined &&
       !sameRevision(expected.meta, existing.kind === 'ok' ? existing.meta : undefined)

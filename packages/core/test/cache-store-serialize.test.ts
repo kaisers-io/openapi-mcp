@@ -140,6 +140,7 @@ describe('commitEntry reuses an object already verified under the lock', () => {
     title: 'v1',
     specVersion: '1',
     fetchedAt: 1,
+    expected: 'unchecked' as const,
   };
 
   const countingReads = (): { fs: CacheFs; reads: (path: string) => number } => {
@@ -175,6 +176,7 @@ describe('commitEntry reuses an object already verified under the lock', () => {
       title: 'v1',
       specVersion: '2',
       fetchedAt: 2,
+      expected: 'unchecked',
     });
     const path = objectPath(LAYOUT, candidateContentHash);
     const before = reads(path);

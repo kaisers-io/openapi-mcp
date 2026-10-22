@@ -3,6 +3,7 @@ import type { CacheFs } from '../cache/fs.ts';
 import { resolveCachePolicy } from '../cache/paths.ts';
 import type { CacheLayout } from '../cache/paths.ts';
 import { readCacheEntry, touchRevalidated, writeAccepted, writeCandidate } from '../cache/store.ts';
+import { isStaleRevisionError } from '../cache/revision.ts';
 import type { ExpectedRevision } from '../cache/revision.ts';
 import type { CacheEntry } from '../cache/store.ts';
 import { evaluateFreshness } from '../cache/ttl.ts';
@@ -122,6 +123,16 @@ const processCachedDocument = (
   return spec;
 };
 
+// FAIL CLOSED on a corrupt entry. A silent refetch would re-enter
+// trust-on-first-use and accept whatever the remote says now, which is exactly
+// the rug pull that fail-closed handling of a corrupt entry exists to prevent,
+// and is reachable by anyone who can write into the cache directory. Recovery
+// must be an explicit operator act.
+const unusableEntryError = (reason: string): Error =>
+  validationError(
+    `the spec cache entry is unusable (${reason}); it is the accepted baseline that authorizes this spec, so it is never refetched silently — run "openapi-mcp cache clear" to reset it deliberately`,
+  );
+
 // A strict cache write (first use, a candidate, an accepted update) waits for
 // a busy writer lock for as long as the operator allowed the spec fetch to
 // take (--timeout), not just the built-in ~2 s: a concurrent first use of a
@@ -207,9 +218,7 @@ const runSpecPipelineOnce = async (
       // that fail-closed handling of a corrupt entry exists to prevent, and is
       // reachable by anyone who can write into the cache directory. Recovery
       // must be an explicit operator act.
-      throw validationError(
-        `the spec cache entry is unusable (${read.reason}); it is the accepted baseline that authorizes this spec, so it is never refetched silently — run "openapi-mcp cache clear" to reset it deliberately`,
-      );
+      throw unusableEntryError(read.reason);
     }
     if (read.kind === 'hit') {
       cached = read.entry;
@@ -342,16 +351,27 @@ const runSpecPipelineOnce = async (
     // as an unexpected exit 1.
     // A typed store error (notably a lock conflict, exit 5) passes through
     // untouched.
-    return await commitRefresh(
-      processedRefresh,
-      refreshed,
-      cached,
-      layout,
-      opts,
-      deps,
-      warnings,
-      source.kind,
-    );
+    //
+    // One retry on a stale revision (#34): another process changed the entry
+    // between this run's lock-free read and its commit (typically servers
+    // starting together). The fetched and validated bytes are still valid
+    // input, so the entry is read again and the decision re-made against
+    // what is current, without refetching. Only a second conflict exits 5:
+    // a decision is still never committed against a revision it did not see.
+    const commitAgainst = (entry: CacheEntry | undefined): Promise<SpecPipelineResult> =>
+      commitRefresh(processedRefresh, refreshed, entry, layout, opts, deps, warnings, source.kind);
+    try {
+      return await commitAgainst(cached);
+    } catch (error) {
+      if (layout === undefined || !isStaleRevisionError(error)) {
+        throw error;
+      }
+      const reread = await readCacheEntry(layout, deps.cacheFs);
+      if (reread.kind === 'corrupt') {
+        throw unusableEntryError(reread.reason);
+      }
+      return await commitAgainst(reread.kind === 'hit' ? reread.entry : undefined);
+    }
   }
 
   // 304 Not Modified: reuse the accepted baseline, bump only the timestamp
