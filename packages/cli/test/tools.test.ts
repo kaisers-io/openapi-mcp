@@ -696,3 +696,57 @@ describe('tools command — toolgen omissions', () => {
     expect(warningsText).not.toContain(String.fromCodePoint(0x20_2e));
   });
 });
+
+// #72: opt-in --default-response-is-error.
+describe('tools command — --default-response-is-error (#72)', () => {
+  type Row = { name: string; outputSchema: boolean; outputSchemaAssumesDefaultIsError?: true };
+  const toolsJson = async (extra: readonly string[]): Promise<Row[]> => {
+    const { lines, ctx } = fileCtx();
+    const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'default-response.json'];
+    const code = await run(ctx, [...argv, ...extra]);
+    expect(code).toBe(EXIT.OK);
+    return (JSON.parse(lines[0]!) as { data: { tools: Row[] } }).data.tools;
+  };
+
+  it('without the flag: no outputSchema for an operation with a default response', async () => {
+    const [row] = await toolsJson([]);
+    expect(row).toMatchObject({ name: 'getCharge', outputSchema: false });
+    expect(row?.outputSchemaAssumesDefaultIsError).toBeUndefined();
+  });
+
+  it('with the flag: an outputSchema, reported as relying on the flag', async () => {
+    const [row] = await toolsJson(['--default-response-is-error']);
+    expect(row).toMatchObject({
+      name: 'getCharge',
+      outputSchema: true,
+      outputSchemaAssumesDefaultIsError: true,
+    });
+  });
+
+  it('marks such tools in human output', async () => {
+    const { lines, ctx } = fileCtx();
+    const argv = ['node', 'openapi-mcp', 'tools', '--spec', 'default-response.json'];
+    const code = await run(ctx, [...argv, '--default-response-is-error']);
+    expect(code).toBe(EXIT.OK);
+    const text = lines.join('\n');
+    expect(text).toContain('getCharge');
+    expect(text).toContain('[output schema assumes default = error]');
+  });
+});
+
+// #39: a withheld output schema is reported in --json output.
+describe('tools command — withheld output schema (#39)', () => {
+  it('reports why a response pattern with nested quantifiers left the tool without one', async () => {
+    const { lines, ctx } = fileCtx();
+    const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'unsafe-pattern.json'];
+    const code = await run(ctx, argv);
+    expect(code).toBe(EXIT.OK);
+    const [row] = (
+      JSON.parse(lines[0]!) as {
+        data: { tools: { name: string; outputSchema: boolean; outputSchemaWithheld?: string }[] };
+      }
+    ).data.tools;
+    expect(row).toMatchObject({ name: 'listCodes', outputSchema: false });
+    expect(row?.outputSchemaWithheld).toMatch(/nested quantifiers/u);
+  });
+});

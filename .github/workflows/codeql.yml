@@ -1,0 +1,38 @@
+name: codeql
+on:
+  push: { branches: [main] }
+  pull_request:
+permissions: {}
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  analyze:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload the results to code scanning
+      actions: read # required alongside security-events on private repositories
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      # JavaScript/TypeScript is analysed from source (`build-mode: none`): no install or build runs here.
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: javascript-typescript
+          build-mode: none
+      # Code scanning (where the results are shown) is free for public repositories but needs GitHub
+      # Advanced Security on private ones. While the repo is private the analysis still runs — so the
+      # workflow is proven to work — but the SARIF is kept as a workflow artifact instead of uploaded.
+      # Uploading switches on by itself once the repository is public.
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          upload: ${{ github.event.repository.private && 'never' || 'always' }}
+          output: sarif-results
+      - if: github.event.repository.private
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: codeql-sarif
+          path: sarif-results
+          retention-days: 7

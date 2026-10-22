@@ -1,5 +1,7 @@
+import { createServer } from 'node:http';
+import type { AddressInfo, Socket } from 'node:net';
 import { describe, expect, it, vi } from 'vitest';
-import { Response } from 'undici';
+import { Response, fetch as undiciFetch } from 'undici';
 import { z } from 'zod';
 import { pinnedRequest } from '../src/http/pinned-dispatcher.ts';
 import {
@@ -64,8 +66,15 @@ const budgets: OutboundBudgets = {
   maxBodyBytes: 65_536,
 };
 
-const buildToolSnapshot = (ops: readonly NamedOperation[]): ServerSnapshot => {
-  const built = buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
+const buildToolSnapshot = (
+  ops: readonly NamedOperation[],
+  defaultResponseIsError = false,
+): ServerSnapshot => {
+  const built = buildTools(ops, {
+    reservedHeaders: SYSTEM_HEADERS,
+    openapiVersion: '3.1',
+    defaultResponseIsError,
+  });
   return buildSnapshot(built, {
     spec: { title: 't', specVersion: '1', omitted: [] },
     contentHash: 'h',
@@ -302,6 +311,145 @@ describe('createExecutor — header assembly', () => {
     expect(calls[0]?.init.body).toBeDefined();
   });
 
+  it('sends the declared JSON variant as Content-Type end to end (#54: merge-patch+json)', async () => {
+    const patchOp: NamedOperation = {
+      toolName: 'patchThing',
+      operation: {
+        method: 'patch',
+        path: '/things',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          content: {
+            'application/merge-patch+json': {
+              schema: { type: 'object', properties: { name: { type: 'string' } } },
+            },
+          },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([patchOp]);
+    const tool = snapshot.toolsByName['patchThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { name: 'widget' }, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['content-type']).toBe('application/merge-patch+json');
+    const body = calls[0]?.init.body as Uint8Array;
+    expect(JSON.parse(new TextDecoder().decode(body))).toEqual({ name: 'widget' });
+  });
+
+  it('sends the bytes {} for a required body whose properties are all optional (#40)', async () => {
+    const noteOp: NamedOperation = {
+      toolName: 'touchThing',
+      operation: {
+        method: 'post',
+        path: '/things',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { note: { type: 'string' } },
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([noteOp]);
+    const tool = snapshot.toolsByName['touchThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, {}, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['content-type']).toBe('application/json');
+    expect(new TextDecoder().decode(calls[0]?.init.body as Uint8Array)).toBe('{}');
+  });
+
+  it('sends decoded raw bytes for an application/octet-stream body (#71)', async () => {
+    const uploadOp: NamedOperation = {
+      toolName: 'uploadFile',
+      operation: {
+        method: 'post',
+        path: '/upload',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([uploadOp]);
+    const tool = snapshot.toolsByName['uploadFile'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { body: 'AAEC/w==' }, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['content-type']).toBe('application/octet-stream');
+    const sent = calls[0]?.init.body as Uint8Array;
+    expect([...sent]).toEqual([0, 1, 2, 255]);
+  });
+
+  it('sends a parseable multipart/form-data body with a generated boundary (#71)', async () => {
+    const formOp: NamedOperation = {
+      toolName: 'uploadForm',
+      operation: {
+        method: 'post',
+        path: '/upload',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['file'],
+                properties: {
+                  file: { type: 'string', format: 'binary' },
+                  note: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([formOp]);
+    const tool = snapshot.toolsByName['uploadForm'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { file: 'aGk=', note: 'n' }, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    const contentType = headers['content-type'] ?? '';
+    expect(contentType).toMatch(/^multipart\/form-data; boundary=/u);
+    const sent = calls[0]?.init.body as Uint8Array;
+    const form = await new globalThis.Request('http://example.test/', {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body: sent,
+    }).formData();
+    expect(form.get('note')).toBe('n');
+    expect(await (form.get('file') as File).text()).toBe('hi');
+  });
+
   it('rejects a tool argument whose header name collides with a reserved header (defensive re-check)', async () => {
     const snapshot = buildToolSnapshot([forcedHeaderOp]);
     const tool = snapshot.toolsByName['forcedHeaderThing'] as SnapshotTool;
@@ -447,30 +595,310 @@ describe('createExecutor — cleartext gate', () => {
   });
 });
 
-describe('createExecutor — global concurrency semaphore', () => {
-  it('rejects a second overlapping call once maxConcurrent is reached', async () => {
+const OVERLOADED_META = {
+  'openapi-mcp/error': 'overloaded',
+  'openapi-mcp/retryAfterMs': 1000,
+};
+
+describe('createExecutor — global concurrency queue', () => {
+  const pingSetup = () => {
     const snapshot = buildToolSnapshot([pingOp]);
     const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
-    let releaseFirst: (response: Response) => void = () => {};
-    const pending = new Promise<Response>((resolve) => {
-      releaseFirst = resolve;
-    });
-    const fetch: PinnedDeps['fetch'] = () => pending;
-    const deps: ExecutorDeps = {
-      transport: { fetch, resolve: rejectingResolve, timeoutSignal },
+    return { snapshot, tool };
+  };
+
+  // A fake transport whose every response is held until the test releases
+  // it, recording how many requests were in flight at once.
+  const gatedTransport = () => {
+    const gates: ((response: Response) => void)[] = [];
+    let inFlight = 0;
+    let peak = 0;
+    let started = 0;
+    const fetch: PinnedDeps['fetch'] = async () => {
+      started += 1;
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      const { promise, resolve } = Promise.withResolvers<Response>();
+      gates.push(resolve);
+      const response = await promise;
+      inFlight -= 1;
+      return response;
     };
+    return {
+      fetch,
+      peak: () => peak,
+      started: () => started,
+      releaseOne: () => gates.shift()?.(textResponse(200, '')),
+    };
+  };
+
+  const flush = async (): Promise<void> => {
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+  };
+
+  it('queues an overlapping call once maxConcurrent is reached, and runs it when a slot frees', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
     const executor = createExecutor(
       baseConfig({ maxConcurrent: 1, validators: validatorsFor(snapshot) }),
-      deps,
+      { transport: { fetch: gated.fetch, resolve: rejectingResolve, timeoutSignal } },
     );
     const first = executor(tool, {}, freshSignal());
     const second = executor(tool, {}, freshSignal());
-    const secondOutcome = await second;
-    expect(secondOutcome.isError).toBe(true);
-    expect(secondOutcome.content[0]?.text).toMatch(/too many concurrent/u);
-    releaseFirst(textResponse(200, ''));
-    const firstOutcome = await first;
-    expect(firstOutcome.isError).toBe(false);
+    await flush();
+    // The second call waits for the slot instead of failing fast.
+    expect(gated.started()).toBe(1);
+    gated.releaseOne();
+    await expect(first).resolves.toMatchObject({ isError: false });
+    await flush();
+    expect(gated.started()).toBe(2);
+    gated.releaseOne();
+    await expect(second).resolves.toMatchObject({ isError: false });
+  });
+
+  it('runs 10 parallel calls with maxConcurrent 2: all succeed, never more than 2 in flight', async () => {
+    const { snapshot, tool } = pingSetup();
+    let inFlight = 0;
+    let peak = 0;
+    const fetch: PinnedDeps['fetch'] = async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
+      inFlight -= 1;
+      return textResponse(200, '');
+    };
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 2, validators: validatorsFor(snapshot) }),
+      { transport: { fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    const outcomes = await Promise.all(
+      Array.from({ length: 10 }, () => executor(tool, {}, freshSignal())),
+    );
+    expect(outcomes.filter((outcome) => outcome.isError)).toEqual([]);
+    expect(peak).toBe(2);
+  });
+
+  it('serves queued calls in FIFO order', async () => {
+    const snapshot = buildToolSnapshot([idPathOp]);
+    const tool = snapshot.toolsByName['getThing'] as SnapshotTool;
+    const order: string[] = [];
+    const gates: (() => void)[] = [];
+    const fetch: PinnedDeps['fetch'] = async (input) => {
+      order.push(String(input));
+      const { promise, resolve } = Promise.withResolvers<void>();
+      gates.push(resolve);
+      await promise;
+      return jsonResponse(200, { id: 1 });
+    };
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, validators: validatorsFor(snapshot) }),
+      { transport: { fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    const calls = ['a', 'b', 'c', 'd'].map((id) => executor(tool, { id }, freshSignal()));
+    for (let index = 0; index < 4; index += 1) {
+      await flush();
+      gates.shift()?.();
+    }
+    await Promise.all(calls);
+    expect(order.map((url) => url.slice(-1))).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('removes an aborted queued call from the queue: the upstream is never called for it', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, validators: validatorsFor(snapshot) }),
+      { transport: { fetch: gated.fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    const first = executor(tool, {}, freshSignal());
+    const controller = new AbortController();
+    const queued = executor(tool, {}, controller.signal);
+    const third = executor(tool, {}, freshSignal());
+    await flush();
+    controller.abort();
+    const queuedOutcome = await queued;
+    expect(queuedOutcome.isError).toBe(true);
+    expect(queuedOutcome.content[0]?.text).toMatch(/cancelled/u);
+    gated.releaseOne();
+    await first;
+    await flush();
+    gated.releaseOne();
+    await expect(third).resolves.toMatchObject({ isError: false });
+    // Only `first` and `third` ever reached the upstream.
+    expect(gated.started()).toBe(2);
+  });
+
+  it('refuses a call once the queue is full, with an actionable retryAfterMs', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, maxQueued: 1, validators: validatorsFor(snapshot) }),
+      { transport: { fetch: gated.fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    const first = executor(tool, {}, freshSignal());
+    const queued = executor(tool, {}, freshSignal());
+    const overflow = await executor(tool, {}, freshSignal());
+    expect(overflow.isError).toBe(true);
+    expect(overflow.content[0]?.text).toMatch(/already in flight or queued; retry after 1s/u);
+    expect(overflow.structuredContent).toBeUndefined();
+    expect(overflow.meta).toEqual(OVERLOADED_META);
+    await flush();
+    gated.releaseOne();
+    await first;
+    await flush();
+    gated.releaseOne();
+    await expect(queued).resolves.toMatchObject({ isError: false });
+  });
+
+  it('defaults the queue to 4 x maxConcurrent', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 2, validators: validatorsFor(snapshot) }),
+      { transport: { fetch: gated.fetch, resolve: rejectingResolve, timeoutSignal } },
+    );
+    // 2 in flight + 8 queued are admitted; the 11th is refused.
+    const admitted = Array.from({ length: 10 }, () => executor(tool, {}, freshSignal()));
+    const refused = await executor(tool, {}, freshSignal());
+    expect(refused.meta).toEqual(OVERLOADED_META);
+    for (let index = 0; index < 10; index += 1) {
+      await flush();
+      gated.releaseOne();
+    }
+    const outcomes = await Promise.all(admitted);
+    expect(outcomes.every((outcome) => !outcome.isError)).toBe(true);
+  });
+
+  it('bounds the wait by the call timeout: a call still queued at its deadline is refused', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const deadlines: AbortController[] = [];
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, validators: validatorsFor(snapshot) }),
+      {
+        transport: {
+          fetch: gated.fetch,
+          resolve: rejectingResolve,
+          timeoutSignal: () => {
+            const controller = new AbortController();
+            deadlines.push(controller);
+            return controller.signal;
+          },
+        },
+      },
+    );
+    const first = executor(tool, {}, freshSignal());
+    await flush();
+    const deadlinesBeforeQueueing = deadlines.length;
+    const queued = executor(tool, {}, freshSignal());
+    await flush();
+    // Exactly one extra deadline was started — for the WAIT, and only
+    // because this call had to queue.
+    expect(deadlines).toHaveLength(deadlinesBeforeQueueing + 1);
+    deadlines.at(-1)?.abort();
+    const outcome = await queued;
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toMatch(/timed out waiting for a free upstream request slot/u);
+    expect(outcome.meta).toEqual(OVERLOADED_META);
+    gated.releaseOne();
+    await expect(first).resolves.toMatchObject({ isError: false });
+    expect(gated.started()).toBe(1);
+  });
+
+  it('charges the queue wait against one call budget: wait <= half, upstream gets the rest', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const requested: number[] = [];
+    let clock = 0;
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, timeoutMs: 5000, validators: validatorsFor(snapshot) }),
+      {
+        transport: {
+          fetch: gated.fetch,
+          resolve: rejectingResolve,
+          timeoutSignal: (ms) => {
+            requested.push(ms);
+            return new AbortController().signal;
+          },
+        },
+        now: () => clock,
+      },
+    );
+    const first = executor(tool, {}, freshSignal());
+    await flush();
+    // Uncontended: the upstream request gets the whole budget.
+    expect(requested).toEqual([5000]);
+    const queued = executor(tool, {}, freshSignal());
+    await flush();
+    // The wait itself is bounded by half the budget.
+    expect(requested).toEqual([5000, 2500]);
+    clock = 1200;
+    gated.releaseOne();
+    await expect(first).resolves.toMatchObject({ isError: false });
+    await flush();
+    // The queued call's upstream request gets only what is left (5000 - 1200),
+    // so queue wait + upstream never exceed the configured timeout.
+    expect(requested).toEqual([5000, 2500, 3800]);
+    gated.releaseOne();
+    await expect(queued).resolves.toMatchObject({ isError: false });
+  });
+});
+
+describe('createExecutor — upstream connection reuse', () => {
+  it('reuses pooled connections across calls and closes them on close()', async () => {
+    const sockets = new Set<Socket>();
+    let connections = 0;
+    const server = createServer((_req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+    server.on('connection', (socket: Socket) => {
+      connections += 1;
+      sockets.add(socket);
+      socket.on('close', () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const { port } = server.address() as AddressInfo;
+    try {
+      const snapshot = buildToolSnapshot([pingOp]);
+      const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
+      const executor = createExecutor(
+        baseConfig({ baseUrl: `http://api.test:${port}`, validators: validatorsFor(snapshot) }),
+        {
+          transport: {
+            fetch: undiciFetch,
+            resolve: () => Promise.resolve(['127.0.0.1']),
+            timeoutSignal: (ms) => AbortSignal.timeout(ms),
+          },
+        },
+      );
+      for (let index = 0; index < 50; index += 1) {
+        const outcome = await executor(tool, {}, freshSignal());
+        expect(outcome.isError).toBe(false);
+      }
+      // Before pooling, every call opened its own connection (50 here).
+      expect(connections).toBeLessThanOrEqual(2);
+      expect(sockets.size).toBeGreaterThan(0);
+      await executor.close();
+      const deadline = Date.now() + 2000;
+      while (sockets.size > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 10);
+        });
+      }
+      expect(sockets.size).toBe(0);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    }
   });
 });
 
@@ -698,5 +1126,943 @@ describe('createExecutor — trust propagation into pinnedRequest', () => {
     const opts = vi.mocked(pinnedRequest).mock.calls.at(-1)?.[1];
     expect(opts?.baseTrusted).toBe(false);
     expect(opts?.allowPrivateNetwork).toBe(true);
+  });
+});
+
+describe('createExecutor — Accept derived from the declared response media types', () => {
+  const negotiatedOp: NamedOperation = {
+    toolName: 'getReport',
+    operation: {
+      method: 'get',
+      path: '/report',
+      tags: [],
+      deprecated: false,
+      parameters: [{ name: 'Accept', in: 'header', required: false, schema: { type: 'string' } }],
+      responses: {
+        '200': {
+          content: {
+            'application/xml': { schema: { type: 'string' } },
+            'application/json; charset=utf-8': { schema: { type: 'object' } },
+          },
+        },
+        '404': { content: { 'application/problem+json': { schema: { type: 'object' } } } },
+      },
+    },
+  };
+
+  const acceptSent = async (
+    op: NamedOperation,
+    overrides: Partial<ExecutorConfig> = {},
+    args: Record<string, unknown> = {},
+  ): Promise<string | undefined> => {
+    const snapshot = buildToolSnapshot([op]);
+    const tool = snapshot.toolsByName[op.toolName] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(
+      baseConfig({ validators: validatorsFor(snapshot), ...overrides }),
+      deps,
+    );
+    await executor(tool, args, freshSignal());
+    return calls[0]?.init.headers?.['accept'];
+  };
+
+  it('asks for the declared JSON type first and other declared types at a lower weight', async () => {
+    expect(await acceptSent(negotiatedOp)).toBe(
+      'application/json, application/xml;q=0.9, */*;q=0.1',
+    );
+  });
+
+  it('asks for the declared JSON type of a plain JSON operation', async () => {
+    expect(await acceptSent(idPathOp, {}, { id: '1' })).toBe('application/json, */*;q=0.1');
+  });
+
+  it('falls back to JSON-first for an operation that declares no success media type', async () => {
+    expect(await acceptSent(pingOp)).toBe('application/json, */*;q=0.1');
+  });
+
+  it('lets an operator --header Accept override the derived value', async () => {
+    expect(
+      await acceptSent(negotiatedOp, {
+        staticHeaders: [{ name: 'Accept', value: 'application/vnd.example+json' }],
+      }),
+    ).toBe('application/vnd.example+json');
+  });
+
+  it("drops a spec 'Accept' header parameter from the tool input (OAS: it SHALL be ignored)", async () => {
+    const snapshot = buildToolSnapshot([negotiatedOp]);
+    const tool = snapshot.toolsByName['getReport'] as SnapshotTool;
+    const { properties } = tool.wireTool.inputSchema as { properties?: Record<string, unknown> };
+    expect(Object.keys(properties ?? {}).map((key) => key.toLowerCase())).not.toContain('accept');
+    // An extra argument named like the header is not mapped onto the wire.
+    expect(await acceptSent(negotiatedOp, {}, { Accept: 'text/html' })).toBe(
+      'application/json, application/xml;q=0.9, */*;q=0.1',
+    );
+  });
+});
+
+describe('createExecutor — forwarded upstream response headers', () => {
+  const SECRET = 'example-token-not-a-secret-123';
+  const run = async (
+    op: NamedOperation,
+    response: () => Response,
+    args: Record<string, unknown> = {},
+  ) => {
+    const snapshot = buildToolSnapshot([op]);
+    const tool = snapshot.toolsByName[op.toolName] as SnapshotTool;
+    const { deps } = recordingTransport(response);
+    const executor = createExecutor(
+      baseConfig({
+        validators: validatorsFor(snapshot),
+        redactor: createRedactor([SECRET]),
+      }),
+      deps,
+    );
+    return { outcome: await executor(tool, args, freshSignal()), tool };
+  };
+
+  const pagedHeaders = {
+    'content-type': 'application/json',
+    link: '<https://api.example.test/things/1?page=2>; rel="next"',
+    'x-total-count': '42',
+    etag: '"v1"',
+    'x-ratelimit-remaining': '9',
+    'set-cookie': `session=${SECRET}`,
+    'x-request-id': 'not-forwarded',
+  };
+
+  it('puts allowlisted headers in the structured envelope, which still validates', async () => {
+    const { outcome, tool } = await run(
+      idPathOp,
+      () => new Response('{"id":1}', { status: 200, headers: pagedHeaders }),
+      { id: '1' },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+      headers: { 'x-total-count': '42', etag: '"v1"', 'x-ratelimit-remaining': '9' },
+    });
+    const validate = compileEnvelopeValidator(tool.wireTool.outputSchema);
+    expect(validate?.(outcome.structuredContent)).toBe(true);
+    // D4: the raw Link URL never reaches the model; Set-Cookie never at all.
+    expect(JSON.stringify(outcome)).not.toContain('page=2');
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+    expect(JSON.stringify(outcome)).not.toContain('not-forwarded');
+  });
+
+  it('leaves the envelope unchanged when the upstream sends none of them', async () => {
+    const { outcome } = await run(idPathOp, () => jsonResponse(200, { id: 1 }), { id: '1' });
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+    });
+  });
+
+  it('adds a trailing headers block to a text result', async () => {
+    const { outcome } = await run(
+      pingOp,
+      () =>
+        new Response('pong', {
+          status: 200,
+          headers: { ...pagedHeaders, 'content-type': 'text/plain' },
+        }),
+    );
+    expect(outcome.content.map((block) => block.text)).toEqual([
+      'pong',
+      'headers:\netag: "v1"\nx-ratelimit-remaining: 9\nx-total-count: 42',
+    ]);
+  });
+
+  it('drops a header whose value carries a registered secret, keeping the rest', async () => {
+    const { outcome } = await run(
+      pingOp,
+      () =>
+        new Response('pong', {
+          status: 200,
+          headers: { 'content-type': 'text/plain', etag: `"${SECRET}"`, 'x-total-count': '1' },
+        }),
+    );
+    expect(outcome.content.at(-1)?.text).toBe('headers:\nx-total-count: 1');
+  });
+
+  it('drops a header whose NAME carries a registered secret, in a structured result too', async () => {
+    const { outcome, tool } = await run(
+      idPathOp,
+      () =>
+        new Response('{"id":1}', {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            [`x-ratelimit-${SECRET}`]: '1',
+            'x-total-count': '1',
+          },
+        }),
+      { id: '1' },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+      headers: { 'x-total-count': '1' },
+    });
+    expect(compileEnvelopeValidator(tool.wireTool.outputSchema)?.(outcome.structuredContent)).toBe(
+      true,
+    );
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+  });
+
+  it('forwards a same-origin Location as a path, and drops a foreign one', async () => {
+    const created = await run(
+      createThingOp,
+      () =>
+        new Response(null, {
+          status: 201,
+          headers: { location: 'https://api.example.test/things/7?x=1' },
+        }),
+      { name: 'x' },
+    );
+    expect(created.outcome.content.at(-1)?.text).toBe('headers:\nlocation: /things/7?x=1');
+    const relative = await run(
+      createThingOp,
+      () => new Response(null, { status: 201, headers: { location: 'things/8' } }),
+      { name: 'x' },
+    );
+    expect(relative.outcome.content.at(-1)?.text).toBe('headers:\nlocation: /things/8');
+    const foreign = await run(
+      createThingOp,
+      () =>
+        new Response(null, { status: 201, headers: { location: 'https://evil.example/steal' } }),
+      { name: 'x' },
+    );
+    expect(JSON.stringify(foreign.outcome)).not.toContain('evil.example');
+    expect(foreign.outcome.content).toHaveLength(1);
+  });
+
+  it('reports upstreamRetryAfterMs for a 429 with Retry-After seconds', async () => {
+    const { outcome } = await run(
+      pingOp,
+      () =>
+        new Response('slow down', {
+          status: 429,
+          headers: { 'content-type': 'text/plain', 'retry-after': '3' },
+        }),
+    );
+    expect(outcome.isError).toBe(true);
+    expect(outcome.meta).toEqual({ 'openapi-mcp/upstreamRetryAfterMs': 3000 });
+    expect(outcome.content.at(-1)?.text).toBe('headers:\nretry-after: 3');
+  });
+
+  it('parses an HTTP-date Retry-After on a 503', async () => {
+    const at = new Date(Date.now() + 60_000).toUTCString();
+    const { outcome } = await run(
+      pingOp,
+      () => new Response('', { status: 503, headers: { 'retry-after': at } }),
+    );
+    const retry = outcome.meta?.['openapi-mcp/upstreamRetryAfterMs'] as number;
+    expect(retry).toBeGreaterThan(55_000);
+    expect(retry).toBeLessThanOrEqual(60_000);
+  });
+
+  it('does not report upstreamRetryAfterMs on a success', async () => {
+    const { outcome } = await run(
+      pingOp,
+      () => new Response('', { status: 200, headers: { 'retry-after': '3' } }),
+    );
+    expect(outcome.meta).toBeUndefined();
+  });
+});
+
+describe('createExecutor — pagination hints', () => {
+  const SECRET = 'example-token-not-a-secret-456';
+  const listReposOp: NamedOperation = {
+    toolName: 'listRepos',
+    operation: {
+      method: 'get',
+      path: '/orgs/{org}/repos',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'org', in: 'path', required: true, schema: { type: 'string' } },
+        { name: 'page', in: 'query', schema: { type: 'integer' } },
+        { name: 'per_page', in: 'query', schema: { type: 'integer' } },
+        { name: 'sort', in: 'query', schema: { type: 'string' } },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          headers: { Link: { schema: { type: 'string' } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'array',
+                items: { type: 'object', properties: { id: { type: 'integer' } } },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const cursorOp: NamedOperation = {
+    toolName: 'listEvents',
+    operation: {
+      method: 'get',
+      path: '/events',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'cursor', in: 'query', schema: { type: 'string' } },
+        { name: 'limit', in: 'query', schema: { type: 'integer' } },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { items: { type: 'array' }, next_cursor: { type: ['string', 'null'] } },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const stripeOp: NamedOperation = {
+    toolName: 'listCharges',
+    operation: {
+      method: 'get',
+      path: '/v1/charges',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'starting_after', in: 'query', schema: { type: 'string' } },
+        { name: 'limit', in: 'query', schema: { type: 'integer' } },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { has_more: { type: 'boolean' }, data: { type: 'array' } },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const call = async (
+    op: NamedOperation,
+    response: () => Response,
+    args: Record<string, unknown>,
+  ) => {
+    const snapshot = buildToolSnapshot([op]);
+    const tool = snapshot.toolsByName[op.toolName] as SnapshotTool;
+    const { deps, calls } = recordingTransport(response);
+    const executor = createExecutor(
+      baseConfig({ validators: validatorsFor(snapshot), redactor: createRedactor([SECRET]) }),
+      deps,
+    );
+    const outcome = await executor(tool, args, freshSignal());
+    const validate = compileEnvelopeValidator(tool.wireTool.outputSchema);
+    return { outcome, tool, calls, valid: validate?.(outcome.structuredContent) };
+  };
+
+  const page =
+    (link: string | undefined, body: unknown = [{ id: 1 }, { id: 2 }]) =>
+    () =>
+      Response.json(body, { status: 200, headers: link === undefined ? {} : { link } });
+
+  const nextOf = (outcome: { structuredContent?: Record<string, unknown> }) =>
+    (outcome.structuredContent?.['pagination'] as { next: unknown } | undefined)?.next;
+
+  it('maps Link rel="next" onto the tool arguments, typed per field, and the envelope validates', async () => {
+    const { outcome, valid, calls } = await call(
+      listReposOp,
+      page(
+        '<https://api.example.test/orgs/acme/repos?page=2&per_page=2>; rel="next", ' +
+          '<https://api.example.test/orgs/acme/repos?page=3&per_page=2>; rel="last"',
+      ),
+      { org: 'acme', per_page: 2 },
+    );
+    expect(calls[0]?.url).toBe('https://api.example.test/orgs/acme/repos?per_page=2');
+    expect(outcome.isError).toBe(false);
+    expect(nextOf(outcome)).toEqual({ org: 'acme', page: 2, per_page: 2 });
+    expect(valid).toBe(true);
+    // No raw URL reaches the result (D4).
+    expect(JSON.stringify(outcome)).not.toContain('https://api.example.test/orgs');
+  });
+
+  it.each([
+    ['another origin', '<https://evil.example/orgs/acme/repos?page=2>; rel="next"'],
+    ['another path', '<https://api.example.test/orgs/other/repos?page=2>; rel="next"'],
+    [
+      'an unmapped parameter',
+      '<https://api.example.test/orgs/acme/repos?page=2&token=x>; rel="next"',
+    ],
+    [
+      'a non-numeric value for an integer field',
+      '<https://api.example.test/orgs/acme/repos?page=two>; rel="next"',
+    ],
+    [
+      'a repeated parameter',
+      '<https://api.example.test/orgs/acme/repos?page=2&page=3>; rel="next"',
+    ],
+    ['no rel=next (last page)', '<https://api.example.test/orgs/acme/repos?page=1>; rel="prev"'],
+    ['a malformed Link header', 'https://api.example.test/orgs/acme/repos?page=2; rel=next'],
+  ])('yields next: null for %s', async (_label, link) => {
+    const { outcome, valid } = await call(listReposOp, page(link), { org: 'acme' });
+    expect(outcome.isError).toBe(false);
+    expect(nextOf(outcome)).toBeNull();
+    expect(valid).toBe(true);
+  });
+
+  it('resolves a relative next link against the response URL', async () => {
+    const { outcome } = await call(listReposOp, page('</orgs/acme/repos?page=2>; rel="next"'), {
+      org: 'acme',
+    });
+    expect(nextOf(outcome)).toEqual({ org: 'acme', page: 2 });
+  });
+
+  it('withholds a hint that would carry a registered secret into the next call', async () => {
+    const { outcome } = await call(
+      listReposOp,
+      page(`<https://api.example.test/orgs/acme/repos?sort=${SECRET}>; rel="next"`),
+      { org: 'acme' },
+    );
+    expect(nextOf(outcome)).toBeNull();
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+  });
+
+  it('maps a body cursor (next_cursor -> cursor), keeping the other arguments', async () => {
+    const { outcome, valid } = await call(
+      cursorOp,
+      page(undefined, { items: [], next_cursor: 'c-2' }),
+      { limit: 10 },
+    );
+    expect(nextOf(outcome)).toEqual({ limit: 10, cursor: 'c-2' });
+    expect(valid).toBe(true);
+    const last = await call(cursorOp, page(undefined, { items: [], next_cursor: null }), {});
+    expect(nextOf(last.outcome)).toBeNull();
+  });
+
+  const issuesOp = (explodeLabels: boolean): NamedOperation => ({
+    toolName: 'listIssues',
+    operation: {
+      method: 'get',
+      path: '/issues',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'cursor', in: 'query', schema: { type: 'string' } },
+        { name: 'page', in: 'query', schema: { type: 'integer' } },
+        { name: 'archived', in: 'query', schema: { type: 'boolean' } },
+        {
+          name: 'labels',
+          in: 'query',
+          style: 'form',
+          explode: explodeLabels,
+          schema: { type: 'array', items: { type: 'string' } },
+        },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          headers: { Link: { schema: { type: 'string' } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { items: { type: 'array' }, next_cursor: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const acceptedAsInput = (tool: SnapshotTool, next: unknown): boolean | undefined =>
+    tool.generated?.inputSchema.safeParse(next).success;
+
+  it('keeps carried boolean/array arguments in a body-cursor hint, and the 200 stays valid', async () => {
+    const { outcome, valid, tool } = await call(
+      issuesOp(false),
+      page(undefined, { items: [], next_cursor: 'c2' }),
+      { archived: true, labels: ['a', 'b'] },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ archived: true, labels: ['a', 'b'], cursor: 'c2' });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it.each([
+    [false, '<https://api.example.test/issues?page=2&archived=true&labels=a,b>; rel="next"'],
+    [true, '<https://api.example.test/issues?page=2&archived=true&labels=a&labels=b>; rel="next"'],
+  ])(
+    'decodes Link values per declared type and style (labels explode=%s), round-tripping the input schema',
+    async (explode, link) => {
+      const { outcome, valid, tool } = await call(issuesOp(explode), page(link, {}), {
+        archived: true,
+        labels: ['a', 'b'],
+      });
+      expect(outcome.isError).toBe(false);
+      expect(valid).toBe(true);
+      const next = nextOf(outcome);
+      expect(next).toEqual({ page: 2, archived: true, labels: ['a', 'b'] });
+      expect(acceptedAsInput(tool, next)).toBe(true);
+    },
+  );
+
+  it('yields next: null for a pipe-delimited array parameter (not decoded yet, #145)', async () => {
+    const op = issuesOp(false);
+    const piped: NamedOperation = {
+      ...op,
+      operation: {
+        ...op.operation,
+        parameters: [
+          ...op.operation.parameters.filter((param) => param['name'] !== 'labels'),
+          {
+            name: 'labels',
+            in: 'query',
+            style: 'pipeDelimited',
+            explode: false,
+            schema: { type: 'array', items: { type: 'string' } },
+          },
+        ],
+      },
+    };
+    const { outcome, valid } = await call(
+      piped,
+      page('<https://api.example.test/issues?page=2&labels=a|b>; rel="next"', {}),
+      {},
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it.each([
+    ['a non-boolean value for a boolean field', 'archived=maybe'],
+    ['a repeated key for an explode=false array', 'labels=a&labels=b'],
+  ])('yields next: null for %s', async (_label, query) => {
+    const { outcome, valid } = await call(
+      issuesOp(false),
+      page(`<https://api.example.test/issues?page=2&${query}>; rel="next"`, {}),
+      {},
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('yields next: null for a hint the tool input schema would reject (enum)', async () => {
+    const enumOp: NamedOperation = {
+      ...listReposOp,
+      operation: {
+        ...listReposOp.operation,
+        parameters: listReposOp.operation.parameters.map((param) =>
+          param['name'] === 'sort'
+            ? { ...param, schema: { type: 'string', enum: ['created'] } }
+            : param,
+        ),
+      },
+    };
+    const link = '<https://api.example.test/orgs/acme/repos?page=2&sort=pushed>; rel="next"';
+    const { outcome, valid } = await call(enumOp, page(link), { org: 'acme' });
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('maps Stripe-style has_more + last id to starting_after', async () => {
+    const more = await call(
+      stripeOp,
+      page(undefined, { has_more: true, data: [{ id: 'ch_1' }, { id: 'ch_2' }] }),
+      { limit: 2 },
+    );
+    expect(nextOf(more.outcome)).toEqual({ limit: 2, starting_after: 'ch_2' });
+    const done = await call(stripeOp, page(undefined, { has_more: false, data: [] }), {});
+    expect(nextOf(done.outcome)).toBeNull();
+  });
+
+  it('leaves a non-paginated tool byte-identical: no pagination key, none in its schema', async () => {
+    const { outcome, tool } = await call(
+      idPathOp,
+      page('<https://api.example.test/things/1?page=2>; rel="next"', { id: 1 }),
+      { id: '1' },
+    );
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+    });
+    expect(JSON.stringify(tool.wireTool.outputSchema)).not.toContain('pagination');
+  });
+
+  it('never treats a non-GET operation as paginated', () => {
+    const postOp: NamedOperation = {
+      ...listReposOp,
+      toolName: 'createRepo',
+      operation: { ...listReposOp.operation, method: 'post' },
+    };
+    const snapshot = buildToolSnapshot([postOp]);
+    expect(snapshot.toolsByName['createRepo']?.generated?.pagination).toBeUndefined();
+  });
+
+  it('adds the hint as its own text block for a paginated tool without an output schema', async () => {
+    const textOp: NamedOperation = {
+      ...listReposOp,
+      toolName: 'listReposText',
+      operation: {
+        ...listReposOp.operation,
+        responses: { '200': { description: 'ok', headers: { Link: {} } } },
+      },
+    };
+    const { outcome } = await call(
+      textOp,
+      page('<https://api.example.test/orgs/acme/repos?page=2>; rel="next"'),
+      { org: 'acme' },
+    );
+    expect(outcome.content.at(-1)?.text).toBe('pagination: {"next":{"org":"acme","page":2}}');
+  });
+});
+
+describe('createExecutor — optional retries for retry-safe requests', () => {
+  const idemOp: NamedOperation = {
+    toolName: 'createOrder',
+    operation: {
+      method: 'post',
+      path: '/orders',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' } },
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { sku: { type: 'string' } }, required: ['sku'] },
+          },
+        },
+      },
+      responses: { '201': { description: 'created' } },
+    },
+  };
+  const putOp: NamedOperation = {
+    ...pingOp,
+    toolName: 'putThing',
+    operation: { ...pingOp.operation, method: 'put' },
+  };
+
+  type Step = number | 'reset';
+  // A scripted fake transport plus a fake clock: sleep() advances the clock
+  // instead of waiting, so the backoff schedule is asserted exactly.
+  const scripted = (steps: Step[], headers: Record<string, string> = {}) => {
+    let clock = 0;
+    const sleeps: number[] = [];
+    const calls: FetchCall[] = [];
+    const fetch: PinnedDeps['fetch'] = (input, init) => {
+      calls.push({ url: String(input), init: (init ?? {}) as FetchCall['init'] });
+      const step = steps.shift() ?? 200;
+      if (step === 'reset') {
+        return Promise.reject(new TypeError('fetch failed', { cause: new Error('ECONNRESET') }));
+      }
+      return Promise.resolve(new Response(step === 200 ? 'ok' : 'busy', { status: step, headers }));
+    };
+    const deps: ExecutorDeps = {
+      transport: { fetch, resolve: rejectingResolve, timeoutSignal },
+      retry: {
+        now: () => clock,
+        random: () => 0.5,
+        sleep: (ms, signal) => {
+          sleeps.push(ms);
+          clock += ms;
+          return signal.aborted ? Promise.reject(new Error('aborted')) : Promise.resolve();
+        },
+      },
+    };
+    return { deps, calls, sleeps };
+  };
+
+  const run = (
+    op: NamedOperation,
+    deps: ExecutorDeps,
+    retries: number,
+    args: Record<string, unknown> = {},
+    signal = freshSignal(),
+  ) => {
+    const snapshot = buildToolSnapshot([op]);
+    const tool = snapshot.toolsByName[op.toolName] as SnapshotTool;
+    const executor = createExecutor(
+      baseConfig({ retries, validators: validatorsFor(snapshot) }),
+      deps,
+    );
+    return executor(tool, args, signal);
+  };
+
+  it('GET 503, 503, 200 with --retries 2 succeeds on the third attempt with jittered backoff', async () => {
+    const { deps, calls, sleeps } = scripted([503, 503, 200]);
+    const outcome = await run(pingOp, deps, 2);
+    expect(outcome.isError).toBe(false);
+    expect(calls).toHaveLength(3);
+    // Full jitter with random() = 0.5 over a 250 ms, then 500 ms window.
+    expect(sleeps).toEqual([125, 250]);
+  });
+
+  it('--retries 0 (the default) never retries', async () => {
+    const { deps, calls } = scripted([503, 200]);
+    const outcome = await run(pingOp, deps, 0);
+    expect(outcome.isError).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('gives up after the configured number of retries and returns the last upstream error', async () => {
+    const { deps, calls } = scripted([502, 502, 502, 200]);
+    const outcome = await run(pingOp, deps, 2);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toMatch(/502/u);
+    expect(calls).toHaveLength(3);
+  });
+
+  it('retries a connection error that happened before any response (PUT is idempotent)', async () => {
+    const { deps, calls } = scripted(['reset', 200]);
+    const outcome = await run(putOp, deps, 1);
+    expect(outcome.isError).toBe(false);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('never retries DELETE after an ambiguous connection error, but does after a 503', async () => {
+    const deleteOp: NamedOperation = {
+      ...pingOp,
+      toolName: 'deleteThing',
+      operation: { ...pingOp.operation, method: 'delete' },
+    };
+    // The upstream may have deleted the resource and lost the connection
+    // while answering: a retry would then report 404 for a successful delete.
+    const reset = scripted(['reset', 200]);
+    const failed = await run(deleteOp, reset.deps, 2);
+    expect(failed.isError).toBe(true);
+    expect(reset.calls).toHaveLength(1);
+    const busy = scripted([503, 200]);
+    const outcome = await run(deleteOp, busy.deps, 2);
+    expect(outcome.isError).toBe(false);
+    expect(busy.calls).toHaveLength(2);
+  });
+
+  it('ignores Retry-After on a 502/504 (honoured only on 429/503)', async () => {
+    const { deps, sleeps } = scripted([502, 200], { 'retry-after': '3' });
+    await run(pingOp, deps, 1);
+    expect(sleeps).toEqual([125]);
+  });
+
+  it.each([400, 401, 403, 404, 409, 500, 501])('never retries a %i', async (status) => {
+    const { deps, calls } = scripted([status, 200]);
+    await run(pingOp, deps, 3);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('never retries a POST without an Idempotency-Key parameter', async () => {
+    const { deps, calls } = scripted([503, 201]);
+    const outcome = await run(createThingOp, deps, 3, { name: 'x' });
+    expect(outcome.isError).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('retries a POST that declares Idempotency-Key, sending ONE generated key on every attempt', async () => {
+    const { deps, calls } = scripted([503, 504, 201]);
+    const outcome = await run(idemOp, deps, 2, { sku: 'a' });
+    expect(outcome.isError).toBe(false);
+    expect(calls).toHaveLength(3);
+    const keys = calls.map((call) => call.init.headers?.['idempotency-key']);
+    expect(keys[0]).toMatch(/^[\da-f-]{36}$/u);
+    expect(new Set(keys).size).toBe(1);
+    // Echoed, so the caller can repeat a failed call with the same key.
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toBe(keys[0]);
+  });
+
+  it('echoes the key in _meta when the call finally fails too', async () => {
+    const { deps, calls } = scripted([503, 503]);
+    const outcome = await run(idemOp, deps, 1, { sku: 'a' });
+    expect(outcome.isError).toBe(true);
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toBe(
+      calls[0]?.init.headers?.['idempotency-key'],
+    );
+  });
+
+  it("keeps the caller's own Idempotency-Key on every attempt", async () => {
+    const snapshot = buildToolSnapshot([idemOp]);
+    const field = Object.entries(
+      (snapshot.toolsByName['createOrder'] as SnapshotTool).generated?.mapper.fields ?? {},
+    ).find(([, mapping]) => mapping.destination === 'header')?.[0] as string;
+    const { deps, calls } = scripted([503, 201]);
+    await run(idemOp, deps, 1, { sku: 'a', [field]: 'caller-key-1' });
+    expect(calls.map((call) => call.init.headers?.['idempotency-key'])).toEqual([
+      'caller-key-1',
+      'caller-key-1',
+    ]);
+  });
+
+  it('does not add an Idempotency-Key when retries are off', async () => {
+    const { deps, calls } = scripted([201]);
+    const outcome = await run(idemOp, deps, 0, { sku: 'a' });
+    expect(calls[0]?.init.headers?.['idempotency-key']).toBeUndefined();
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toBeUndefined();
+  });
+
+  it('waits for a 429 Retry-After instead of the jittered delay', async () => {
+    const { deps, sleeps, calls } = scripted([429, 200], { 'retry-after': '1' });
+    const outcome = await run(pingOp, deps, 1);
+    expect(outcome.isError).toBe(false);
+    expect(sleeps).toEqual([1000]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('stops when the next backoff would cross the call deadline, reporting the upstream Retry-After', async () => {
+    // Retry-After 10 s, but the call timeout (baseConfig) is 5 s.
+    const { deps, calls } = scripted([503, 200], { 'retry-after': '10' });
+    const outcome = await run(pingOp, deps, 3);
+    expect(outcome.isError).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(outcome.meta).toEqual({ 'openapi-mcp/upstreamRetryAfterMs': 10_000 });
+  });
+
+  it('returns cancelled, with no further attempt, when the caller aborts during backoff', async () => {
+    const controller = new AbortController();
+    const { deps, calls } = scripted([503, 200]);
+    const sleep = deps.retry?.sleep;
+    const withAbort: ExecutorDeps = {
+      ...deps,
+      retry: {
+        ...deps.retry,
+        sleep: (ms, signal) => {
+          controller.abort();
+          return sleep?.(ms, signal) ?? Promise.resolve();
+        },
+      },
+    };
+    const outcome = await run(pingOp, withAbort, 2, {}, controller.signal);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toMatch(/cancelled/u);
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe('createExecutor — W3C trace context propagation', () => {
+  const TRACE = {
+    traceparent: '00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01',
+    tracestate: 'congo=t61rcWkgMzE',
+  };
+
+  const run = async (
+    propagate: boolean | undefined,
+    handler: (call: FetchCall) => Response = () => textResponse(200, ''),
+  ) => {
+    const snapshot = buildToolSnapshot([pingOp]);
+    const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(handler);
+    const executor = createExecutor(
+      baseConfig({
+        validators: validatorsFor(snapshot),
+        ...(propagate === undefined ? {} : { propagateTraceContext: propagate }),
+      }),
+      deps,
+    );
+    await executor(tool, {}, freshSignal(), TRACE);
+    return calls;
+  };
+
+  it('forwards traceparent/tracestate on the same-origin request when enabled', async () => {
+    const [call] = await run(true);
+    expect(call?.init.headers?.['traceparent']).toBe(TRACE.traceparent);
+    expect(call?.init.headers?.['tracestate']).toBe(TRACE.tracestate);
+  });
+
+  it('never forwards it when propagation is off (the core default)', async () => {
+    for (const propagate of [false, undefined]) {
+      const [call] = await run(propagate);
+      expect(call?.init.headers?.['traceparent']).toBeUndefined();
+    }
+  });
+
+  it('never forwards it to a cross-origin redirect target', async () => {
+    const calls = await run(true, (call) =>
+      call.url.startsWith('https://api.example.test')
+        ? new Response(null, { status: 302, headers: { location: 'https://other.example/x' } })
+        : textResponse(200, ''),
+    );
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.init.headers?.['traceparent']).toBe(TRACE.traceparent);
+    expect(calls[1]?.init.headers?.['traceparent']).toBeUndefined();
+    expect(calls[1]?.init.headers?.['tracestate']).toBeUndefined();
+  });
+
+  it('reserves traceparent/tracestate: a spec header parameter of that name is no tool input', () => {
+    expect(SYSTEM_HEADERS.has('traceparent')).toBe(true);
+    expect(SYSTEM_HEADERS.has('tracestate')).toBe(true);
+  });
+});
+
+// #72: end to end with --default-response-is-error semantics.
+describe('createExecutor — default response treated as error (#72)', () => {
+  const chargeOp: NamedOperation = {
+    toolName: 'getCharge',
+    operation: {
+      method: 'get',
+      path: '/charges',
+      tags: [],
+      deprecated: false,
+      parameters: [],
+      responses: {
+        '200': {
+          content: {
+            'application/json': {
+              schema: { type: 'object', properties: { id: { type: 'string' } } },
+            },
+          },
+        },
+        default: { description: 'error' },
+      },
+    },
+  };
+
+  const call = (response: Response) => {
+    const snapshot = buildToolSnapshot([chargeOp], true);
+    const tool = snapshot.toolsByName['getCharge'] as SnapshotTool;
+    const { deps } = recordingTransport(() => response);
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    return executor(tool, {}, freshSignal());
+  };
+
+  it('returns structuredContent for the documented 200', async () => {
+    const outcome = await call(jsonResponse(200, { id: 'ch_1' }));
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 'ch_1' },
+    });
+  });
+
+  it('fails closed on an undocumented 201, naming the flag', async () => {
+    const outcome = await call(jsonResponse(201, { id: 'ch_1' }));
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toContain('--default-response-is-error');
+  });
+
+  it('keeps the HTTP error path for a 4xx', async () => {
+    const outcome = await call(jsonResponse(404, { error: {} }));
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toContain('404');
   });
 });
