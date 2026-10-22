@@ -71,6 +71,11 @@ describe('verifyJwt — accepted tokens', () => {
   it('compares the audience as a resource URI: a trailing slash and upper-case scheme/host still match', () => {
     expect(verdict({ aud: `${AUDIENCE}/` })).toBe('ok');
     expect(verdict({ aud: 'HTTPS://MCP.EXAMPLE.TEST/mcp' })).toBe('ok');
+    // URL normalization also elides the default port and resolves dot
+    // segments; path case and empty segments stay significant.
+    expect(verdict({ aud: 'https://mcp.example.test:443/x/../mcp' })).toBe('ok');
+    expect(verdict({ aud: 'https://mcp.example.test/MCP' })).toBe('wrong-audience');
+    expect(verdict({ aud: 'https://mcp.example.test//mcp' })).toBe('wrong-audience');
   });
 
   it('tolerates 60 s of clock skew on exp and nbf, and no more', () => {
@@ -181,7 +186,7 @@ describe('verifyJwt — rejected tokens', () => {
 
   it('treats an unparseable signature as a failed verification, not an exception', () => {
     const [header, payload] = signJwt(ec, claims()).split('.');
-    expect(reasonOf(`${String(header)}.${String(payload)}.${signWith(ec, 'x').slice(0, 10)}`)).toBe(
+    expect(reasonOf(`${String(header)}.${String(payload)}.${signWith(ec, 'x').slice(0, 8)}`)).toBe(
       'bad-signature',
     );
   });
@@ -201,7 +206,7 @@ describe('parseJwks', () => {
     expect([...(parsed?.keys() ?? [])]).toStrictEqual([rsa.kid]);
   });
 
-  it('refuses documents that are not a JWKS and caps the number of keys read', () => {
+  it('refuses documents that are not a JWKS and caps the number of usable keys kept', () => {
     expect(parseJwks([])).toBeUndefined();
     expect(parseJwks({ keys: 'x' })).toBeUndefined();
     const many = Array.from({ length: 40 }, (_unused, index) => ({
@@ -209,5 +214,76 @@ describe('parseJwks', () => {
       kid: `k${String(index)}`,
     }));
     expect(parseJwks({ keys: many })?.size).toBe(32);
+  });
+
+  it('collapses a key listed twice verbatim under one kid', () => {
+    const parsed = parseJwks({ keys: [rsa.publicJwk, { ...rsa.publicJwk }] });
+    expect(parsed?.has(rsa.kid)).toBe(true);
+    const token = signJwt(rsa, claims());
+    expect(reasonOf(token, parsed ?? new Map())).toBe('ok');
+  });
+
+  it('ignores an encryption key, a key_ops without verify and a small RSA key sharing the kid', () => {
+    const enc = makeKey('RS256', rsa.kid);
+    const weak = makeKey('RS256', rsa.kid, 1024);
+    const parsed = parseJwks({
+      keys: [
+        { ...enc.publicJwk, use: 'enc' },
+        { ...ec.publicJwk, kid: rsa.kid, key_ops: ['encrypt'] },
+        weak.publicJwk,
+        rsa.publicJwk,
+      ],
+    });
+    const token = signJwt(rsa, claims());
+    expect(reasonOf(token, parsed ?? new Map())).toBe('ok');
+  });
+
+  it('skips unusable entries before the cap, so they cannot hide the real key', () => {
+    const junk = Array.from({ length: 40 }, (_unused, index) => ({
+      kty: 'oct',
+      k: 'c2VjcmV0',
+      kid: `oct-${String(index)}`,
+    }));
+    const parsed = parseJwks({ keys: [...junk, rsa.publicJwk] });
+    expect([...(parsed?.keys() ?? [])]).toStrictEqual([rsa.kid]);
+  });
+
+  it('still drops a kid naming two different signing keys, or one key with conflicting pins', () => {
+    const other = makeKey('RS256', rsa.kid);
+    expect(parseJwks({ keys: [rsa.publicJwk, other.publicJwk] })?.has(rsa.kid)).toBe(false);
+    expect(
+      parseJwks({ keys: [rsa.publicJwk, { ...rsa.publicJwk, alg: 'PS256' }] })?.has(rsa.kid),
+    ).toBe(false);
+  });
+
+  it('reads at most 100 raw entries', () => {
+    const junk = Array.from({ length: 100 }, (_unused, index) => ({
+      kty: 'oct',
+      kid: `oct-${String(index)}`,
+    }));
+    expect(parseJwks({ keys: [...junk, rsa.publicJwk] })?.size).toBe(0);
+  });
+});
+
+describe('verifyJwt — canonical encoding', () => {
+  // Flips the lowest bit of a segment's last base64url character: for a
+  // segment whose length is not a multiple of 4 that bit is unused padding,
+  // so the decoded bytes are unchanged.
+  const flipLastBit = (segment: string): string => {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = alphabet.indexOf(segment.at(-1) ?? 'A');
+    return `${segment.slice(0, -1)}${alphabet[last ^ 1] ?? ''}`;
+  };
+
+  it.each([
+    ['RS256', rsa],
+    ['ES256', ec],
+  ] as const)('rejects a %s token whose signature is spelled non-canonically', (_alg, key) => {
+    const [header = '', payload = '', signature = ''] = signJwt(key, claims()).split('.');
+    expect(signature.length % 4).not.toBe(0);
+    const respelled = flipLastBit(signature);
+    expect(Buffer.from(respelled, 'base64url')).toStrictEqual(Buffer.from(signature, 'base64url'));
+    expect(reasonOf(`${header}.${payload}.${respelled}`)).toBe('malformed');
+    expect(reasonOf(`${header}.${payload}.${signature}`)).toBe('ok');
   });
 });

@@ -147,35 +147,90 @@ export const verifyWithJwk = (
   return verifySignature(alg, key, signingInput, signature) ? 'ok' : 'bad-signature';
 };
 
-// Upper bound on keys taken from one JWKS document: real authorization
-// servers publish a handful (current + next + previous); a document with
-// hundreds is hostile or broken, and every key is parsed per refresh.
+// Upper bounds on one JWKS document. Real authorization servers publish a
+// handful of signing keys (current + next + previous), sometimes next to
+// encryption keys. At most MAX_JWKS_ENTRIES raw entries are inspected (each
+// is imported once per refresh to check that it can verify), and at most
+// MAX_JWKS_KEYS usable signing keys are kept; a document beyond either is
+// hostile or broken.
+export const MAX_JWKS_ENTRIES = 100;
 export const MAX_JWKS_KEYS = 32;
 
-// Parses a JWKS document (RFC 7517 §5) into a kid-indexed key set. Keys
-// without a `kid`, with a duplicate `kid`, or of an unsupported type are
-// skipped rather than failing the whole set — one unusable key must not
-// lock out tokens signed by the others. Returns undefined for a document
-// that is not a JWKS at all.
+const SUPPORTED_CURVES: Readonly<Record<string, ReadonlySet<string>>> = {
+  EC: new Set(['P-256', 'P-384', 'P-521']),
+  OKP: new Set(['Ed25519']),
+};
+
+const isSupportedKeyType = (kty: unknown, crv: unknown): boolean =>
+  kty === 'RSA' ||
+  (typeof kty === 'string' && typeof crv === 'string' && SUPPORTED_CURVES[kty]?.has(crv) === true);
+
+// Whether a JWKS entry can ever verify a token accepted here: a signing key
+// (`use` absent or `sig`, `key_ops` absent or containing `verify`) of a
+// supported type/curve, with an allowlisted `alg` pin if it has one, that
+// imports as a public key (RSA >= 2048 bits). Encryption keys and keys of
+// other types are legal in a JWKS (RFC 7517 §4); they are just not ours.
+const isUsableSigningKey = (jwk: JsonWebKey): boolean => {
+  const { alg, use, key_ops: keyOps, kty, crv } = jwk;
+  if (use !== undefined && use !== 'sig') {
+    return false;
+  }
+  if (keyOps !== undefined && !(Array.isArray(keyOps) && keyOps.includes('verify'))) {
+    return false;
+  }
+  if (alg !== undefined && !isAllowedAlg(alg)) {
+    return false;
+  }
+  return isSupportedKeyType(kty, crv) && importKey(jwk) !== undefined;
+};
+
+// The members that decide what a key verifies: its public key material and
+// its alg/use/key_ops pins. Two entries under one kid that agree on all of
+// them are the same key listed twice.
+const keyIdentity = (jwk: JsonWebKey): string => {
+  const { alg, use, key_ops: keyOps } = jwk;
+  const material = Object.entries(publicJwk(jwk)).toSorted(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  const ops = Array.isArray(keyOps) ? keyOps.toSorted() : keyOps;
+  return JSON.stringify([material, alg, use, ops]);
+};
+
+// Parses a JWKS document (RFC 7517 §5) into a kid-indexed set of usable
+// signing keys. Entries without a `kid`, or that can never verify (see
+// isUsableSigningKey), are skipped BEFORE the ambiguity check: an encryption
+// key sharing a signing key's kid, or a stray key of another type, must not
+// lock out tokens signed by the others. An entry repeated verbatim counts
+// once. Returns undefined for a document that is not a JWKS at all.
 export const parseJwks = (document: unknown): KeySet | undefined => {
   if (!isRecord(document) || !Array.isArray(document['keys'])) {
     return undefined;
   }
   const keys = new Map<string, JsonWebKey>();
-  const duplicates = new Set<string>();
-  for (const candidate of document['keys'].slice(0, MAX_JWKS_KEYS)) {
+  const identities = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const candidate of document['keys'].slice(0, MAX_JWKS_ENTRIES)) {
     if (!isRecord(candidate) || typeof candidate['kid'] !== 'string' || candidate['kid'] === '') {
       continue;
     }
     const { kid } = candidate;
-    if (keys.has(kid)) {
-      duplicates.add(kid);
+    const jwk = candidate as JsonWebKey;
+    if (!isUsableSigningKey(jwk)) {
+      continue;
     }
-    keys.set(kid, candidate as JsonWebKey);
+    const identity = keyIdentity(jwk);
+    const seen = identities.get(kid);
+    if (seen === undefined && identities.size < MAX_JWKS_KEYS) {
+      identities.set(kid, identity);
+      keys.set(kid, jwk);
+    } else if (seen !== undefined && seen !== identity) {
+      ambiguous.add(kid);
+    }
   }
-  // An ambiguous kid is dropped entirely: picking either key would let the
-  // JWKS's ordering decide which signature is accepted.
-  for (const kid of duplicates) {
+  // A kid naming two DIFFERENT usable signing keys is dropped entirely:
+  // picking either would let the JWKS's ordering decide which signature is
+  // accepted.
+  for (const kid of ambiguous) {
     keys.delete(kid);
   }
   return keys;
