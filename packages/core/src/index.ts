@@ -230,11 +230,13 @@ export {
   isValidBearerToken,
   markSecretScanned,
   META_TOOL_NAME,
+  parseJwks,
   resolveToolMode,
   SEARCH_TOOL_NAME,
   structuredOutcome,
   textOutcome,
   TOOL_MODES,
+  verifyJwt,
 } from './server/index.ts';
 export type {
   BearerCheck,
@@ -248,6 +250,9 @@ export type {
   ExecutorDeps,
   GuardDecision,
   IncomingHeaders,
+  JwtFailure,
+  JwtVerifyResult,
+  KeySet,
   MetaExecutor,
   MetaSummary,
   RateLimiter,
@@ -264,6 +269,7 @@ export type {
   ToolExecutor,
   ToolMode,
   UpstreamExecutor,
+  VerifiedAccessToken,
   WireTool,
 } from './server/index.ts';
 export { serveStdioSession } from './server/sdk/stdio.ts';
