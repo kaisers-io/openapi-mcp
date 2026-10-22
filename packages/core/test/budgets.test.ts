@@ -11,7 +11,10 @@ describe('SPEC_BUDGETS', () => {
       maxSchemaNodes: 500_000,
       maxRefDepth: 64,
       maxToolCount: 512,
+      maxDiscoverToolCount: 4096,
+      maxOperationCount: 4096,
       maxTextLength: 4096,
+      maxServerUrlBytes: 2048,
     });
   });
 });

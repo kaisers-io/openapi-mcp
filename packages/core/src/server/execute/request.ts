@@ -1,4 +1,14 @@
-import { HEADER_NAME_RE } from '../../http/headers.ts';
+import { randomBytes } from 'node:crypto';
+import { HEADER_NAME_RE, NON_LATIN1_RE } from '../../http/headers.ts';
+import {
+  FORM_URLENCODED,
+  isJsonEssence,
+  isSafePartName,
+  isStrictBase64,
+  MULTIPART_FORM_DATA,
+  OCTET_STREAM,
+  parseMediaType,
+} from '../../toolgen/media-type.ts';
 import { isDangerousKey } from '../../toolgen/schema.ts';
 import type { FieldMapping, RequestMapper } from '../../toolgen/layout.ts';
 
@@ -33,9 +43,9 @@ type Shape =
   | { kind: 'array'; values: readonly Primitive[] }
   | { kind: 'object'; entries: readonly (readonly [string, Primitive])[] };
 
-// The mapper only ever emits path/simple, query/form, header/simple — and
-// those styles are DEFINED only for a primitive, an array-of-primitives, or a
-// flat object-of-primitives. Our Zod schemas do not prevent a nested object
+// The mapper only ever emits path/simple, query/form|deepObject|
+// spaceDelimited|pipeDelimited, header/simple — and those styles are DEFINED
+// only for a primitive, an array-of-primitives, or a flat object-of-primitives. Our Zod schemas do not prevent a nested object
 // or array-of-objects from reaching here, so this guard fails closed rather
 // than ever emitting `[object Object]` onto the wire.
 const classifyShape = (value: unknown): Shape | undefined => {
@@ -76,12 +86,23 @@ const encodeLeaf = (raw: string): string | undefined => {
 // it. The static half of the path template is already vetted at build time
 // (toolgen/layout.ts's `isDangerousStaticSegment`) — this only guards the
 // dynamic VALUE.
+// An encoded dot counts the same as a literal one for that double-decode:
+// `.%2e`, `%2e.` and `%2e%2e` all become `..`, and a lone `%2e` becomes `.`,
+// so any dot pair involving at least one `%2e`, and a leaf that is nothing
+// but one encoded dot, are refused alike.
+const ENCODED_DOT_PAIR_RE = /%2e%2e|\.%2e|%2e\./u;
+
 const isDangerousPathLeaf = (raw: string): boolean => {
   if (raw === '.' || raw === '..' || raw.includes('/') || raw.includes('\\')) {
     return true;
   }
   const lower = raw.toLowerCase();
-  return lower.includes('%2f') || lower.includes('%5c') || lower.includes('%2e%2e');
+  return (
+    lower.includes('%2f') ||
+    lower.includes('%5c') ||
+    lower === '%2e' ||
+    ENCODED_DOT_PAIR_RE.test(lower)
+  );
 };
 
 type PathMapping = Extract<FieldMapping, { destination: 'path' }>;
@@ -99,7 +120,7 @@ const serializePathValue = (
   const leaf = (raw: string): { ok: string } | { error: string } => {
     if (isDangerousPathLeaf(raw)) {
       return {
-        error: `path parameter "${mapping.wireName}" would introduce a path separator or dot-segment`,
+        error: `path parameter "${mapping.wireName}" was refused: it contains a path separator or dot-segment (/, \\, . or .., or an encoded slash or dot such as %2F, %5C or %2E). No request was sent; pass the value without them`,
       };
     }
     const encoded = encodeLeaf(raw);
@@ -167,6 +188,99 @@ type QueryPair = {
 
 type QueryMapping = Extract<FieldMapping, { destination: 'query' }>;
 
+type Encoder = (raw: string) => { ok: string } | { error: string };
+
+// The deepObject style (OAS 3.1.1 §4.8.12.4): `name[key]=value` per property, with the
+// brackets percent-encoded exactly as in the spec's example
+// (`?color%5BR%5D=100&color%5BG%5D=200`). Key and value are encoded leaf-wise
+// like every other query leaf, so `&`, `=`, `#` inside them can never start a
+// new parameter. Only an object of scalars is defined; anything else fails
+// closed (a nested value is already rejected by classifyShape). A key that
+// contains `[` or `]` is rejected as ambiguous: it would encode to `%5B`/`%5D`,
+// the very bytes of the structural brackets, so `{"a][b": v}` would reach a
+// bracket-parsing server (Rails/Rack, PHP, qs) as the NESTED `name[a][b]`.
+const serializeDeepObject = (
+  mapping: QueryMapping,
+  wireKey: string,
+  shape: Shape,
+  enc: Encoder,
+): { ok: readonly QueryPair[] } | { error: string } => {
+  if (shape.kind !== 'object') {
+    return { error: `query parameter "${mapping.wireName}" (deepObject) must be an object` };
+  }
+  // Imperative on purpose: same first-failure rationale as serializeQueryValue.
+  const pairs: QueryPair[] = [];
+  for (const [key, val] of shape.entries) {
+    if (key.includes('[') || key.includes(']')) {
+      return {
+        error: `query parameter "${mapping.wireName}" (deepObject) has a key containing "[" or "]", which is ambiguous with nesting; use keys without brackets`,
+      };
+    }
+    const keyResult = enc(key);
+    if ('error' in keyResult) {
+      return keyResult;
+    }
+    const valResult = enc(String(val));
+    if ('error' in valResult) {
+      return valResult;
+    }
+    pairs.push({ key: `${wireKey}%5B${keyResult.ok}%5D`, value: valResult.ok });
+  }
+  return { ok: pairs };
+};
+
+const DELIMITERS: Readonly<
+  Record<'spaceDelimited' | 'pipeDelimited', { raw: string; wire: string }>
+> = {
+  spaceDelimited: { raw: ' ', wire: '%20' },
+  pipeDelimited: { raw: '|', wire: '%7C' },
+};
+
+// The spaceDelimited / pipeDelimited styles with explode=false (the only defined form,
+// OAS 3.1.1 §4.8.12.4): one key, array items or object k,v,k,v joined by the
+// PERCENT-ENCODED delimiter (`%20` / `%7C`, as in the spec's examples). A leaf
+// that itself contains the raw delimiter would encode to the very same bytes
+// and make the list ambiguous, so it is rejected rather than sent.
+const serializeDelimited = (
+  mapping: QueryMapping,
+  style: 'spaceDelimited' | 'pipeDelimited',
+  wireKey: string,
+  shape: Shape,
+  enc: Encoder,
+): { ok: readonly QueryPair[] } | { error: string } => {
+  const delimiter = DELIMITERS[style];
+  if (shape.kind === 'primitive') {
+    return {
+      error: `query parameter "${mapping.wireName}" (${style}) must be an array or object`,
+    };
+  }
+  const leaves =
+    shape.kind === 'array'
+      ? shape.values.map(String)
+      : shape.entries.flatMap(([key, val]) => [key, String(val)]);
+  // An empty array/object sends nothing, like `form` does: `ids=` would read
+  // as "filter by the empty string" on many APIs, not as "no filter".
+  if (leaves.length === 0) {
+    return { ok: [] };
+  }
+  // Flattening to raw strings is a cheap O(n) copy; the per-leaf ENCODING
+  // below stops at the first failure (same rationale as serializeQueryValue).
+  const parts: string[] = [];
+  for (const leaf of leaves) {
+    if (leaf.includes(delimiter.raw)) {
+      return {
+        error: `query parameter "${mapping.wireName}" contains its own ${style} delimiter, which is ambiguous`,
+      };
+    }
+    const result = enc(leaf);
+    if ('error' in result) {
+      return result;
+    }
+    parts.push(result.ok);
+  }
+  return { ok: [{ key: wireKey, value: parts.join(delimiter.wire) }] };
+};
+
 const serializeQueryValue = (
   mapping: QueryMapping,
   value: unknown,
@@ -186,6 +300,12 @@ const serializeQueryValue = (
   const wireKey = enc(mapping.wireName);
   if ('error' in wireKey) {
     return wireKey;
+  }
+  if (mapping.style === 'deepObject') {
+    return serializeDeepObject(mapping, wireKey.ok, shape, enc);
+  }
+  if (mapping.style === 'spaceDelimited' || mapping.style === 'pipeDelimited') {
+    return serializeDelimited(mapping, mapping.style, wireKey.ok, shape, enc);
   }
   // Imperative on purpose (applies to every per-leaf loop below): `enc()`
   // can fail per leaf, and the array/object branches must stop at the FIRST
@@ -255,6 +375,10 @@ type HeaderMapping = Extract<FieldMapping, { destination: 'header' }>;
 // rejected outright — never stripped, never encoded.
 // oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it rejects them outright)
 const HEADER_CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
+// NON_LATIN1_RE (http/headers.ts): a header value travels as bytes, so a
+// code point above U+00FF cannot be represented, and the transport would
+// only throw later as an opaque network failure — after the request was
+// prepared — so it is refused here as an argument error the caller can fix.
 
 // `mapping.wireName` is spec-derived, untrusted text (the header parameter's
 // NAME, not its value). The undici transport THROWS at fetch time on a
@@ -280,6 +404,11 @@ const serializeHeaderValue = (
   ): { ok: string } | { error: string } => {
     if (HEADER_CONTROL_CHAR_RE.test(raw)) {
       return { error: `header parameter "${mapping.wireName}" contains a control character` };
+    }
+    if (NON_LATIN1_RE.test(raw)) {
+      return {
+        error: `header parameter "${mapping.wireName}" was refused: it contains a character above U+00FF, which an HTTP header cannot carry. No request was sent; use Latin-1 text only (ASCII is safest)`,
+      };
     }
     if (delimiters.some((delimiter) => raw.includes(delimiter))) {
       return {
@@ -413,6 +542,76 @@ type SerializedBody = {
   contentType?: string;
 };
 
+const bodyEncoding = (
+  contentType: string,
+): 'json' | 'form' | 'binary' | 'multipart' | undefined => {
+  const essence = parseMediaType(contentType)?.essence;
+  if (essence !== undefined && isJsonEssence(essence)) {
+    return 'json';
+  }
+  if (essence === OCTET_STREAM) {
+    return 'binary';
+  }
+  if (essence === MULTIPART_FORM_DATA) {
+    return 'multipart';
+  }
+  return essence === FORM_URLENCODED ? 'form' : undefined;
+};
+
+// An octet-stream body arrives as a base64 string (see layout.ts) and is sent
+// as the decoded bytes. Re-validated strictly here — Node's base64 decoder is
+// lenient (it skips invalid characters), so decoding unvalidated text could
+// silently send different bytes than the caller encoded.
+const binaryBody = (payload: unknown): { ok: Uint8Array } | { error: string } =>
+  typeof payload === 'string' && isStrictBase64(payload)
+    ? { ok: new Uint8Array(Buffer.from(payload, 'base64')) }
+    : { error: 'an application/octet-stream body must be a valid base64 string' };
+
+// The multipart/form-data encoding (RFC 7578): one part per top-level body property.
+// Text parts carry the scalar's string form as UTF-8 with no part
+// Content-Type (§4.4 default text/plain); binary parts (mapping.binary) carry
+// the decoded base64 bytes as `application/octet-stream` with a filename
+// (§4.2), which most servers require to treat a part as a file. The boundary
+// is 192 random bits, generated per request; a part that happens to contain
+// the delimiter fails closed rather than producing an ambiguous body.
+const multipartBody = (
+  payload: Record<string, unknown>,
+  // File part name -> its Content-Type.
+  binaryParts: ReadonlyMap<string, string>,
+): { ok: Uint8Array; boundary: string } | { error: string } => {
+  const boundary = `openapi-mcp-${randomBytes(24).toString('hex')}`;
+  const delimiter = Buffer.from(`--${boundary}`);
+  const chunks: Buffer[] = [];
+  // Imperative on purpose: each part can fail (bad name, bad value, bad
+  // base64) and must stop the whole body at the first failure.
+  for (const [name, value] of Object.entries(payload)) {
+    if (!isSafePartName(name)) {
+      return { error: `multipart part name "${name}" cannot be encoded safely` };
+    }
+    let content: Buffer;
+    let headers = `Content-Disposition: form-data; name="${name}"`;
+    const partType = binaryParts.get(name);
+    if (partType !== undefined) {
+      const decoded = binaryBody(value);
+      if ('error' in decoded) {
+        return { error: `multipart part "${name}" must be a valid base64 string` };
+      }
+      content = Buffer.from(decoded.ok);
+      headers += `; filename="${name}"\r\nContent-Type: ${partType}`;
+    } else if (isPrimitive(value)) {
+      content = Buffer.from(String(value), 'utf8');
+    } else {
+      return { error: `multipart part "${name}" must be a string, number or boolean` };
+    }
+    if (content.includes(delimiter)) {
+      return { error: 'a multipart part contains the generated boundary' };
+    }
+    chunks.push(Buffer.from(`--${boundary}\r\n${headers}\r\n\r\n`), content, Buffer.from('\r\n'));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return { ok: new Uint8Array(Buffer.concat(chunks)), boundary };
+};
+
 const serializeBody = (
   mapper: RequestMapper,
   method: string,
@@ -436,6 +635,14 @@ const serializeBody = (
     // always carries a contentType. Defensive, fail-closed if ever violated.
     return { error: 'the request mapper is missing a body content type' };
   }
+  // The content type is the spec's declared media type, sent verbatim
+  // (decision D5); its essence picks the encoding. buildLayout only ever
+  // selects a well-formed JSON-family or form-urlencoded type — anything else
+  // here is a broken invariant and fails closed.
+  const encoding = bodyEncoding(contentType);
+  if (encoding === undefined) {
+    return { error: 'the request mapper has an unsupported body content type' };
+  }
   let payload: unknown;
   if (mapper.bodyMode === 'single') {
     const [entry] = bodyFieldEntries;
@@ -453,15 +660,54 @@ const serializeBody = (
     if ('error' in assembled) {
       return assembled;
     }
-    // An entirely-absent optional body group sends no body at all — the
+    // An entirely-absent OPTIONAL body group sends no body at all — the
     // all-or-nothing refine in buildLayout already guarantees the group is
-    // either fully present or fully absent by the time we get here.
-    if (!assembled.anyPresent) {
+    // either fully present or fully absent by the time we get here. A
+    // REQUIRED body is sent even when every (optional) field is absent: it
+    // falls through with the empty object, so the upstream receives `{}` (or
+    // an empty form body) with its Content-Type rather than no body at all
+    // (#40). Presence comes from the mapper, never from populated fields.
+    if (!assembled.anyPresent && mapper.bodyRequired !== true) {
       return { ok: {} };
     }
     payload = assembled.object;
   }
-  if (contentType === 'application/json') {
+  if (encoding === 'multipart') {
+    if (!isPlainObject(payload)) {
+      return { error: 'a multipart/form-data body must be an object' };
+    }
+    // RFC 2046 §5.1.1 requires at least one body part; a required body whose
+    // parts are all optional and absent would be just the close delimiter,
+    // which strict parsers (busboy/multer setups, some Java servers) reject.
+    if (Object.keys(payload).length === 0) {
+      const names = bodyFieldEntries.map(([name]) => name).join(', ');
+      return {
+        error: `the multipart/form-data request body needs at least one part (RFC 2046); provide at least one of: ${names}`,
+      };
+    }
+    const binaryParts = new Map(
+      bodyFieldEntries.flatMap(([, mapping]) =>
+        mapping.binary === true && mapping.bodyPath.length === 1
+          ? [[mapping.bodyPath[0] as string, mapping.partContentType ?? OCTET_STREAM] as const]
+          : [],
+      ),
+    );
+    const encoded = multipartBody(payload, binaryParts);
+    if ('error' in encoded) {
+      return encoded;
+    }
+    return {
+      ok: { body: encoded.ok, contentType: `${contentType}; boundary=${encoded.boundary}` },
+    };
+  }
+  if (encoding === 'binary') {
+    const decoded = binaryBody(payload);
+    if ('error' in decoded) {
+      return decoded;
+    }
+    return { ok: { body: decoded.ok, contentType } };
+  }
+  if (encoding === 'json') {
     const encoded = jsonBody(payload);
     if ('error' in encoded) {
       return encoded;

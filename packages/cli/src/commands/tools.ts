@@ -23,6 +23,12 @@ type ToolRow = {
   path: string;
   summary?: string;
   deprecated: boolean;
+  outputSchema: boolean;
+  // The outputSchema exists only because of --default-response-is-error.
+  outputSchemaAssumesDefaultIsError?: true;
+  // Why there is no outputSchema, when the tool description tells the agent
+  // (#39: a response pattern with nested quantifiers).
+  outputSchemaWithheld?: string;
 };
 
 const toToolRow = (generated: GeneratedTool): ToolRow => ({
@@ -31,6 +37,13 @@ const toToolRow = (generated: GeneratedTool): ToolRow => ({
   path: generated.operation.path,
   deprecated: generated.operation.deprecated,
   ...(generated.operation.summary === undefined ? {} : { summary: generated.operation.summary }),
+  outputSchema: generated.outputSchema !== undefined,
+  ...(generated.outputSchemaAssumesDefaultIsError === true
+    ? { outputSchemaAssumesDefaultIsError: true as const }
+    : {}),
+  ...(generated.outputSchemaWithheld === undefined
+    ? {}
+    : { outputSchemaWithheld: generated.outputSchemaWithheld }),
 });
 
 export const registerTools: CommandRegistrar = (program, ctx, state) => {
@@ -51,6 +64,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
         const built = buildTools(result.namedOperations, {
           reservedHeaders: SYSTEM_HEADERS,
           openapiVersion: result.spec.openapiVersion,
+          defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
         });
         const allOmitted = [...result.spec.omitted, ...built.omitted];
         const tools: ToolRow[] = built.tools.map(toToolRow);
@@ -82,7 +96,11 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
             (tool) =>
               `  ${tool.name.padEnd(nameWidth)}  ${tool.method.padEnd(6)} ${sanitizeSpecText(tool.path, PATH_DISPLAY_MAX)}${
                 tool.summary === undefined ? '' : ` — ${tool.summary}`
-              }${tool.deprecated ? ' [deprecated]' : ''}`,
+              }${tool.deprecated ? ' [deprecated]' : ''}${
+                tool.outputSchemaAssumesDefaultIsError === true
+                  ? ' [output schema assumes default = error]'
+                  : ''
+              }`,
           ),
         ];
         // Omissions, dead patterns, and cache degradation are all non-fatal

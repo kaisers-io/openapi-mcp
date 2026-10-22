@@ -6,6 +6,11 @@
 // this module never touches a real timer.
 export type RateLimiter = {
   consume: (nowMs: number) => boolean;
+  // How long until consume() can next succeed: 0 while the window has room,
+  // otherwise exactly `oldestTimestamp + windowMs - now` (the instant the
+  // oldest call in the window expires). Never negative; read-only — it
+  // records no call.
+  retryAfterMs: (nowMs: number) => number;
 };
 
 export type RateLimiterOptions = {
@@ -53,7 +58,38 @@ export const createRateLimiter = (opts: RateLimiterOptions = DEFAULT_RATE_LIMIT)
   // (clock skew, a misbehaving caller) can never be treated as if real time
   // had rewound — see the effectiveNow clamp below.
   let highWaterMs = Number.NEGATIVE_INFINITY;
+  // Shared by consume() and retryAfterMs(): clamps `nowMs` monotonic and
+  // drops expired entries, so both see the same window.
+  const advance = (nowMs: number): number => {
+    // A decreasing nowMs is "no progress": clamp to the highest value
+    // already observed. This keeps `timestamps` insertion-ordered (the
+    // trim loop below assumes ascending order) and guarantees a stale
+    // clock reading can never reopen a window that has already, from the
+    // real clock's perspective, expired.
+    const effectiveNow = Math.max(nowMs, highWaterMs);
+    highWaterMs = effectiveNow;
+    const windowStart = effectiveNow - windowMs;
+    // An entry exactly windowMs old is expired: `timestamp <= windowStart`,
+    // matching the window-boundary test above.
+    while (timestamps.length > 0 && (timestamps[0] as number) <= windowStart) {
+      timestamps.shift();
+    }
+    return effectiveNow;
+  };
   return {
+    retryAfterMs: (nowMs: number): number => {
+      // Mirrors consume()'s fail-closed stance on a non-finite clock: the
+      // honest answer is "a full window", never 0 (retry now) or NaN.
+      if (!Number.isFinite(nowMs)) {
+        return windowMs;
+      }
+      const effectiveNow = advance(nowMs);
+      const [oldest] = timestamps;
+      if (timestamps.length < maxCalls || oldest === undefined) {
+        return 0;
+      }
+      return Math.max(0, oldest + windowMs - effectiveNow);
+    },
     consume: (nowMs: number): boolean => {
       // A non-finite/NaN sample can never legitimately occur (the CLI's
       // injected clock always returns a real Date.now() reading) — fail
@@ -63,19 +99,7 @@ export const createRateLimiter = (opts: RateLimiterOptions = DEFAULT_RATE_LIMIT)
       if (!Number.isFinite(nowMs)) {
         return false;
       }
-      // A decreasing nowMs is "no progress": clamp to the highest value
-      // already observed. This keeps `timestamps` insertion-ordered (the
-      // trim loop below assumes ascending order) and guarantees a stale
-      // clock reading can never reopen a window that has already, from the
-      // real clock's perspective, expired.
-      const effectiveNow = Math.max(nowMs, highWaterMs);
-      highWaterMs = effectiveNow;
-      const windowStart = effectiveNow - windowMs;
-      // An entry exactly windowMs old is expired: `timestamp <= windowStart`,
-      // matching the window-boundary test above.
-      while (timestamps.length > 0 && (timestamps[0] as number) <= windowStart) {
-        timestamps.shift();
-      }
+      const effectiveNow = advance(nowMs);
       if (timestamps.length >= maxCalls) {
         return false;
       }
