@@ -49,20 +49,30 @@ const getPet: NamedOperation = {
   },
 };
 
-const snapshotOf = (ops: readonly NamedOperation[]): ServerSnapshot =>
-  buildSnapshot(buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' }), {
-    spec: { title: 't', specVersion: '1', omitted: [] },
-    contentHash: 'h',
-    displaySource: 's',
-    deadPatterns: [],
-  });
+const snapshotOf = (
+  ops: readonly NamedOperation[],
+  toolMode: 'per-operation' | 'discover' = 'per-operation',
+): ServerSnapshot =>
+  buildSnapshot(
+    buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' }),
+    {
+      spec: { title: 't', specVersion: '1', omitted: [] },
+      contentHash: 'h',
+      displaySource: 's',
+      deadPatterns: [],
+    },
+    { toolMode },
+  );
 
 const config = (
   snapshot: ServerSnapshot,
   overrides: Partial<ExecutorConfig> = {},
 ): ExecutorConfig => {
   const validators = new Map(
-    snapshot.tools.map((tool) => [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)]),
+    snapshot.operations.map((tool) => [
+      tool.name,
+      compileEnvelopeValidator(tool.wireTool.outputSchema),
+    ]),
   );
   return {
     baseUrl: 'https://api.example.test',
@@ -333,5 +343,55 @@ describe('createCallStats and openapi_mcp_status', () => {
     const plain = await createMetaExecutor()(snapshot, new AbortController().signal);
     expect(plain.structuredContent?.['calls']).toBeUndefined();
     expect(validate?.(plain.structuredContent)).toBe(true);
+  });
+});
+
+describe('call records through call_operation (discover mode)', () => {
+  const discoverPipeline = () => {
+    const snapshot = snapshotOf([getPet], 'discover');
+    const records: CallRecord[] = [];
+    const executor = createExecutor(config(snapshot), {
+      transport: {
+        fetch: ok200,
+        resolve: () => Promise.reject(new Error('no DNS in this suite')),
+        timeoutSignal: () => new AbortController().signal,
+      },
+    });
+    const dispatcher = createDispatcher({
+      snapshot,
+      limiter: { consume: () => true, retryAfterMs: () => 0 },
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor: createRedactor([SECRET]),
+      onCall: (record) => records.push(record),
+    });
+    const call = (args: unknown) =>
+      dispatcher.call({
+        name: 'call_operation',
+        arguments: { name: 'getPetById', arguments: args },
+        signal: new AbortController().signal,
+      });
+    return { call, records };
+  };
+
+  it('records the operation that ran, with the upstream facts', async () => {
+    const { call, records } = discoverPipeline();
+    await call({ petId: '1' });
+    expect(records).toEqual([
+      expect.objectContaining({
+        tool: 'getPetById',
+        method: 'GET',
+        pathTemplate: '/pet/{petId}',
+        status: 200,
+        outcome: 'ok',
+      }),
+    ]);
+  });
+
+  it('classifies invalid operation arguments as validation_error', async () => {
+    const { call, records } = discoverPipeline();
+    await call({ petId: 42 });
+    expect(records.map((record) => record.outcome)).toEqual(['validation_error']);
   });
 });

@@ -31,6 +31,9 @@ export type CallOutcomeKind =
 // What the executor reports about one upstream call.
 export type CallTelemetry = {
   outcome: CallOutcomeKind;
+  // The operation that ran when it differs from the called tool
+  // (call_operation in discover mode); the record's `tool` then names it.
+  tool?: string;
   method?: string;
   // The operation's path TEMPLATE (`/pet/{petId}`), never the filled URL.
   pathTemplate?: string;
@@ -125,7 +128,7 @@ export const observeCalls =
       try {
         observe({
           ...finalTelemetry(reported, result.outcome),
-          tool: request.name,
+          tool: reported?.tool ?? request.name,
           latencyMs: Math.max(0, now() - started),
         });
       } catch {

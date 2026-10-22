@@ -73,7 +73,13 @@ export const detectPagination = (
   const carried: string[] = [];
   for (const [field, mapping] of Object.entries(mapper.fields)) {
     if (mapping.destination === 'query') {
-      query[mapping.wireName] = fieldOf(field, properties[field], mapping.explode);
+      // Link values are decoded by the form style only; the other query
+      // styles (deepObject, space/pipe-delimited) cannot carry a hint yet
+      // (follow-up #145), so a next link using them yields null.
+      query[mapping.wireName] =
+        mapping.style === 'form'
+          ? fieldOf(field, properties[field], mapping.explode)
+          : { field, kind: 'unsupported' };
     } else {
       carried.push(field);
     }

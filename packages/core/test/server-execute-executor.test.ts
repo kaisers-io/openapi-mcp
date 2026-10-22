@@ -66,8 +66,15 @@ const budgets: OutboundBudgets = {
   maxBodyBytes: 65_536,
 };
 
-const buildToolSnapshot = (ops: readonly NamedOperation[]): ServerSnapshot => {
-  const built = buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
+const buildToolSnapshot = (
+  ops: readonly NamedOperation[],
+  defaultResponseIsError = false,
+): ServerSnapshot => {
+  const built = buildTools(ops, {
+    reservedHeaders: SYSTEM_HEADERS,
+    openapiVersion: '3.1',
+    defaultResponseIsError,
+  });
   return buildSnapshot(built, {
     spec: { title: 't', specVersion: '1', omitted: [] },
     contentHash: 'h',
@@ -302,6 +309,145 @@ describe('createExecutor — header assembly', () => {
     const headers = calls[0]?.init.headers ?? {};
     expect(headers['content-type']).toBe('application/json');
     expect(calls[0]?.init.body).toBeDefined();
+  });
+
+  it('sends the declared JSON variant as Content-Type end to end (#54: merge-patch+json)', async () => {
+    const patchOp: NamedOperation = {
+      toolName: 'patchThing',
+      operation: {
+        method: 'patch',
+        path: '/things',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          content: {
+            'application/merge-patch+json': {
+              schema: { type: 'object', properties: { name: { type: 'string' } } },
+            },
+          },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([patchOp]);
+    const tool = snapshot.toolsByName['patchThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { name: 'widget' }, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['content-type']).toBe('application/merge-patch+json');
+    const body = calls[0]?.init.body as Uint8Array;
+    expect(JSON.parse(new TextDecoder().decode(body))).toEqual({ name: 'widget' });
+  });
+
+  it('sends the bytes {} for a required body whose properties are all optional (#40)', async () => {
+    const noteOp: NamedOperation = {
+      toolName: 'touchThing',
+      operation: {
+        method: 'post',
+        path: '/things',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { note: { type: 'string' } },
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([noteOp]);
+    const tool = snapshot.toolsByName['touchThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, {}, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['content-type']).toBe('application/json');
+    expect(new TextDecoder().decode(calls[0]?.init.body as Uint8Array)).toBe('{}');
+  });
+
+  it('sends decoded raw bytes for an application/octet-stream body (#71)', async () => {
+    const uploadOp: NamedOperation = {
+      toolName: 'uploadFile',
+      operation: {
+        method: 'post',
+        path: '/upload',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          content: { 'application/octet-stream': { schema: { type: 'string', format: 'binary' } } },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([uploadOp]);
+    const tool = snapshot.toolsByName['uploadFile'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { body: 'AAEC/w==' }, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['content-type']).toBe('application/octet-stream');
+    const sent = calls[0]?.init.body as Uint8Array;
+    expect([...sent]).toEqual([0, 1, 2, 255]);
+  });
+
+  it('sends a parseable multipart/form-data body with a generated boundary (#71)', async () => {
+    const formOp: NamedOperation = {
+      toolName: 'uploadForm',
+      operation: {
+        method: 'post',
+        path: '/upload',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['file'],
+                properties: {
+                  file: { type: 'string', format: 'binary' },
+                  note: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([formOp]);
+    const tool = snapshot.toolsByName['uploadForm'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, { file: 'aGk=', note: 'n' }, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    const contentType = headers['content-type'] ?? '';
+    expect(contentType).toMatch(/^multipart\/form-data; boundary=/u);
+    const sent = calls[0]?.init.body as Uint8Array;
+    const form = await new globalThis.Request('http://example.test/', {
+      method: 'POST',
+      headers: { 'content-type': contentType },
+      body: sent,
+    }).formData();
+    expect(form.get('note')).toBe('n');
+    expect(await (form.get('file') as File).text()).toBe('hi');
   });
 
   it('rejects a tool argument whose header name collides with a reserved header (defensive re-check)', async () => {
@@ -785,6 +931,33 @@ describe('createExecutor — cancellation and redaction', () => {
     const outcome = await executor(tool, {}, freshSignal());
     expect(outcome.isError).toBe(true);
     expect(outcome.content[0]?.text).not.toContain(secret);
+  });
+
+  // Issue #58, end to end: the redactor is built from the header VALUE
+  // exactly as serve.ts registers it (`Bearer <token>`), the header really
+  // goes out, and the upstream echoes only the bare token.
+  it('redacts the bare token of a `Bearer <token>` header echoed in an upstream error body', async () => {
+    const token = 'example-token-not-a-secret';
+    const headerValue = `Bearer ${token}`;
+    const snapshot = buildToolSnapshot([pingOp]);
+    const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() =>
+      textResponse(500, `{"error":"invalid api key ${token}"}`),
+    );
+    const executor = createExecutor(
+      baseConfig({
+        secretHeaders: [{ name: 'Authorization', value: headerValue, envVar: 'API_TOKEN' }],
+        redactor: createRedactor([headerValue]),
+        validators: validatorsFor(snapshot),
+      }),
+      deps,
+    );
+    const outcome = await executor(tool, {}, freshSignal());
+    expect(calls[0]?.init.headers?.['authorization']).toBe(headerValue);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toBe(
+      'upstream request failed with status 500: {"error":"invalid api key [redacted]"}',
+    );
   });
 });
 
@@ -1450,6 +1623,34 @@ describe('createExecutor — pagination hints', () => {
     },
   );
 
+  it('yields next: null for a pipe-delimited array parameter (not decoded yet, #145)', async () => {
+    const op = issuesOp(false);
+    const piped: NamedOperation = {
+      ...op,
+      operation: {
+        ...op.operation,
+        parameters: [
+          ...op.operation.parameters.filter((param) => param['name'] !== 'labels'),
+          {
+            name: 'labels',
+            in: 'query',
+            style: 'pipeDelimited',
+            explode: false,
+            schema: { type: 'array', items: { type: 'string' } },
+          },
+        ],
+      },
+    };
+    const { outcome, valid } = await call(
+      piped,
+      page('<https://api.example.test/issues?page=2&labels=a|b>; rel="next"', {}),
+      {},
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
   it.each([
     ['a non-boolean value for a boolean field', 'archived=maybe'],
     ['a repeated key for an explode=false array', 'labels=a&labels=b'],
@@ -1809,5 +2010,59 @@ describe('createExecutor — W3C trace context propagation', () => {
   it('reserves traceparent/tracestate: a spec header parameter of that name is no tool input', () => {
     expect(SYSTEM_HEADERS.has('traceparent')).toBe(true);
     expect(SYSTEM_HEADERS.has('tracestate')).toBe(true);
+  });
+});
+
+// #72: end to end with --default-response-is-error semantics.
+describe('createExecutor — default response treated as error (#72)', () => {
+  const chargeOp: NamedOperation = {
+    toolName: 'getCharge',
+    operation: {
+      method: 'get',
+      path: '/charges',
+      tags: [],
+      deprecated: false,
+      parameters: [],
+      responses: {
+        '200': {
+          content: {
+            'application/json': {
+              schema: { type: 'object', properties: { id: { type: 'string' } } },
+            },
+          },
+        },
+        default: { description: 'error' },
+      },
+    },
+  };
+
+  const call = (response: Response) => {
+    const snapshot = buildToolSnapshot([chargeOp], true);
+    const tool = snapshot.toolsByName['getCharge'] as SnapshotTool;
+    const { deps } = recordingTransport(() => response);
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    return executor(tool, {}, freshSignal());
+  };
+
+  it('returns structuredContent for the documented 200', async () => {
+    const outcome = await call(jsonResponse(200, { id: 'ch_1' }));
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 'ch_1' },
+    });
+  });
+
+  it('fails closed on an undocumented 201, naming the flag', async () => {
+    const outcome = await call(jsonResponse(201, { id: 'ch_1' }));
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toContain('--default-response-is-error');
+  });
+
+  it('keeps the HTTP error path for a 4xx', async () => {
+    const outcome = await call(jsonResponse(404, { error: {} }));
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toContain('404');
   });
 });
