@@ -105,6 +105,8 @@ export type TestIssuer = {
   // When set, JWKS requests answer this status instead of the key set.
   failJwks: (status?: number) => void;
   jwksFetches: () => number;
+  // The request target (path and query) of every JWKS request, in order.
+  jwksRequests: () => readonly string[];
   metadataPaths: () => readonly string[];
   close: () => Promise<void>;
 };
@@ -119,6 +121,8 @@ export type IssuerOptions = {
   // Overrides the published jwks_uri.
   jwksUri?: string;
   omitJwksUri?: boolean;
+  // Appended to the default jwks_uri, e.g. `?keyset=signing`.
+  jwksQuery?: string;
 };
 
 export const startIssuer = async (
@@ -127,7 +131,7 @@ export const startIssuer = async (
 ): Promise<TestIssuer> => {
   let currentKeys = keys;
   let jwksStatus: number | undefined;
-  let jwksCount = 0;
+  const jwksTargets: string[] = [];
   const seenMetadata: string[] = [];
   let issuer = '';
   const path = options.path ?? '';
@@ -149,13 +153,13 @@ export const startIssuer = async (
           token_endpoint: `${issuer}/token`,
           ...(options.omitJwksUri === true
             ? {}
-            : { jwks_uri: options.jwksUri ?? `${issuer}/jwks` }),
+            : { jwks_uri: options.jwksUri ?? `${issuer}/jwks${options.jwksQuery ?? ''}` }),
         }),
       );
       return;
     }
-    if (url === `${path}/jwks`) {
-      jwksCount += 1;
+    if (url.split('?')[0] === `${path}/jwks`) {
+      jwksTargets.push(url);
       if (jwksStatus !== undefined) {
         res.writeHead(jwksStatus).end();
         return;
@@ -180,7 +184,8 @@ export const startIssuer = async (
     failJwks: (status) => {
       jwksStatus = status;
     },
-    jwksFetches: () => jwksCount,
+    jwksFetches: () => jwksTargets.length,
+    jwksRequests: () => jwksTargets,
     metadataPaths: () => seenMetadata,
     close: async () => {
       server.closeAllConnections();

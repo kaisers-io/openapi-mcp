@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createOAuthResourceServer } from '../src/index.ts';
 import type {
+  PinnedDeps,
   OAuthDecision,
   OAuthResourceServer,
   OAuthResourceServerConfig,
@@ -30,6 +31,8 @@ type Fixture = {
   server: OAuthResourceServer;
   // Authenticates a fresh token signed with `key`, carrying `over` claims.
   authWith: (key: TestKey, over?: Record<string, unknown>) => Promise<OAuthDecision>;
+  // Key-set notices the server reported (deps.warn).
+  warnings: string[];
 };
 
 describe('createOAuthResourceServer', () => {
@@ -48,6 +51,7 @@ describe('createOAuthResourceServer', () => {
     issuer: TestIssuer,
     clock: Clock,
     over: Partial<OAuthResourceServerConfig> = {},
+    warnings: string[] = [],
   ): Promise<OAuthResourceServer> =>
     createOAuthResourceServer(
       {
@@ -58,7 +62,13 @@ describe('createOAuthResourceServer', () => {
         timeoutMs: 5000,
         ...over,
       },
-      { transport: loopbackTransport, now: clock.now },
+      {
+        transport: loopbackTransport,
+        now: clock.now,
+        warn: (message) => {
+          warnings.push(message);
+        },
+      },
     );
 
   const fixture = async (
@@ -67,7 +77,8 @@ describe('createOAuthResourceServer', () => {
   ): Promise<Fixture> => {
     const issuer = await issue(keys);
     const clock = makeClock();
-    const server = await build(issuer, clock, over);
+    const warnings: string[] = [];
+    const server = await build(issuer, clock, over, warnings);
     const authWith = (key: TestKey, claims: Record<string, unknown> = {}) => {
       const token = signJwt(key, {
         iss: issuer.issuer,
@@ -79,7 +90,7 @@ describe('createOAuthResourceServer', () => {
       });
       return server.authenticate(`Bearer ${token}`);
     };
-    return { issuer, clock, server, authWith };
+    return { issuer, clock, server, authWith, warnings };
   };
 
   describe('discovery', () => {
@@ -129,6 +140,80 @@ describe('createOAuthResourceServer', () => {
       await expect(
         build(issuer, makeClock(), { allowPrivateNetwork: true }),
       ).resolves.toBeDefined();
+    });
+
+    it('accepts a jwks_uri with a query string and fetches exactly that URL', async () => {
+      const issuer = await issue([makeKey('RS256', 'k1')], { jwksQuery: '?keyset=signing' });
+      await build(issuer, makeClock());
+      expect(issuer.jwksRequests()).toStrictEqual(['/jwks?keyset=signing']);
+    });
+
+    it('still refuses a jwks_uri with credentials or a fragment', async () => {
+      const issuer = await issue([makeKey('RS256', 'k1')], { jwksQuery: '#keys' });
+      await expect(build(issuer, makeClock())).rejects.toThrow(/fragment/u);
+    });
+
+    describe('over https (injected transport)', () => {
+      const ISSUER = 'https://auth.example.test/realm';
+      const key = makeKey('ES256', 'k1');
+      // A fake fetch answering https URLs; records every request it sees.
+      const httpsTransport = (
+        jwksUri: string,
+        routes: Record<string, () => Response>,
+      ): { transport: PinnedDeps; requested: string[] } => {
+        const requested: string[] = [];
+        const json = (body: unknown): Response => Response.json(body);
+        const all: Record<string, () => Response> = {
+          'https://auth.example.test/.well-known/oauth-authorization-server/realm': () =>
+            json({ issuer: ISSUER, jwks_uri: jwksUri }),
+          ...routes,
+        };
+        const fakeFetch = (input: URL): Promise<Response> => {
+          requested.push(input.href);
+          return Promise.resolve(all[input.href]?.() ?? new Response('', { status: 404 }));
+        };
+        return {
+          requested,
+          transport: {
+            fetch: fakeFetch as unknown as PinnedDeps['fetch'],
+            resolve: () => Promise.resolve(['93.184.216.34']),
+            timeoutSignal: (ms) => AbortSignal.timeout(ms),
+          },
+        };
+      };
+      const create = (transport: PinnedDeps) =>
+        createOAuthResourceServer(
+          {
+            issuer: ISSUER,
+            audience: AUDIENCE,
+            requiredScopes: [],
+            allowPrivateNetwork: false,
+            timeoutMs: 5000,
+          },
+          { transport, now: () => 0 },
+        );
+
+      it('fetches an Entra-style jwks_uri with its query intact', async () => {
+        const jwksUri = 'https://auth.example.test/keys?appid=abc';
+        const { transport, requested } = httpsTransport(jwksUri, {
+          [jwksUri]: () => Response.json({ keys: [key.publicJwk] }),
+        });
+        await expect(create(transport)).resolves.toBeDefined();
+        expect(requested.at(-1)).toBe(jwksUri);
+      });
+
+      it('refuses a JWKS redirect to cleartext http on every hop', async () => {
+        const jwksUri = 'https://auth.example.test/keys';
+        const { transport, requested } = httpsTransport(jwksUri, {
+          [jwksUri]: () =>
+            new Response('', {
+              status: 302,
+              headers: { location: 'http://auth.example.test/keys' },
+            }),
+        });
+        await expect(create(transport)).rejects.toThrow(/egress.*not https/u);
+        expect(requested).not.toContain('http://auth.example.test/keys');
+      });
     });
 
     it.each([
@@ -209,8 +294,54 @@ describe('createOAuthResourceServer', () => {
       expect(results.map((result) => result.outcome)).toStrictEqual(['allow', 'allow', 'allow']);
       expect(issuer.jwksFetches()).toBe(1);
       clock.advance(300_000);
+      // Stale-while-revalidate: answered from the cache, refreshed behind.
+      expect(await authWith(key)).toMatchObject({ outcome: 'allow' });
+      await vi.waitFor(() => expect(issuer.jwksFetches()).toBe(2));
+    });
+
+    it('after the TTL with a failing authorization server: junk bearers cause no fetch, valid tokens at most one per cooldown, and nobody waits', async () => {
+      const key = makeKey('RS256', 'k1');
+      const { issuer, clock, server, authWith, warnings } = await fixture([key]);
+      issuer.failJwks(500);
+      clock.advance(360_000);
+      const junk = await Promise.all(
+        Array.from({ length: 20 }, () => server.authenticate('Bearer garbage')),
+      );
+      expect(junk.every((decision) => decision.outcome === 'deny')).toBe(true);
+      expect(issuer.jwksFetches()).toBe(1);
+      for (let round = 0; round < 3; round += 1) {
+        // Twenty requests 100 ms apart, all served from the last good set.
+        for (let index = 0; index < 20; index += 1) {
+          expect(await authWith(key)).toMatchObject({ outcome: 'allow' });
+          clock.advance(100);
+        }
+        await vi.waitFor(() => expect(issuer.jwksFetches()).toBe(2 + round));
+        clock.advance(30_000 - 2000);
+      }
+      await vi.waitFor(() => expect(warnings).toHaveLength(3));
+      expect(warnings[0]).toMatch(/JWKS refresh failed \(.*HTTP 500\); still using the key set/u);
+    });
+
+    it('keeps the last good set when a refresh yields no usable key, but honours an empty set as revocation', async () => {
+      const key = makeKey('RS256', 'k1');
+      const { issuer, clock, authWith, warnings } = await fixture([key]);
+      const encOnly = makeKey('RS256', 'enc');
+      issuer.setKeys([{ ...encOnly, publicJwk: { ...encOnly.publicJwk, use: 'enc' } }]);
+      clock.advance(300_000);
       await authWith(key);
-      expect(issuer.jwksFetches()).toBe(2);
+      await vi.waitFor(() => expect(warnings).toHaveLength(1));
+      expect(warnings[0]).toMatch(/no usable signing key/u);
+      expect(await authWith(key)).toMatchObject({ outcome: 'allow' });
+
+      issuer.setKeys([]);
+      clock.advance(30_000);
+      await authWith(key);
+      await vi.waitFor(() => expect(warnings).toHaveLength(2));
+      expect(warnings[1]).toMatch(/EMPTY JWKS.*every access token is rejected/u);
+      expect(await authWith(key)).toMatchObject({
+        status: 401,
+        reason: 'token rejected: kid not in the JWKS',
+      });
     });
 
     it('refetches once for an unknown kid (key rotation), then rate-limits further refetches', async () => {
@@ -252,7 +383,9 @@ describe('createOAuthResourceServer', () => {
       const { issuer, clock, authWith } = await fixture([oldKey]);
       issuer.setKeys([makeKey('RS256', 'new')]);
       clock.advance(300_000);
-      expect(await authWith(oldKey)).toMatchObject({ status: 401 });
+      await authWith(oldKey);
+      await vi.waitFor(() => expect(issuer.jwksFetches()).toBe(2));
+      await vi.waitFor(async () => expect(await authWith(oldKey)).toMatchObject({ status: 401 }));
     });
   });
 });

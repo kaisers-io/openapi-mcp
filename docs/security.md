@@ -168,9 +168,12 @@ loopback-only.
   verifies. The token must name its key (`kid`), the key must fit the algorithm (and its own
   `alg`/`use`/`key_ops`, if published), RSA keys must be at least 2048 bits, and a `crit` header
   is rejected. `iss` must equal `--oauth-issuer` exactly, `aud` must name `--oauth-audience`
-  (RFC 8707 audience binding; a trailing slash and the case of scheme and host do not matter),
+  (RFC 8707 audience binding, compared as normalized URLs: a trailing slash, the case of scheme
+  and host, a default port and dot segments do not matter; path case does),
   `exp` is required, and `exp`/`nbf`/`iat` are checked with 60 s of clock skew. `typ` may be
-  `at+jwt`, `application/at+jwt`, `JWT` or absent; any other `typ` is rejected.
+  `at+jwt`, `application/at+jwt`, `JWT` or absent; any other `typ` is rejected. `sub`,
+  `client_id`, `iat` and `jti` are optional (RFC 9068 §2.2 requires them; widely deployed
+  authorization servers omit some). Token segments must be canonical base64url.
 - **Opaque tokens are not supported**: there is no token introspection (RFC 7662) in this
   version.
 - **Key discovery goes through the egress policy.** At startup the server fetches the
@@ -179,15 +182,43 @@ loopback-only.
   are fetched through the same DNS-pinned transport as API calls: cloud-metadata addresses are
   always denied, private addresses only on the issuer's own origin (operator intent) or with
   `--allow-private-network`, and documents are capped at 64 KiB. Issuer, audience and
-  `jwks_uri` must use `https` (plain `http` only for a loopback host). An unreachable or
-  inconsistent authorization server fails startup.
-- **JWKS cache.** Keys are refreshed every 5 minutes; a token with an unknown `kid` triggers at
-  most one early refresh per 30 s (key rotation without letting made-up `kid`s drive fetches). If
-  refreshes fail, the last good key set is used for at most one hour after it was fetched, then
-  requests fail closed with `503`.
+  `jwks_uri` must use `https` (plain `http` only for a loopback host), and so must every redirect
+  hop of a metadata or JWKS fetch. `jwks_uri` may carry a query string (e.g. Entra ID's
+  `?appid=`) and is fetched exactly as published; issuer and audience may not. An unreachable or
+  inconsistent authorization server, or one without a usable signing key, fails startup.
+- **JWKS keys.** Entries that can never verify a token (encryption keys, `key_ops` without
+  `verify`, unsupported key types, RSA under 2048 bits) are ignored, so they cannot shadow a
+  signing key; a key listed twice verbatim counts once; a `kid` naming two different signing keys
+  is dropped (ordering must not decide which signature is accepted). At most 100 entries are read
+  and 32 signing keys kept.
+- **JWKS cache and refresh policy.**
+  - The key set is fresh for 5 minutes. After that, requests are still verified against it
+    immediately while one refresh runs in the background (stale-while-revalidate); no request
+    waits on the authorization server while a usable key set is at hand.
+  - A token with an unknown `kid` (key rotation) waits for an early refresh.
+  - Whatever triggers it, at most one JWKS fetch starts per 30 s. A token that is malformed or
+    has a forbidden header is rejected before the key cache is consulted, so junk bearer tokens
+    never cause a fetch.
+  - A failed refresh (network error, non-200, not a JWKS, no usable signing key) keeps the last
+    good key set and logs a warning; that set is used for at most one hour after it was fetched,
+    then requests fail closed with `503`.
+  - A valid but **empty** key set (`{"keys": []}`) is the authorization server's authoritative
+    answer that every key is revoked: it is honoured (every token is rejected with `401`) and
+    logged as a warning until a signing key is published again.
 - **No token passthrough.** The client's access token is read from the `Authorization` header
   only and is never forwarded upstream or written to any output; upstream credentials are still
   only `--header-env`. Rejection causes are logged to stderr (rate-bounded) without the token.
+- **One upstream identity for everyone.** OAuth here decides who may use *this server*; it does
+  not give per-user authorization at the upstream API. Every authenticated caller acts with the
+  operator's single `--header-env` identity, so `--oauth-required-scope` is the only per-user
+  control. Without it, any token the issuer mints for `--oauth-audience` grants access to every
+  tool; on a non-loopback `--http-host` the server says so in a startup warning.
+- **No sessions to hijack.** The transport is stateless: no `Mcp-Session-Id` is issued and no
+  state is kept between requests, so one caller cannot ride on another caller's session; every
+  request is authenticated on its own.
+- **Metadata caching.** The Protected Resource Metadata response carries
+  `cache-control: max-age=3600`: after changing `--oauth-issuer` or `--oauth-required-scope`,
+  clients may use the old document for up to an hour.
 - **Deployment.** TLS is not terminated by `openapi-mcp`: run it behind a reverse proxy that
   serves the `--oauth-audience` URL over `https` and forwards the client's `Host` header — the
   `Host` check accepts exactly the audience's authority, so a request addressed to any other host

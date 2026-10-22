@@ -201,6 +201,8 @@ type HttpAuthConfig =
 
 type HttpConfig = { port: number; hostname: string; auth: HttpAuthConfig };
 
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1']);
+
 // Discovers the authorization server and loads its JWKS through the same
 // pinned egress transport as the upstream API — an unreachable or
 // inconsistent authorization server is a startup failure, not a 503 per
@@ -218,14 +220,30 @@ const createOAuthGuard = async (
       requiredScopes: auth.requiredScopes,
       ...egress,
     },
-    { transport: ctx.transport, now: ctx.now },
+    {
+      transport: ctx.transport,
+      now: ctx.now,
+      // Key-set notices (a failed refresh, an empty set) are already bounded
+      // to one per refresh cooldown by the cache itself.
+      warn: (message) => emitWarnings(ctx, [`oauth: ${message}`]),
+    },
   );
   return { allowedOrigins: new Set(), allowedHost: oauth.publicHost, oauth };
 };
 
+// Without a required scope, ANY token the issuer mints for this audience
+// gets full access — fine on loopback, worth saying out loud on a network.
+const noRequiredScopeWarning = (config: HttpConfig): string[] =>
+  config.auth.kind === 'oauth' &&
+  config.auth.requiredScopes.length === 0 &&
+  !LOOPBACK_ADDRESSES.has(config.hostname)
+    ? [
+        `oauth: no --oauth-required-scope is set, so every access token ${config.auth.issuer} issues for ${config.auth.audience} grants full access to all tools; pass --oauth-required-scope to restrict it`,
+      ]
+    : [];
+
 // RFC 6749 §3.3 scope-token: printable ASCII except space, `"` and `\`.
 const SCOPE_TOKEN_RE = /^[\u0021\u0023-\u005B\u005D-\u007E]+$/u;
-const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1']);
 
 const collect = (value: string, previous: string[] | undefined): string[] => [
   ...(previous ?? []),
@@ -500,6 +518,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...result.warnings,
         ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
+        ...(httpConfig === undefined ? [] : noRequiredScopeWarning(httpConfig)),
       ]);
       if (httpConfig === undefined) {
         const session = serveStdioSession(

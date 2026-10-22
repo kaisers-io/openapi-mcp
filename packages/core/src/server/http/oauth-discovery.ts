@@ -2,14 +2,15 @@ import { usageError, validationError } from '../../errors.ts';
 import { pinnedRequest } from '../../http/pinned-dispatcher.ts';
 import type { PinnedDeps } from '../../http/pinned-dispatcher.ts';
 import { parseJwks } from './jwk.ts';
-import type { KeySet } from './jwk.ts';
+import { createJwksCache } from './jwks-cache.ts';
+import type { JwksCache, KeySetFetch } from './jwks-cache.ts';
 
 // Authorization-server discovery and JWKS caching for the OAuth
 // resource-server mode (oauth.ts). Every outbound fetch goes through the
 // same DNS-pinned egress transport as the upstream API: metadata addresses
 // are always denied, private addresses only on the operator-configured
-// issuer origin (or with --allow-private-network), and bodies are
-// size-capped.
+// issuer origin (or with --allow-private-network), bodies are size-capped,
+// and every hop — redirects included — must be https (or loopback http).
 
 export type IssuerEgressConfig = {
   // The issuer identifier, compared EXACTLY with the `issuer` member of its
@@ -22,45 +23,66 @@ export type IssuerEgressConfig = {
 export type OAuthDeps = {
   transport: PinnedDeps;
   now: () => number;
+  // Operator-facing notices about the key set: a failed refresh (the last
+  // good set is kept) or an authorization server that published an empty
+  // set (every token is rejected). At most one per refresh cooldown
+  // (jwks-cache.ts, which holds the cache policy).
+  warn?: (message: string) => void;
 };
 
-// Fixed cache policy for the JWKS. Keys are refreshed after JWKS_TTL_MS; an
-// unknown `kid` (a key rotated in since the last fetch) triggers an early
-// refresh, at most once per REFETCH_COOLDOWN_MS so a stream of tokens with
-// made-up kids cannot turn into a stream of fetches. If refreshes fail, the
-// last good set keeps verifying for at most MAX_STALE_MS after it was
-// fetched; past that, requests fail closed with 503 rather than trusting
-// keys the authorization server may have revoked.
-export const JWKS_TTL_MS = 300_000;
-export const REFETCH_COOLDOWN_MS = 30_000;
-export const MAX_STALE_MS = 3_600_000;
 // Metadata and JWKS documents are small; 64 KiB is generous for both.
 export const MAX_DOCUMENT_BYTES = 65_536;
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 // Cleartext is accepted only for a loopback authority (local development and
-// tests, matching the SDK's own issuer check); everything else must be
-// https. Fragments, queries and userinfo are refused: none belongs in an
-// issuer identifier (RFC 8414 §2) or a resource URI (RFC 8707 §2).
-export const parseSecureUrl = (raw: string, label: string): URL => {
+// tests, matching the SDK's own issuer check); everything else must be https.
+const isSecureScheme = (url: URL): boolean =>
+  url.protocol === 'https:' || (url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname));
+
+const parseAbsoluteUrl = (raw: string, label: string): URL => {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
     throw usageError(`${label} must be an absolute URL`);
   }
-  if (
-    url.protocol !== 'https:' &&
-    !(url.protocol === 'http:' && LOOPBACK_HOSTS.has(url.hostname))
-  ) {
+  if (!isSecureScheme(url)) {
     throw usageError(`${label} must use https (http is accepted only for a loopback host)`);
   }
+  return url;
+};
+
+// An issuer identifier or resource URI: fragments, queries and userinfo are
+// refused — none belongs in an issuer identifier (RFC 8414 §2) or a resource
+// URI (RFC 8707 §2).
+export const parseSecureUrl = (raw: string, label: string): URL => {
+  const url = parseAbsoluteUrl(raw, label);
   if (url.username !== '' || url.password !== '' || url.search !== '' || url.hash !== '') {
     throw usageError(`${label} must not contain credentials, a query string or a fragment`);
   }
   return url;
 };
+
+// A JWKS location is a document URL, not an identifier: RFC 8414 §2 only
+// requires https, and deployed authorization servers do put a query on it
+// (Entra ID's `?appid=`). Credentials and fragments are still refused.
+export const parseJwksUrl = (raw: string): URL => {
+  const label = 'the authorization server jwks_uri';
+  const url = parseAbsoluteUrl(raw, label);
+  if (url.username !== '' || url.password !== '' || url.hash !== '') {
+    throw usageError(`${label} must not contain credentials or a fragment`);
+  }
+  return url;
+};
+
+// Applied to every hop of every discovery/JWKS fetch: an https document
+// that redirects to cleartext would otherwise hand a network attacker the
+// key set.
+const requireSecureHop = (url: URL): string | undefined =>
+  isSecureScheme(url)
+    ? undefined
+    : `${url.origin} is not https (cleartext is accepted only for a loopback host)`;
 
 // RFC 8414 §3.1 path insertion, then the two OpenID Connect Discovery
 // locations — the order the MCP authorization spec prescribes for clients
@@ -83,6 +105,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 type FetchJsonOptions = { trusted: boolean; config: IssuerEgressConfig };
 
+const describeUrl = (url: URL): string => `${url.origin}${url.pathname}`;
+
 // One GET through the pinned egress transport, returning parsed JSON or an
 // operator-readable failure. Never echoes response bodies.
 const fetchJson = async (
@@ -101,12 +125,15 @@ const fetchJson = async (
       timeoutMs: opts.config.timeoutMs,
       maxResponseBytes: MAX_DOCUMENT_BYTES,
       signal: new AbortController().signal,
+      checkHop: requireSecureHop,
     },
     deps.transport,
   );
-  const where = `${url.origin}${url.pathname}`;
+  const where = describeUrl(url);
   if (outcome.kind === 'error') {
-    return { ok: false, detail: `${where}: ${outcome.reason}` };
+    const detail =
+      outcome.reason === 'egress' && outcome.detail !== undefined ? ` (${outcome.detail})` : '';
+    return { ok: false, detail: `${where}: ${outcome.reason}${detail}` };
   }
   if (outcome.status !== 200) {
     return { ok: false, detail: `${where}: HTTP ${String(outcome.status)}` };
@@ -138,7 +165,7 @@ const discoverJwksUri = async (
       continue;
     }
     if (!isRecord(result.json) || result.json['issuer'] !== config.issuer) {
-      failures.push(`${candidate.origin}${candidate.pathname}: issuer does not match`);
+      failures.push(`${describeUrl(candidate)}: issuer does not match`);
       continue;
     }
     const jwksUri = result.json['jwks_uri'];
@@ -148,7 +175,7 @@ const discoverJwksUri = async (
       );
     }
     try {
-      return parseSecureUrl(jwksUri, 'the authorization server jwks_uri');
+      return parseJwksUrl(jwksUri);
     } catch (error) {
       throw validationError(error instanceof Error ? error.message : String(error));
     }
@@ -158,79 +185,55 @@ const discoverJwksUri = async (
   );
 };
 
-export type JwksCache = {
-  get: () => Promise<KeySet | undefined>;
-  refreshForUnknownKid: () => Promise<KeySet | undefined>;
-};
-
-const createJwksCache = (
+// One JWKS fetch, classified: usable keys, an authoritative empty set, or a
+// failure (unreachable, non-200, not a JWKS, or entries none of which can
+// verify — e.g. only encryption keys, which is a broken document rather than
+// a revocation).
+const fetchKeySet = async (
   jwksUri: URL,
-  issuer: URL,
-  config: IssuerEgressConfig,
+  opts: FetchJsonOptions,
   deps: OAuthDeps,
-  initial: KeySet,
-): JwksCache => {
-  // Trusted (private addresses allowed) only on the issuer's own origin —
-  // the operator named that origin; a jwks_uri elsewhere is remote-chosen.
-  const trusted = jwksUri.origin === issuer.origin;
-  let keys = initial;
-  let fetchedAtMs = deps.now();
-  let lastAttemptMs = fetchedAtMs;
-  let inflight: Promise<void> | undefined;
-
-  const fetchKeys = async (): Promise<void> => {
-    try {
-      lastAttemptMs = deps.now();
-      const result = await fetchJson(jwksUri, { trusted, config }, deps);
-      const parsed = result.ok ? parseJwks(result.json) : undefined;
-      if (parsed !== undefined) {
-        keys = parsed;
-        fetchedAtMs = deps.now();
-      }
-    } finally {
-      inflight = undefined;
-    }
-  };
-  // Single-flight: concurrent requests share one fetch.
-  const refresh = (): Promise<void> => {
-    inflight ??= fetchKeys();
-    return inflight;
-  };
-  const current = (): KeySet | undefined =>
-    deps.now() - fetchedAtMs < MAX_STALE_MS ? keys : undefined;
-
-  return {
-    get: async () => {
-      if (deps.now() - fetchedAtMs >= JWKS_TTL_MS) {
-        await refresh();
-      }
-      return current();
-    },
-    refreshForUnknownKid: async () => {
-      if (deps.now() - lastAttemptMs >= REFETCH_COOLDOWN_MS) {
-        await refresh();
-      }
-      return current();
-    },
-  };
+): Promise<KeySetFetch> => {
+  const result = await fetchJson(jwksUri, opts, deps);
+  if (!result.ok) {
+    return { kind: 'failed', detail: result.detail };
+  }
+  const where = describeUrl(jwksUri);
+  const parsed = parseJwks(result.json);
+  if (parsed === undefined) {
+    return { kind: 'failed', detail: `${where}: not a JWKS document` };
+  }
+  if (parsed.size > 0) {
+    return { kind: 'keys', keys: parsed };
+  }
+  const entries = isRecord(result.json) ? result.json['keys'] : undefined;
+  return Array.isArray(entries) && entries.length === 0
+    ? { kind: 'revoked' }
+    : { kind: 'failed', detail: `${where}: no usable signing key` };
 };
 
 // Discovers the issuer's JWKS and loads it once. Fails fast: an unreachable
-// or inconsistent authorization server is a startup error, not a 503 on
-// every request.
+// or inconsistent authorization server, or one without a usable signing key,
+// is a startup error, not a 503 on every request.
 export const loadIssuerKeys = async (
   issuer: URL,
   config: IssuerEgressConfig,
   deps: OAuthDeps,
 ): Promise<JwksCache> => {
   const jwksUri = await discoverJwksUri(issuer, config, deps);
-  const trusted = jwksUri.origin === issuer.origin;
-  const initial = await fetchJson(jwksUri, { trusted, config }, deps);
-  const initialKeys = initial.ok ? parseJwks(initial.json) : undefined;
-  if (initialKeys === undefined || initialKeys.size === 0) {
+  // Trusted (private addresses allowed) only on the issuer's own origin —
+  // the operator named that origin; a jwks_uri elsewhere is remote-chosen.
+  const opts: FetchJsonOptions = { trusted: jwksUri.origin === issuer.origin, config };
+  const initial = await fetchKeySet(jwksUri, opts, deps);
+  if (initial.kind !== 'keys') {
     throw validationError(
-      `cannot load a usable JWKS from ${jwksUri.origin}${jwksUri.pathname}${initial.ok ? '' : ` (${initial.detail})`}`,
+      `cannot load a usable JWKS from ${describeUrl(jwksUri)}${initial.kind === 'failed' ? ` (${initial.detail})` : ' (the key set is empty)'}`,
     );
   }
-  return createJwksCache(jwksUri, issuer, config, deps, initialKeys);
+  return createJwksCache(initial.keys, {
+    fetchKeySet: () => fetchKeySet(jwksUri, opts, deps),
+    location: describeUrl(jwksUri),
+    now: deps.now,
+    warn: deps.warn ?? (() => {}),
+  });
 };

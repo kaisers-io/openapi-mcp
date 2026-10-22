@@ -1,7 +1,7 @@
 import { getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/server';
 import { extractBearerToken } from './auth.ts';
 import type { KeySet } from './jwk.ts';
-import { verifyJwt } from './jwt.ts';
+import { checkJwtStructure, verifyJwt } from './jwt.ts';
 import type { JwtFailure, VerifiedAccessToken } from './jwt.ts';
 import { loadIssuerKeys, parseSecureUrl } from './oauth-discovery.ts';
 import type { IssuerEgressConfig, OAuthDeps } from './oauth-discovery.ts';
@@ -123,6 +123,13 @@ export const createOAuthResourceServer = async (
     const token = extractBearerToken(authorization);
     if (token === undefined) {
       return missingToken;
+    }
+    // Structure and header first: a malformed or forbidden token is
+    // rejected without touching the key cache, so junk bearers can never
+    // cause (or wait for) a JWKS fetch.
+    const structure = checkJwtStructure(token);
+    if (!structure.ok) {
+      return deny(401, 'invalid_token', `token rejected: ${FAILURE_TEXT[structure.reason]}`);
     }
     const verifyWith = (keys: KeySet) =>
       verifyJwt(token, keys, {

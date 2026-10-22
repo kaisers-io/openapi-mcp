@@ -319,5 +319,31 @@ describe('serve --http --http-auth oauth', () => {
     });
     expect(wrongHost.status).toBe(403);
     expect(upstream.seen).toHaveLength(1);
+    expect(serve.stderr()).not.toMatch(/no --oauth-required-scope/u);
+  }, 20_000);
+
+  it('warns at startup when a network bind requires no scope', async () => {
+    const issuer = await startIssuer();
+    const upstream = await startUpstream();
+    const serve = await spawnServe([
+      '--base-url',
+      `http://127.0.0.1:${String(upstream.port)}`,
+      '--trust-spec-updates',
+      '--http',
+      '--port',
+      '4383',
+      '--http-host',
+      '0.0.0.0',
+      '--http-auth',
+      'oauth',
+      '--oauth-issuer',
+      issuer,
+      '--oauth-audience',
+      'https://mcp.example.test/mcp',
+    ]);
+    await waitForListener(4383, 'mcp.example.test');
+    expect(serve.stderr()).toMatch(
+      /no --oauth-required-scope is set, so every access token .* grants full access to all tools/u,
+    );
   }, 20_000);
 });
