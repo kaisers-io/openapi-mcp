@@ -72,6 +72,20 @@ describe('buildSnapshot', () => {
     expect(snapshot.toolsByName['getThing']?.kind).toBe('upstream');
   });
 
+  it('reports a cache lock that blocked start-up bookkeeping as cacheLock, and nothing otherwise (#65)', () => {
+    const built = buildTools([namedOp('getThing', '/things/{id}')], {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    expect(buildSnapshot(built, pipelineOf()).meta).not.toHaveProperty('cacheLock');
+    const stale = buildSnapshot(built, { ...pipelineOf(), cacheLock: 'stale' });
+    expect(stale.meta.cacheLock).toBe('stale');
+    const schema = stale.toolsByName[META_TOOL_NAME]?.wireTool.outputSchema as {
+      properties: Record<string, { enum?: unknown }>;
+    };
+    expect(schema.properties['cacheLock']?.enum).toStrictEqual(['held', 'stale']);
+  });
+
   it('asserts every wire input/output schema is object-rooted', () => {
     const built = buildTools([namedOp('getThing', '/things/{id}')], {
       reservedHeaders: SYSTEM_HEADERS,

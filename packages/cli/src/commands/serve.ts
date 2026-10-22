@@ -1,9 +1,11 @@
 import type { Command } from '@commander-js/extra-typings';
 import {
   assertAllowedRedirectTarget,
+  AUTO_DISCOVER_THRESHOLD,
   buildSnapshot,
   buildTools,
   compileEnvelopeValidator,
+  discoverApprovalWarning,
   createExecutor,
   createMetaExecutor,
   createRateLimiter,
@@ -12,9 +14,12 @@ import {
   EXIT,
   isValidBearerToken,
   parseSpecSource,
+  resolveToolMode,
   runSpecPipeline,
+  SPEC_BUDGETS,
   serveStdioSession,
   SYSTEM_HEADERS,
+  TOOL_MODES,
   usageError,
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
@@ -22,6 +27,7 @@ import type {
   EnvelopeValidator,
   ExecutorConfig,
   NormalizedSpec,
+  RequestedToolMode,
   RequestGuardOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
@@ -185,7 +191,17 @@ type ServeCmdOpts = SpecCmdOpts &
     http?: boolean;
     port: string;
     httpTokenEnv?: string;
+    toolMode: string;
   };
+
+// Validated like --port: before any spec, cache or network work.
+const parseToolMode = (raw: string): RequestedToolMode => {
+  const mode = TOOL_MODES.find((candidate) => candidate === raw);
+  if (mode === undefined) {
+    throw usageError(`--tool-mode "${raw}" is not one of ${TOOL_MODES.join(', ')}`);
+  }
+  return mode;
+};
 
 export const registerServe: CommandRegistrar = (program, ctx, state) => {
   const command = registerApiOptions(registerSpecOptions(program.command('serve')))
@@ -194,9 +210,11 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     )
     .option('--http', 'serve over Streamable HTTP (127.0.0.1 only) instead of stdio')
     .option('--port <n>', 'HTTP port', '3044')
+    .option('--http-token-env <ENV>', 'env var holding the bearer token required for HTTP requests')
     .option(
-      '--http-token-env <ENV>',
-      'env var holding the bearer token required for HTTP requests',
+      '--tool-mode <mode>',
+      `per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above ${String(AUTO_DISCOVER_THRESHOLD)} operations)`,
+      'per-operation',
     );
   // Orphaned HTTP-only flags without --http are a usage error, not a
   // silent no-op: `--port` carries a default ('3044'), so a plain value
@@ -268,8 +286,23 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // validated fast, before any spec/cache/network processing, matching
       // the httpConfig check just above.
       const apiConfig = resolveApiConfig(cmdOpts, ctx);
+      const requestedToolMode = parseToolMode(cmdOpts.toolMode);
       const args = parseSpecPipelineArgs(cmdOpts, ctx);
-      const result = await runSpecPipeline(args.source, args.options, args.deps);
+      // The exposed-set budget follows the tool mode: one tool per operation
+      // keeps the 512-tool budget; discover (and auto, which only ever picks
+      // per-operation at or below its 64-operation threshold) lifts it, since
+      // its tools/list no longer grows with the operation count.
+      const result = await runSpecPipeline(
+        args.source,
+        {
+          ...args.options,
+          maxToolCount:
+            requestedToolMode === 'per-operation'
+              ? SPEC_BUDGETS.maxToolCount
+              : SPEC_BUDGETS.maxDiscoverToolCount,
+        },
+        args.deps,
+      );
       // Sanitized + suggestion-bearing, matching `tools`' strict-filters
       // throw exactly (deadPatternMessage is the shared renderer): building
       // the message inline instead would put unsanitized spec-derived text
@@ -287,8 +320,11 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       const built = buildTools(result.namedOperations, {
         reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
         openapiVersion: result.spec.openapiVersion,
+        defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
       });
-      const snapshot = buildSnapshot(built, result);
+      const snapshot = buildSnapshot(built, result, {
+        toolMode: resolveToolMode(requestedToolMode, built.tools.length),
+      });
 
       // Resolve + validate the API base URL: --base-url (trusted, address
       // check skipped) else the spec-derived candidate (untrusted — a
@@ -331,17 +367,15 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // first matching call. `validators.has` is the executor's fail-closed
       // contract — every upstream tool gets an entry, `undefined` only for a
       // genuine no-outputSchema tool.
-      const validatorEntries = snapshot.tools
-        .filter((tool) => tool.kind === 'upstream')
-        .map((tool) => {
-          try {
-            return [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)] as const;
-          } catch (error) {
-            throw usageError(
-              `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
-            );
-          }
-        });
+      const validatorEntries = snapshot.operations.map((tool) => {
+        try {
+          return [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)] as const;
+        } catch (error) {
+          throw usageError(
+            `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
+          );
+        }
+      });
       const validators = new Map<string, EnvelopeValidator | undefined>(validatorEntries);
 
       const executorConfig: ExecutorConfig = {
@@ -383,6 +417,9 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...result.warnings,
         ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
+        ...[discoverApprovalWarning(snapshot.toolMode, snapshot.operations)].filter(
+          (line): line is string => line !== undefined,
+        ),
       ]);
       if (httpConfig === undefined) {
         const session = serveStdioSession(
@@ -421,6 +458,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           // bearer.
           allowedOrigins: new Set(),
           allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
+          // `http://localhost:<port>/` is how many clients are configured;
+          // the listener is the same loopback socket (IPv4 only, so no
+          // `[::1]` alias).
+          allowedHostAliases: new Set([`localhost:${String(httpConfig.port)}`]),
           bearer: { configuredToken: httpConfig.token },
         };
         const httpServer = createStreamableHttpServer({
