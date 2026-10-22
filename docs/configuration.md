@@ -60,12 +60,14 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--request-timeout <duration>` | no | time budget for each upstream tool call, queue wait included (independent of `--timeout`, which covers the spec fetch) | `30s` |
 | `--retries <n>` | no | retry a transient upstream failure up to `n` times (0–3), only for retry-safe requests (see below) | `0` |
+| `--no-trace-propagation` | no | do not forward a call's W3C trace context (`_meta.traceparent`/`tracestate`) to the upstream API | forwarded |
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
 | `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
 | `--tool-mode <mode>` | no | `per-operation`, `discover` or `auto` — see [Tool modes](#tool-modes) | `per-operation` |
+| `--tools-page-size <n>` | no | page `tools/list` with `n` tools per page (1–512); only for MCP hosts that follow `nextCursor` | off (all tools in one response) |
 
 Notes:
 
@@ -142,6 +144,18 @@ Notes:
   call's concurrency slot and its single rate-limit charge. The slot is held during backoff,
   so under an upstream `Retry-After` storm queued calls wait (and may time out waiting for a
   slot) rather than add load.
+- Trace context (**on by default**): when a `tools/call` carries a valid W3C `traceparent`
+  (and optionally `tracestate`) in `_meta`, it is sent to the upstream as the same-named
+  headers, on same-origin hops only. An invalid value is dropped; a higher `traceparent`
+  version is read by the version-00 layout and forwarded as `00`. Tool arguments can never
+  set these headers. This gives the upstream a correlation ID across calls and sessions,
+  which is what you want for an API you operate. For a third-party API you do not operate,
+  pass `--no-trace-propagation`.
+- `tools/list` paging is off by default: every tool comes in one response (the spec budget
+  caps a spec at 512 tools). Several MCP hosts call `tools/list` once and never follow
+  `nextCursor`, so paging would silently hide every tool after the first page there. Set
+  `--tools-page-size <n>` only when your host follows `nextCursor`. A cursor is bound to the
+  served spec; a cursor from another spec version is rejected with Invalid Params.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly

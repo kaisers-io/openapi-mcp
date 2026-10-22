@@ -4,6 +4,7 @@ import type { DeadPattern } from '../filter/engine.ts';
 import type { OmittedOperation } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { BuildToolsResult, GeneratedTool } from '../toolgen/build.ts';
+import { byToolName, titleOf } from './tool-display.ts';
 import { buildDiscoveryTools } from './discovery.ts';
 import { buildSearchIndex } from './search-index.ts';
 import type { MetaSummary, ServerSnapshot, SnapshotTool, ToolMode, WireTool } from './types.ts';
@@ -84,6 +85,7 @@ const META_OUTPUT_SCHEMA: Record<string, unknown> = {
 
 const metaWireTool = (): WireTool => ({
   name: META_TOOL_NAME,
+  title: 'Server status',
   description:
     "Report this server's accepted spec, tool inventory, and omissions. Read-only, package-authored — never spec-derived.",
   inputSchema: z.toJSONSchema(META_INPUT_SCHEMA) as Record<string, unknown>,
@@ -94,13 +96,17 @@ const metaWireTool = (): WireTool => ({
   annotations: { readOnlyHint: true, openWorldHint: false },
 });
 
-const wireToolOf = (generated: GeneratedTool): WireTool => ({
-  name: generated.toolName,
-  description: generated.description,
-  inputSchema: generated.wireSchema as Record<string, unknown>,
-  ...(generated.outputSchema === undefined ? {} : { outputSchema: generated.outputSchema }),
-  annotations: generated.annotations as unknown as Record<string, unknown>,
-});
+const wireToolOf = (generated: GeneratedTool): WireTool => {
+  const title = titleOf(generated);
+  return {
+    name: generated.toolName,
+    ...(title === undefined ? {} : { title }),
+    description: generated.description,
+    inputSchema: generated.wireSchema as Record<string, unknown>,
+    ...(generated.outputSchema === undefined ? {} : { outputSchema: generated.outputSchema }),
+    annotations: generated.annotations as unknown as Record<string, unknown>,
+  };
+};
 
 const assertObjectRoot = (
   toolName: string,
@@ -233,21 +239,23 @@ export const buildSnapshot = (
     wireTool: metaWireTool(),
     inputSchema: META_INPUT_SCHEMA,
   };
-  // Meta tool first: a stable, predictable tools/list order that does not
-  // depend on operation ordering in the spec. Under `discover` the
+  // Meta tool first, then the upstream tools sorted by name: the tools/list
+  // order (and therefore its bytes, which clients and prompt caches key on)
+  // depends only on WHICH operations exist, never on the order of keys in
+  // the spec document — a YAML-to-JSON round trip or a registry that
+  // re-serializes the spec cannot reorder the list. Under `discover` the
   // operations leave tools/list; the three discovery tools take their place.
+  const sorted = upstreamTools.toSorted(byToolName);
   const all =
-    toolMode === 'discover'
-      ? [metaTool, ...buildDiscoveryTools(upstreamTools)]
-      : [metaTool, ...upstreamTools];
+    toolMode === 'discover' ? [metaTool, ...buildDiscoveryTools(sorted)] : [metaTool, ...sorted];
   // Two separate namespaces under `discover`: an operation that happens to
   // be named `call_operation` is reached as call_operation's `name` argument
   // and never collides with the listed tool of that name.
   const toolsByName = indexByName(all);
-  const operationsByName = indexByName(upstreamTools);
+  const operationsByName = indexByName(sorted);
   // Every operation's schemas stay checked under `discover` too: they reach
   // the client through describe_operation instead of tools/list.
-  for (const tool of toolMode === 'discover' ? [...all, ...upstreamTools] : all) {
+  for (const tool of toolMode === 'discover' ? [...all, ...sorted] : all) {
     assertObjectRoot(tool.name, 'inputSchema', tool.wireTool.inputSchema);
     if (tool.wireTool.outputSchema !== undefined) {
       assertObjectRoot(tool.name, 'outputSchema', tool.wireTool.outputSchema);

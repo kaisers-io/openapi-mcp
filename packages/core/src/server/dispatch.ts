@@ -10,6 +10,7 @@ import {
 } from './result.ts';
 import { searchOperations } from './search-index.ts';
 import type { DispatchResult, ToolCallOutcome } from './result.ts';
+import type { TraceContext } from './trace.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
 import { validateAndExecute } from './validation.ts';
 
@@ -17,6 +18,7 @@ export type ToolExecutor = (
   tool: SnapshotTool,
   args: unknown,
   signal: AbortSignal,
+  trace?: TraceContext,
 ) => Promise<ToolCallOutcome>;
 
 export type MetaExecutor = (
@@ -41,6 +43,8 @@ export type CallRequest = {
   name: string;
   arguments: unknown;
   signal: AbortSignal;
+  // Validated W3C trace context from the request's `_meta` (server/trace.ts).
+  trace?: TraceContext;
 };
 
 // A single, generic, stable message — never the structured content itself —
@@ -112,7 +116,7 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
 const callOperation = (
   deps: DispatcherDeps,
   data: unknown,
-  signal: AbortSignal,
+  { signal, trace }: CallRequest,
 ): Promise<ToolCallOutcome> => {
   const input = data as CallInput;
   const target = lookupOperation(deps.snapshot.operationsByName, input.name);
@@ -120,7 +124,7 @@ const callOperation = (
     return Promise.resolve(unknownOperationOutcome(input.name));
   }
   return validateAndExecute(target, input.arguments, (targetData) =>
-    deps.executor(target, targetData, signal),
+    deps.executor(target, targetData, signal, trace),
   );
 };
 
@@ -128,7 +132,7 @@ const runDiscoveryTool = (
   deps: DispatcherDeps,
   tool: SnapshotTool,
   data: unknown,
-  signal: AbortSignal,
+  request: CallRequest,
 ): Promise<ToolCallOutcome> => {
   switch (tool.discovery) {
     case 'search': {
@@ -140,7 +144,7 @@ const runDiscoveryTool = (
       return Promise.resolve(describeOperation(deps.snapshot.operationsByName, data));
     }
     case 'call': {
-      return callOperation(deps, data, signal);
+      return callOperation(deps, data, request);
     }
     default: {
       return Promise.resolve(textOutcome('tool execution failed unexpectedly', true));
@@ -152,17 +156,17 @@ const routeExecutor = (
   deps: DispatcherDeps,
   tool: SnapshotTool,
   data: unknown,
-  signal: AbortSignal,
+  request: CallRequest,
 ): Promise<ToolCallOutcome> => {
   switch (tool.kind) {
     case 'meta': {
-      return deps.metaExecutor(deps.snapshot, signal);
+      return deps.metaExecutor(deps.snapshot, request.signal);
     }
     case 'discovery': {
-      return runDiscoveryTool(deps, tool, data, signal);
+      return runDiscoveryTool(deps, tool, data, request);
     }
     case 'upstream': {
-      return deps.executor(tool, data, signal);
+      return deps.executor(tool, data, request.signal, request.trace);
     }
   }
 };
@@ -208,7 +212,7 @@ export const createDispatcher = (
         };
       }
       const outcome = await validateAndExecute(tool, request.arguments, (data) =>
-        routeExecutor(deps, tool, data, request.signal),
+        routeExecutor(deps, tool, data, request),
       );
       return { kind: 'outcome', outcome: finalizeOutcome(outcome, deps.redactor) };
     } catch {

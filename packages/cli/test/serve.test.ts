@@ -86,11 +86,11 @@ const sendModern = (
 };
 
 // The tools/list order is fixed by the snapshot, not by the wire: the meta tool is
-// always first, then the spec's operations in document order (`legacyList` is
-// omitted upstream — it carries a cookie parameter). Pinning the exact array
+// always first, then the spec's operations sorted by tool name, independent of
+// document order (`legacyList` is omitted upstream — it carries a cookie parameter). Pinning the exact array
 // (not a containment check) is what makes a reordering of the derived list a
 // test failure rather than an invisible change for every cached client.
-const EXPECTED_TOOL_ORDER = ['openapi_mcp_status', 'listPets', 'createPet'];
+const EXPECTED_TOOL_ORDER = ['openapi_mcp_status', 'createPet', 'listPets'];
 
 type Collected = {
   stdoutLines: string[];
@@ -424,6 +424,46 @@ describe('serve — stdio subprocess E2E', () => {
     expect(stderrLines.join('\n')).not.toMatch(/^\{/mu); // Never the --json envelope shape
     expect(stderrLines.join('\n').length).toBeGreaterThan(0);
   });
+
+  it('pages tools/list only when --tools-page-size is given (off by default)', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    const listPage = async (extraArgs: readonly string[]) => {
+      child = spawn(
+        process.execPath,
+        [bin, 'serve', '--spec', 'petstore.json', '--base-url', 'http://127.0.0.1:1', ...extraArgs],
+        { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+      );
+      const { stdoutLines } = collectLines(child);
+      sendModern(child, 1, 'tools/list');
+      await waitFor(() => stdoutLines.length > 0);
+      child.kill();
+      return (JSON.parse(stdoutLines[0] as string) as JsonRpcMessage).result ?? {};
+    };
+    const all = await listPage([]);
+    expect((all['tools'] as unknown[]).length).toBeGreaterThan(1);
+    expect(all['nextCursor']).toBeUndefined();
+    const paged = await listPage(['--tools-page-size', '1']);
+    expect(paged['tools']).toHaveLength(1);
+    expect(typeof paged['nextCursor']).toBe('string');
+  }, 15_000);
+
+  it.each(['0', '-1', '1.5', '513'])(
+    'rejects --tools-page-size %s as a usage error naming the flag',
+    async (value) => {
+      child = spawn(
+        process.execPath,
+        [bin, 'serve', '--spec', 'petstore.json', '--tools-page-size', value],
+        { cwd: fixturesDir },
+      );
+      const { stderrLines, rawStdout } = collectLines(child);
+      const code = await new Promise<number | null>((resolve) => {
+        child?.once('exit', (exitCode) => resolve(exitCode));
+      });
+      expect(code).toBe(2); // EXIT.USAGE
+      expect(rawStdout()).toBe('');
+      expect(stderrLines.join('\n')).toContain('--tools-page-size');
+    },
+  );
 
   it('a PRE-action commander parse failure (an unknown flag) never touches stdout, even with the global --json flag', async () => {
     // MUST pass --json here to actually bind the policy this test claims to

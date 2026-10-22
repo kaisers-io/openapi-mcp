@@ -511,3 +511,10 @@ describe('--retries', () => {
     expectUsageError(() => resolve(['--retries', raw]), '--retries');
   });
 });
+
+describe('--no-trace-propagation', () => {
+  it('propagates trace context by default and turns it off with the flag', () => {
+    expect(resolve([]).propagateTraceContext).toBe(true);
+    expect(resolve(['--no-trace-propagation']).propagateTraceContext).toBe(false);
+  });
+});

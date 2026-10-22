@@ -12,6 +12,9 @@ import type { SearchIndex } from './search-index.ts';
 // erased at compile time and does nothing at runtime).
 export type WireTool = {
   readonly name: string;
+  // Human-readable display name (MCP `Tool.title`), from the operation's
+  // sanitized `summary`; absent when the spec gives none.
+  readonly title?: string;
   readonly description: string;
   readonly inputSchema: Readonly<Record<string, unknown>>;
   readonly outputSchema?: Readonly<Record<string, unknown>>;

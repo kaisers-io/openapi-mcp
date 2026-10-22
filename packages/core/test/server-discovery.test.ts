@@ -197,12 +197,13 @@ describe('buildSnapshot — tool modes', () => {
     const wire = (snapshot: ServerSnapshot) =>
       JSON.stringify(snapshot.tools.map((tool) => tool.wireTool));
     expect(wire(explicit)).toBe(wire(implicit));
+    // Sorted by name after the meta tool (#77), not in spec order.
     expect(implicit.tools.map((tool) => tool.name)).toEqual([
       'openapi_mcp_status',
-      'listThings',
-      'getThing',
       'createThingItem',
       'deleteThing',
+      'getThing',
+      'listThings',
     ]);
     expect(implicit.toolMode).toBe('per-operation');
     expect(implicit.searchIndex).toBeUndefined();

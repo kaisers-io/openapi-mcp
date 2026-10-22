@@ -68,6 +68,9 @@ export const SYSTEM_HEADERS: ReadonlySet<string> = new Set([
   'keep-alive',
   'te',
   'trailer',
+  // W3C trace context: forwarded from the MCP request's `_meta` only.
+  'traceparent',
+  'tracestate',
   'upgrade',
   'expect',
 ]);
