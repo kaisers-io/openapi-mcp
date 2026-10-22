@@ -1114,6 +1114,33 @@ describe('createExecutor — forwarded upstream response headers', () => {
     expect(outcome.content.at(-1)?.text).toBe('headers:\nx-total-count: 1');
   });
 
+  it('drops a header whose NAME carries a registered secret, in a structured result too', async () => {
+    const { outcome, tool } = await run(
+      idPathOp,
+      () =>
+        new Response('{"id":1}', {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            [`x-ratelimit-${SECRET}`]: '1',
+            'x-total-count': '1',
+          },
+        }),
+      { id: '1' },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+      headers: { 'x-total-count': '1' },
+    });
+    expect(compileEnvelopeValidator(tool.wireTool.outputSchema)?.(outcome.structuredContent)).toBe(
+      true,
+    );
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+  });
+
   it('forwards a same-origin Location as a path, and drops a foreign one', async () => {
     const created = await run(
       createThingOp,

@@ -6,7 +6,7 @@ import type { ToolCallOutcome } from '../result.ts';
 // Turns the transport's captured response headers into what a tool result
 // may carry. Every value is upstream-controlled text, so each one is
 // sanitized (control/bidi characters stripped, length capped) and dropped
-// outright if it contains a registered secret — dropping one header is
+// outright if its value or its name contains a registered secret — dropping one header is
 // enough; the response body itself is unaffected.
 //
 // Upstream URLs never reach the model as-is (decision D4):
@@ -69,7 +69,9 @@ export const forwardableHeaders = (opts: ForwardOptions): Record<string, string>
   for (const [name, raw] of Object.entries(opts.headers)) {
     const value = forwardedValue(name, raw, opts);
     const clean = value === undefined ? '' : sanitizeSpecText(value, MAX_FORWARDED_VALUE);
-    if (clean !== '' && !hasSecret(opts.redactor, clean)) {
+    // The NAME is upstream-controlled too: an allowlisted prefix
+    // (`x-ratelimit-*`, `ratelimit*`) lets an upstream echo a secret in it.
+    if (clean !== '' && !hasSecret(opts.redactor, clean) && !hasSecret(opts.redactor, name)) {
       out[name] = clean;
     }
   }
