@@ -139,6 +139,29 @@ const realCacheRuntime = (): CacheRuntime => ({
   },
 });
 
+// A cache file is untrusted input: the size is checked on the open handle,
+// before any bytes are read, so an oversized file is refused rather than
+// buffered. `allocUnsafe` (no zero fill) is safe here: readExactly
+// overwrites the buffer from offset 0, and only the prefix it actually filled
+// (`bytesRead`) is ever returned, so no uninitialized memory can escape even
+// when the file shrank after the stat.
+const readFileBytesCapped = async (path: string, maxBytes: number): Promise<Buffer> => {
+  const handle = await open(path, 'r');
+  try {
+    const { size } = await handle.stat();
+    if (size > maxBytes) {
+      throw validationError(
+        `cache file "${path}" is ${size} bytes — exceeds the ${maxBytes}-byte budget`,
+      );
+    }
+    const buffer = Buffer.allocUnsafe(Number(size));
+    const bytesRead = await readExactly(handle, buffer);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+};
+
 const realCacheFs = (): CacheFs => ({
   runtime: realCacheRuntime(),
   mkdirSecure: async (path) => {
@@ -234,24 +257,10 @@ const realCacheFs = (): CacheFs => ({
     }
   },
   readFileTextCapped: async (path, maxBytes) => {
-    // A cache file is untrusted input: the size is checked on the open
-    // handle, before any bytes are turned into a string, so an oversized file
-    // is refused rather than buffered
-    const handle = await open(path, 'r');
-    try {
-      const { size } = await handle.stat();
-      if (size > maxBytes) {
-        throw validationError(
-          `cache file "${path}" is ${size} bytes — exceeds the ${maxBytes}-byte budget`,
-        );
-      }
-      const buffer = Buffer.alloc(Number(size));
-      const bytesRead = await readExactly(handle, buffer);
-      return buffer.subarray(0, bytesRead).toString('utf8');
-    } finally {
-      await handle.close();
-    }
+    const bytes = await readFileBytesCapped(path, maxBytes);
+    return bytes.toString('utf8');
   },
+  readFileBytesCapped,
   readDirNames: (path) => readdir(path),
   removeDir: (path) => rm(path, { recursive: true, force: true }),
   pathExists: async (path) => {
@@ -316,6 +325,10 @@ const realCacheFs = (): CacheFs => ({
     }
   },
   removeFile: (path) => rm(path, { force: true }),
+  modifiedAtMs: async (path) => {
+    const info = await lstat(path);
+    return info.mtimeMs;
+  },
 });
 
 // A TTY whose columns are unavailable (0/undefined) still soft-wraps, so it

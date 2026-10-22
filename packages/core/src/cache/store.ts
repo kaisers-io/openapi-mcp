@@ -9,11 +9,11 @@ import {
   zCacheMeta,
 } from '../schemas/cache.ts';
 import type { CacheMeta } from '../schemas/cache.ts';
-import { hashContent } from '../spec/load.ts';
+import { hashBytes, hashContent } from '../spec/load.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import type { CacheFs } from './fs.ts';
-import { tryWithNamespaceLock, withNamespaceLock } from './lock.ts';
+import { LOCK_STALE_MS, tryWithNamespaceLock, withNamespaceLock } from './lock.ts';
 import { STALE_REVISION_REASON, sameRevision, staleRevisionError } from './revision.ts';
 import type { ExpectedRevision } from './revision.ts';
 import {
@@ -381,6 +381,24 @@ const persistableTextOrThrow = (
   return text;
 };
 
+// Every verified object read: the decoded text plus the SHA-256 of the bytes
+// as they are on disk. With a bytes-capable CacheFs the hash is taken over
+// the raw bytes (#88) — one decode and no re-encode, instead of decoding and
+// then re-encoding the whole document just to hash it. Errors (absence,
+// over-budget validationError, I/O) propagate exactly as from
+// readFileTextCapped, so every caller's catch keeps its meaning.
+const readObject = async (fs: CacheFs, path: string): Promise<{ text: string; hash: string }> => {
+  if (fs.readFileBytesCapped === undefined) {
+    const text = await fs.readFileTextCapped(path, CACHE_MAX_PERSISTED_BYTES);
+    return { text, hash: hashContent(text) };
+  }
+  const bytes = await fs.readFileBytesCapped(path, CACHE_MAX_PERSISTED_BYTES);
+  return {
+    text: Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8'),
+    hash: hashBytes(bytes),
+  };
+};
+
 // Spec objects are immutable and content-addressed, so writing a generation
 // only ever CREATES a file and can never disturb the bytes the live meta.json
 // points at — unlike a fixed accepted/spec.json path that gets REPLACED on
@@ -399,6 +417,8 @@ const commitEntry = async (
   fs: CacheFs,
   objects: readonly { hash: string; text: string }[],
   meta: CacheMeta,
+  // The committing operation's clock, for the age of a stray lock temp
+  nowMs: number,
   verifiedHashes: ReadonlySet<string> = new Set(),
 ): Promise<void> => {
   const metaJson = serializeMeta(meta);
@@ -417,8 +437,8 @@ const commitEntry = async (
     // overwrite (overwriting would also be the one mutation this layout
     // exists to avoid, and a lock-free reader may be holding it).
     if (await fs.pathExists(path)) {
-      const existing = await fs.readFileTextCapped(path, CACHE_MAX_PERSISTED_BYTES);
-      if (hashContent(existing) !== object.hash) {
+      const existing = await readObject(fs, path);
+      if (existing.hash !== object.hash) {
         throw validationError(
           `cache entry ${layout.namespace} already holds a spec object whose contents do not match its own name — run "openapi-mcp cache clear" to reset this entry deliberately`,
         );
@@ -428,7 +448,7 @@ const commitEntry = async (
     await fs.writeFileAtomic(path, object.text);
   }
   await fs.writeFileAtomic(layout.metaPath, metaJson);
-  await collectGarbage(layout, fs, meta);
+  await collectGarbage(layout, fs, meta, nowMs);
 };
 
 // Runs strictly after the commit. Anything the newly committed meta.json does
@@ -436,7 +456,45 @@ const commitEntry = async (
 // earlier attempt. A failure here is deliberately swallowed: the commit already
 // succeeded, and leaving a stray object is a wasted inode, not a correctness
 // problem — turning it into an error would fail a write that actually worked.
-const collectGarbage = async (layout: CacheLayout, fs: CacheFs, meta: CacheMeta): Promise<void> => {
+//
+// The entry directory gets the same treatment for the temp files the atomic
+// writers leave behind when killed between write and rename/link (#88) —
+// matched by the exact names the CacheFs adapter generates, so nothing else
+// in the directory is ever touched:
+//  - `.meta.json.<uuid>.tmp`: meta.json is only ever written under the
+//    writer lock, which this commit holds, so no live writer can own one.
+//  - `.lock.<uuid>.tmp`: a lock temp is written BEFORE its writer holds the
+//    lock (it is the record about to be link()ed into place), so a young one
+//    may be in flight; removing it would make that writer's link() fail with
+//    ENOENT. Only one older than LOCK_STALE_MS is collected, and only when
+//    the filesystem can report its age.
+const META_TEMP_RE = /^\.meta\.json\.[0-9a-f-]{36}\.tmp$/u;
+const LOCK_TEMP_RE = /^\.lock\.[0-9a-f-]{36}\.tmp$/u;
+
+const collectEntryTemps = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  nowMs: number,
+): Promise<void> => {
+  for (const name of await fs.readDirNames(layout.dir)) {
+    const path = join(layout.dir, name);
+    if (META_TEMP_RE.test(name)) {
+      await fs.removeFile(path);
+    } else if (LOCK_TEMP_RE.test(name) && fs.modifiedAtMs !== undefined) {
+      const ageMs = nowMs - (await fs.modifiedAtMs(path));
+      if (ageMs > LOCK_STALE_MS) {
+        await fs.removeFile(path);
+      }
+    }
+  }
+};
+
+const collectGarbage = async (
+  layout: CacheLayout,
+  fs: CacheFs,
+  meta: CacheMeta,
+  nowMs: number,
+): Promise<void> => {
   const referenced = new Set<string>(
     meta.candidate === undefined
       ? [`${meta.acceptedContentHash}.json`]
@@ -448,6 +506,7 @@ const collectGarbage = async (layout: CacheLayout, fs: CacheFs, meta: CacheMeta)
         await fs.removeFile(join(layout.objectsDir, name));
       }
     }
+    await collectEntryTemps(layout, fs, nowMs);
   } catch {
     // See above: best-effort by design
   }
@@ -600,9 +659,9 @@ type AcceptedObjectVerification =
 const verifyAcceptedObject = (
   layout: CacheLayout,
   meta: CacheMeta,
-  acceptedText: string,
+  accepted: { text: string; hash: string },
 ): AcceptedObjectVerification => {
-  if (hashContent(acceptedText) !== meta.acceptedContentHash) {
+  if (accepted.hash !== meta.acceptedContentHash) {
     // Tampered bytes must never become (or remain) the baseline. No retry
     // here: the object is filed UNDER this hash, so content that does not
     // produce it is damage, not a lost race.
@@ -611,7 +670,7 @@ const verifyAcceptedObject = (
       reason: `the accepted spec for cache entry ${layout.namespace} does not match its recorded content hash`,
     };
   }
-  const document = parseJsonObject(acceptedText);
+  const document = parseJsonObject(accepted.text);
   if (document === undefined) {
     return {
       kind: 'corrupt',
@@ -649,12 +708,9 @@ const assertAcceptedObjectIntact = async (
   meta: CacheMeta,
 ): Promise<void> => {
   // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
-  let acceptedText: string;
+  let accepted: { text: string; hash: string };
   try {
-    acceptedText = await fs.readFileTextCapped(
-      objectPath(layout, meta.acceptedContentHash),
-      CACHE_MAX_PERSISTED_BYTES,
-    );
+    accepted = await readObject(fs, objectPath(layout, meta.acceptedContentHash));
   } catch (error) {
     // Only genuine absence is corruption. Anything else (EACCES, EIO)
     // rethrows unchanged, so withCacheErrors types it at the definition
@@ -665,7 +721,7 @@ const assertAcceptedObjectIntact = async (
     }
     throw corruptEntryError(`the accepted spec for cache entry ${layout.namespace} cannot be read`);
   }
-  const verified = verifyAcceptedObject(layout, meta, acceptedText);
+  const verified = verifyAcceptedObject(layout, meta, accepted);
   if (verified.kind === 'corrupt') {
     throw corruptEntryError(verified.reason);
   }
@@ -764,6 +820,7 @@ const writeAcceptedImpl = async (
         // value can never contradict the bytes it describes
         openapiVersion,
       },
+      input.fetchedAt,
       verifiedHashes,
     );
     return { acceptedContentHash };
@@ -857,7 +914,13 @@ const writeCandidateImpl = async (
     };
     // Both objects stay referenced, so the accepted bytes survive untouched and
     // GC reclaims only what the previous generation left behind
-    await commitEntry(layout, fs, [{ hash: candidateContentHash, text: candidateText }], meta);
+    await commitEntry(
+      layout,
+      fs,
+      [{ hash: candidateContentHash, text: candidateText }],
+      meta,
+      input.fetchedAt,
+    );
     return { candidateContentHash };
   });
 };
@@ -1049,12 +1112,9 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
     // `for (;;)` loop to retry against a new generation — a control-flow
     // move `.catch` cannot express and this security module forbids
     // restructuring around.
-    let acceptedText: string;
+    let accepted: { text: string; hash: string };
     try {
-      acceptedText = await fs.readFileTextCapped(
-        objectPath(layout, meta.acceptedContentHash),
-        CACHE_MAX_PERSISTED_BYTES,
-      );
+      accepted = await readObject(fs, objectPath(layout, meta.acceptedContentHash));
     } catch (error) {
       // An over-budget object is genuine corruption, not a lost race.
       if (error instanceof OpenapiMcpError && error.code === 'validation') {
@@ -1111,7 +1171,7 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
     // declaredOpenapiVersion): a lock-free reader has no opinion on retries
     // itself, so this call is pure and this loop is entirely responsible for
     // deciding when to retry.
-    const verified = verifyAcceptedObject(layout, meta, acceptedText);
+    const verified = verifyAcceptedObject(layout, meta, accepted);
     if (verified.kind === 'corrupt') {
       return verified;
     }
@@ -1146,12 +1206,9 @@ const readCandidateDocumentImpl = async (
   });
   // Imperative on purpose: the catch returns a result of a different type
   // from the success value, as in the accepted reader above
-  let text: string;
+  let read: { text: string; hash: string };
   try {
-    text = await fs.readFileTextCapped(
-      objectPath(layout, candidateContentHash),
-      CACHE_MAX_PERSISTED_BYTES,
-    );
+    read = await readObject(fs, objectPath(layout, candidateContentHash));
   } catch (error) {
     if (error instanceof OpenapiMcpError && error.code === 'validation') {
       return corrupt(`exceeds its ${CACHE_MAX_PERSISTED_BYTES}-byte budget`);
@@ -1164,10 +1221,10 @@ const readCandidateDocumentImpl = async (
       ? corrupt('cannot be read')
       : { kind: 'changed' };
   }
-  if (hashContent(text) !== candidateContentHash) {
+  if (read.hash !== candidateContentHash) {
     return corrupt('does not match its recorded content hash');
   }
-  const document = parseJsonObject(text);
+  const document = parseJsonObject(read.text);
   return document === undefined ? corrupt('is not a JSON object') : { kind: 'ok', document };
 };
 
@@ -1243,12 +1300,9 @@ const promoteCandidateImpl = async (
       );
     }
     // Kept as try/catch (not .catch()): CacheFs is an injected seam whose methods may throw synchronously despite their Promise return type; only the try block also catches that case.
-    let candidateText: string;
+    let candidateRead: { text: string; hash: string };
     try {
-      candidateText = await fs.readFileTextCapped(
-        objectPath(layout, candidate.contentHash),
-        CACHE_MAX_PERSISTED_BYTES,
-      );
+      candidateRead = await readObject(fs, objectPath(layout, candidate.contentHash));
     } catch (error) {
       // Only genuine absence means "the candidate is gone, refresh before
       // promoting". Catching EVERY failure here and returning conflict exit 5
@@ -1263,7 +1317,7 @@ const promoteCandidateImpl = async (
         `the candidate spec for cache entry ${layout.namespace} cannot be read — refresh before promoting`,
       );
     }
-    const promotedHash = hashContent(candidateText);
+    const { text: candidateText, hash: promotedHash } = candidateRead;
     if (promotedHash !== candidate.contentHash) {
       throw conflictError(
         `the candidate spec for cache entry ${layout.namespace} does not match its recorded hash — refresh before promoting`,
@@ -1305,6 +1359,7 @@ const promoteCandidateImpl = async (
         // candidate may legitimately have moved between 3.0 and 3.1
         openapiVersion: promotedOpenapiVersion(document, layout.namespace),
       },
+      nowMs,
       new Set([promotedHash]),
     );
     return { promotedHash };

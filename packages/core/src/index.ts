@@ -12,9 +12,12 @@ export type { ExitCode, RenderedError } from './errors.ts';
 export { createRedactor } from './redact.ts';
 export type { Redactor } from './redact.ts';
 export {
+  MAX_AGE_DURATION_MS,
   MAX_DURATION_MS,
+  parseAgeDuration,
   parseByteSize,
   parseDuration,
+  zAgeDuration,
   zByteSize,
   zDuration,
 } from './schemas/primitives.ts';
