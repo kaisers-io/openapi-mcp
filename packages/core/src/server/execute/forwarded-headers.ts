@@ -14,6 +14,9 @@ export type PageInput = {
   links?: readonly LinkValue[];
   responseUrl: string;
   data?: unknown;
+  // Which documented response this is (JSON:API body links, pagination.ts).
+  status: number;
+  contentType?: string;
 };
 
 // Turns the transport's captured response headers into what a tool result
@@ -152,6 +155,7 @@ export const pageHinter = (
   headers: Readonly<Record<string, string>>,
   responseUrl: string,
   status: number,
+  contentType: string | undefined,
 ): ((data?: unknown) => PageHint) | undefined => {
   if (status < 200 || status > 299) {
     return undefined;
@@ -163,6 +167,8 @@ export const pageHinter = (
       ...(links === undefined ? {} : { links }),
       responseUrl,
       ...(data === undefined ? {} : { data }),
+      status,
+      ...(contentType === undefined ? {} : { contentType }),
     });
     return hasSecret(redactor, hint) ? { next: NO_NEXT_PAGE } : hint;
   };

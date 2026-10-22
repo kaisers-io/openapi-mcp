@@ -1625,9 +1625,12 @@ describe('createExecutor — pagination hints', () => {
     },
   );
 
-  it('yields next: null for a pipe-delimited array parameter (not decoded yet, #145)', async () => {
+  // #108's styles (#145): a delimited array's value is split on its own
+  // delimiter; a deepObject field (JSON:API `page[number]`, `filter[x]`) is
+  // reassembled from its `name[key]` parameters, declared keys only.
+  const withLabels = (style: string): NamedOperation => {
     const op = issuesOp(false);
-    const piped: NamedOperation = {
+    return {
       ...op,
       operation: {
         ...op.operation,
@@ -1636,18 +1639,387 @@ describe('createExecutor — pagination hints', () => {
           {
             name: 'labels',
             in: 'query',
-            style: 'pipeDelimited',
+            style,
             explode: false,
             schema: { type: 'array', items: { type: 'string' } },
           },
         ],
       },
     };
+  };
+  const issuesLink = (query: string) =>
+    page(`<https://api.example.test/issues?page=2&${query}>; rel="next"`, {});
+
+  it.each([
+    ['pipeDelimited', 'labels=a|b'],
+    ['pipeDelimited', 'labels=a%7Cb'],
+    ['spaceDelimited', 'labels=a%20b'],
+    ['spaceDelimited', 'labels=a+b'],
+  ])('decodes a %s array (%s), round-tripping the input schema', async (style, query) => {
+    const { outcome, valid, tool, calls } = await call(withLabels(style), issuesLink(query), {
+      labels: ['a', 'b'],
+    });
+    expect(calls[0]?.url).toContain(style === 'pipeDelimited' ? 'labels=a%7Cb' : 'labels=a%20b');
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ page: 2, labels: ['a', 'b'] });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it('splits a delimited array only on its own delimiter', async () => {
+    const { outcome } = await call(withLabels('pipeDelimited'), issuesLink('labels=a,b'), {});
+    expect(nextOf(outcome)).toEqual({ page: 2, labels: ['a,b'] });
+  });
+
+  it.each([
+    ['an empty item', 'labels=a||b'],
+    ['a repeated key', 'labels=a|b&labels=c'],
+  ])('yields next: null for a pipe-delimited array with %s', async (_label, query) => {
+    const { outcome, valid } = await call(withLabels('pipeDelimited'), issuesLink(query), {});
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  // A JSON:API collection: `page` and `filter` are deepObject parameters
+  // (https://jsonapi.org/format/#fetching-pagination), plus a form `sort`.
+  const jsonApiParams: Record<string, unknown>[] = [
+    {
+      name: 'page',
+      in: 'query',
+      style: 'deepObject',
+      explode: true,
+      schema: {
+        type: 'object',
+        properties: { number: { type: 'integer' }, size: { type: 'integer' } },
+      },
+    },
+    {
+      name: 'filter',
+      in: 'query',
+      style: 'deepObject',
+      explode: true,
+      schema: {
+        type: 'object',
+        properties: { status: { type: 'string' }, featured: { type: 'boolean' } },
+      },
+    },
+    { name: 'sort', in: 'query', schema: { type: 'string' } },
+  ];
+  const jsonApiOp = (parameters: Record<string, unknown>[] = jsonApiParams): NamedOperation => ({
+    toolName: 'listArticles',
+    operation: {
+      method: 'get',
+      path: '/articles',
+      tags: [],
+      deprecated: false,
+      parameters,
+      responses: {
+        '200': {
+          description: 'ok',
+          headers: { Link: { schema: { type: 'string' } } },
+          content: { 'application/json': { schema: { type: 'object' } } },
+        },
+      },
+    },
+  });
+  const articles = (query: string) =>
+    page(`<https://api.example.test/articles?${query}>; rel="next"`, { data: [] });
+
+  it('maps JSON:API page[number]/page[size] and filter[x] back onto deepObject fields', async () => {
+    const { outcome, valid, tool, calls } = await call(
+      jsonApiOp(),
+      articles(
+        'page%5Bnumber%5D=2&page%5Bsize%5D=10&filter[status]=published&filter[featured]=true&sort=-created',
+      ),
+      { page: { size: 10 }, filter: { status: 'published', featured: true }, sort: '-created' },
+    );
+    expect(calls[0]?.url).toBe(
+      'https://api.example.test/articles?page%5Bsize%5D=10&filter%5Bstatus%5D=published&filter%5Bfeatured%5D=true&sort=-created',
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({
+      page: { number: 2, size: 10 },
+      filter: { status: 'published', featured: true },
+      sort: '-created',
+    });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it.each([
+    ['a key the deepObject schema does not declare', 'page[number]=2&page[cursor]=x'],
+    ['a nested bracket key', 'page[number]=2&filter[author][name]=x'],
+    ['an empty bracket key', 'page[]=2'],
+    ['a repeated deepObject key', 'page[number]=2&page[number]=3'],
+    ['the bare deepObject name', 'page=2'],
+    ['a bracket key on a form field', 'page[number]=2&sort[by]=x'],
+    ['a value that does not decode to the property type', 'page[number]=two'],
+    ['a bracket key on an undeclared parameter', 'page[number]=2&fields[articles]=title'],
+    ['an inherited property name as key', 'page[number]=2&page[__proto__]=1'],
+    ['an inherited property name as parameter', 'page[number]=2&constructor=x'],
+    ['an inherited property name as deepObject owner', 'page[number]=2&toString[a]=x'],
+  ])('yields next: null for %s', async (_label, query) => {
+    const { outcome, valid } = await call(jsonApiOp(), articles(query), {});
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('yields next: null when a bracket name is both a form parameter and a deepObject key', async () => {
+    // `page[number]` is declared literally as a form parameter AND is
+    // `page.number` of the deepObject: the link cannot say which one it means.
+    const op = jsonApiOp([
+      ...jsonApiParams,
+      { name: 'page[number]', in: 'query', schema: { type: 'integer' } },
+    ]);
+    const { outcome, valid } = await call(op, articles('page[number]=2'), {});
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('still maps a literal bracket-named form parameter when no deepObject claims it', async () => {
+    const op = jsonApiOp([
+      { name: 'page[number]', in: 'query', schema: { type: 'integer' } },
+      { name: 'page[size]', in: 'query', schema: { type: 'integer' } },
+    ]);
+    const { outcome, valid, tool } = await call(op, articles('page[number]=2&page[size]=5'), {});
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ 'page[number]': 2, 'page[size]': 5 });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  // JSON:API puts pagination links in the BODY, in the top-level `links`
+  // object (https://jsonapi.org/format/#fetching-pagination), not in a Link
+  // header. A realistic `application/vnd.api+json` collection document.
+  const JSON_API = 'application/vnd.api+json';
+  const jsonApiDocOp = (
+    pageProperties: Record<string, unknown>,
+    mediaType = JSON_API,
+    schema?: Record<string, unknown>,
+  ): NamedOperation => ({
+    toolName: 'listArticles',
+    operation: {
+      method: 'get',
+      path: '/articles',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        {
+          name: 'page',
+          in: 'query',
+          style: 'deepObject',
+          explode: true,
+          schema: { type: 'object', properties: pageProperties },
+        },
+        jsonApiParams[1] as Record<string, unknown>,
+        { name: 'sort', in: 'query', schema: { type: 'string' } },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          content: { [mediaType]: { schema: schema ?? { type: 'object' } } },
+        },
+      },
+    },
+  });
+  const numbered = { number: { type: 'integer' }, size: { type: 'integer' } };
+  const cursored = { after: { type: 'string' }, size: { type: 'integer' } };
+  const jsonApiDoc =
+    (links: Record<string, unknown> | undefined, link?: string, mediaType = JSON_API) =>
+    () =>
+      Response.json(
+        {
+          data: [
+            { type: 'articles', id: '1', attributes: { title: 'JSON:API paints my bikeshed!' } },
+            { type: 'articles', id: '2', attributes: { title: 'Rails is Omakase' } },
+          ],
+          ...(links === undefined ? {} : { links }),
+          meta: { totalPages: 13 },
+        },
+        {
+          status: 200,
+          headers: { 'content-type': mediaType, ...(link === undefined ? {} : { link }) },
+        },
+      );
+  const BASE = 'https://api.example.test/articles';
+
+  it('maps a JSON:API body links.next (page[number]/page[size] + filter[x]) onto the arguments', async () => {
+    const { outcome, valid, tool } = await call(
+      jsonApiDocOp(numbered),
+      jsonApiDoc({
+        self: `${BASE}?page%5Bnumber%5D=2&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+        first: `${BASE}?page%5Bnumber%5D=1&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+        prev: `${BASE}?page%5Bnumber%5D=1&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+        next: `${BASE}?page%5Bnumber%5D=3&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+        last: `${BASE}?page%5Bnumber%5D=13&page%5Bsize%5D=2&filter%5Bstatus%5D=published`,
+      }),
+      { page: { number: 2, size: 2 }, filter: { status: 'published' } },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ page: { number: 3, size: 2 }, filter: { status: 'published' } });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+    // Still arguments, never the URL (D4).
+    expect(JSON.stringify(outcome.structuredContent?.['pagination'])).not.toContain('https://');
+  });
+
+  it('maps a JSON:API cursor links.next (page[after]), resolving a relative link', async () => {
+    const { outcome, valid, tool } = await call(
+      jsonApiDocOp(cursored),
+      jsonApiDoc({ next: '/articles?page[size]=2&page[after]=eyJpZCI6Mn0' }),
+      { page: { size: 2 } },
+    );
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ page: { size: 2, after: 'eyJpZCI6Mn0' } });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it('reads a JSON:API 1.1 link object (links.next.href)', async () => {
     const { outcome, valid } = await call(
-      piped,
-      page('<https://api.example.test/issues?page=2&labels=a|b>; rel="next"', {}),
+      jsonApiDocOp(numbered),
+      jsonApiDoc({ next: { href: `${BASE}?page[number]=3`, meta: { count: 2 } } }),
       {},
     );
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toEqual({ page: { number: 3 } });
+  });
+
+  it('reads links.next from an application/json response whose schema declares it', async () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        data: { type: 'array' },
+        links: { type: 'object', properties: { next: { type: ['string', 'null'] } } },
+      },
+    };
+    const { outcome, valid } = await call(
+      jsonApiDocOp(numbered, 'application/json', schema),
+      jsonApiDoc({ next: `${BASE}?page[number]=2` }, undefined, 'application/json'),
+      {},
+    );
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toEqual({ page: { number: 2 } });
+  });
+
+  it('never reads links.next where the response is not declared JSON:API-shaped', async () => {
+    const { outcome } = await call(
+      jsonApiDocOp(numbered, 'application/json'),
+      jsonApiDoc({ next: `${BASE}?page[number]=2` }, undefined, 'application/json'),
+      {},
+    );
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('prefers the Link header over the body links.next', async () => {
+    const { outcome } = await call(
+      jsonApiDocOp(numbered),
+      jsonApiDoc({ next: `${BASE}?page[number]=3` }, `<${BASE}?page[number]=5>; rel="next"`),
+      {},
+    );
+    expect(nextOf(outcome)).toEqual({ page: { number: 5 } });
+  });
+
+  it.each([
+    ['only a non-pagination rel', '<https://api.example.test/docs>; rel="describedby"'],
+    ['a deprecation notice', '<https://api.example.test/sunset>; rel="deprecation"'],
+    ['an unparsable value', 'not a link header'],
+  ])('reads the body links.next when the Link header has %s', async (_label, link) => {
+    const { outcome } = await call(
+      jsonApiDocOp(numbered),
+      jsonApiDoc({ next: `${BASE}?page[number]=3` }, link),
+      {},
+    );
+    expect(nextOf(outcome)).toEqual({ page: { number: 3 } });
+  });
+
+  it('keeps a pagination Link header final even without rel=next (last page)', async () => {
+    const { outcome } = await call(
+      jsonApiDocOp(numbered),
+      jsonApiDoc({ next: `${BASE}?page[number]=3` }, `<${BASE}?page[number]=1>; rel="prev"`),
+      {},
+    );
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it.each([
+    ['links.next null (last page)', { self: `${BASE}?page[number]=13`, next: null }],
+    ['no links.next', { self: `${BASE}?page[number]=13` }],
+    ['no links object', undefined],
+    ['a non-string links.next', { next: 3 }],
+    ['a link object without href', { next: { meta: { count: 3 } } }],
+    ['another origin', { next: 'https://evil.example/articles?page[number]=3' }],
+    ['another path', { next: 'https://api.example.test/admin?page[number]=3' }],
+    ['an unmapped parameter', { next: `${BASE}?page[number]=3&token=x` }],
+    ['an undeclared page key', { next: `${BASE}?page[number]=3&page[cursor]=x` }],
+    ['a nested bracket key', { next: `${BASE}?page[number]=3&filter[author][name]=x` }],
+    ['an unparsable URL', { next: 'http://[::1' }],
+  ])('yields next: null for a JSON:API body with %s', async (_label, links) => {
+    const { outcome, valid } = await call(jsonApiDocOp(numbered), jsonApiDoc(links), {});
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  // JSON:API precedence belongs to the response actually returned, not to
+  // the operation: an ordinary JSON 200 next to a JSON:API 206 keeps its
+  // body cursor (review of #149).
+  const mixedOp: NamedOperation = {
+    toolName: 'listThings',
+    operation: {
+      method: 'get',
+      path: '/things',
+      tags: [],
+      deprecated: false,
+      parameters: [{ name: 'cursor', in: 'query', schema: { type: 'string' } }],
+      responses: {
+        '200': {
+          description: 'ok',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  next_cursor: { type: 'string' },
+                  links: { type: 'object', properties: { self: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        },
+        '206': {
+          description: 'partial',
+          content: { [JSON_API]: { schema: { type: 'object' } } },
+        },
+      },
+    },
+  };
+  const mixedBody = {
+    next_cursor: 'page-two',
+    links: { self: 'https://api.example.test/things?cursor=page-one' },
+  };
+  const mixedPage = (status: number, mediaType: string) => () =>
+    Response.json(mixedBody, { status, headers: { 'content-type': mediaType } });
+
+  it('keeps the body cursor of a plain JSON 200 when only another response is JSON:API', async () => {
+    const { outcome, valid } = await call(mixedOp, mixedPage(200, 'application/json'), {
+      cursor: 'page-one',
+    });
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toEqual({ cursor: 'page-two' });
+  });
+
+  it('treats the links object of an actual JSON:API response as final (no next -> null)', async () => {
+    const { outcome, valid } = await call(mixedOp, mixedPage(206, JSON_API), {
+      cursor: 'page-one',
+    });
     expect(outcome.isError).toBe(false);
     expect(valid).toBe(true);
     expect(nextOf(outcome)).toBeNull();

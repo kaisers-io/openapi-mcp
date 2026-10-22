@@ -149,8 +149,16 @@ Notes:
   does not prove the data is exhausted (e.g. an `offset` API without a `Link` header). A
   `Link: <…>; rel="next"` header is used only if it has the same origin and the same
   (byte-identical) path as the request, and all of its query parameters map onto the tool's
-  own query parameters. Values are decoded by the parameter's declared type and form style
-  (booleans, numbers, comma-joined or repeated arrays). Otherwise a body cursor is used:
+  own query parameters. Values are decoded by the parameter's declared type and style
+  (booleans, numbers, comma-joined or repeated arrays, space- or pipe-delimited arrays).
+  `name[key]` parameters (JSON:API `page[number]=2&page[size]=10`, `filter[status]=x`) map
+  back onto a `deepObject` parameter `name`, but only keys its schema declares, one level
+  deep, each once; a name that could be either a literal parameter or a `deepObject` key
+  gives `null`. Without a `Link` header, a JSON:API response (media type
+  `application/vnd.api+json`, or a response schema that declares `links.next`) uses its
+  top-level `links.next` (a URL or a link object's `href`) under the same rules;
+  `links.next: null` means the last page.
+  Otherwise a body cursor is used:
   `next_cursor`/`nextCursor` maps to `cursor`, `next_page_token` to `page_token`,
   `nextPageToken` to `pageToken`, and Stripe-style `has_more` with the last item's `id` maps to
   `starting_after`. A body cursor needs a structured result (an output schema), so a

@@ -73,6 +73,17 @@
   tool's own parameter types, or `null` when no next page is known (not proof that the data
   is exhausted). Its output schema gains an optional `pagination` property.
 
+- **Next-page hints for JSON:API and `deepObject`/delimited query parameters (#145).** A
+  JSON:API response (`application/vnd.api+json`, or a schema declaring `links.next`) now
+  gets `pagination.next` from its body `links.next`, under the same rules as a `Link`
+  header (same origin and path, every parameter maps, the tool's input schema accepts it);
+  a `Link` header still wins when both are sent. Next URLs using `page[number]=2&page[size]=10`,
+  `page[after]=…` or `filter[status]=x` map back onto the tool's `deepObject` parameters
+  (declared keys only), and space- or pipe-delimited array values are split on their
+  delimiter. Before, all of these gave `next: null`. Anything ambiguous (an undeclared or
+  nested key, a repeated key, a name that is both a literal parameter and a `deepObject`
+  key) still gives `null`.
+
 - **Opt-in retries for retry-safe requests (#82).** `--retries <n>` (0–3, default `0`)
   retries 429/502/503/504 and connection errors before any response for GET, HEAD, PUT and
   DELETE (DELETE not after a connection error), and for POST/PATCH only when the operation
