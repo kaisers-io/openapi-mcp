@@ -13,9 +13,16 @@ export type TraceContext = {
   readonly tracestate?: string;
 };
 
-// Version "00" only: `00-<32 hex trace-id>-<16 hex parent-id>-<2 hex flags>`,
-// lowercase, with an all-zero trace-id or parent-id being invalid.
-const TRACEPARENT_RE = /^00-(?<traceId>[\da-f]{32})-(?<parentId>[\da-f]{16})-[\da-f]{2}$/u;
+// `<version>-<32 hex trace-id>-<16 hex parent-id>-<2 hex flags>`,
+// lowercase, with an all-zero trace-id or parent-id being invalid. Version
+// "00" must end there. A HIGHER version may carry more `-`-prefixed fields
+// after the flags, and W3C Trace Context §4.3 asks a parser to read it by
+// the version-00 layout; version "ff" is invalid. Only the version-00 part is
+// forwarded (normalised to "00"), because this server cannot vouch for
+// fields it does not know.
+const TRACEPARENT_RE =
+  /^(?<version>[\da-f]{2})-(?<traceId>[\da-f]{32})-(?<parentId>[\da-f]{16})-(?<flags>[\da-f]{2})(?<rest>-[!-~]*)?$/u;
+const MAX_TRACEPARENT_LENGTH = 512;
 const ALL_ZERO_RE = /^0+$/u;
 
 // A tracestate list-member: `key=value`; key is a simple key or a
@@ -30,15 +37,19 @@ const validTraceparent = (value: unknown): string | undefined => {
   if (typeof value !== 'string') {
     return undefined;
   }
-  const groups = TRACEPARENT_RE.exec(value)?.groups;
+  const groups =
+    value.length > MAX_TRACEPARENT_LENGTH ? undefined : TRACEPARENT_RE.exec(value)?.groups;
+  const version = groups?.['version'];
   if (
     groups === undefined ||
+    version === 'ff' ||
+    (version === '00' && groups['rest'] !== undefined) ||
     ALL_ZERO_RE.test(groups['traceId'] ?? '') ||
     ALL_ZERO_RE.test(groups['parentId'] ?? '')
   ) {
     return undefined;
   }
-  return value;
+  return `00-${groups['traceId'] ?? ''}-${groups['parentId'] ?? ''}-${groups['flags'] ?? ''}`;
 };
 
 const validTracestate = (value: unknown): string | undefined => {

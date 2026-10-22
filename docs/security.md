@@ -96,6 +96,10 @@ generated API request:
   positives. Empty secrets are rejected at startup rather than silently redacting nothing.
 - There is no "show env/config/debug request" tool — nothing exposes the resolved secret
   values back through MCP.
+- Trace propagation is on by default: a client's W3C `traceparent`/`tracestate` from a
+  `tools/call`'s `_meta` is forwarded to the upstream (same-origin hops only, strictly
+  validated). It carries no credentials, but it lets the upstream correlate calls across
+  sessions. For third-party APIs you do not operate, pass `--no-trace-propagation`.
 - For safe terminal testing, see the README's [Secrets](../README.md#secrets) section
   (`HIST_IGNORE_SPACE`, `read -s`, secret-manager CLIs).
 
