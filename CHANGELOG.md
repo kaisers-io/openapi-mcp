@@ -102,3 +102,34 @@
   response accept an optional `_fields` argument (up to 32 JSON Pointers, `*` maps over an
   array; also through `call_operation`) and return only the selected values under
   `projection`. Off by default because it grows `tools/list` by about 30%.
+
+- **JWT access-token verifier in core (#70).** `verifyJwt` and `parseJwks` check an RFC 9068
+  access token against a kid-indexed JWKS: asymmetric algorithms only (RS/PS/ES/EdDSA), `kid`
+  required, canonical base64url, exact `iss`, `aud` bound to the resource URI, `exp` required,
+  60 s clock skew. Library only; the HTTP resource-server wiring follows.
+
+- **OAuth resource-server mode for `--http` (#70).** `--http-auth oauth` with `--oauth-issuer`,
+  `--oauth-audience` and optional `--oauth-required-scope` validates JWT access tokens locally
+  against the issuer's JWKS, serves RFC 9728 Protected Resource Metadata and answers with
+  `401`/`403` challenges. Every MCP request is checked at the transport, `call_operation`
+  included. Only this mode may bind a non-loopback `--http-host` (with an `https` audience).
+  The JWKS is refreshed stale-while-revalidate, at most once per 30 s; a failed refresh keeps
+  the last good set for up to an hour, an empty set revokes every key. Static `--http-token-env`
+  stays the default.
+
+- **Security-scheme hints (#55).** `tools` prints one `auth:` line per `securitySchemes` entry
+  an exposed operation references, naming the flag that supplies it (`tools --json`:
+  `data.security`), and `serve` warns at startup when no configured header satisfies an exposed
+  operation's `security` requirement (alternatives joined with `OR`, schemes needed together
+  with `AND`). Query-string API keys, challenge/response `http` schemes and mutual TLS are
+  reported as unsupported. Requests are built as before.
+
+- **Upstream OAuth2 client credentials (#55).** `serve` can obtain the upstream API's access
+  token itself: `--upstream-oauth-client-id-env` and `--upstream-oauth-client-secret-env`
+  (plus optional `--upstream-oauth-scheme`, `--upstream-oauth-scope`,
+  `--upstream-oauth-token-url`, `--upstream-oauth-client-auth`) run the client-credentials
+  grant against the spec's `tokenUrl` through the same egress policy as API calls. Tokens are
+  cached in memory, refreshed before expiry and registered with the redactor as they are
+  issued; the token request is bounded by `--request-timeout`. An upstream `401` replays the
+  request once with a fresh token; that replay is separate from `--retries`. A call whose token
+  could not be obtained is logged with the new outcome `token_error`.

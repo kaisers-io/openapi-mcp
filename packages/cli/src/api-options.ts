@@ -11,6 +11,8 @@ import {
 } from '@kaisers-io/openapi-mcp-core';
 import type { HeaderEnvMapping } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
+import { resolveOAuthConfig } from './oauth-options.ts';
+import type { OAuthCmdOpts, ResolvedOAuthConfig } from './oauth-options.ts';
 
 const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,
@@ -134,9 +136,11 @@ export type ResolvedApiConfig = {
   // Forward a call's W3C trace context (traceparent/tracestate from the MCP
   // request's _meta) to the upstream; --no-trace-propagation turns it off.
   propagateTraceContext: boolean;
+  // Present iff --upstream-oauth-* was given (see oauth-options.ts).
+  oauth?: ResolvedOAuthConfig;
 };
 
-export type ApiCmdOpts = {
+export type ApiCmdOpts = OAuthCmdOpts & {
   // Same commander generic-constraint workaround as SpecCmdOpts
   // (spec-options.ts): a plain object literal type is rejected by
   // `Command<[], Opts>`'s `Opts extends OptionValues` constraint without an
@@ -201,6 +205,30 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     .option(
       '--no-trace-propagation',
       "do not forward a call's W3C trace context (traceparent/tracestate) to the upstream API",
+    )
+    .option(
+      '--upstream-oauth-client-id-env <ENV>',
+      'OAuth2 client-credentials: env var holding the client id',
+    )
+    .option(
+      '--upstream-oauth-client-secret-env <ENV>',
+      'OAuth2 client-credentials: env var holding the client secret (secret)',
+    )
+    .option(
+      '--upstream-oauth-scheme <name>',
+      'which oauth2 securitySchemes entry to use when the spec declares several',
+    )
+    .option(
+      '--upstream-oauth-scope <scope>',
+      'scope to request (repeatable; none by default)',
+      collect,
+      [] as readonly string[],
+    )
+    .option('--upstream-oauth-token-url <url>', "override the spec's clientCredentials tokenUrl")
+    .option(
+      '--upstream-oauth-client-auth <method>',
+      'client authentication: client_secret_basic or client_secret_post',
+      'client_secret_basic',
     );
 
 // Shared by both header groups so the name/value size checks are defined
@@ -437,6 +465,14 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
       .map((header) => header.value)
       .filter((value) => value.length >= MIN_SECRET_REGISTRATION_LENGTH),
   ];
+  const oauth = resolveOAuthConfig(
+    cmdOpts,
+    new Set(secretHeaders.map((header) => header.name.toLowerCase())),
+    ctx.env,
+  );
+  if (oauth !== undefined) {
+    secretValues.push(...oauth.secretValues);
+  }
   const maxResponseBytes = parseMaxResponseBytes(cmdOpts.maxResponseBytes);
   const baseUrlOverride =
     cmdOpts.baseUrl === undefined ? undefined : validateBaseUrl(cmdOpts.baseUrl);
@@ -453,5 +489,6 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
     requestTimeoutMs: parseRequestTimeout(cmdOpts.requestTimeout),
     retries: parseRetries(cmdOpts.retries),
     propagateTraceContext: cmdOpts.tracePropagation !== false,
+    ...(oauth === undefined ? {} : { oauth }),
   };
 };

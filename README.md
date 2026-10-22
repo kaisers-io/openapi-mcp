@@ -199,7 +199,8 @@ trade-offs: [Tool modes](docs/configuration.md#tool-modes).
 ## Secrets
 
 Secrets are read **exclusively** from environment variables named by `--spec-header-env`
-(spec fetch), `--header-env` (API requests), and `--http-token-env` (HTTP transport) — never
+(spec fetch), `--header-env` and `--upstream-oauth-client-id-env`/`--upstream-oauth-client-secret-env` (API
+requests; the latter for OAuth2 client credentials), and `--http-token-env` (HTTP transport) — never
 from argv, config files, or the model context:
 
 - `--spec-header-env Header=ENV` / `--header-env Header=ENV` — **equals** syntax; the value
@@ -256,9 +257,9 @@ Full flag reference, including duration and size grammar: [`docs/configuration.m
 
 ## HTTP transport
 
-`--http` starts a Streamable HTTP server bound to `127.0.0.1` only, instead of stdio.
-`--http-token-env <ENV>` is **mandatory** with `--http` — the CLI refuses to start without it,
-since loopback binding alone does not authenticate local callers:
+`--http` starts a Streamable HTTP server bound to `127.0.0.1`, instead of stdio. In the default
+static mode, `--http-token-env <ENV>` is **mandatory** with `--http` — the CLI refuses to start
+without it, since loopback binding alone does not authenticate local callers:
 
 ```bash
 export TOKEN=$(openssl rand -base64 32)
@@ -272,6 +273,11 @@ including hex, is rejected at startup. Exact rules and an openssl-free generator
 [`docs/security.md`](docs/security.md#http-mode-authentication-and-limits).
 
 Clients must send `Authorization: Bearer <token>`. `--port` defaults to `3044`.
+
+For a shared deployment, `--http-auth oauth` makes the server an OAuth resource server instead:
+it publishes Protected Resource Metadata, validates JWT access tokens from `--oauth-issuer`
+for `--oauth-audience`, and is the only mode that may bind a non-loopback `--http-host`. See
+[docs/security.md](docs/security.md#oauth-resource-server-mode-opt-in).
 
 The server speaks MCP revision `2026-07-28` and is stateless: each request is served on its
 own, with no `initialize` handshake and no session state (no `Mcp-Session-Id`). Older, 2025-era
