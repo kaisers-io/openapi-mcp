@@ -186,31 +186,31 @@
     "typescript/return-await": ["error", "error-handling-correctness-only"],
     // Off for now: type-aware rules outside #85's scope that the categories
     // above switch on together with the ones above, and that have findings
-    // on main (counts when type-aware linting was enabled). Each needs its
-    // own review of whether the code or the rule should change, so they are
-    // follow-up work, not part of the async guard.
-    "typescript/prefer-readonly-parameter-types": "off", // 700
-    "typescript/no-unsafe-type-assertion": "off", // 353
-    "typescript/no-confusing-void-expression": "off", // 46
+    // on main (counts as of #115's merge with main). Each needs its own
+    // review of whether the code or the rule should change, so they are
+    // follow-up work, not part of the async guard: tracked in #148.
+    "typescript/prefer-readonly-parameter-types": "off", // 1616
+    "typescript/no-unsafe-type-assertion": "off", // 589
+    "typescript/no-confusing-void-expression": "off", // 87
+    "typescript/no-unsafe-assignment": "off", // 13
+    "typescript/no-misused-spread": "off", // 11
+    "typescript/dot-notation": "off", // 10
     "typescript/only-throw-error": "off", // 10
-    "typescript/no-misused-spread": "off", // 9
+    "typescript/no-base-to-string": "off", // 9
     "typescript/no-unsafe-member-access": "off", // 8
-    "typescript/dot-notation": "off", // 7
+    "typescript/switch-exhaustiveness-check": "off", // 6
     "typescript/no-unsafe-call": "off", // 5
-    "typescript/no-unsafe-assignment": "off", // 4
     "typescript/no-unsafe-argument": "off", // 4
-    "typescript/no-base-to-string": "off", // 4
-    "typescript/no-unnecessary-type-parameters": "off", // 2
+    "typescript/no-deprecated": "off", // 3
+    "typescript/consistent-return": "off", // 2
     "typescript/no-unnecessary-boolean-literal-compare": "off", // 2
-    "typescript/switch-exhaustiveness-check": "off", // 1
-    "typescript/strict-boolean-expressions": "off", // 1
-    "typescript/require-array-sort-compare": "off", // 1
-    "typescript/prefer-nullish-coalescing": "off", // 1
-    "typescript/no-unsafe-return": "off", // 1
-    "typescript/no-unnecessary-type-conversion": "off", // 1
+    "typescript/no-unnecessary-type-parameters": "off", // 2
+    "typescript/no-unsafe-return": "off", // 2
+    "typescript/require-array-sort-compare": "off", // 2
     "typescript/no-unnecessary-template-expression": "off", // 1
-    "typescript/no-deprecated": "off", // 1
-    "typescript/consistent-return": "off" // 1
+    "typescript/no-unnecessary-type-conversion": "off", // 1
+    "typescript/prefer-nullish-coalescing": "off", // 1
+    "typescript/strict-boolean-expressions": "off" // 1
   },
   "ignorePatterns": [
     "**/dist/**",
