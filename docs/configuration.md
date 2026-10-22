@@ -48,7 +48,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
 | `--timeout <duration>` | no | spec fetch timeout | `30s` |
-| `--ttl <duration>` | no | spec refresh interval | `1h` |
+| `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
@@ -59,13 +59,18 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
-| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
+| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
 
 Notes:
 
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.
+- Header values (from `--header`, `--header-env` and `--spec-header-env`, and header parameters
+  a tool caller passes) are sent as bytes. Control characters and characters above U+00FF are
+  refused: operator headers at startup, tool arguments per call, before any request is sent.
+  Characters U+0080–U+00FF are allowed, are sent as single bytes, and the receiving server reads
+  them as Latin-1 (ISO-8859-1), not UTF-8. ASCII is the safe choice.
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
@@ -114,7 +119,7 @@ API-request or transport flags (no `--base-url`, `--header*`, `--max-response-by
 | `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
 | `--timeout <duration>` | no | spec fetch timeout | `30s` |
-| `--ttl <duration>` | no | spec refresh interval | `1h` |
+| `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
@@ -194,6 +199,19 @@ openapi-mcp cache promote --spec https://api.example.com/openapi.json --cache-ke
 Remove a stale writer lock left behind by a process that died. Stop other `openapi-mcp`
 processes on this entry first — removing a lock a live writer still holds re-admits a second
 writer.
+
+The lock records the owning process id and hostname. The conflict message and `cache unlock`
+report them, and for an owner on the same host whether that process is still running. A lock
+younger than 60 seconds still needs `--force`, even when its owner looks dead: a process in
+another PID namespace (a container sharing the cache directory) can look dead from here.
+
+A held lock only fails commands that change what is accepted (first use, a new candidate,
+`--trust-spec-updates`, `cache promote`, `cache clear`), and only after retrying: for as long as
+`--timeout` allows when a spec is loaded (at least about two seconds), about two seconds for
+`cache promote` and `cache clear`. A start whose spec is unchanged serves the verified baseline
+with a warning instead, and `serve` reports it in the `openapi_mcp_status` tool as
+`cacheLock: "held"` (another process is writing) or `cacheLock: "stale"` (the owner looks gone:
+run `cache unlock`).
 
 | Flag | Meaning | Default |
 |---|---|---|

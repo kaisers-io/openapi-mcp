@@ -1165,6 +1165,31 @@ describe('runSpecPipeline — tool budget after filtering (issue #32)', () => {
     expect(refreshed.warnings.join('\n')).not.toContain('tool budget');
   });
 
+  it('refuses an over-budget exposed set on an unchanged 200 before any bookkeeping touch', async () => {
+    // The unchanged-200 path only touches meta.json (#106); that touch must
+    // not happen for a run the tool budget refuses (#32)
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
+    await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...cachedOpts, allow: [parseFilterPattern('op1')] },
+      { ...bigDeps(600), cacheFs },
+    );
+    const before = metaOf(cacheFs);
+    // Past the TTL, same bytes, but without the narrowing filter
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...cachedOpts, nowMs: 3_600_001 },
+        { ...bigDeps(600), cacheFs },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('512-tool budget') as string,
+    });
+    expect(metaOf(cacheFs)).toEqual(before);
+  });
+
   it('applies the same two-level rule when serving a cached spec', async () => {
     const cacheFs = memoryCacheFs();
     const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };

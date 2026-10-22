@@ -60,6 +60,7 @@ export const acceptedInput = (
   title: 'Petstore',
   specVersion: '1.0.0',
   fetchedAt: 1_700_000_000_000,
+  expected: 'unchecked',
   ...over,
 });
 
@@ -69,6 +70,7 @@ export const candidateInput = (): Parameters<typeof writeCandidate>[2] => ({
   title: 'Petstore v2',
   specVersion: '2.0.0',
   fetchedAt: 1_700_000_500_000,
+  expected: 'unchecked',
 });
 
 export const CANDIDATE_HASH = hashContent(DOC_V2_TEXT);
@@ -1074,10 +1076,16 @@ describe('touchRevalidated', () => {
     const fs = await seeded();
     await writeCandidate(LAYOUT, fs, candidateInput());
     const before = metaOf(fs);
-    await touchRevalidated(LAYOUT, fs, 1_700_001_000_000, {
-      etag: '"v3"',
-      lastModified: 'Fri, 23 Oct 2026 07:28:00 GMT',
-    });
+    await touchRevalidated(
+      LAYOUT,
+      fs,
+      1_700_001_000_000,
+      {
+        etag: '"v3"',
+        lastModified: 'Fri, 23 Oct 2026 07:28:00 GMT',
+      },
+      { expected: 'unchecked' },
+    );
     const after = metaOf(fs);
     expect(after.fetchedAt).toBe(1_700_001_000_000);
     expect(after.etag).toBe('"v3"');
@@ -1092,21 +1100,23 @@ describe('touchRevalidated', () => {
   it('preserves existing validators when the revalidation returns none', async () => {
     const fs = memoryCacheFs();
     await writeAccepted(LAYOUT, fs, acceptedInput({ etag: '"v1"' }));
-    await touchRevalidated(LAYOUT, fs, 1_700_001_000_000, {});
+    await touchRevalidated(LAYOUT, fs, 1_700_001_000_000, {}, { expected: 'unchecked' });
     expect(metaOf(fs).etag).toBe('"v1"');
     expect(metaOf(fs).fetchedAt).toBe(1_700_001_000_000);
   });
 
   it('refuses to revalidate a namespace with no accepted baseline at all', async () => {
     await expect(
-      touchRevalidated(LAYOUT, memoryCacheFs(), 1_700_000_000_000, {}),
+      touchRevalidated(LAYOUT, memoryCacheFs(), 1_700_000_000_000, {}, { expected: 'unchecked' }),
     ).rejects.toMatchObject({ code: 'validation' });
   });
 
   it('refuses on a corrupt entry rather than healing it', async () => {
     const fs = await seeded();
     fs.files.set(LAYOUT.metaPath, 'not json');
-    await expect(touchRevalidated(LAYOUT, fs, 1_700_000_000_000, {})).rejects.toMatchObject({
+    await expect(
+      touchRevalidated(LAYOUT, fs, 1_700_000_000_000, {}, { expected: 'unchecked' }),
+    ).rejects.toMatchObject({
       code: 'validation',
       message: expect.stringContaining('cache clear') as string,
     });
@@ -1118,7 +1128,9 @@ describe('touchRevalidated', () => {
       LAYOUT.lockPath,
       JSON.stringify({ owner: 'other', acquiredAt: 1_700_000_000_000 }),
     );
-    await expect(touchRevalidated(LAYOUT, fs, 1_700_000_000_000, {})).rejects.toMatchObject({
+    await expect(
+      touchRevalidated(LAYOUT, fs, 1_700_000_000_000, {}, { expected: 'unchecked' }),
+    ).rejects.toMatchObject({
       code: 'conflict',
     });
   });
@@ -1967,7 +1979,9 @@ describe('every write path verifies the accepted OBJECT, not just meta.json', ()
   it('touchRevalidated refuses to record a 304 against a damaged baseline', async () => {
     const fs = await seeded();
     damageAcceptedObject(fs);
-    await expect(touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' })).rejects.toMatchObject({
+    await expect(
+      touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' }, { expected: 'unchecked' }),
+    ).rejects.toMatchObject({
       code: 'validation',
       exitCode: 3,
     });
@@ -2280,7 +2294,7 @@ describe('touchRevalidated (the 304 transition)', () => {
     // candidate awaiting promotion without ever approving it.
     const fs = await withCandidate();
     const before = metaOf(fs);
-    await touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' });
+    await touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' }, { expected: 'unchecked' });
     const after = metaOf(fs);
     expect(after.candidate).toEqual(before.candidate);
     expect(candidateTextOf(fs)).toBe(DOC_V2_TEXT);
@@ -2289,7 +2303,7 @@ describe('touchRevalidated (the 304 transition)', () => {
   it('preserves the accepted baseline byte for byte', async () => {
     const fs = await withCandidate();
     const before = metaOf(fs);
-    await touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' });
+    await touchRevalidated(LAYOUT, fs, NOW, { etag: '"v2"' }, { expected: 'unchecked' });
     const after = metaOf(fs);
     expect(after.acceptedContentHash).toBe(before.acceptedContentHash);
     expect(after.sourceContentHash).toBe(before.sourceContentHash);
@@ -2307,23 +2321,29 @@ describe('touchRevalidated (the 304 transition)', () => {
       written.push(path);
       return inner(path, data);
     };
-    await touchRevalidated(LAYOUT, fs, NOW, {});
+    await touchRevalidated(LAYOUT, fs, NOW, {}, { expected: 'unchecked' });
     expect(written).toEqual([LAYOUT.metaPath]);
     expect(objectNamesOf(fs)).toEqual(namesBefore);
   });
 
   it('advances fetchedAt so the TTL restarts from the successful check', async () => {
     const fs = await withCandidate();
-    await touchRevalidated(LAYOUT, fs, NOW, {});
+    await touchRevalidated(LAYOUT, fs, NOW, {}, { expected: 'unchecked' });
     expect(metaOf(fs).fetchedAt).toBe(NOW);
   });
 
   it('records the validators the 304 returned', async () => {
     const fs = await seeded();
-    await touchRevalidated(LAYOUT, fs, NOW, {
-      etag: '"fresh"',
-      lastModified: 'Thu, 22 Oct 2026 07:28:00 GMT',
-    });
+    await touchRevalidated(
+      LAYOUT,
+      fs,
+      NOW,
+      {
+        etag: '"fresh"',
+        lastModified: 'Thu, 22 Oct 2026 07:28:00 GMT',
+      },
+      { expected: 'unchecked' },
+    );
     expect(metaOf(fs)).toMatchObject({
       etag: '"fresh"',
       lastModified: 'Thu, 22 Oct 2026 07:28:00 GMT',
@@ -2335,14 +2355,16 @@ describe('touchRevalidated (the 304 transition)', () => {
     // what we have would force an unconditional refetch next time
     const fs = memoryCacheFs();
     await writeAccepted(LAYOUT, fs, acceptedInput({ etag: '"keep"' }));
-    await touchRevalidated(LAYOUT, fs, NOW, {});
+    await touchRevalidated(LAYOUT, fs, NOW, {}, { expected: 'unchecked' });
     expect(metaOf(fs).etag).toBe('"keep"');
   });
 
   it('runs under the namespace writer lock', async () => {
     const fs = await seeded();
     await fs.createExclusive(LAYOUT.lockPath, JSON.stringify({ owner: 'other', acquiredAt: NOW }));
-    await expect(touchRevalidated(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+    await expect(
+      touchRevalidated(LAYOUT, fs, NOW, {}, { expected: 'unchecked' }),
+    ).rejects.toMatchObject({
       code: 'conflict',
     });
   });
@@ -2350,14 +2372,18 @@ describe('touchRevalidated (the 304 transition)', () => {
   it('fails closed on a corrupt entry', async () => {
     const fs = await seeded();
     fs.files.set(LAYOUT.metaPath, 'not json');
-    await expect(touchRevalidated(LAYOUT, fs, NOW, {})).rejects.toMatchObject({
+    await expect(
+      touchRevalidated(LAYOUT, fs, NOW, {}, { expected: 'unchecked' }),
+    ).rejects.toMatchObject({
       code: 'validation',
       exitCode: 3,
     });
   });
 
   it('refuses a 304 revalidation when there is no baseline to revalidate', async () => {
-    await expect(touchRevalidated(LAYOUT, memoryCacheFs(), NOW, {})).rejects.toMatchObject({
+    await expect(
+      touchRevalidated(LAYOUT, memoryCacheFs(), NOW, {}, { expected: 'unchecked' }),
+    ).rejects.toMatchObject({
       code: 'validation',
     });
   });
