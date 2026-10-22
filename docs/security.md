@@ -31,13 +31,14 @@ Everything below is a defense *in addition to* that requirement, not a replaceme
   expansion depth, every `$ref` resolvable and document-internal, a capped operation
   count (4096), and a capped single-description length (truncated with a marker past the cap).
   Violating any of these is a hard failure before the spec is written to cache. The number of
-  tools actually exposed after `--allow`/`--deny` filtering is capped separately (512) and
-  checked on every run, since it depends on the filters rather than on the cached document; a
-  narrow `--allow` can therefore serve a few tools from an API that documents more. Only the
-  exposed operations are dereferenced, each shared `$ref` target once, under two node budgets
-  checked on every run: unique allocated nodes (500,000) and the size of the result read as a
-  tree (10,000,000), so neither shared models nor a "billion laughs" `$ref` graph can make
-  dereferencing or tool generation unbounded. External
+  tools actually exposed after `--allow`/`--deny` filtering is capped separately (512, or
+  4096 under `--tool-mode discover`/`auto`, whose `tools/list` does not grow with the
+  operation count) and checked on every run, since it depends on the filters rather than on
+  the cached document; a narrow `--allow` can therefore serve a few tools from an API that
+  documents more. Only the exposed operations are dereferenced, each shared `$ref` target
+  once, under two node budgets checked on every run: unique allocated nodes (500,000) and the
+  size of the result read as a tree (10,000,000), so neither shared models nor a "billion
+  laughs" `$ref` graph can make dereferencing or tool generation unbounded. External
   (cross-document) `$ref`s are rejected outright as a spec-level hard failure.
 - A refreshed spec fetched at runtime never silently changes what a model can do: the cache
   keeps a durable accepted baseline plus at most one pending candidate. The only change
@@ -179,6 +180,30 @@ credentials — so:
   enabled.
 - Graceful shutdown on `SIGINT`/`SIGTERM` stops accepting new requests and aborts in-flight
   ones; there is no session state to close.
+
+## Discovery tool mode
+
+`--tool-mode discover` replaces the per-operation tools with `search_operations`,
+`describe_operation` and `call_operation`. It adds no second policy path: the three tools
+only ever see the exposed (post-filter) operations, and `call_operation` runs the target
+through the same rate limit, strict input validation, executor and dispatch-boundary
+redaction as a direct call — an operation `--allow`/`--deny` or the read-only default
+excluded is an unknown operation, and no upstream request is made. Search input is bounded
+(query length and term count, tag list, result count) and every spec-derived string in a
+search result is sanitized and capped like any other tool text. The trade-off is approval
+granularity: `call_operation` carries the least safe annotations among the exposed
+operations (see [Tool modes](configuration.md#tool-modes)), so a host gating approval per
+tool sees one tool for all of them. **One approval covers every exposed operation**: in a
+host that offers "always allow this tool", allowing `call_operation` once allows every
+operation the filters expose, writes included when `--allow` widens the set beyond the
+read-only default. Use `discover` with the read-only default (or an `--allow` set you would
+approve as a whole), or `--tool-mode per-operation` where each write needs its own approval.
+`serve` prints a startup warning naming the non-read-only operations whenever `discover` (or
+`auto` resolving to it) exposes any. `call_operation` also rejects `arguments: null` (the
+advertised schema says object; omit `arguments` for an operation without inputs), so the
+wire contract and the runtime agree. A code-execution mode (model-written code calling the
+API) is deliberately not offered: it would bypass per-call validation, filtering, rate
+limiting and redaction.
 
 ## What `openapi-mcp` defends, and what you still must do
 

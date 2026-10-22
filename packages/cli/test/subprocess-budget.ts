@@ -31,6 +31,7 @@ export const SUBPROCESS_E2E_FILES = [
   'test/cache-concurrency.test.ts',
   'test/serve.test.ts',
   'test/serve-http.test.ts',
+  'test/serve-tool-mode.test.ts',
 ];
 
 // Test files that start a child process but stay in the unit project, each

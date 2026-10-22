@@ -60,6 +60,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
+| `--tool-mode <mode>` | no | `per-operation`, `discover` or `auto` — see [Tool modes](#tool-modes) | `per-operation` |
 
 Notes:
 
@@ -103,6 +104,55 @@ export TOKEN=$(openssl rand -base64 32)
 openapi-mcp serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
+
+### Tool modes
+
+`--tool-mode` decides how the exposed operations reach the model.
+
+- `per-operation` (default): one MCP tool per exposed operation, each with its full input
+  schema, output schema and description in `tools/list`. At most 512 operations may be
+  exposed.
+- `discover`: `tools/list` carries `openapi_mcp_status` plus three fixed tools, whatever the
+  number of operations:
+  - `search_operations` `{ query?, tags?, method?, limit? (1–25, default 10), detail?
+    ("names" | "summary") }` ranks the exposed operations by keyword (operation name, path,
+    tags, parameter names, summary, description). Local and deterministic: no embeddings, no
+    network. The query is capped at 500 characters and 32 distinct terms.
+  - `describe_operation` `{ name }` returns the operation's definition exactly as
+    `per-operation` would list it.
+  - `call_operation` `{ name, arguments }` calls it. `arguments` is validated by that
+    operation's own schema, with the same error messages, rate limit, redaction and upstream
+    request as a direct call. Omit `arguments` for an operation without inputs; `null` is
+    rejected (`arguments: invalid_type`).
+    Up to 4096 operations may be exposed.
+- `auto`: `discover` when more than 64 operations are exposed after filtering, otherwise
+  `per-operation`.
+
+`--allow`/`--deny` and the read-only default apply unchanged: an operation they exclude is
+neither searchable nor callable (`call_operation` reports it as an unknown operation).
+
+What `discover` costs: a model typically needs a search and a describe before each new
+operation, so a task takes more tool calls. And because one `call_operation` tool stands for
+every exposed operation, it carries the least safe annotations among them — `readOnlyHint:
+true` only when every exposed operation is a `GET`/`HEAD` (the read-only default),
+otherwise `destructiveHint: true` when any is. A host that asks for approval per tool, or
+decides it from annotations, sees one approval surface for all operations: approving
+`call_operation` once approves every exposed operation, writes included. `serve` warns at
+startup when `discover` exposes any non-read-only operation; narrow the set with
+`--allow`/`--deny` if that matters (see [security](security.md#discovery-tool-mode)).
+
+Startup cost: `serve` compiles one output validator per exposed operation before it answers,
+about 12 ms each with the current per-tool compilation, so a few thousand operations under
+`discover` take tens of seconds to start. Shared validator compilation (#137) removes most of
+that cost.
+
+Measured `tools/list` sizes (2026-07-28 stdio response, tokens ≈ bytes / 4):
+
+| Spec | Exposed | `per-operation` | `discover` |
+|---|---|---|---|
+| 400 generated `GET` operations | 400 | 273,824 bytes (~68k tokens) | 4,349 bytes (~1.1k tokens) |
+| DigitalOcean (read-only default) | 146 | 120,745 bytes (~30k tokens) | 4,349 bytes |
+| DigitalOcean (`--allow '**'`) | 265 | 355,878 bytes (~89k tokens) | 4,396 bytes |
 
 ## `tools`
 

@@ -1148,6 +1148,26 @@ describe('runSpecPipeline — tool budget after filtering (issue #32)', () => {
     );
   });
 
+  it('checks a candidate against the budget of the run (discover mode allows more tools)', async () => {
+    const cacheFs = memoryCacheFs();
+    const cachedOpts = {
+      ...baseOpts,
+      cacheRoot: '/cache',
+      maxToolCount: SPEC_BUDGETS.maxDiscoverToolCount,
+    };
+    await runSpecPipeline('https://api.example.com/big.json', cachedOpts, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    const refreshed = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...cachedOpts, nowMs: 3_600_001 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(refreshed.cacheStatus).toBe('candidate');
+    expect(refreshed.warnings.join('\n')).not.toContain('tool budget');
+  });
+
   it('does not warn about a candidate that fits the tool budget', async () => {
     const cacheFs = memoryCacheFs();
     const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };

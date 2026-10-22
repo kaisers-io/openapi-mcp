@@ -181,6 +181,16 @@ Pass `--strict-filters` to turn a dead pattern (one that matches nothing) into a
 error instead of a warning — useful once a filter set is stable and you want drift to fail
 loudly. Full flag reference: [`docs/configuration.md`](docs/configuration.md).
 
+### Large APIs: `--tool-mode discover`
+
+By default every exposed operation is its own MCP tool, and every tool's schemas are sent to
+the model up front — about 30k tokens for DigitalOcean's read-only operations. With
+`--tool-mode discover` the server lists three tools instead — `search_operations`,
+`describe_operation`, `call_operation` — and `tools/list` stays around 4 KB however many
+operations are exposed (up to 4096). Filters, validation and redaction apply exactly as for a
+direct call. `--tool-mode auto` picks `discover` above 64 exposed operations. Details and
+trade-offs: [Tool modes](docs/configuration.md#tool-modes).
+
 ## Secrets
 
 Secrets are read **exclusively** from environment variables named by `--spec-header-env`

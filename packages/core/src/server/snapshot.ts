@@ -4,7 +4,9 @@ import type { DeadPattern } from '../filter/engine.ts';
 import type { OmittedOperation } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { BuildToolsResult, GeneratedTool } from '../toolgen/build.ts';
-import type { MetaSummary, ServerSnapshot, SnapshotTool, WireTool } from './types.ts';
+import { buildDiscoveryTools } from './discovery.ts';
+import { buildSearchIndex } from './search-index.ts';
+import type { MetaSummary, ServerSnapshot, SnapshotTool, ToolMode, WireTool } from './types.ts';
 
 export const META_TOOL_NAME = 'openapi_mcp_status';
 
@@ -187,10 +189,37 @@ const deepFreeze = <T>(value: T, seen = new WeakSet<object>()): T => {
   return Object.freeze(value);
 };
 
+// Null-prototype: tool names are sanitized identifiers already, but a null
+// prototype is the safe default regardless — `__proto__`/`constructor` are
+// just ordinary own keys here, never a prototype-pollution vector, and
+// `Object.hasOwn` never needs to distinguish an own key from an inherited one.
+// Imperative on purpose: this is validate-then-write, not a plain
+// accumulation — `Object.fromEntries`/`reduce` would either silently let a
+// later duplicate name overwrite an earlier tool (losing the throw entirely)
+// or need the same hasOwn-then-throw check re-embedded in a reducer callback
+// for no readability gain over the loop below.
+const indexByName = (tools: readonly SnapshotTool[]): Record<string, SnapshotTool | undefined> => {
+  const byName = Object.create(null) as Record<string, SnapshotTool | undefined>;
+  for (const tool of tools) {
+    if (Object.hasOwn(byName, tool.name)) {
+      throw validationError(`duplicate tool name "${tool.name}" in the server snapshot`);
+    }
+    byName[tool.name] = tool;
+  }
+  return byName;
+};
+
+export type SnapshotOptions = {
+  // Omitted means `per-operation`, whose snapshot is unchanged by this option.
+  toolMode?: ToolMode;
+};
+
 export const buildSnapshot = (
   built: BuildToolsResult,
   pipeline: SnapshotPipelineInput,
+  options: SnapshotOptions = {},
 ): ServerSnapshot => {
+  const toolMode = options.toolMode ?? 'per-operation';
   const upstreamTools: SnapshotTool[] = built.tools.map((generated) => ({
     kind: 'upstream',
     name: generated.toolName,
@@ -205,29 +234,20 @@ export const buildSnapshot = (
     inputSchema: META_INPUT_SCHEMA,
   };
   // Meta tool first: a stable, predictable tools/list order that does not
-  // depend on operation ordering in the spec.
-  const all = [metaTool, ...upstreamTools];
-  // Null-prototype: tool names are sanitized identifiers already, but a null
-  // prototype is the safe default regardless — `__proto__`/`constructor` are
-  // just ordinary own keys here, never a prototype-pollution vector, and
-  // `Object.hasOwn` below never needs to distinguish an own key from an
-  // inherited one.
-  const toolsByName: Record<string, SnapshotTool | undefined> = Object.create(null) as Record<
-    string,
-    SnapshotTool | undefined
-  >;
-  // Imperative on purpose: this is validate-then-write, not a plain
-  // accumulation — `Object.fromEntries`/`reduce` would either silently let a
-  // later duplicate name overwrite an earlier tool (losing the throw
-  // entirely) or need the same hasOwn-then-throw check re-embedded in a
-  // reducer callback for no readability gain over the loop below.
-  for (const tool of all) {
-    if (Object.hasOwn(toolsByName, tool.name)) {
-      throw validationError(`duplicate tool name "${tool.name}" in the server snapshot`);
-    }
-    toolsByName[tool.name] = tool;
-  }
-  for (const tool of all) {
+  // depend on operation ordering in the spec. Under `discover` the
+  // operations leave tools/list; the three discovery tools take their place.
+  const all =
+    toolMode === 'discover'
+      ? [metaTool, ...buildDiscoveryTools(upstreamTools)]
+      : [metaTool, ...upstreamTools];
+  // Two separate namespaces under `discover`: an operation that happens to
+  // be named `call_operation` is reached as call_operation's `name` argument
+  // and never collides with the listed tool of that name.
+  const toolsByName = indexByName(all);
+  const operationsByName = indexByName(upstreamTools);
+  // Every operation's schemas stay checked under `discover` too: they reach
+  // the client through describe_operation instead of tools/list.
+  for (const tool of toolMode === 'discover' ? [...all, ...upstreamTools] : all) {
     assertObjectRoot(tool.name, 'inputSchema', tool.wireTool.inputSchema);
     if (tool.wireTool.outputSchema !== undefined) {
       assertObjectRoot(tool.name, 'outputSchema', tool.wireTool.outputSchema);
@@ -254,5 +274,13 @@ export const buildSnapshot = (
     deadPatternCount: pipeline.deadPatterns.length,
     ...(pipeline.cacheLock === undefined ? {} : { cacheLock: pipeline.cacheLock }),
   };
-  return deepFreeze({ tools: all, toolsByName, meta });
+  return deepFreeze({
+    toolMode,
+    tools: all,
+    toolsByName,
+    operations: upstreamTools,
+    operationsByName,
+    ...(toolMode === 'discover' ? { searchIndex: buildSearchIndex(upstreamTools) } : {}),
+    meta,
+  });
 };
