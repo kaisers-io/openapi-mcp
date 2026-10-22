@@ -1,0 +1,28 @@
+# Version updates for the two things that otherwise go stale silently:
+# - the SHA-pinned actions in .github/workflows (Dependabot reads the `# vX.Y.Z` comment next to each
+#   pin and bumps SHA and comment together), and
+# - pnpm-lock.yaml / the exact-pinned package.json versions.
+# Weekly and grouped, so routine bumps arrive as one reviewable PR per ecosystem instead of a stream.
+# `cooldown` holds a fresh release back for a week before proposing it: most malicious npm releases
+# are detected and pulled within days. It applies to version updates only — security updates (from
+# Dependabot alerts) are never delayed.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    commit-message: { prefix: ci }
+    groups:
+      actions:
+        patterns: ['*']
+  - package-ecosystem: npm # covers pnpm (pnpm-lock.yaml) and every workspace package
+    directory: /
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    commit-message: { prefix: chore, include: scope }
+    groups:
+      # Minor/patch bumps travel together; a major gets its own PR, since it is the one that needs reading.
+      npm-minor-patch:
+        update-types: [minor, patch]
+        patterns: ['*']

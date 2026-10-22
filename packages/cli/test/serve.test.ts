@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
 // A real, local upstream (127.0.0.1, ephemeral port) that the executor
 // actually calls through — this test asserts a genuine upstream response,
@@ -124,7 +125,7 @@ const collectLines = (proc: ReturnType<typeof spawn>): Collected => {
   return { stdoutLines, stderrLines, rawStdout: () => rawStdout };
 };
 
-const waitFor = async (predicate: () => boolean, timeoutMs = 5000): Promise<void> => {
+const waitFor = async (predicate: () => boolean, timeoutMs = SUBPROCESS_WAIT_MS): Promise<void> => {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) {
@@ -283,7 +284,7 @@ describe('serve — stdio subprocess E2E', () => {
       expect(parsed.jsonrpc).toBe('2.0');
     }
     expect(stderrLines.every((line) => !line.includes('{'))).toBe(true); // Stderr carries plain-text diagnostics, not JSON-RPC
-  }, 10_000);
+  });
 
   // Era negotiation: the SAME server, the SAME factory, opened with a 2025-era
   // `initialize` instead of an envelope claim. A claim-less opening pins the
@@ -350,7 +351,7 @@ describe('serve — stdio subprocess E2E', () => {
     const finalRaw = rawStdout();
     expect(finalRaw === '' || finalRaw.endsWith('\n')).toBe(true);
     expect(finalRaw.split('\n').filter((line) => line !== '')).toHaveLength(3);
-  }, 10_000);
+  });
 
   // FALSIFICATION target: pointing buildTools back at
   // SYSTEM_HEADERS only (dropping the `...apiConfig.reservedHeaderNames`
@@ -550,7 +551,7 @@ describe('serve — stdio subprocess E2E', () => {
       child?.once('exit', (exitCode) => resolve(exitCode));
     });
     expect(code).toBe(0);
-  }, 10_000);
+  });
 
   // The executor's cleartext gate (executor.ts's
   // `cleartextBlocked` — a secret `--header-env` header over a cleartext
@@ -652,7 +653,7 @@ describe('serve — stdio subprocess E2E', () => {
       permitted.once('exit', () => resolve());
     });
     child = undefined;
-  }, 10_000);
+  });
 });
 
 // Concurrency and rate limiting end to end: real `serve` subprocess, real
