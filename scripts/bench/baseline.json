@@ -171,6 +171,41 @@
           "omittedCount": 0,
           "parallelErrors": 0,
           "upstreamConnections": 16
+        },
+        "yaml-400": {
+          "startupMs": {
+            "median": 692.31,
+            "min": 644.15,
+            "max": 1128.01,
+            "samples": [1128.01, 798.33, 692.31, 672.3, 644.15]
+          },
+          "warmStartupMs": {
+            "median": 389.32,
+            "min": 324.08,
+            "max": 500.55,
+            "samples": [500.55, 426.16, 389.32, 324.08, 338.67]
+          },
+          "toolsListMs": {
+            "median": 9.92,
+            "min": 9.11,
+            "max": 15.4,
+            "samples": [15.4, 9.92, 9.11, 10.94, 9.77]
+          },
+          "rssMB": {
+            "median": 158.36,
+            "min": 156.23,
+            "max": 161.33,
+            "samples": [161.33, 158.36, 156.23, 157.55, 158.38]
+          },
+          "warmRssMB": {
+            "median": 108.8,
+            "min": 106.24,
+            "max": 111.07,
+            "samples": [106.24, 108.48, 111.07, 108.91, 108.8]
+          },
+          "toolsListBytes": 266136,
+          "toolCount": 401,
+          "omittedCount": 0
         }
       }
     }

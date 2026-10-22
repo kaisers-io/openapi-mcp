@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { parseSpecText } from '../../packages/core/src/spec/parse.ts';
 import { layeredSpec } from './fixtures.ts';
+import { describedSpec, toYaml } from './yaml-fixture.ts';
 import { compareResults, hasRegression, judge, summarize } from './stats.ts';
 import type { CliResult, FixtureMetrics } from './stats.ts';
 
@@ -162,5 +164,17 @@ describe('layeredSpec', () => {
   it('is deterministic', () => {
     const opts = { schemas: 20, refsPerSchema: 3, pathCount: 5, layers: 4 };
     expect(JSON.stringify(layeredSpec(opts))).toBe(JSON.stringify(layeredSpec(opts)));
+  });
+});
+
+describe('toYaml', () => {
+  it('writes YAML that the spec parser reads back as the same value', () => {
+    const spec = describedSpec(3);
+    expect(parseSpecText(toYaml(spec))).toStrictEqual(spec);
+    const awkward = {
+      'a: b': ['- x', '#y', '', 0, 1.5, true, null, [], {}],
+      200: { 'k"q': 'v\n', nested: [{ x: 1 }, [2]] },
+    };
+    expect(parseSpecText(toYaml(awkward))).toStrictEqual(awkward);
   });
 });
