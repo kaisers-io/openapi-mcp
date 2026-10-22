@@ -78,3 +78,8 @@
   response accept an optional `_fields` argument (up to 32 JSON Pointers, `*` maps over an
   array; also through `call_operation`) and return only the selected values under
   `projection`. Off by default because it grows `tools/list` by about 30%.
+
+- **JWT access-token verifier in core (#70).** `verifyJwt` and `parseJwks` check an RFC 9068
+  access token against a kid-indexed JWKS: asymmetric algorithms only (RS/PS/ES/EdDSA), `kid`
+  required, canonical base64url, exact `iss`, `aud` bound to the resource URI, `exp` required,
+  60 s clock skew. Library only; the HTTP resource-server wiring follows.
