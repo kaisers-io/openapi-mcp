@@ -2,6 +2,7 @@ import type { Command } from '@commander-js/extra-typings';
 import {
   defaultCacheRoot,
   parseCacheKey,
+  parseAgeDuration,
   parseDuration,
   parseFilterPatterns,
   parseHeaderEnvMapping,
@@ -90,6 +91,7 @@ export type SpecCmdOpts = {
   cacheKey?: string;
   trustSpecUpdates?: boolean;
   allowPrivateNetwork?: boolean;
+  defaultResponseIsError?: boolean;
 };
 
 // The --spec/--allow/--deny/... flags shared by every command that runs the
@@ -123,12 +125,20 @@ export const registerSpecOptions = (command: Command): Command<[], SpecCmdOpts> 
       [] as readonly string[],
     )
     .option('--timeout <duration>', 'spec fetch timeout (<int><s|m|h|d>)', '30s')
-    .option('--ttl <duration>', 'spec refresh interval (<int><s|m|h|d>)', '1h')
+    .option(
+      '--ttl <duration>',
+      'how long a cached spec is used before it is re-validated at startup (<int><s|m|h|d>, up to 365d)',
+      '1h',
+    )
     .option('--cache-key <name>', 'durable cache namespace label; required for authenticated specs')
     .option('--trust-spec-updates', 'auto-accept refreshed specs instead of gating them')
     .option(
       '--allow-private-network',
       'permit private/loopback redirect targets during the spec fetch (never cloud-metadata)',
+    )
+    .option(
+      '--default-response-is-error',
+      'derive output schemas for operations with a "default" response, assuming it covers errors only (an undocumented 2xx then fails)',
     );
 
 export type SpecPipelineArgs = {
@@ -143,8 +153,10 @@ export type SpecPipelineArgs = {
 export const parseSpecPipelineArgs = (cmdOpts: SpecCmdOpts, ctx: CliContext): SpecPipelineArgs => {
   const mappings = cmdOpts.specHeaderEnv.map((raw) => parseHeaderEnvMapping(raw));
   const specHeaders: readonly ResolvedHeader[] = resolveHeaderEnvMappings(mappings, ctx.env);
-  const timeoutMs = parseDuration(cmdOpts.timeout);
-  const ttlMs = parseDuration(cmdOpts.ttl);
+  const timeoutMs = parseDuration(cmdOpts.timeout, '--timeout');
+  // An age, not a timer: --ttl is only compared with a cache entry's age, so
+  // it is not bound by the Node timer limit that --timeout is (#88)
+  const ttlMs = parseAgeDuration(cmdOpts.ttl, '--ttl');
   const cacheKey = cmdOpts.cacheKey === undefined ? undefined : parseCacheKey(cmdOpts.cacheKey);
   const filters = parseFilters(cmdOpts.allow, cmdOpts.deny);
   return {

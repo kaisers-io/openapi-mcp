@@ -1,28 +1,36 @@
 import type { Command } from '@commander-js/extra-typings';
 import {
   assertAllowedRedirectTarget,
+  AUTO_DISCOVER_THRESHOLD,
   buildSnapshot,
   buildTools,
   compileEnvelopeValidator,
+  discoverApprovalWarning,
   createExecutor,
+  createCallStats,
   createMetaExecutor,
+  formatCallLog,
   createRateLimiter,
   createRedactor,
   createStreamableHttpServer,
   EXIT,
   isValidBearerToken,
   parseSpecSource,
+  resolveToolMode,
   runSpecPipeline,
-  serveStdioSession,
   SPEC_BUDGETS,
+  serveStdioSession,
   SYSTEM_HEADERS,
+  TOOL_MODES,
   usageError,
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
 import type {
+  CallObserver,
   EnvelopeValidator,
   ExecutorConfig,
   NormalizedSpec,
+  RequestedToolMode,
   RequestGuardOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
@@ -46,9 +54,6 @@ import type { CommandRegistrar } from './registry.ts';
 // request against a real API.
 const MAX_URL_LENGTH = 8192;
 const MAX_HEADER_BYTES = 16_384;
-// Global outbound-concurrency semaphore, shared by stdio + HTTP because
-// `createExecutor` is constructed exactly ONCE below.
-const MAX_CONCURRENT_UPSTREAM_CALLS = 16;
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -195,7 +200,36 @@ type ServeCmdOpts = SpecCmdOpts &
     http?: boolean;
     port: string;
     httpTokenEnv?: string;
+    log?: string;
+    toolsPageSize?: string;
+    responseProjection?: boolean;
+    toolMode: string;
   };
+
+// Upper bound for --tools-page-size: the spec budget's tool cap, so a larger
+// value could never page anyway.
+const MAX_TOOLS_PAGE_SIZE = SPEC_BUDGETS.maxToolCount;
+
+const parseToolsPageSize = (raw: string | undefined): number | undefined => {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!/^[1-9]\d*$/u.test(raw) || Number(raw) > MAX_TOOLS_PAGE_SIZE) {
+    throw usageError(
+      `invalid --tools-page-size "${raw}" — expected an integer from 1 to ${MAX_TOOLS_PAGE_SIZE}`,
+    );
+  }
+  return Number(raw);
+};
+
+// Validated like --port: before any spec, cache or network work.
+const parseToolMode = (raw: string): RequestedToolMode => {
+  const mode = TOOL_MODES.find((candidate) => candidate === raw);
+  if (mode === undefined) {
+    throw usageError(`--tool-mode "${raw}" is not one of ${TOOL_MODES.join(', ')}`);
+  }
+  return mode;
+};
 
 export const registerServe: CommandRegistrar = (program, ctx, state) => {
   const command = registerApiOptions(registerSpecOptions(program.command('serve')))
@@ -204,9 +238,23 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     )
     .option('--http', 'serve over Streamable HTTP (127.0.0.1 only) instead of stdio')
     .option('--port <n>', 'HTTP port', '3044')
+    .option('--http-token-env <ENV>', 'env var holding the bearer token required for HTTP requests')
     .option(
-      '--http-token-env <ENV>',
-      'env var holding the bearer token required for HTTP requests',
+      '--log <format>',
+      'write one structured line per tool call to stderr (only "json"; never arguments, header values or bodies)',
+    )
+    .option(
+      '--response-projection',
+      'offer an optional _fields argument (JSON Pointers) on JSON tools, so a call returns only the selected fields; adds about a third to tools/list',
+    )
+    .option(
+      '--tools-page-size <n>',
+      'page tools/list with n tools per page (only for MCP hosts that follow nextCursor); default: all tools in one response',
+    )
+    .option(
+      '--tool-mode <mode>',
+      `per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above ${String(AUTO_DISCOVER_THRESHOLD)} operations)`,
+      'per-operation',
     );
   // Orphaned HTTP-only flags without --http are a usage error, not a
   // silent no-op: `--port` carries a default ('3044'), so a plain value
@@ -259,6 +307,11 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     // STDOUT, and stdout is MCP-JSON-only for the entire life of this
     // process. Startup failures always render as plain text on stderr.
     const errorOpts = { json: false, verbose: false };
+    // Set once the executor exists. Closed in `finally` so a throw anywhere
+    // after the first upstream call (e.g. httpServer.close()) still releases
+    // pooled keep-alive sockets and retiring agents instead of leaving them
+    // to process exit.
+    let closeExecutor: (() => Promise<void>) | undefined;
     try {
       // HTTP-specific options are validated FIRST — BEFORE any spec/cache/
       // network processing — so a bad --port or --http-token-env fails
@@ -266,6 +319,12 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // matches "validated once at CLI startup" rather than discovering
       // the mistake only after paying for a spec fetch.
       const httpConfig = resolveHttpConfig(cmdOpts);
+      if (cmdOpts.log !== undefined && cmdOpts.log !== 'json') {
+        throw usageError(`invalid --log "${cmdOpts.log}" — the only supported format is "json"`);
+      }
+      const logJson = cmdOpts.log === 'json';
+      const toolsPageSize = parseToolsPageSize(cmdOpts.toolsPageSize);
+      const paging = toolsPageSize === undefined ? {} : { toolsPageSize };
       // Resolved BEFORE buildTools (below): its reservedHeaderNames must be
       // unioned into buildTools' reservedHeaders so a spec header parameter
       // colliding with a configured auth header name is dropped from the
@@ -273,8 +332,23 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // validated fast, before any spec/cache/network processing, matching
       // the httpConfig check just above.
       const apiConfig = resolveApiConfig(cmdOpts, ctx);
+      const requestedToolMode = parseToolMode(cmdOpts.toolMode);
       const args = parseSpecPipelineArgs(cmdOpts, ctx);
-      const result = await runSpecPipeline(args.source, args.options, args.deps);
+      // The exposed-set budget follows the tool mode: one tool per operation
+      // keeps the 512-tool budget; discover (and auto, which only ever picks
+      // per-operation at or below its 64-operation threshold) lifts it, since
+      // its tools/list no longer grows with the operation count.
+      const result = await runSpecPipeline(
+        args.source,
+        {
+          ...args.options,
+          maxToolCount:
+            requestedToolMode === 'per-operation'
+              ? SPEC_BUDGETS.maxToolCount
+              : SPEC_BUDGETS.maxDiscoverToolCount,
+        },
+        args.deps,
+      );
       // Sanitized + suggestion-bearing, matching `tools`' strict-filters
       // throw exactly (deadPatternMessage is the shared renderer): building
       // the message inline instead would put unsanitized spec-derived text
@@ -292,8 +366,12 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       const built = buildTools(result.namedOperations, {
         reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
         openapiVersion: result.spec.openapiVersion,
+        projection: cmdOpts.responseProjection === true,
+        defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
       });
-      const snapshot = buildSnapshot(built, result);
+      const snapshot = buildSnapshot(built, result, {
+        toolMode: resolveToolMode(requestedToolMode, built.tools.length),
+      });
 
       // Resolve + validate the API base URL: --base-url (trusted, address
       // check skipped) else the spec-derived candidate (untrusted — a
@@ -336,17 +414,15 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // first matching call. `validators.has` is the executor's fail-closed
       // contract — every upstream tool gets an entry, `undefined` only for a
       // genuine no-outputSchema tool.
-      const validatorEntries = snapshot.tools
-        .filter((tool) => tool.kind === 'upstream')
-        .map((tool) => {
-          try {
-            return [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)] as const;
-          } catch (error) {
-            throw usageError(
-              `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
-            );
-          }
-        });
+      const validatorEntries = snapshot.operations.map((tool) => {
+        try {
+          return [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)] as const;
+        } catch (error) {
+          throw usageError(
+            `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
+          );
+        }
+      });
       const validators = new Map<string, EnvelopeValidator | undefined>(validatorEntries);
 
       const executorConfig: ExecutorConfig = {
@@ -358,24 +434,44 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         staticHeaders: apiConfig.staticHeaders,
         reservedHeaderNames: apiConfig.reservedHeaderNames,
         redactor,
-        timeoutMs: args.options.timeoutMs,
+        // --request-timeout, NOT the spec fetch's --timeout: raising one for a
+        // slow spec URL must not silently change every API call's deadline.
+        timeoutMs: apiConfig.requestTimeoutMs,
         maxResponseBytes: apiConfig.maxResponseBytes,
         outboundBudgets: {
           maxUrlLength: MAX_URL_LENGTH,
           maxHeaderBytes: MAX_HEADER_BYTES,
           maxBodyBytes: apiConfig.maxResponseBytes,
         },
-        maxConcurrent: MAX_CONCURRENT_UPSTREAM_CALLS,
+        // Global outbound-concurrency cap (--max-concurrency), shared by
+        // stdio + HTTP because `createExecutor` is constructed exactly ONCE
+        // below; up to 4x as many calls may queue for a slot.
+        maxConcurrent: apiConfig.maxConcurrency,
+        retries: apiConfig.retries,
+        propagateTraceContext: apiConfig.propagateTraceContext,
         validators,
       };
       // ONE executor instance, shared by the stdio AND HTTP branches below,
       // so the global outbound-concurrency semaphore is genuinely shared.
       const executor = createExecutor(executorConfig, { transport: ctx.transport });
+      closeExecutor = () => executor.close();
+      // Call counters always feed openapi_mcp_status; the per-call JSON line
+      // is written only with --log json, and only to stderr (stdout is
+      // MCP-JSON-only).
+      const callStats = createCallStats();
+      const onCall: CallObserver = (record) => {
+        callStats.record(record);
+        if (logJson) {
+          const line = formatCallLog(record, redactor, new Date(ctx.now()));
+          ctx.errLine(line);
+        }
+      };
       const dispatcherDeps = {
-        limiter: createRateLimiter(),
+        onCall,
+        limiter: createRateLimiter(apiConfig.rateLimit),
         now: ctx.now,
         executor,
-        metaExecutor: createMetaExecutor(),
+        metaExecutor: createMetaExecutor({ stats: callStats }),
         redactor,
       };
       // Startup diagnostics — cache staleness, a pending candidate, dead
@@ -387,10 +483,13 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...result.warnings,
         ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
+        ...[discoverApprovalWarning(snapshot.toolMode, snapshot.operations)].filter(
+          (line): line is string => line !== undefined,
+        ),
       ]);
       if (httpConfig === undefined) {
         const session = serveStdioSession(
-          { name: 'openapi-mcp', version: pkg.version, snapshot, dispatcherDeps },
+          { name: 'openapi-mcp', version: pkg.version, snapshot, dispatcherDeps, ...paging },
           {
             // Out-of-band transport errors carry no JSON-RPC reply — route
             // them through the SAME sanitizing stderr path the startup
@@ -425,6 +524,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           // bearer.
           allowedOrigins: new Set(),
           allowedHost: `127.0.0.1:${String(httpConfig.port)}`,
+          // `http://localhost:<port>/` is how many clients are configured;
+          // the listener is the same loopback socket (IPv4 only, so no
+          // `[::1]` alias).
+          allowedHostAliases: new Set([`localhost:${String(httpConfig.port)}`]),
           bearer: { configuredToken: httpConfig.token },
         };
         const httpServer = createStreamableHttpServer({
@@ -432,6 +535,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           version: pkg.version,
           snapshot,
           dispatcherDeps,
+          ...paging,
           guard,
           port: httpConfig.port,
           // Same reasoning — and the same bounded route — as the stdio
@@ -461,6 +565,12 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       state.exitCode = EXIT.OK;
     } catch (error) {
       state.exitCode = emitError(ctx, errorOpts, error);
+    } finally {
+      // After the transport is gone (or failed): no further call can borrow a
+      // pooled upstream connection, and an idle keep-alive socket must not
+      // hold the process open past stdin EOF, a shutdown signal or an error.
+      // Best effort — a close failure must not mask the exit code above.
+      await closeExecutor?.().catch(() => {});
     }
   });
 };

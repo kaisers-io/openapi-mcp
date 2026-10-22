@@ -414,6 +414,17 @@
       }
     },
     {
+      "files": ["packages/core/src/server/execute/executor.ts"],
+      "rules": {
+        // Off: executor.ts is the composition root of one upstream tool
+        // call -- request building, the pinned transport and its agent pool,
+        // the admission queue, retries, Accept, trace context, pagination,
+        // projection, telemetry and response mapping meet here, and each
+        // guard is re-checked right before a byte leaves the process.
+        "import/max-dependencies": "off"
+      }
+    },
+    {
       "files": ["packages/core/src/cache/store.ts"],
       "rules": {
         // Off: store.ts is the transactional cache-store core -- schema
@@ -587,7 +598,12 @@
         // header-precedence write order both depend on seeing the full call
         // sequence in one place; splitting either out would separate that
         // ordering invariant from the code that must respect it.
-        "max-lines": "off"
+        "max-lines": "off",
+        // Off for the same reason: as the integration point it imports one
+        // module per stage it wires (request, transport + connection pool,
+        // admission queue, response mapping, redaction, sanitizing, result
+        // types) -- 11 against a cap of 10.
+        "import/max-dependencies": "off"
       }
     },
     {

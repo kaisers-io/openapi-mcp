@@ -28,13 +28,26 @@ Everything below is a defense *in addition to* that requirement, not a replaceme
   before it is attached.
 - Spec parsing enforces resource budgets before anything is trusted or cached: a bounded spec
   fetch timeout and size, bounded YAML alias/anchor counts, bounded parse and `$ref`
-  expansion depth, a bounded total schema-node count after dereferencing, a capped generated
-  tool count, and a capped single-description length (truncated with a marker past the cap).
-  Violating any budget is a hard failure before the spec is written to cache. External
+  expansion depth, every `$ref` resolvable and document-internal, a capped operation
+  count (4096), and a capped single-description length (truncated with a marker past the cap).
+  Violating any of these is a hard failure before the spec is written to cache. The number of
+  tools actually exposed after `--allow`/`--deny` filtering is capped separately (512, or
+  4096 under `--tool-mode discover`/`auto`, whose `tools/list` does not grow with the
+  operation count) and checked on every run, since it depends on the filters rather than on
+  the cached document; a narrow `--allow` can therefore serve a few tools from an API that
+  documents more. Only the exposed operations are dereferenced, each shared `$ref` target
+  once, under two node budgets checked on every run: unique allocated nodes (500,000) and the
+  size of the result read as a tree (10,000,000), so neither shared models nor a "billion
+  laughs" `$ref` graph can make dereferencing or tool generation unbounded. External
   (cross-document) `$ref`s are rejected outright as a spec-level hard failure.
 - A refreshed spec fetched at runtime never silently changes what a model can do: the cache
   keeps a durable accepted baseline plus at most one pending candidate. The only change
-  applied automatically is a **removal** (fail-safe direction). New tools, changed
+  applied automatically is a **removal** (fail-safe direction): while a candidate waits, an
+  accepted operation it no longer has (matched by method and path) is withheld and reported,
+  and operations present in both keep their accepted definition. A candidate object that
+  cannot be verified fails closed like any other damaged cache entry. Specs are only
+  re-validated at startup (once the TTL has expired); a running server never changes its tool
+  list. New tools, changed
   descriptions, changed input schemas, method/path/base-URL changes, and auth-scheme changes
   all wait behind an explicit `openapi-mcp cache promote` (or the operator's own
   `--trust-spec-updates` opt-out for a spec they own). Restart is not treated as approval —
@@ -91,11 +104,19 @@ generated API request:
 - Every secret value registered at startup is passed through a central redactor applied
   recursively to every output channel: tool errors, logs, `doctor`, the status tool, and both
   text and structured tool results. Redaction covers the raw value and, for secrets of 8+
-  characters, common encoded variants (standard Base64, URL-safe Base64, percent-encoded) —
-  shorter values are excluded from variant redaction to avoid common-substring false
-  positives. Empty secrets are rejected at startup rather than silently redacting nothing.
+  characters, common encoded variants (standard Base64, URL-safe Base64, percent-encoded with
+  upper- or lowercase hex, form-encoded, JSON-string-escaped including `\/`) — shorter values
+  are excluded from variant redaction to avoid common-substring false positives. For a value
+  shaped like an `Authorization` credential (`<scheme> <credential>`, e.g. `Bearer …`), the
+  bare credential is redacted too, and for `Basic` also the decoded `user:password` and the
+  password alone (each only when 8+ characters; the user name alone is not treated as
+  secret). Empty secrets are rejected at startup rather than silently redacting nothing.
 - There is no "show env/config/debug request" tool — nothing exposes the resolved secret
   values back through MCP.
+- Trace propagation is on by default: a client's W3C `traceparent`/`tracestate` from a
+  `tools/call`'s `_meta` is forwarded to the upstream (same-origin hops only, strictly
+  validated). It carries no credentials, but it lets the upstream correlate calls across
+  sessions. For third-party APIs you do not operate, pass `--no-trace-propagation`.
 - For safe terminal testing, see the README's [Secrets](../README.md#secrets) section
   (`HIST_IGNORE_SPACE`, `read -s`, secret-manager CLIs).
 
@@ -104,6 +125,22 @@ generated API request:
 - Successful responses are validated against the operation's declared output envelope before
   being returned as `structuredContent`; a mismatch (unexpected status, shape, or media type)
   returns a tool error with a redacted summary rather than nonconforming structured output.
+- Regular expressions (`pattern`) and response validation. Response validation runs
+  synchronously after the upstream call has finished, so the request timeout no longer
+  applies to it. To keep its CPU cost bounded, a response schema with a `pattern` that has
+  **nested quantifiers** gets no output schema. The tool still works and returns its result
+  as text, and its description starts with a sentence that says so. Supported pattern
+  contract:
+  - Response schemas: a pattern is enforced unless it nests quantifiers. "Nested" means a
+    group repeated more than once (`*`, `+`, `{n,}`, `{n,m}` with m > 1) that contains an
+    unbounded quantifier (`(a+)+`, `(\w+\s?)*`, `(a*){2}`), or an unbounded repetition of a
+    group that contains any variable quantifier (`(a?)+`, `(\d{1,3})*`). Small bounded
+    nestings stay supported: `(\d{1,3}\.){3}` (IPv4) and `(-[0-9a-f]{4}){3}` (UUID).
+  - This is a star-height heuristic in the style of safe-regex. It is conservative: some
+    unambiguous patterns, such as `^[a-z]+(-[a-z]+)*$`, are refused too. It does not detect
+    overlapping alternation under a single quantifier (`(a|a)+`) or backreferences.
+  - Request schemas (tool inputs): `pattern` and `format` are advertised to the model in the
+    input schema but never executed by this server, so they carry no CPU risk here.
 - Oversized responses (over `--max-response-bytes`, default `10MB`) return a tool error — never
   a truncated, silently-invalid partial payload.
 - Binary and unknown media types return a tool error describing the media type; this tool does
@@ -122,14 +159,30 @@ callers — any other local process could otherwise reach tools that carry your 
 credentials — so:
 
 - `--http-token-env <ENV>` is **mandatory** with `--http`; startup fails closed without it.
-  The token must be at least 32 ASCII characters from the Base64/Base64URL alphabet (the
-  README's example generates one with `openssl rand -base64 32`); shorter, non-ASCII, or
-  header-hostile values are rejected at startup.
+  The token must encode exactly 32 bytes (256 bits), in one of two forms:
+  - 44 characters of padded standard Base64 — alphabet `A-Z a-z 0-9 + /`, ending in exactly
+    one `=` (the output of `openssl rand -base64 32`), or
+  - 43 characters of unpadded Base64URL — alphabet `A-Z a-z 0-9 - _`, no `=`.
+
+  Everything else is rejected at startup: other lengths, hex strings (`openssl rand -hex 32`),
+  missing or extra padding, mixing the two alphabets, and surrounding whitespace or newlines.
+  The format check cannot tell a random token from a guessable one, so generate it with a
+  cryptographically secure random source — never a password, a hand-typed string, or a
+  derivation of other data:
+
+  ```bash
+  export TOKEN=$(openssl rand -base64 32)
+  # or, without openssl:
+  export TOKEN=$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")
+  ```
+
 - Clients authenticate with `Authorization: Bearer <token>`, compared using a constant-time
   digest comparison (both sides hashed, length-safe, no early exit on a length mismatch) to
   avoid timing side channels.
 - The server binds `127.0.0.1` only; `Origin`/`Host` are validated to guard against
-  DNS-rebinding.
+  DNS-rebinding. `Host` must be exactly `127.0.0.1:<port>` or `localhost:<port>` (the port
+  must match). Any other value, including `[::1]:<port>`, gets 403. A rebinding page always
+  sends its own hostname in `Host`, so it is still rejected.
 - The transport speaks MCP revision `2026-07-28` and is **stateless**: every request is served
   end to end on its own, with no `initialize` handshake and no session state — the modern era
   carries its context in a per-request `_meta` envelope instead. The SDK's built-in era support
@@ -148,6 +201,30 @@ credentials — so:
 - Graceful shutdown on `SIGINT`/`SIGTERM` stops accepting new requests and aborts in-flight
   ones; there is no session state to close.
 
+## Discovery tool mode
+
+`--tool-mode discover` replaces the per-operation tools with `search_operations`,
+`describe_operation` and `call_operation`. It adds no second policy path: the three tools
+only ever see the exposed (post-filter) operations, and `call_operation` runs the target
+through the same rate limit, strict input validation, executor and dispatch-boundary
+redaction as a direct call — an operation `--allow`/`--deny` or the read-only default
+excluded is an unknown operation, and no upstream request is made. Search input is bounded
+(query length and term count, tag list, result count) and every spec-derived string in a
+search result is sanitized and capped like any other tool text. The trade-off is approval
+granularity: `call_operation` carries the least safe annotations among the exposed
+operations (see [Tool modes](configuration.md#tool-modes)), so a host gating approval per
+tool sees one tool for all of them. **One approval covers every exposed operation**: in a
+host that offers "always allow this tool", allowing `call_operation` once allows every
+operation the filters expose, writes included when `--allow` widens the set beyond the
+read-only default. Use `discover` with the read-only default (or an `--allow` set you would
+approve as a whole), or `--tool-mode per-operation` where each write needs its own approval.
+`serve` prints a startup warning naming the non-read-only operations whenever `discover` (or
+`auto` resolving to it) exposes any. `call_operation` also rejects `arguments: null` (the
+advertised schema says object; omit `arguments` for an operation without inputs), so the
+wire contract and the runtime agree. A code-execution mode (model-written code calling the
+API) is deliberately not offered: it would bypass per-call validation, filtering, rate
+limiting and redaction.
+
 ## What `openapi-mcp` defends, and what you still must do
 
 `openapi-mcp` defends: credential exposure (env-only, redacted everywhere), unbounded/hostile
@@ -162,3 +239,31 @@ choose `--allow` patterns deliberately rather than exposing write operations by 
 review a spec's diff before running `cache promote`; and treat any `--base-url` you set as an
 explicit, trusted operator decision, since it bypasses the private-range deny-by-default
 check that applies to spec-derived origins.
+
+## Dependency audit (maintainers)
+
+`pnpm audit --audit-level=high` checks the whole lockfile against the live advisory database. It
+covers dev dependencies too, because the CLI bundles its runtime dependencies from them. The check
+runs in `.github/workflows/audit.yml`:
+
+- weekly on `main` (Mondays, 06:17 UTC),
+- on demand (Actions → audit → Run workflow),
+- on pull requests that change `pnpm-lock.yaml`, `pnpm-workspace.yaml` or a `package.json`.
+
+It is not part of `ci.yml` and must not be a required status check. A new advisory against an
+unrelated transitive package would otherwise turn every open PR red without any change in the PR.
+
+When a run fails:
+
+1. **Read the advisory.** Check whether the vulnerable code path is reachable here: is it in the
+   shipped bundle (`packages/cli/dist`), or only in dev tooling?
+2. **Fix by upgrading.** This is the normal case. Bump the direct dependency that pulls the
+   vulnerable package in. If that is not possible yet, run `pnpm audit --fix update` (re-resolves
+   the lockfile) or `pnpm audit --fix override` (pins a fixed version through `overrides` in
+   `pnpm-workspace.yaml`). Open a PR. The audit runs on it because it changes the lockfile.
+3. **Accept only with a record.** Accept an advisory only when no fixed version exists and the
+   code path is not reachable. Add `--ignore GHSA-xxxx-xxxx-xxxx` to the audit step in
+   `audit.yml` with a comment giving the reason and a review-by date. Remove the ignore once a
+   fix ships, or when the date passes.
+4. **Shipped code affected.** If the vulnerable code is in the shipped bundle and reachable,
+   treat it as a release blocker: fix it, then cut a patch release.
