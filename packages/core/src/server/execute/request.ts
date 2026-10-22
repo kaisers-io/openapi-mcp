@@ -1,4 +1,5 @@
 import { HEADER_NAME_RE, NON_LATIN1_RE } from '../../http/headers.ts';
+import { FORM_URLENCODED, isJsonEssence, parseMediaType } from '../../toolgen/media-type.ts';
 import { isDangerousKey } from '../../toolgen/schema.ts';
 import type { FieldMapping, RequestMapper } from '../../toolgen/layout.ts';
 
@@ -433,6 +434,14 @@ type SerializedBody = {
   contentType?: string;
 };
 
+const bodyEncoding = (contentType: string): 'json' | 'form' | undefined => {
+  const essence = parseMediaType(contentType)?.essence;
+  if (essence !== undefined && isJsonEssence(essence)) {
+    return 'json';
+  }
+  return essence === FORM_URLENCODED ? 'form' : undefined;
+};
+
 const serializeBody = (
   mapper: RequestMapper,
   method: string,
@@ -455,6 +464,14 @@ const serializeBody = (
     // Invariant from toolgen/layout.ts's buildLayout: bodyMode !== 'none'
     // always carries a contentType. Defensive, fail-closed if ever violated.
     return { error: 'the request mapper is missing a body content type' };
+  }
+  // The content type is the spec's declared media type, sent verbatim
+  // (decision D5); its essence picks the encoding. buildLayout only ever
+  // selects a well-formed JSON-family or form-urlencoded type — anything else
+  // here is a broken invariant and fails closed.
+  const encoding = bodyEncoding(contentType);
+  if (encoding === undefined) {
+    return { error: 'the request mapper has an unsupported body content type' };
   }
   let payload: unknown;
   if (mapper.bodyMode === 'single') {
@@ -481,7 +498,7 @@ const serializeBody = (
     }
     payload = assembled.object;
   }
-  if (contentType === 'application/json') {
+  if (encoding === 'json') {
     const encoded = jsonBody(payload);
     if ('error' in encoded) {
       return encoded;

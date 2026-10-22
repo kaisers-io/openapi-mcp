@@ -3,6 +3,7 @@ import { SPEC_BUDGETS } from '../spec/budgets.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import { FORM_URLENCODED, isJsonEssence, parseMediaType } from './media-type.ts';
 import { convertSchema, isDangerousKey } from './schema.ts';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -22,7 +23,11 @@ export type FieldMapping =
 
 export type RequestMapper = {
   bodyMode: 'flattened' | 'single' | 'none';
-  bodyContentType?: 'application/json' | 'application/x-www-form-urlencoded';
+  // The request body's media type exactly as the spec declares it (parameters
+  // included, decision D5): `application/json`, any `application/*+json`
+  // variant, or `application/x-www-form-urlencoded`. Sent verbatim as the
+  // Content-Type; buildRequest picks the encoding from its essence.
+  bodyContentType?: string;
   fields: Record<string, FieldMapping>;
 };
 
@@ -131,12 +136,10 @@ export type LayoutResult = {
   mapper: RequestMapper;
 };
 
-type BodyContentType = 'application/json' | 'application/x-www-form-urlencoded';
-
 type BodyResult = {
   fields: Field[];
   mode: 'flattened' | 'single' | 'none';
-  contentType?: BodyContentType;
+  contentType?: string;
 };
 
 // Keys allowed on a body object-root for it to be FLATTENED. Anything else
@@ -161,16 +164,88 @@ const FLATTEN_ROOT_KEYS: ReadonlySet<string> = new Set([
   '$schema',
 ]);
 
+type MediaCandidate = { contentType: string; essence: string; hasParameters: boolean };
+
+// A form key whose only parameter is `charset=utf-8` (any case, optionally
+// quoted) — the charset the body is actually encoded in.
+const UTF8_FORM_KEY_RE =
+  /^application\/x-www-form-urlencoded[ \t]*;[ \t]*charset=(?:utf-8|"utf-8")[ \t]*$/iu;
+const isUtf8FormKey = (contentType: string): boolean => UTF8_FORM_KEY_RE.test(contentType);
+type SelectedMedia = { contentType: string; entry: Record<string, unknown> };
+
+// Among candidates of one tier: the only one, else the only one without
+// parameters (`application/json` beats `application/json; charset=utf-8`),
+// else no deterministic winner.
+const pickOne = (candidates: readonly MediaCandidate[]): MediaCandidate | undefined => {
+  if (candidates.length === 1) {
+    return candidates[0];
+  }
+  const bare = candidates.filter((candidate) => !candidate.hasParameters);
+  return bare.length === 1 ? bare[0] : undefined;
+};
+
+const jsonTier = (json: readonly MediaCandidate[]): readonly MediaCandidate[] => {
+  const exact = json.filter((candidate) => candidate.essence === 'application/json');
+  if (exact.length > 0) {
+    return exact;
+  }
+  const mergePatch = json.filter(
+    (candidate) => candidate.essence === 'application/merge-patch+json',
+  );
+  return mergePatch.length > 0 ? mergePatch : json;
+};
+
+// Picks the request body media type deterministically (#54, decision D5):
+//   1. `application/json` (any case, with or without parameters);
+//   2. otherwise one `application/*+json` variant — if several are declared,
+//      `application/merge-patch+json` (RFC 7396) wins: it is the
+//      object-shaped patch format (Kubernetes declares json-patch+json,
+//      merge-patch+json and strategic-merge-patch+json on every PATCH, all
+//      with the same schema); any other tie omits — never an arbitrary pick;
+//   3. otherwise `application/x-www-form-urlencoded`, bare or with
+//      `charset=utf-8` (the bare key wins if both are declared). The body is
+//      always encoded as UTF-8 (WHATWG URL §5.2), so a key naming another
+//      charset is not selected (fail-closed: the operation is omitted).
+// The declared key is returned verbatim; a key that is not a well-formed
+// media type is never selected (see media-type.ts).
 const selectMedia = (
   content: Record<string, unknown>,
-): { contentType: BodyContentType; entry: Record<string, unknown> } | undefined => {
-  for (const contentType of ['application/json', 'application/x-www-form-urlencoded'] as const) {
-    const entry = content[contentType];
-    if (isRecord(entry)) {
-      return { contentType, entry };
+): SelectedMedia | { ambiguous: string } | undefined => {
+  const json: MediaCandidate[] = Object.keys(content).flatMap((contentType) => {
+    const parsed = parseMediaType(contentType);
+    return parsed !== undefined && isJsonEssence(parsed.essence) && isRecord(content[contentType])
+      ? [{ contentType, ...parsed }]
+      : [];
+  });
+  const tier = jsonTier(json);
+  if (tier.length > 0) {
+    const chosen = pickOne(tier);
+    if (chosen === undefined) {
+      return {
+        ambiguous: `several JSON media types (${tier.map((candidate) => candidate.contentType).join(', ')})`,
+      };
     }
+    return {
+      contentType: chosen.contentType,
+      entry: content[chosen.contentType] as Record<string, unknown>,
+    };
   }
-  return undefined;
+  const form = Object.keys(content).flatMap((contentType) => {
+    const parsed = parseMediaType(contentType);
+    return parsed !== undefined &&
+      parsed.essence === FORM_URLENCODED &&
+      (!parsed.hasParameters || isUtf8FormKey(contentType)) &&
+      isRecord(content[contentType])
+      ? [{ contentType, ...parsed }]
+      : [];
+  });
+  const chosenForm = pickOne(form);
+  return chosenForm === undefined
+    ? undefined
+    : {
+        contentType: chosenForm.contentType,
+        entry: content[chosenForm.contentType] as Record<string, unknown>,
+      };
 };
 
 const isFlattenableRoot = (root: unknown): root is Record<string, unknown> => {
@@ -213,6 +288,11 @@ const bodyFields = (
   const media = content === undefined ? undefined : selectMedia(content);
   if (media === undefined) {
     return { unrepresentable: 'the request body has no JSON or form-urlencoded content' };
+  }
+  if ('ambiguous' in media) {
+    return {
+      unrepresentable: `the request body declares ${media.ambiguous} with no deterministic choice`,
+    };
   }
   if (isRecord(media.entry['encoding']) && Object.keys(media.entry['encoding']).length > 0) {
     return { unrepresentable: 'a request body encoding object is not supported' };
