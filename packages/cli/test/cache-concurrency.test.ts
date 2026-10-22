@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { EXIT } from '@kaisers-io/openapi-mcp-core';
+import { CACHE_META_SCHEMA_VERSION, EXIT } from '@kaisers-io/openapi-mcp-core';
 import { realContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 import { CLI_ENTRY } from './cli-subprocess.ts';
@@ -115,6 +115,61 @@ describe('cross-process cache races and the authenticated bypass (real filesyste
       expect(await readMeta()).toMatchObject({ specVersion: '1.0.0' });
     });
 
+    it('lets every concurrent start on an unchanged, revalidating spec succeed (#65)', async () => {
+      // MCP hosts start several servers at once. Past the TTL each of these
+      // revalidates an unchanged spec; only one can record that under the
+      // writer lock, and the others must still serve the verified baseline
+      // (exit 0, at most a warning) rather than exit 5.
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1100);
+      });
+      const args = [
+        'tools',
+        '--spec',
+        fixture.url,
+        '--cache-key',
+        'race',
+        '--allow-private-network',
+        '--ttl',
+        '1s',
+      ];
+      const results = await Promise.all(Array.from({ length: 6 }, () => runProcess(args)));
+      for (const result of results) {
+        expect(result.code).toBe(EXIT.OK);
+        expect(result.stderr).not.toContain('ENOENT');
+      }
+      const names = await readdir(await namespaceDir());
+      expect(names).not.toContain('.lock');
+    }, 30_000);
+
+    it('serves a verified entry past a lock left by a crashed writer (#65)', async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1100);
+      });
+      const lockPath = join(await namespaceDir(), '.lock');
+      await writeFile(
+        lockPath,
+        JSON.stringify({ owner: 'crashed', acquiredAt: Date.now() - 3_600_000 }),
+      );
+      try {
+        const result = await runProcess([
+          'tools',
+          '--spec',
+          fixture.url,
+          '--cache-key',
+          'race',
+          '--allow-private-network',
+          '--ttl',
+          '1s',
+        ]);
+        expect(result.code).toBe(EXIT.OK);
+        expect(result.stderr).toContain('cache metadata not updated');
+        expect(result.stderr).toContain('cache unlock');
+      } finally {
+        await rm(lockPath, { force: true });
+      }
+    }, 30_000);
+
     it('keeps meta.json consistent under a concurrent refresh storm', async () => {
       fixture.body.text = specOf('2.0.0', true);
       const args = [
@@ -140,14 +195,16 @@ describe('cross-process cache races and the authenticated bypass (real filesyste
       }
       // Meta.json is the sole commit point: it parses and describes real bytes
       const meta = await readMeta();
-      expect(meta['schemaVersion']).toBe(1);
+      expect(meta['schemaVersion']).toBe(CACHE_META_SCHEMA_VERSION);
       expect(meta['acceptedContentHash']).toMatch(/^[0-9a-f]{64}$/u);
       const dir = await namespaceDir();
       const names = await readdir(dir);
       // No half-written temp files and no orphaned lock survive the storm
       expect(names.filter((name) => name.includes('.tmp'))).toEqual([]);
       expect(names).not.toContain('.lock');
-    });
+      // Strict writers now wait for each other for up to --timeout instead of
+      // ~2 s, so the five refreshes may run one after another
+    }, 30_000);
 
     it('never lets a reader observe a mismatched generation during promotion', async () => {
       const readerArgs = [

@@ -1,5 +1,11 @@
 import { SPEC_BUDGETS } from './budgets.ts';
+import { mergeParameters } from './merge-parameters.ts';
+import type { Resolve } from './merge-parameters.ts';
+import { isRecord, resolveShallowOrSelf } from './refs.ts';
 import { sanitizeSpecText } from './sanitize.ts';
+import { extractSecuritySchemes, parseSecurityRequirements } from './security.ts';
+import type { SecurityRequirement, SecurityScheme } from './security.ts';
+import { extractServerUrl } from './server-url.ts';
 import type { OpenapiVersion } from './validate.ts';
 
 export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head'] as const;
@@ -21,6 +27,9 @@ export type OperationRecord = {
   parameters: readonly Record<string, unknown>[];
   requestBody?: Record<string, unknown>;
   responses: Record<string, unknown>;
+  // The operation's own `security` (overrides the root one); absent when
+  // not declared or malformed. Read for operator hints only.
+  security?: readonly SecurityRequirement[];
 };
 
 export type OmittedOperation = {
@@ -36,43 +45,33 @@ export type NormalizedSpec = {
   operations: readonly OperationRecord[];
   omitted: readonly OmittedOperation[];
   // The resolved-or-absolute base-URL candidate from root `document.servers[0]`
-  // (variable-default expanded). Undefined when unresolvable — fail-closed,
-  // never throws. See `extractServerUrl`.
+  // (variable-default expanded). Undefined when unresolvable — fail-closed.
   serverUrl?: string;
+  // Set (with `serverUrl` undefined) when servers[0].url would expand past
+  // SPEC_BUDGETS.maxServerUrlBytes. Unlike a plain undefined, the consumer
+  // must NOT fall back to the document origin: it requires --base-url.
+  // `expandedBytes` feeds the warning (serverUrlRejectedWarning).
+  serverUrlRejected?: { expandedBytes: number };
   // True when `serverUrl` is a relative reference (no scheme) that still
   // needs a document base to resolve into an absolute URL.
   serverUrlIsRelative?: boolean;
+  // `components.securitySchemes` and the root `security` (see security.ts);
+  // absent when the spec declares none.
+  securitySchemes?: readonly SecurityScheme[];
+  security?: readonly SecurityRequirement[];
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
-const mergeParameters = (
-  pathLevel: readonly unknown[],
-  opLevel: readonly unknown[],
-): { parameters: Record<string, unknown>[]; unresolvable: boolean } => {
-  const merged = new Map<string, Record<string, unknown>>();
-  for (const source of [pathLevel, opLevel]) {
-    for (const param of source) {
-      if (
-        !isRecord(param) ||
-        typeof param['name'] !== 'string' ||
-        typeof param['in'] !== 'string'
-      ) {
-        // Covers cyclic { $ref } markers and malformed parameter shapes
-        return { parameters: [], unresolvable: true };
-      }
-      merged.set(`${param['in']} ${param['name']}`, param);
-    }
-  }
-  return { parameters: [...merged.values()], unresolvable: false };
-};
+// Normalization reads the document BEFORE it is dereferenced (issue #89): a
+// path item or parameter `{ $ref }` is followed only as far as needed to read
+// it (the Resolve callback); contents stay raw until the pipeline
+// dereferences exposed operations.
 
 const buildOperation = (
   method: HttpMethod,
   path: string,
   op: Record<string, unknown>,
   pathParameters: readonly unknown[],
+  resolve: Resolve,
 ): OperationRecord | OmittedOperation => {
   const upper = method.toUpperCase();
   if (op['servers'] !== undefined) {
@@ -82,7 +81,11 @@ const buildOperation = (
     return { method: upper, path, reason: 'callbacks are not supported' };
   }
   const opParameters = Array.isArray(op['parameters']) ? op['parameters'] : [];
-  const { parameters, unresolvable } = mergeParameters(pathParameters, opParameters);
+  const { parameters, unresolvable, cookie } = mergeParameters(
+    pathParameters,
+    opParameters,
+    resolve,
+  );
   if (unresolvable) {
     return {
       method: upper,
@@ -90,7 +93,7 @@ const buildOperation = (
       reason: 'a parameter could not be resolved (unsupported shape or cyclic $ref)',
     };
   }
-  if (parameters.some((param) => param['in'] === 'cookie')) {
+  if (cookie) {
     return { method: upper, path, reason: 'cookie parameters are not supported' };
   }
   const tags = Array.isArray(op['tags'])
@@ -104,6 +107,7 @@ const buildOperation = (
     typeof op['description'] === 'string'
       ? sanitizeSpecText(op['description'], SPEC_BUDGETS.maxTextLength)
       : undefined;
+  const security = parseSecurityRequirements(op['security']);
   return {
     method,
     path,
@@ -117,73 +121,8 @@ const buildOperation = (
     parameters,
     ...(isRecord(op['requestBody']) ? { requestBody: op['requestBody'] } : {}),
     responses: isRecord(op['responses']) ? op['responses'] : {},
+    ...(security === undefined ? {} : { security }),
   };
-};
-
-// Absolute iff the candidate URL has a leading URI scheme (RFC 3986 §3.1).
-const ABSOLUTE_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/iu;
-
-// Substitute every `{name}` placeholder in a server URL template with
-// `variables[name].default`. Returns undefined (unresolvable) if any
-// placeholder lacks a matching `variables` entry with a string default.
-//
-// Single-pass only: `String.replace` with a global regex scans the ORIGINAL
-// template left-to-right exactly once and never re-scans replacement text.
-// A prior per-match `split(placeholder).join(defaultValue)` loop re-scanned
-// the growing ACCUMULATOR on every iteration; a hostile spec with a
-// placeholder repeated k times whose own default re-injects that placeholder
-// (e.g. `url: "{x}{x}...{x}"`, `variables.x.default = "{x}{x}"`) doubled the
-// placeholder count each iteration, an exponential (~k*2^k) CPU/memory DoS
-// at spec-normalization time on untrusted spec content. A residual `{`/`}`
-// after the single pass (malformed template, or a default that itself
-// injected a brace) is fail-closed to undefined rather than resolved.
-const expandServerUrlTemplate = (
-  template: string,
-  variables: Record<string, unknown>,
-): string | undefined => {
-  // Imperative on purpose: the failure signal must be set from INSIDE the
-  // single replaceAll callback (see the single-pass rationale above) — a
-  // second pass (e.g. matchAll + reduce) to compute it separately would
-  // duplicate the exact re-scan this function exists to avoid.
-  let failed = false;
-  const expanded = template.replaceAll(/\{(?<name>[^{}]+)\}/gu, (whole: string, name: string) => {
-    const variable = variables[name];
-    const defaultValue = isRecord(variable) ? variable['default'] : undefined;
-    if (typeof defaultValue !== 'string') {
-      failed = true;
-      return whole;
-    }
-    return defaultValue;
-  });
-  if (failed || expanded.includes('{') || expanded.includes('}')) {
-    return undefined;
-  }
-  return expanded;
-};
-
-// Extracts the base-URL candidate from ROOT `document.servers[0]` only
-// (path/operation-level `servers` overrides stay omitted elsewhere in this
-// module). Fail-closed: any malformed shape yields `{}` rather than
-// throwing, and never affects the generated operation set.
-const extractServerUrl = (
-  document: Record<string, unknown>,
-): Pick<NormalizedSpec, 'serverUrl' | 'serverUrlIsRelative'> => {
-  const { servers } = document;
-  if (!Array.isArray(servers) || servers.length === 0) {
-    return {};
-  }
-  const [first] = servers;
-  if (!isRecord(first) || typeof first['url'] !== 'string') {
-    return {};
-  }
-  const variables = isRecord(first['variables']) ? first['variables'] : {};
-  const serverUrl = expandServerUrlTemplate(first['url'], variables);
-  if (serverUrl === undefined) {
-    return {};
-  }
-  return ABSOLUTE_SCHEME_PATTERN.test(serverUrl)
-    ? { serverUrl }
-    : { serverUrl, serverUrlIsRelative: true };
 };
 
 // Per-path slice of what normalizeSpec's old nested loop did in one iteration
@@ -194,6 +133,7 @@ const extractServerUrl = (
 const buildPathEntries = (
   path: string,
   item: unknown,
+  resolve: Resolve,
 ): { operations: OperationRecord[]; omitted: OmittedOperation[] } => {
   if (!path.startsWith('/') || !isRecord(item)) {
     // Path-object extension keys (x-*) are not paths
@@ -225,7 +165,7 @@ const buildPathEntries = (
         },
       ];
     }
-    return [buildOperation(method, path, op, pathParameters)];
+    return [buildOperation(method, path, op, pathParameters, resolve)];
   });
   return {
     operations: perMethod.filter((entry): entry is OperationRecord => !('reason' in entry)),
@@ -252,7 +192,10 @@ export const normalizeSpec = (
   const paths = isRecord(document['paths']) ? document['paths'] : {};
   // One buildPathEntries call per path, in Object.entries order — matches the
   // original outer for-of's iteration order exactly.
-  const perPath = Object.entries(paths).map(([path, item]) => buildPathEntries(path, item));
+  const resolve: Resolve = (node) => resolveShallowOrSelf(document, node);
+  const perPath = Object.entries(paths).map(([path, item]) =>
+    buildPathEntries(path, resolve(item), resolve),
+  );
   const operations = perPath.flatMap((entry) => entry.operations);
   const webhooks = isRecord(document['webhooks']) ? document['webhooks'] : {};
   const omitted = [
@@ -265,6 +208,8 @@ export const normalizeSpec = (
       reason: 'webhooks are not supported',
     })),
   ];
+  const securitySchemes = extractSecuritySchemes(document);
+  const security = parseSecurityRequirements(document['security']);
   return {
     title,
     specVersion,
@@ -272,5 +217,7 @@ export const normalizeSpec = (
     operations,
     omitted,
     ...extractServerUrl(document),
+    ...(securitySchemes.length === 0 ? {} : { securitySchemes }),
+    ...(security === undefined ? {} : { security }),
   };
 };

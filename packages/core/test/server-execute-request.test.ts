@@ -90,6 +90,27 @@ describe('buildRequest — path/simple', () => {
     },
   );
 
+  it.each([['.%2e'], ['%2e.'], ['.%2E'], ['%2E.'], ['%2e'], ['%2E'], ['a.%2eb'], ['x%2e.y']])(
+    'rejects a mixed-encoded dot segment (double-decodes to . or ..): %s',
+    (petId) => {
+      const message = err(buildRequest(pathMapper(), 'get', '/pets/{petId}', { petId }, budgets));
+      // Names the encoded dot, so a caller with a legitimate value (the
+      // deliberate a.%2eb false positive) can tell why it was refused, and
+      // says that nothing reached the upstream
+      expect(message).toBe(
+        'path parameter "petId" was refused: it contains a path separator or dot-segment (/, \\, . or .., or an encoded slash or dot such as %2F, %5C or %2E). No request was sent; pass the value without them',
+      );
+    },
+  );
+
+  it.each([['v1..v2'], ['file.tar.gz'], ['a%2eb'], ['...']])(
+    'still accepts a leaf whose dots cannot form an encoded dot segment: %s',
+    (petId) => {
+      const built = buildRequest(pathMapper(), 'get', '/pets/{petId}', { petId }, budgets);
+      expect(ok(built).pathname).toMatch(/^\/pets\//u);
+    },
+  );
+
   it('rejects a traversal element inside an array path leaf', () => {
     const message = err(
       buildRequest(pathMapper(), 'get', '/pets/{petId}', { petId: ['ok', '../admin'] }, budgets),
@@ -267,6 +288,25 @@ describe('buildRequest — header/simple', () => {
   it('lowercases the header name', () => {
     const built = ok(buildRequest(headerMapper(false), 'get', '/x', { 'x-trace': 'v' }, budgets));
     expect(Object.keys(built.headers)).toEqual(['x-trace']);
+  });
+
+  it.each([['price 5€'], ['naïve ✓'], ['日本'], ['emoji 😀']])(
+    'rejects a header value with a character above U+00FF with a specific argument error: %s',
+    (value) => {
+      const message = err(
+        buildRequest(headerMapper(false), 'get', '/x', { 'x-trace': value }, budgets),
+      );
+      expect(message).toBe(
+        'header parameter "X-Trace" was refused: it contains a character above U+00FF, which an HTTP header cannot carry. No request was sent; use Latin-1 text only (ASCII is safest)',
+      );
+    },
+  );
+
+  it('still accepts Latin-1 header characters (U+0080..U+00FF are valid header bytes)', () => {
+    const built = ok(
+      buildRequest(headerMapper(false), 'get', '/x', { 'x-trace': 'café ÿ' }, budgets),
+    );
+    expect(built.headers['x-trace']).toBe('café ÿ');
   });
 
   it('rejects a CR/LF-bearing header value', () => {
@@ -952,5 +992,283 @@ describe('buildRequest — body reassembly defensive invariants', () => {
     };
     const message = err(buildRequest(mapper, 'post', '/pets', { body: 'just a string' }, budgets));
     expect(message).toMatch(/object/iu);
+  });
+});
+
+// #54 / D5: the declared media type (with parameters) is what is sent, and
+// every JSON variant is JSON-encoded.
+describe('buildRequest — declared JSON media-type variants (#54)', () => {
+  const mapperFor = (bodyContentType: string): RequestMapper => ({
+    bodyMode: 'flattened',
+    bodyContentType,
+    fields: { name: { destination: 'body', bodyPath: ['name'], required: true } },
+  });
+
+  it.each([
+    'application/merge-patch+json',
+    'application/json; charset=utf-8',
+    'application/vnd.api+json',
+  ])('sends Content-Type %s with a JSON body', (contentType) => {
+    const built = ok(buildRequest(mapperFor(contentType), 'patch', '/x', { name: 'n' }, budgets));
+    expect(built.contentType).toBe(contentType);
+    expect(JSON.parse(new TextDecoder().decode(built.body))).toEqual({ name: 'n' });
+  });
+
+  it('fails closed on a mapper content type that is neither JSON nor form', () => {
+    const result = buildRequest(mapperFor('text/plain'), 'post', '/x', { name: 'n' }, budgets);
+    expect(err(result)).toMatch(/content type/iu);
+  });
+});
+
+// #59: OAS 3.1.1 §4.8.12.4 Style Examples — brackets and delimiters are
+// percent-encoded exactly as in the spec's examples.
+describe('buildRequest — query deepObject / spaceDelimited / pipeDelimited (#59)', () => {
+  const styled = (
+    style: 'deepObject' | 'spaceDelimited' | 'pipeDelimited',
+    explode: boolean,
+  ): RequestMapper => ({
+    bodyMode: 'none',
+    fields: {
+      created: { destination: 'query', wireName: 'created', style, explode, required: false },
+    },
+  });
+  const run = (
+    style: 'deepObject' | 'spaceDelimited' | 'pipeDelimited',
+    explode: boolean,
+    created: unknown,
+  ) => buildRequest(styled(style, explode), 'get', '/x', { created }, budgets);
+
+  it('deepObject: name[key]=value with encoded brackets', () => {
+    const built = ok(run('deepObject', true, { gt: 1, lte: 5 }));
+    expect(built.query).toBe('created%5Bgt%5D=1&created%5Blte%5D=5');
+  });
+
+  it('deepObject: keys and values containing &, =, # are percent-encoded', () => {
+    const built = ok(run('deepObject', true, { 'a&b=': 'x#y&z=1' }));
+    expect(built.query).toBe('created%5Ba%26b%3D%5D=x%23y%26z%3D1');
+  });
+
+  it('deepObject: a nested value or a non-object value fails closed', () => {
+    expect(err(run('deepObject', true, { gt: { a: 1 } }))).toMatch(/cannot be serialized/u);
+    expect(err(run('deepObject', true, 'x'))).toMatch(/deepObject/u);
+  });
+
+  it('pipeDelimited: array joined with %7C; spaceDelimited with %20', () => {
+    expect(ok(run('pipeDelimited', false, ['a', 'b'])).query).toBe('created=a%7Cb');
+    expect(ok(run('spaceDelimited', false, ['a', 'b'])).query).toBe('created=a%20b');
+  });
+
+  it('delimited object: k, v, k, v sequence', () => {
+    expect(ok(run('pipeDelimited', false, { R: 100, G: 200 })).query).toBe(
+      'created=R%7C100%7CG%7C200',
+    );
+  });
+
+  it('delimited: a value containing its own delimiter is rejected as ambiguous', () => {
+    expect(err(run('pipeDelimited', false, ['a|b', 'c']))).toMatch(/delimiter/u);
+    expect(err(run('spaceDelimited', false, ['a b']))).toMatch(/delimiter/u);
+  });
+
+  it('delimited: other reserved characters are still encoded', () => {
+    expect(ok(run('pipeDelimited', false, ['a&b', 'c=#'])).query).toBe('created=a%26b%7Cc%3D%23');
+  });
+
+  it.each(['a][b', 'a[0]', ']', '[', 'a['])(
+    'deepObject: a key %j containing a bracket is rejected as ambiguous with nesting',
+    (key) => {
+      expect(err(run('deepObject', true, { [key]: 'v', ok: 1 }))).toMatch(
+        /key containing "\[" or "\]"/u,
+      );
+    },
+  );
+
+  it('delimited: an empty array or object is omitted, like form', () => {
+    expect(ok(run('pipeDelimited', false, [])).query).toBe('');
+    expect(ok(run('spaceDelimited', false, [])).query).toBe('');
+    expect(ok(run('pipeDelimited', false, {})).query).toBe('');
+  });
+});
+
+// #40: a REQUIRED body whose flattened properties are all optional and all
+// absent is still sent — as an empty object — instead of silently dropped.
+describe('buildRequest — required empty body (#40)', () => {
+  const mapper = (bodyContentType: string, bodyRequired: boolean): RequestMapper => ({
+    bodyMode: 'flattened',
+    bodyContentType,
+    ...(bodyRequired ? { bodyRequired: true } : {}),
+    fields: { note: { destination: 'body', bodyPath: ['note'], required: false } },
+  });
+
+  it('sends {} with the JSON content type when the body is required', () => {
+    const built = ok(buildRequest(mapper('application/json', true), 'post', '/x', {}, budgets));
+    expect(built.contentType).toBe('application/json');
+    expect(new TextDecoder().decode(built.body)).toBe('{}');
+  });
+
+  it('sends an empty form body with its content type when the body is required', () => {
+    const built = ok(
+      buildRequest(mapper('application/x-www-form-urlencoded', true), 'post', '/x', {}, budgets),
+    );
+    expect(built.contentType).toBe('application/x-www-form-urlencoded');
+    expect(built.body?.byteLength).toBe(0);
+  });
+
+  it('keeps an optional, entirely absent body absent', () => {
+    const built = ok(buildRequest(mapper('application/json', false), 'post', '/x', {}, budgets));
+    expect(built.body).toBeUndefined();
+    expect(built.contentType).toBeUndefined();
+  });
+
+  it('still never sends a body for GET', () => {
+    const built = ok(buildRequest(mapper('application/json', true), 'get', '/x', {}, budgets));
+    expect(built.body).toBeUndefined();
+  });
+});
+
+// #71: base64 tool input is decoded to the raw request bytes.
+describe('buildRequest — application/octet-stream body (#71)', () => {
+  const mapper: RequestMapper = {
+    bodyMode: 'single',
+    bodyContentType: 'application/octet-stream',
+    bodyRequired: true,
+    fields: { body: { destination: 'body', bodyPath: [], required: true } },
+  };
+
+  it('decodes base64 and sends the raw bytes with the declared content type', () => {
+    const built = ok(buildRequest(mapper, 'post', '/upload', { body: 'AAEC/w==' }, budgets));
+    expect(built.contentType).toBe('application/octet-stream');
+    expect([...(built.body ?? [])]).toEqual([0, 1, 2, 255]);
+  });
+
+  it('fails closed on invalid base64 or a non-string payload', () => {
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: 'a*b=' }, budgets))).toMatch(
+      /base64/u,
+    );
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: { a: 1 } }, budgets))).toMatch(
+      /base64/u,
+    );
+  });
+
+  it('counts the DECODED bytes against the body budget', () => {
+    const big = Buffer.alloc(budgets.maxBodyBytes + 1).toString('base64');
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: big }, budgets))).toMatch(/budget/u);
+  });
+
+  it('sends a multi-MiB upload (the regex check overflowed the stack above ~3.2 MiB)', () => {
+    const bytes = Buffer.alloc(6 * 1024 * 1024, 0xab);
+    const large = { ...budgets, maxBodyBytes: 10 * 1024 * 1024 };
+    const built = ok(
+      buildRequest(mapper, 'post', '/upload', { body: bytes.toString('base64') }, large),
+    );
+    expect(built.body?.byteLength).toBe(bytes.byteLength);
+  });
+
+  it('rejects non-canonical trailing bits and embedded whitespace', () => {
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: 'QR==' }, budgets))).toMatch(
+      /base64/u,
+    );
+    expect(err(buildRequest(mapper, 'post', '/upload', { body: 'aGVs bG8=' }, budgets))).toMatch(
+      /base64/u,
+    );
+  });
+});
+
+// #71: multipart/form-data encoding (RFC 7578).
+describe('buildRequest — multipart/form-data body (#71)', () => {
+  const mapper: RequestMapper = {
+    bodyMode: 'flattened',
+    bodyContentType: 'multipart/form-data',
+    bodyRequired: true,
+    fields: {
+      file: { destination: 'body', bodyPath: ['file'], required: true, binary: true },
+      note: { destination: 'body', bodyPath: ['note'], required: false },
+      count: { destination: 'body', bodyPath: ['count'], required: false },
+    },
+  };
+
+  const parse = (built: { body?: Uint8Array; contentType?: string }) => {
+    const request = new Request('http://example.test/', {
+      method: 'POST',
+      headers: { 'content-type': built.contentType ?? '' },
+      body: built.body ?? null,
+    });
+    return request.formData();
+  };
+
+  it('encodes text and binary parts that a standard parser reads back', async () => {
+    const built = ok(
+      buildRequest(
+        mapper,
+        'post',
+        '/upload',
+        { file: 'AAEC/w==', note: 'hi there', count: 3 },
+        budgets,
+      ),
+    );
+    expect(built.contentType).toMatch(/^multipart\/form-data; boundary=[0-9A-Za-z-]+$/u);
+    const form = await parse(built);
+    expect(form.get('note')).toBe('hi there');
+    expect(form.get('count')).toBe('3');
+    const file = form.get('file') as File;
+    expect(file.type).toBe('application/octet-stream');
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0, 1, 2, 255]);
+  });
+
+  it('fails closed on invalid base64 or a non-scalar text part', () => {
+    expect(err(buildRequest(mapper, 'post', '/upload', { file: 'a*b=' }, budgets))).toMatch(
+      /base64/u,
+    );
+    expect(
+      err(buildRequest(mapper, 'post', '/upload', { file: 'AA==', note: { a: 1 } }, budgets)),
+    ).toMatch(/multipart/u);
+  });
+
+  it('uses a fresh random boundary per request', () => {
+    const first = ok(buildRequest(mapper, 'post', '/upload', { file: 'AA==' }, budgets));
+    const second = ok(buildRequest(mapper, 'post', '/upload', { file: 'AA==' }, budgets));
+    expect(first.contentType).not.toBe(second.contentType);
+  });
+
+  it('sends a file part with its declared contentMediaType', async () => {
+    const typed: RequestMapper = {
+      ...mapper,
+      fields: {
+        file: {
+          destination: 'body',
+          bodyPath: ['file'],
+          required: true,
+          binary: true,
+          partContentType: 'image/png',
+        },
+      },
+    };
+    const built = ok(buildRequest(typed, 'post', '/upload', { file: 'AAEC/w==' }, budgets));
+    const form = await parse(built);
+    const file = form.get('file') as File;
+    expect(file.type).toBe('image/png');
+  });
+
+  it('refuses a required body with zero parts (RFC 2046 needs at least one)', () => {
+    const optionalParts: RequestMapper = {
+      ...mapper,
+      fields: {
+        note: { destination: 'body', bodyPath: ['note'], required: false },
+        count: { destination: 'body', bodyPath: ['count'], required: false },
+      },
+    };
+    expect(err(buildRequest(optionalParts, 'post', '/upload', {}, budgets))).toMatch(
+      /at least one part \(RFC 2046\); provide at least one of: note, count/u,
+    );
+  });
+
+  it('sends a multi-MiB file part (inherits the #114 base64 check)', async () => {
+    const bytes = Buffer.alloc(5 * 1024 * 1024, 1);
+    const large = { ...budgets, maxBodyBytes: 10 * 1024 * 1024 };
+    const built = ok(
+      buildRequest(mapper, 'post', '/upload', { file: bytes.toString('base64') }, large),
+    );
+    const form = await parse(built);
+    const file = form.get('file') as File;
+    expect(file.size).toBe(bytes.byteLength);
   });
 });

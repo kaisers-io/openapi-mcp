@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
+  BOUNDARY_WITHHELD_ERROR_TEXT,
+  BOUNDARY_WITHHELD_SUCCESS_TEXT,
   buildSnapshot,
   buildTools,
   createDispatcher,
   createMetaExecutor,
   createRedactor,
+  markSecretScanned,
   structuredOutcome,
   SYSTEM_HEADERS,
   textOutcome,
@@ -65,7 +68,7 @@ const buildTestSnapshot = (): ServerSnapshot => {
   });
 };
 
-const alwaysPermitLimiter = () => ({ consume: () => true });
+const alwaysPermitLimiter = () => ({ consume: () => true, retryAfterMs: () => 0 });
 const noSignal = new AbortController().signal;
 
 // A nested free-form property (OpenAPI `additionalProperties: {type:
@@ -265,7 +268,14 @@ const buildTransformSnapshot = (): ServerSnapshot => {
     acceptedContentHash: 'h',
     deadPatternCount: 0,
   };
-  return { tools: [tool], toolsByName, meta };
+  return {
+    toolMode: 'per-operation',
+    tools: [tool],
+    toolsByName,
+    operations: [],
+    operationsByName: Object.create(null) as Record<string, SnapshotTool | undefined>,
+    meta,
+  };
 };
 
 describe('createDispatcher', () => {
@@ -273,7 +283,7 @@ describe('createDispatcher', () => {
     const consume = vi.fn<(nowMs: number) => boolean>(() => true);
     const dispatcher = createDispatcher({
       snapshot: buildTestSnapshot(),
-      limiter: { consume },
+      limiter: { consume, retryAfterMs: () => 0 },
       now: () => 0,
       executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
@@ -288,7 +298,7 @@ describe('createDispatcher', () => {
     const consume = vi.fn<(nowMs: number) => boolean>(() => true);
     const dispatcher = createDispatcher({
       snapshot: buildTestSnapshot(),
-      limiter: { consume },
+      limiter: { consume, retryAfterMs: () => 0 },
       now: () => 0,
       executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
@@ -308,7 +318,7 @@ describe('createDispatcher', () => {
     );
     const dispatcher = createDispatcher({
       snapshot: buildTestSnapshot(),
-      limiter: { consume: () => false },
+      limiter: { consume: () => false, retryAfterMs: () => 1000 },
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
@@ -317,9 +327,37 @@ describe('createDispatcher', () => {
     const result = await dispatcher.call({ name: 'createThing', arguments: {}, signal: noSignal });
     expect(result).toEqual({
       kind: 'outcome',
-      outcome: textOutcome('rate limit exceeded — too many tool calls; retry later', true),
+      outcome: {
+        isError: true,
+        content: [
+          { type: 'text', text: 'rate limit exceeded — too many tool calls; retry after 1s' },
+        ],
+        meta: { 'openapi-mcp/error': 'rate_limited', 'openapi-mcp/retryAfterMs': 1000 },
+      },
     });
     expect(executor).not.toHaveBeenCalled();
+  });
+
+  it("reports the limiter's exact retryAfterMs, read at the same instant the call was refused", async () => {
+    const retryAfterMs = vi.fn<(nowMs: number) => number>(() => 4200);
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: { consume: () => false, retryAfterMs },
+      now: () => 777,
+      executor: vi.fn<ToolExecutor>(),
+      metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
+    });
+    const result = await dispatcher.call({ name: 'createThing', arguments: {}, signal: noSignal });
+    expect(retryAfterMs).toHaveBeenCalledWith(777);
+    expect(result).toMatchObject({
+      kind: 'outcome',
+      outcome: {
+        isError: true,
+        content: [{ text: 'rate limit exceeded — too many tool calls; retry after 5s' }],
+        meta: { 'openapi-mcp/error': 'rate_limited', 'openapi-mcp/retryAfterMs': 4200 },
+      },
+    });
   });
 
   it('an invalid partial optional-body call NEVER reaches the executor', async () => {
@@ -610,6 +648,7 @@ describe('createDispatcher', () => {
         consume: () => {
           throw new Error(secret);
         },
+        retryAfterMs: () => 0,
       },
       now: () => 0,
       executor: noopExecutor,
@@ -809,5 +848,71 @@ describe('dispatch-boundary redaction', () => {
       contentType: 'application/json',
       data: {},
     });
+  });
+});
+
+describe('createDispatcher — boundary scan of structuredContent (scan once)', () => {
+  const SECRET = 'example-token-not-a-secret';
+  const leaky = { data: { note: SECRET } };
+
+  const dispatchWith = (redactor: ReturnType<typeof createRedactor>, executor: ToolExecutor) => {
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: { consume: () => true, retryAfterMs: () => 0 },
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor,
+    });
+    return dispatcher.call({ name: 'createThing', arguments: {}, signal: noSignal });
+  };
+
+  it('still scans structuredContent from any executor that did not scan it itself', async () => {
+    const redactor = createRedactor([SECRET]);
+    const result = await dispatchWith(redactor, () =>
+      Promise.resolve(structuredOutcome('ok', { ...leaky })),
+    );
+    expect(result).toMatchObject({
+      kind: 'outcome',
+      outcome: {
+        isError: true,
+        content: [{ text: BOUNDARY_WITHHELD_SUCCESS_TEXT }],
+      },
+    });
+  });
+
+  it('does not claim success when an ERROR result is withheld', async () => {
+    const redactor = createRedactor([SECRET]);
+    const result = await dispatchWith(redactor, () =>
+      Promise.resolve({ ...textOutcome('failed', true), meta: { note: SECRET } }),
+    );
+    expect(result).toMatchObject({
+      kind: 'outcome',
+      outcome: { isError: true, content: [{ text: BOUNDARY_WITHHELD_ERROR_TEXT }] },
+    });
+  });
+
+  it('skips the repeat tree scan only for a result scanned by the SAME redactor', async () => {
+    const redactor = createRedactor([SECRET]);
+    const scan = vi.spyOn(redactor, 'scanForSecret');
+    const clean = { data: Array.from({ length: 100 }, (_unused, id) => ({ id })) };
+    const result = await dispatchWith(redactor, () => {
+      markSecretScanned(clean, redactor);
+      return Promise.resolve(structuredOutcome('ok', clean));
+    });
+    expect(result).toMatchObject({ kind: 'outcome', outcome: { isError: false } });
+    // Only the short text block is scanned at the boundary, never the tree.
+    expect(scan.mock.calls.map(([value]) => value)).not.toContain(clean);
+  });
+
+  it('does NOT trust a scan made by a different redactor', async () => {
+    const boundary = createRedactor([SECRET]);
+    const other = createRedactor(['some-other-example-value']);
+    const result = await dispatchWith(boundary, () => {
+      const content = { ...leaky };
+      markSecretScanned(content, other);
+      return Promise.resolve(structuredOutcome('ok', content));
+    });
+    expect(result).toMatchObject({ kind: 'outcome', outcome: { isError: true } });
   });
 });

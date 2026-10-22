@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { Buffer } from 'node:buffer';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -332,6 +333,39 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     child.kill('SIGTERM');
   });
 
+  it('accepts http://localhost:<port> as well as 127.0.0.1, and still 403s a foreign Host', async () => {
+    const spawned = await spawnServeHttp();
+    child = spawned.proc;
+    const { port } = spawned;
+    const body = JSON.stringify(modernBody(nextId(), 'tools/list'));
+    const viaLocalhost = await fetch(`http://localhost:${String(port)}/`, {
+      method: 'POST',
+      headers: modernHeaders('tools/list'),
+      body,
+    });
+    expect(viaLocalhost.status).toBe(200);
+    // The fetch() API always derives Host from the URL, so the foreign-Host probe
+    // goes through node:http, which sends the header exactly as given.
+    const foreignStatus = await new Promise<number | undefined>((resolve, reject) => {
+      const req = httpRequest(
+        {
+          host: '127.0.0.1',
+          port,
+          method: 'POST',
+          headers: { ...modernHeaders('tools/list'), host: `rebind.example:${String(port)}` },
+        },
+        (res) => {
+          res.resume();
+          resolve(res.statusCode);
+        },
+      );
+      req.on('error', reject);
+      req.end(body);
+    });
+    expect(foreignStatus).toBe(403);
+    child.kill('SIGTERM');
+  }, 15_000);
+
   it('answers GET and DELETE with 405 once authenticated, and 401 without the bearer — the guard runs on every HTTP method, and the 2025 session operations have no stateless equivalent', async () => {
     const spawned = await spawnServeHttp();
     child = spawned.proc;
@@ -534,8 +568,8 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
       lastBody = (await res.json()) as JsonRpcEnvelope;
     }
     expect(lastBody?.result?.isError).toBe(true);
-    expect(lastBody?.result?.content?.[0]?.text).toBe(
-      'rate limit exceeded — too many tool calls; retry later',
+    expect(lastBody?.result?.content?.[0]?.text).toMatch(
+      /^rate limit exceeded — too many tool calls; retry after \d+s$/u,
     );
   }, 40_000);
 

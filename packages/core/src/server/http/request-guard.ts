@@ -1,7 +1,7 @@
 import { isAuthorized } from './auth.ts';
 import type { BearerCheck } from './auth.ts';
 
-export type RequestGuardOptions = {
+export type HostOriginOptions = {
   // Exact serialized origins only — no wildcard. An empty set means every
   // PRESENT Origin is rejected (the posture for a non-browser-facing server).
   allowedOrigins: ReadonlySet<string>;
@@ -10,6 +10,14 @@ export type RequestGuardOptions = {
   // port-comparison quirks); this guard is the single source of truth and
   // runs before the SDK transport ever sees the request.
   allowedHost: string;
+  // Further exact host:port values naming the SAME local listener (serve
+  // passes `localhost:<port>`). DNS-rebinding protection is unaffected: a
+  // rebinding page's request carries the attacker's own hostname in Host,
+  // never `localhost` — and the port must still match exactly.
+  allowedHostAliases?: ReadonlySet<string>;
+};
+
+export type RequestGuardOptions = HostOriginOptions & {
   bearer: BearerCheck;
 };
 
@@ -28,7 +36,7 @@ export type GuardDecision =
 // Host/Origin is itself suspicious (a client should never send either twice),
 // so it collapses to "absent" here and is handled by the SAME fail-closed
 // path as a missing header — never silently picking the first/last value.
-const singleHeader = (value: string | string[] | undefined): string | undefined => {
+export const singleHeader = (value: string | string[] | undefined): string | undefined => {
   if (value === undefined) {
     return undefined;
   }
@@ -38,15 +46,24 @@ const singleHeader = (value: string | string[] | undefined): string | undefined 
   return value;
 };
 
-export const evaluateRequest = (
-  opts: RequestGuardOptions,
-  headers: IncomingHeaders,
+// The Host/Origin half of the guard, shared by both authentication modes:
+// the static bearer below, and the OAuth resource-server mode, which runs
+// its (asynchronous) token validation only after this has allowed the
+// request.
+export const evaluateHostOrigin = (
+  opts: HostOriginOptions,
+  headers: Omit<IncomingHeaders, 'authorization'>,
 ): GuardDecision => {
   const host = singleHeader(headers.host);
   const origin = singleHeader(headers.origin);
 
   // Host MUST match exactly (including port) or 403 — before the bearer.
-  if (host === undefined || host !== opts.allowedHost) {
+  // Host names compare case-insensitively (RFC 9110 §4.2.3), so an alias
+  // is matched on the lowercased value.
+  if (
+    host === undefined ||
+    (host !== opts.allowedHost && opts.allowedHostAliases?.has(host.toLowerCase()) !== true)
+  ) {
     return { outcome: 'deny', status: 403, reason: 'invalid or missing Host header' };
   }
   // A PRESENT Origin (including the literal string "null", which browsers
@@ -57,6 +74,17 @@ export const evaluateRequest = (
   const originHeaderPresent = headers.origin !== undefined;
   if (originHeaderPresent && (origin === undefined || !opts.allowedOrigins.has(origin))) {
     return { outcome: 'deny', status: 403, reason: 'Origin not allowlisted' };
+  }
+  return { outcome: 'allow' };
+};
+
+export const evaluateRequest = (
+  opts: RequestGuardOptions,
+  headers: IncomingHeaders,
+): GuardDecision => {
+  const hostOrigin = evaluateHostOrigin(opts, headers);
+  if (hostOrigin.outcome === 'deny') {
+    return hostOrigin;
   }
   // Absent-or-allowed Origin: NOW check the bearer. Normalized here, not at
   // the top, as defense-in-depth — nothing touches headers.authorization
