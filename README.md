@@ -248,6 +248,11 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
 
 Clients must send `Authorization: Bearer <token>`. `--port` defaults to `3044`.
 
+For a shared deployment, `--http-auth oauth` makes the server an OAuth resource server instead:
+it publishes Protected Resource Metadata, validates JWT access tokens from `--oauth-issuer`
+for `--oauth-audience`, and is the only mode that may bind a non-loopback `--http-host`. See
+[docs/security.md](docs/security.md#oauth-resource-server-mode-opt-in).
+
 The server speaks MCP revision `2026-07-28` and is stateless: each request is served on its
 own, with no `initialize` handshake and no session state (no `Mcp-Session-Id`). Older, 2025-era
 clients are served the same stateless way. The endpoint is POST-only — `GET` and `DELETE`

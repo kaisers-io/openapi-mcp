@@ -57,9 +57,14 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
-| `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
+| `--http` | no | serve over Streamable HTTP (127.0.0.1 unless `--http-host`) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
-| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
+| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` in `static` mode | none |
+| `--http-auth <mode>` | no | `static` (one bearer token from `--http-token-env`) or `oauth` (OAuth resource-server mode, see [security.md](security.md#oauth-resource-server-mode-opt-in)) | `static` |
+| `--http-host <addr>` | no | IP address to bind; anything but loopback requires `--http-auth oauth` and an `https` `--oauth-audience` | `127.0.0.1` |
+| `--oauth-issuer <url>` | no | authorization server issuer whose JWT access tokens are accepted; required with `--http-auth oauth` | none |
+| `--oauth-audience <uri>` | no | this server's canonical resource URI (its public URL); tokens must carry it in `aud`; required with `--http-auth oauth` | none |
+| `--oauth-required-scope <scope>` | yes | scope every access token must grant; advertised as `scopes_supported` | `[]` |
 
 Notes:
 
@@ -91,6 +96,18 @@ HTTP-mode example:
 export TOKEN=$(openssl rand -base64 32)
 openapi-mcp serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
+```
+
+OAuth resource-server example (behind a TLS-terminating reverse proxy that serves
+`https://mcp.example.com/mcp` and forwards the client's `Host` header):
+
+```bash
+openapi-mcp serve --spec https://api.example.com/openapi.json \
+  --header-env Authorization=API_TOKEN \
+  --http --http-auth oauth --http-host 0.0.0.0 --port 3044 \
+  --oauth-issuer https://auth.example.com/realms/main \
+  --oauth-audience https://mcp.example.com/mcp \
+  --oauth-required-scope mcp:tools
 ```
 
 ## `tools`

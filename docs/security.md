@@ -121,7 +121,8 @@ generated API request:
 callers — any other local process could otherwise reach tools that carry your API
 credentials — so:
 
-- `--http-token-env <ENV>` is **mandatory** with `--http`; startup fails closed without it.
+- `--http-token-env <ENV>` is **mandatory** with `--http` in the default `static` mode; startup
+  fails closed without it. (The opt-in OAuth mode below replaces it.)
   The token must be at least 32 ASCII characters from the Base64/Base64URL alphabet (the
   README's example generates one with `openssl rand -base64 32`); shorter, non-ASCII, or
   header-hostile values are rejected at startup.
@@ -147,6 +148,52 @@ credentials — so:
   enabled.
 - Graceful shutdown on `SIGINT`/`SIGTERM` stops accepting new requests and aborts in-flight
   ones; there is no session state to close.
+
+## OAuth resource-server mode (opt-in)
+
+`--http-auth oauth` turns the HTTP transport into an OAuth 2.1 resource server as the MCP
+authorization specification (revision `2026-07-28`) describes. It is the only mode that may bind
+a non-loopback address (`--http-host`); the static token stays the default and stays
+loopback-only.
+
+- **Discovery.** `/.well-known/oauth-protected-resource[/<path>]` serves RFC 9728 Protected
+  Resource Metadata (`resource` = `--oauth-audience`, `authorization_servers` =
+  `--oauth-issuer`, `scopes_supported` = `--oauth-required-scope`, `bearer_methods_supported`
+  = `header`). A request without a token gets `401` with
+  `WWW-Authenticate: Bearer resource_metadata="…", scope="…"`; an invalid token gets `401`
+  `invalid_token`, a valid token without a required scope `403` `insufficient_scope`.
+- **Local JWT validation (RFC 9068).** Tokens are verified against the issuer's JWKS. Only
+  asymmetric algorithms are accepted (`RS*`, `PS*`, `ES256/384/512`, `EdDSA`); `none` and every
+  `HS*` algorithm are rejected, so a token signed with the public key as an HMAC secret never
+  verifies. The token must name its key (`kid`), the key must fit the algorithm (and its own
+  `alg`/`use`/`key_ops`, if published), RSA keys must be at least 2048 bits, and a `crit` header
+  is rejected. `iss` must equal `--oauth-issuer` exactly, `aud` must name `--oauth-audience`
+  (RFC 8707 audience binding; a trailing slash and the case of scheme and host do not matter),
+  `exp` is required, and `exp`/`nbf`/`iat` are checked with 60 s of clock skew. `typ` may be
+  `at+jwt`, `application/at+jwt`, `JWT` or absent; any other `typ` is rejected.
+- **Opaque tokens are not supported**: there is no token introspection (RFC 7662) in this
+  version.
+- **Key discovery goes through the egress policy.** At startup the server fetches the
+  authorization server metadata (RFC 8414 path insertion, then OpenID Connect discovery — the
+  order MCP clients use) and requires its `issuer` to equal `--oauth-issuer`. Metadata and JWKS
+  are fetched through the same DNS-pinned transport as API calls: cloud-metadata addresses are
+  always denied, private addresses only on the issuer's own origin (operator intent) or with
+  `--allow-private-network`, and documents are capped at 64 KiB. Issuer, audience and
+  `jwks_uri` must use `https` (plain `http` only for a loopback host). An unreachable or
+  inconsistent authorization server fails startup.
+- **JWKS cache.** Keys are refreshed every 5 minutes; a token with an unknown `kid` triggers at
+  most one early refresh per 30 s (key rotation without letting made-up `kid`s drive fetches). If
+  refreshes fail, the last good key set is used for at most one hour after it was fetched, then
+  requests fail closed with `503`.
+- **No token passthrough.** The client's access token is read from the `Authorization` header
+  only and is never forwarded upstream or written to any output; upstream credentials are still
+  only `--header-env`. Rejection causes are logged to stderr (rate-bounded) without the token.
+- **Deployment.** TLS is not terminated by `openapi-mcp`: run it behind a reverse proxy that
+  serves the `--oauth-audience` URL over `https` and forwards the client's `Host` header — the
+  `Host` check accepts exactly the audience's authority, so a request addressed to any other host
+  is refused with `403` before authentication. Browser `Origin`s are still refused. The request
+  body is read only after the token validated. The tool-call rate limit and the upstream
+  concurrency cap remain process-wide, not per user: every authenticated caller shares them.
 
 ## What `openapi-mcp` defends, and what you still must do
 
