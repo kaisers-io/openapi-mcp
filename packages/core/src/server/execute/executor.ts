@@ -75,6 +75,19 @@ export type ExecutorConfig = {
   // By tool name; compiled eagerly once at server startup — this module only
   // looks the map up per call.
   validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
+  // OAuth2 client-credentials (--upstream-oauth-*): every call carries
+  // `Authorization: Bearer <token>` from this source, and an upstream 401
+  // invalidates the token and replays the request ONCE with a fresh one.
+  // `envVarHint` names the client id/secret env vars for error hints.
+  // `tokens` is structurally http/oauth-client-credentials.ts's TokenSource
+  // (spelled out here to keep this module's dependency set unchanged).
+  oauth?: {
+    tokens: {
+      getToken: () => Promise<{ ok: string } | { error: string }>;
+      invalidate: (token: string) => boolean;
+    };
+    envVarHint: string;
+  };
 };
 
 export type ExecutorDeps = {
@@ -157,7 +170,7 @@ const isLoopbackHost = (hostname: string): boolean => {
 // entirely (no request is ever sent) unless the operator explicitly opted in
 // via --allow-insecure-http.
 const cleartextBlocked = (config: ExecutorConfig, base: URL): boolean =>
-  config.secretHeaders.length > 0 &&
+  (config.secretHeaders.length > 0 || config.oauth !== undefined) &&
   base.protocol === 'http:' &&
   !config.allowInsecureHttp &&
   !isLoopbackHost(base.hostname);
@@ -204,6 +217,7 @@ const assembleHeaders = (
   accept: string,
   contentType: string | undefined,
   toolHeaders: Readonly<Record<string, string>>,
+  bearer: string | undefined,
 ): HopHeaders => {
   // Kept as sequential bracket assignments (not a spread build): the write
   // ORDER is the precedence contract, and bracket assignment on a plain
@@ -226,6 +240,11 @@ const assembleHeaders = (
   }
   for (const header of config.secretHeaders) {
     sameOriginHeaders[header.name.toLowerCase()] = header.value;
+  }
+  // The OAuth2 access token, last of all. --header-env Authorization is a
+  // startup usage error alongside --upstream-oauth-*, so nothing is overwritten.
+  if (bearer !== undefined) {
+    sameOriginHeaders['authorization'] = `Bearer ${bearer}`;
   }
   // Accept is content negotiation, not a credential: it survives a
   // cross-origin redirect (as browsers keep it too).
@@ -360,68 +379,132 @@ const runUpstreamCall = async (
   if (finalUrl.origin !== base.origin || !withinBasePath(finalUrl.pathname, base.pathname)) {
     return isError('the final request URL escaped the configured base URL');
   }
-  const headers = assembleHeaders(
-    config,
-    deriveAccept(generated.operation.responses),
-    built.ok.contentType,
-    built.ok.headers,
-  );
-  if (config.propagateTraceContext === true && trace !== undefined) {
-    // Same-origin set only: a trace id is client correlation data, and a
-    // redirect to a foreign origin must not receive it. `traceparent` and
-    // `tracestate` are reserved tool-header names, so only an operator's
-    // own --header could already hold them — and that one wins.
-    for (const [name, value] of Object.entries(trace)) {
-      headers.sameOriginHeaders[name] ??= value;
-    }
-  }
+  const accept = deriveAccept(generated.operation.responses);
   const retries = Math.min(config.retries ?? 0, MAX_RETRIES);
   const idempotencyKeyField = Object.values(generated.mapper.fields).some(
     (mapping) =>
       mapping.destination === 'header' && mapping.wireName.toLowerCase() === 'idempotency-key',
   );
   const keyed = retries > 0 && idempotencyKeyField && (method === 'POST' || method === 'PATCH');
-  if (keyed) {
-    // ONE key per tool call, identical on every attempt — the caller's own
-    // value when it passed one, else a fresh UUID — so the upstream can
-    // deduplicate a retried write. Added before the final budget check.
-    headers.sameOriginHeaders['idempotency-key'] ??= randomUUID();
-  }
-  const idempotencyKey = keyed ? headers.sameOriginHeaders['idempotency-key'] : undefined;
-  if (overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)) {
-    report({ outcome: 'refused', method, pathTemplate: generated.operation.path });
-    return isError('the final request exceeds the outbound resource budget');
-  }
-  const requestOptions: PinnedRequestOptions = {
-    method,
-    headers,
-    ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
-    baseTrusted: config.baseTrusted,
-    allowPrivateNetwork: config.allowPrivateNetwork,
-    timeoutMs,
-    maxResponseBytes: config.maxResponseBytes,
-    signal,
+  // ONE key per tool call, identical on every attempt (a 401 token replay
+  // included) — the caller's own value when it passed one, else this fresh
+  // UUID — so the upstream can deduplicate a retried write.
+  const generatedKey = keyed ? randomUUID() : undefined;
+  // The wire headers for one send with the given bearer token (none without
+  // --upstream-oauth-*), or undefined when they exceed the final budgets —
+  // re-checked per send, since a refreshed token can differ in length.
+  const headersFor = (bearer: string | undefined): HopHeaders | undefined => {
+    const headers = assembleHeaders(config, accept, built.ok.contentType, built.ok.headers, bearer);
+    if (config.propagateTraceContext === true && trace !== undefined) {
+      // Same-origin set only: a trace id is client correlation data, and a
+      // redirect to a foreign origin must not receive it. `traceparent` and
+      // `tracestate` are reserved tool-header names, so only an operator's
+      // own --header could already hold them — and that one wins.
+      for (const [name, value] of Object.entries(trace)) {
+        headers.sameOriginHeaders[name] ??= value;
+      }
+    }
+    if (generatedKey !== undefined) {
+      headers.sameOriginHeaders['idempotency-key'] ??= generatedKey;
+    }
+    return overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)
+      ? undefined
+      : headers;
   };
+  const operationFacts = { method, pathTemplate: generated.operation.path };
+  const overBudget = (): ToolCallOutcome => {
+    report({ outcome: 'refused', ...operationFacts });
+    return isError('the final request exceeds the outbound resource budget');
+  };
+  const { oauth } = config;
+  // A token failure is a tool error naming the env vars to check; its text
+  // never carries endpoint-supplied prose (see oauth-client-credentials.ts).
+  // No API request was sent.
+  const tokenError = (error: string): ToolCallOutcome => {
+    report({ outcome: 'token_error', ...operationFacts });
+    return isError(`${error} (check the ${oauth?.envVarHint ?? ''} environment variables)`);
+  };
+  // The call's time budget runs from here: the token request (when one is
+  // needed) and every upstream attempt share it.
   const upstreamStarted = retryDeps.now();
-  const { outcome, attempts } = await withRetries(
-    (remainingMs) =>
-      pinnedRequest(finalUrl, { ...requestOptions, timeoutMs: remainingMs }, transport),
-    {
-      retries: isRetryableMethod(method, idempotencyKeyField) ? retries : 0,
+  const remainingMs = (): number =>
+    Math.max(Math.floor(timeoutMs - (retryDeps.now() - upstreamStarted)), 1);
+  const send = async (
+    headers: HopHeaders,
+    retriesLeft: number,
+  ): Promise<{ outcome: PinnedOutcome; attempts: number }> => {
+    const requestOptions: PinnedRequestOptions = {
+      method,
+      headers,
+      ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
+      baseTrusted: config.baseTrusted,
+      allowPrivateNetwork: config.allowPrivateNetwork,
       timeoutMs,
-      connectionErrors: retriesConnectionErrors(method),
+      maxResponseBytes: config.maxResponseBytes,
       signal,
-    },
-    retryDeps,
-  );
+    };
+    return await withRetries(
+      (attemptMs) =>
+        pinnedRequest(finalUrl, { ...requestOptions, timeoutMs: attemptMs }, transport),
+      {
+        retries: retriesLeft,
+        timeoutMs: remainingMs(),
+        connectionErrors: retriesConnectionErrors(method),
+        signal,
+      },
+      retryDeps,
+    );
+  };
+  const first = oauth === undefined ? undefined : await oauth.tokens.getToken();
+  if (first !== undefined && 'error' in first) {
+    return tokenError(first.error);
+  }
+  const firstHeaders = headersFor(first?.ok);
+  if (firstHeaders === undefined) {
+    return overBudget();
+  }
+  const idempotencyKey =
+    generatedKey === undefined ? undefined : firstHeaders.sameOriginHeaders['idempotency-key'];
+  const allowedRetries = isRetryableMethod(method, idempotencyKeyField) ? retries : 0;
+  const sent = await send(firstHeaders, allowedRetries);
+  let { outcome, attempts } = sent;
+  // At most one replay on 401: the request was not authorized, so it had no
+  // effect — replaying it once (writes included) with a fresh token is safe.
+  // No replay when the token source keeps the token (it was minted moments
+  // ago, so a new one would be rejected the same way). A second 401 is
+  // returned like any other.
+  // The replay and --retries are separate budgets: a 401 is never a
+  // transient failure, so withRetries never re-sends one; retries spent on
+  // transient failures before the 401 do not prevent the replay, and the
+  // replay does not use up a retry (it gets the ones the first send left).
+  if (
+    oauth !== undefined &&
+    first !== undefined &&
+    outcome.kind === 'response' &&
+    outcome.status === 401 &&
+    oauth.tokens.invalidate(first.ok)
+  ) {
+    const fresh = await oauth.tokens.getToken();
+    if ('error' in fresh) {
+      return tokenError(fresh.error);
+    }
+    const replayHeaders = headersFor(fresh.ok);
+    if (replayHeaders === undefined) {
+      return overBudget();
+    }
+    const replay = await send(replayHeaders, Math.max(allowedRetries - (attempts - 1), 0));
+    ({ outcome } = replay);
+    attempts += replay.attempts;
+  }
   const upstreamMs = Math.max(0, retryDeps.now() - upstreamStarted);
   const [firstSecretHeader] = config.secretHeaders;
+  const envVarHint = oauth?.envVarHint ?? firstSecretHeader?.envVar;
   const mapped = mapResponse({
     outcome,
     validator,
     outputSchema: tool.wireTool.outputSchema,
     redactor: config.redactor,
-    ...(firstSecretHeader === undefined ? {} : { envVarHint: firstSecretHeader.envVar }),
+    ...(envVarHint === undefined ? {} : { envVarHint }),
     ...(tool.generated?.outputSchemaAssumesDefaultIsError === true
       ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
       : {}),
