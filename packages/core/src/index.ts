@@ -180,8 +180,10 @@ export {
   isAuthorized,
   isValidBearerToken,
   META_TOOL_NAME,
+  parseJwks,
   structuredOutcome,
   textOutcome,
+  verifyJwt,
 } from './server/index.ts';
 export type {
   BearerCheck,
@@ -192,6 +194,9 @@ export type {
   ExecutorDeps,
   GuardDecision,
   IncomingHeaders,
+  JwtFailure,
+  JwtVerifyResult,
+  KeySet,
   MetaExecutor,
   MetaSummary,
   RateLimiter,
@@ -203,6 +208,7 @@ export type {
   SnapshotToolKind,
   ToolCallOutcome,
   ToolExecutor,
+  VerifiedAccessToken,
   WireTool,
 } from './server/index.ts';
 export { serveStdioSession } from './server/sdk/stdio.ts';

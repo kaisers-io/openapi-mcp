@@ -37,3 +37,10 @@ export {
   type IncomingHeaders,
   type RequestGuardOptions,
 } from './http/request-guard.ts';
+export {
+  verifyJwt,
+  type JwtFailure,
+  type JwtVerifyResult,
+  type VerifiedAccessToken,
+} from './http/jwt.ts';
+export { ALLOWED_JWS_ALGS, parseJwks, type KeySet } from './http/jwk.ts';
