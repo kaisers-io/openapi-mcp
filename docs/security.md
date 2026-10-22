@@ -104,6 +104,22 @@ generated API request:
 - Successful responses are validated against the operation's declared output envelope before
   being returned as `structuredContent`; a mismatch (unexpected status, shape, or media type)
   returns a tool error with a redacted summary rather than nonconforming structured output.
+- Regular expressions (`pattern`) and response validation. Response validation runs
+  synchronously after the upstream call has finished, so the request timeout no longer
+  applies to it. To keep its CPU cost bounded, a response schema with a `pattern` that has
+  **nested quantifiers** gets no output schema. The tool still works and returns its result
+  as text, and its description starts with a sentence that says so. Supported pattern
+  contract:
+  - Response schemas: a pattern is enforced unless it nests quantifiers. "Nested" means a
+    group repeated more than once (`*`, `+`, `{n,}`, `{n,m}` with m > 1) that contains an
+    unbounded quantifier (`(a+)+`, `(\w+\s?)*`, `(a*){2}`), or an unbounded repetition of a
+    group that contains any variable quantifier (`(a?)+`, `(\d{1,3})*`). Small bounded
+    nestings stay supported: `(\d{1,3}\.){3}` (IPv4) and `(-[0-9a-f]{4}){3}` (UUID).
+  - This is a star-height heuristic in the style of safe-regex. It is conservative: some
+    unambiguous patterns, such as `^[a-z]+(-[a-z]+)*$`, are refused too. It does not detect
+    overlapping alternation under a single quantifier (`(a|a)+`) or backreferences.
+  - Request schemas (tool inputs): `pattern` and `format` are advertised to the model in the
+    input schema but never executed by this server, so they carry no CPU risk here.
 - Oversized responses (over `--max-response-bytes`, default `10MB`) return a tool error — never
   a truncated, silently-invalid partial payload.
 - Binary and unknown media types return a tool error describing the media type; this tool does

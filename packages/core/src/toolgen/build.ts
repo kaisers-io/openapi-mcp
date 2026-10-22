@@ -7,7 +7,7 @@ import { composeDescription } from './description.ts';
 import { buildLayout } from './layout.ts';
 import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
-import { deriveOutputSchema } from './output-schema.ts';
+import { explainOutputSchema } from './output-schema.ts';
 import type { JsonSchemaRecord } from './output-schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
@@ -21,6 +21,10 @@ export type GeneratedTool = {
   description: string;
   annotations: ToolAnnotations;
   outputSchema?: JsonSchemaRecord;
+  // Why the tool has no outputSchema, when the agent should know (#39: a
+  // response `pattern` with nested quantifiers). Also folded into the
+  // description.
+  outputSchemaWithheld?: string;
 };
 
 export type BuildToolsResult = {
@@ -89,9 +93,9 @@ const buildToolEntry = (
       reason: `input schema cannot be represented as JSON Schema: ${wireResult.error}`,
     };
   }
-  const description = composeDescription(named.operation);
+  const { outputSchema, withheld } = explainOutputSchema(named.operation, openapiVersion);
+  const description = composeDescription(named.operation, withheld);
   const annotations = deriveAnnotations(named.operation.method);
-  const outputSchema = deriveOutputSchema(named.operation, openapiVersion);
   return {
     toolName: named.toolName,
     operation: named.operation,
@@ -101,6 +105,7 @@ const buildToolEntry = (
     description,
     annotations,
     ...(outputSchema === undefined ? {} : { outputSchema }),
+    ...(withheld === undefined ? {} : { outputSchemaWithheld: withheld }),
   };
 };
 
