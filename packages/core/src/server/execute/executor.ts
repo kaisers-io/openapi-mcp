@@ -572,13 +572,15 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     connections: config.maxConcurrent,
   });
   const transport: PinnedDeps = { ...deps.transport, agents };
+  // One clock for the queue wait, the call budget and the timings: an
+  // injected `now` also drives the per-call budget inside runUpstreamCall,
+  // unless the retry clock is injected on its own.
   const retryDeps: RetryDeps = {
     sleep: realSleep,
     random: Math.random,
-    now: Date.now,
+    now: deps.now ?? Date.now,
     ...deps.retry,
   };
-  // One clock for the queue wait, the call budget and the timings.
   const now = deps.now ?? retryDeps.now;
   // ONE time budget per call, shared by the queue wait and the upstream
   // request, so a queued call cannot take queue wait + a full timeout
