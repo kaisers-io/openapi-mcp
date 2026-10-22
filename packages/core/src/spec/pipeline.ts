@@ -15,7 +15,6 @@ import { assignToolNames } from '../toolgen/naming.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
 import { SPEC_BUDGETS } from './budgets.ts';
 import { dereference } from './dereference.ts';
-import { fetchSpecConditional } from './fetch.ts';
 import type { FetchSpecDeps } from './fetch.ts';
 import { loadSpecFromFile, parseSpecSource } from './load.ts';
 import type { LoadedSpecText } from './load.ts';
@@ -237,6 +236,9 @@ export const runSpecPipeline = async (
       // no etag/lastModified (see its construction above), so this degrades
       // to an ordinary GET — identical bytes, but with the response's
       // validators captured.
+      // Imported here, not at the top (issue #91): the fetch path pulls in
+      // undici and the DNS-pinned transport, which file specs never need
+      const { fetchSpecConditional } = await import('./fetch.ts');
       const conditional = await fetchSpecConditional(
         source.url,
         {

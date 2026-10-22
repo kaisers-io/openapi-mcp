@@ -32,3 +32,26 @@ node -e '
   }
   console.log("tools smoke OK — generated:", o.data.tools.map((t) => t.name).join(", "));
 ' "$OUT"
+
+# `serve` runs from a chunk the bin imports only when the action starts (issue #91): start it over
+# stdio and require an `initialize` answer, so a chunk missing from the tarball fails here.
+node -e '
+  const { spawn } = require("node:child_process");
+  const child = spawn("openapi-mcp", ["serve", "--spec", process.argv[1], "--base-url", "https://api.example.com"]);
+  const timer = setTimeout(() => { console.error("serve smoke FAILED: no initialize answer"); child.kill(); process.exit(1); }, 15000);
+  let out = "";
+  child.stdout.on("data", (chunk) => {
+    out += chunk;
+    const line = out.split("\n")[0];
+    if (!out.includes("\n")) return;
+    clearTimeout(timer);
+    const reply = JSON.parse(line);
+    child.stdin.end();
+    if (reply.result?.protocolVersion !== "2025-11-25") {
+      console.error("serve smoke FAILED:", line);
+      process.exit(1);
+    }
+    console.log("serve smoke OK — initialize answered over stdio");
+  });
+  child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "smoke", version: "1" } } }) + "\n");
+' "$SPEC"

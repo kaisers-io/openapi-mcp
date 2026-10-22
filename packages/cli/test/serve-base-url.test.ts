@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { NormalizedSpec } from '@kaisers-io/openapi-mcp-core';
-import { assertBaseUrlShape, resolveBaseUrl } from '../src/commands/serve.ts';
+import { assertBaseUrlShape, resolveBaseUrl } from '../src/commands/serve-action.ts';
 
 // In-process unit coverage for the base-URL resolution helpers serve.ts's
 // action body wires together — the CLI's own serve.test.ts/

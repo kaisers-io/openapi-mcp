@@ -19,7 +19,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { cachePathTypeError, validationError } from '@kaisers-io/openapi-mcp-core';
 import type { CacheFs, PinnedDeps } from '@kaisers-io/openapi-mcp-core';
-import { fetch as undiciFetch } from 'undici';
+import type { fetch as UndiciFetch } from 'undici';
 
 export type CliContext = {
   env: Readonly<Record<string, string | undefined>>;
@@ -328,6 +328,14 @@ const realLookup = async (hostname: string, signal: AbortSignal): Promise<readon
   });
   const entries = await Promise.race([pending, aborted]);
   return entries.map((entry) => entry.address);
+};
+
+// Undici's fetch, imported on first use (issue #91): --version, file specs,
+// doctor and the cache subcommands never fetch, so they never load undici.
+// Still undici's OWN fetch (see `fetcher` above), just resolved lazily.
+const undiciFetch: typeof UndiciFetch = async (...args) => {
+  const { fetch } = await import('undici');
+  return fetch(...args);
 };
 
 export const realContext = (): CliContext => ({
