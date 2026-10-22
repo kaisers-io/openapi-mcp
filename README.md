@@ -31,7 +31,9 @@ Four pillars:
 
 ## Install
 
-Requirements: Node.js `>=24.11`, macOS or Linux.
+Requirements: Node.js `>=24.11`, macOS or Linux. Windows is not supported natively (the cache relies on POSIX file
+permissions and rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/). Other POSIX systems
+(e.g. FreeBSD) are refused because they are untested, not because they are known to be unsafe.
 
 ```bash
 npm i -g @kaisers-io/openapi-mcp
@@ -46,10 +48,6 @@ openapi-mcp doctor
 
 `openapi-mcp doctor` prints CLI/Node versions and the effective cache root — a good first
 check when something looks wrong.
-
-The GitHub repository is currently private, so `npm i -g @kaisers-io/openapi-mcp` and the
-`npx` invocations below only work for accounts with registry/repo access until
-`openapi-mcp` goes public.
 
 ## Quickstart
 
@@ -252,6 +250,11 @@ export TOKEN=$(openssl rand -base64 32)
 openapi-mcp serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
+
+The token must be exactly 32 bytes from a cryptographically secure random source, encoded as
+padded Base64 (what `openssl rand -base64 32` prints) or unpadded Base64URL; any other shape,
+including hex, is rejected at startup. Exact rules and an openssl-free generator:
+[`docs/security.md`](docs/security.md#http-mode-authentication-and-limits).
 
 Clients must send `Authorization: Bearer <token>`. `--port` defaults to `3044`.
 
