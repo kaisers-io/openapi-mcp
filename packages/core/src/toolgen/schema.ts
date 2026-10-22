@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SPEC_BUDGETS } from '../spec/budgets.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import { hasNestedQuantifier } from './pattern-safety.ts';
 
 // Structural nesting guard, tied to the existing parse-depth budget — not a new
 // budget. The document is already dereferenced (cycle-safe) upstream, so this
@@ -9,6 +10,12 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 export const MAX_CONVERT_DEPTH = SPEC_BUDGETS.maxParseDepth;
 
 export type SchemaResult = { ok: z.ZodType } | { unrepresentable: string };
+
+// The unrepresentable reason for a response `pattern` with nested quantifiers
+// (#39). Output-schema derivation looks for it to tell the agent why a tool
+// has no output schema.
+export const UNSAFE_PATTERN_REASON =
+  'a "pattern" with nested quantifiers (unbounded regex matching cost)';
 
 // Which side of the HTTP exchange a schema describes. The same Schema Object
 // is routinely shared between a request body and a response (`User` with a
@@ -27,7 +34,8 @@ export type SchemaResult = { ok: z.ZodType } | { unrepresentable: string };
 //     provider adding a field does not break the tool; only an EXPLICIT
 //     `additionalProperties: false` closes the object. A `writeOnly: true`
 //     property is never required (it "MAY be sent as part of a request but
-//     SHOULD NOT be sent as part of the response", OAS 3.0.3 §4.7.24.2).
+//     SHOULD NOT be sent as part of the response", OAS 3.0.3 §4.7.24.2), and
+//     an open object leaves it out of the shape entirely.
 export type SchemaMode = 'request' | 'response';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -587,6 +595,16 @@ const objectSchema = (
   // short-circuit into forced recursive conversion work for every property
   // on hostile input, even past the first failure.
   const droppedReadOnly = new Set<string>();
+  // A writeOnly property SHOULD NOT appear in a response (OAS 3.0.3 §4.7.24.2),
+  // so in response mode it is left out of the advertised shape — the model is
+  // never shown a field the upstream does not return (FastMCP's
+  // `remove_write_only`). Only an OPEN object drops it: an undeclared key is
+  // still allowed there, so a server that does echo it stays valid. A closed
+  // object (`additionalProperties: false` or a schema) keeps it as optional,
+  // or an echo would fail output validation.
+  const ap = node['additionalProperties'];
+  const dropsWriteOnly = mode === 'response' && (ap === undefined || ap === true);
+  const droppedWriteOnly = new Set<string>();
   for (const [key, child] of Object.entries(properties)) {
     if (isDangerousKey(key)) {
       return { unrepresentable: `a property named "${key}"` };
@@ -600,13 +618,16 @@ const objectSchema = (
       droppedReadOnly.add(key);
       continue;
     }
+    if (dropsWriteOnly && isAccessOnly(child, 'writeOnly')) {
+      droppedWriteOnly.add(key);
+      continue;
+    }
     const conv = convertSchema(child, version, depth + 1, mode);
     if (!('ok' in conv)) {
       return { unrepresentable: `property "${key}": ${conv.unrepresentable}` };
     }
-    // A writeOnly property SHOULD NOT appear in a response, so `required` on it
-    // applies to requests only; in response mode it is optional (still
-    // validated by its schema if a server does echo it).
+    // In a closed response object a writeOnly property is kept but never
+    // required: `required` on it applies to requests only.
     const requiredHere =
       required.has(key) && !(mode === 'response' && isAccessOnly(child, 'writeOnly'));
     shape[key] = requiredHere ? conv.ok : conv.ok.optional();
@@ -615,11 +636,10 @@ const objectSchema = (
   // schema for it) — omit rather than silently accept its absence. Object.hasOwn,
   // not `in`, so an inherited name like `toString` is not treated as declared.
   for (const name of required) {
-    if (!Object.hasOwn(shape, name) && !droppedReadOnly.has(name)) {
+    if (!Object.hasOwn(shape, name) && !droppedReadOnly.has(name) && !droppedWriteOnly.has(name)) {
       return { unrepresentable: `the required property "${name}" is not declared in properties` };
     }
   }
-  const ap = node['additionalProperties'];
   if (ap === false) {
     return { ok: z.strictObject(shape) };
   }
@@ -632,7 +652,8 @@ const objectSchema = (
     // than the spec states. An empty `properties: {}` declares nothing, the
     // same rule mergeAllOf/buildTyped apply ("empty properties is not object
     // evidence"). `droppedReadOnly` counts as declared: an object whose
-    // properties are all readOnly accepts only `{}` in a request.
+    // properties are all readOnly accepts only `{}` in a request. (A response
+    // object is open here regardless, so a dropped writeOnly changes nothing.)
     const declaresProperties = Object.keys(properties).length > 0;
     return mode === 'request' && declaresProperties
       ? { ok: z.strictObject(shape) }
@@ -926,7 +947,8 @@ export const convertSchema = (
   // The direction the converted schema validates. `'request'` (the default:
   // tool inputs, parameters, request bodies) stays strict and drops readOnly
   // properties; `'response'` (output schemas) leaves undeclared properties
-  // open and makes writeOnly properties optional. Propagated unchanged to
+  // open and drops (open object) or relaxes (closed object) writeOnly
+  // properties. Propagated unchanged to
   // every nested schema. See SchemaMode.
   mode: SchemaMode = 'request',
 ): SchemaResult => {
@@ -944,6 +966,18 @@ export const convertSchema = (
   if (malformed !== undefined) {
     return { unrepresentable: `a malformed "${malformed}" value` };
   }
+  // #39: a response schema is compiled by Ajv, which RUNS `pattern` on
+  // upstream data synchronously. A pattern with nested quantifiers can
+  // backtrack catastrophically, so it makes the output schema unrepresentable
+  // (fail-closed; the tool falls back to text). Request mode only advertises
+  // `pattern` and never executes it, so it is unaffected. See pattern-safety.ts.
+  if (
+    mode === 'response' &&
+    typeof node['pattern'] === 'string' &&
+    hasNestedQuantifier(node['pattern'])
+  ) {
+    return { unrepresentable: UNSAFE_PATTERN_REASON };
+  }
   const conflict = conflictingCombination(node);
   if (conflict !== undefined) {
     return { unrepresentable: conflict };
@@ -954,9 +988,11 @@ export const convertSchema = (
   }
   // Advertise `pattern` and `format` uniformly: attach them as wire metadata on
   // whatever the branch produced — string, enum, const, composite, or a
-  // typeless z.unknown() — so z.toJSONSchema emits the keywords WITHOUT
-  // enforcing them (no live RegExp; no divergent format validator). The model
-  // sees them; validation never runs them.
+  // typeless z.unknown() — so z.toJSONSchema emits the keywords WITHOUT Zod
+  // enforcing them (no live RegExp; no divergent format validator). For a
+  // request the model sees them and nothing runs them. For a response the
+  // output schema IS compiled by Ajv, which runs `pattern` on upstream data —
+  // hence the nested-quantifier gate above (#39).
   const meta: Record<string, unknown> = {};
   if (typeof node['pattern'] === 'string') {
     meta['pattern'] = node['pattern'];

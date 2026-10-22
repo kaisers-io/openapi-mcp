@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
+import { UNSAFE_PATTERN_REASON, convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
 import type { SchemaResult } from '../src/index.ts';
 
 const ok = (r: SchemaResult): z.ZodType => {
@@ -945,12 +945,25 @@ describe('convertSchema — request/response mode (#33, #47)', () => {
     expect(s.safeParse({ owner: { id: '1', name: 'x', password: 'p' } }).success).toBe(false);
   });
 
-  it('response mode: a required writeOnly property becomes optional; readOnly stays required', () => {
+  it('response mode: an open object drops a writeOnly property; readOnly stays required', () => {
     const s = ok(convertSchema(user, '3.1', 0, 'response'));
     expect(s.safeParse({ id: 'a', name: 'x' }).success).toBe(true);
     expect(s.safeParse({ name: 'x' }).success).toBe(false);
     // A server that does echo the writeOnly value is still schema-valid.
     expect(s.safeParse({ id: 'a', name: 'x', password: 'p' }).success).toBe(true);
+    const wire = z.toJSONSchema(s) as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(wire.properties)).toEqual(['id', 'name']);
+    expect(wire.required).toEqual(['id', 'name']);
+  });
+
+  it('response mode: a closed object keeps a writeOnly property, optional, so an echo stays valid', () => {
+    const s = ok(convertSchema({ ...user, additionalProperties: false }, '3.1', 0, 'response'));
+    expect(s.safeParse({ id: 'a', name: 'x' }).success).toBe(true);
+    expect(s.safeParse({ id: 'a', name: 'x', password: 'p' }).success).toBe(true);
+    expect(s.safeParse({ id: 'a', name: 'x', password: 1 }).success).toBe(false);
+    const wire = z.toJSONSchema(s) as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(wire.properties)).toEqual(['id', 'name', 'password']);
+    expect(wire.required).toEqual(['id', 'name']);
   });
 
   it('request mode: a readOnly property inside an allOf member is dropped as well', () => {
@@ -1054,5 +1067,39 @@ describe('convertSchema — nullable and single-member allOf idioms (#41)', () =
       'unrepresentable' in convertSchema({ type: ['string', 'string'], enum: ['a'] }, '3.1'),
     ).toBe(true);
     expect('unrepresentable' in convertSchema({ type: [], enum: ['a'] }, '3.1')).toBe(true);
+  });
+});
+
+// #39 / D11: a response `pattern` with nested quantifiers is unrepresentable.
+describe('convertSchema — response pattern safety (#39)', () => {
+  it('response mode: a nested-quantifier pattern is unrepresentable', () => {
+    const result = convertSchema(
+      { type: 'object', properties: { v: { type: 'string', pattern: '^(a+)+$' } } },
+      '3.1',
+      0,
+      'response',
+    );
+    expect(result).toEqual({
+      unrepresentable: `property "v": ${UNSAFE_PATTERN_REASON}`,
+    });
+  });
+
+  it('request mode keeps advertising the same pattern (never executed there)', () => {
+    const s = ok(convertSchema({ type: 'string', pattern: '^(a+)+$' }));
+    expect((z.toJSONSchema(s) as Record<string, unknown>)['pattern']).toBe('^(a+)+$');
+  });
+
+  it('response mode: an ordinary pattern is still advertised', () => {
+    const s = ok(
+      convertSchema(
+        { type: 'string', pattern: '^(\\d{1,3}\\.){3}\\d{1,3}$' },
+        '3.1',
+        0,
+        'response',
+      ),
+    );
+    expect((z.toJSONSchema(s) as Record<string, unknown>)['pattern']).toBe(
+      '^(\\d{1,3}\\.){3}\\d{1,3}$',
+    );
   });
 });
