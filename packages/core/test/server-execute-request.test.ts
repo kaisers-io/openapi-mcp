@@ -1032,6 +1032,21 @@ describe('buildRequest — query deepObject / spaceDelimited / pipeDelimited (#5
   it('delimited: other reserved characters are still encoded', () => {
     expect(ok(run('pipeDelimited', false, ['a&b', 'c=#'])).query).toBe('created=a%26b%7Cc%3D%23');
   });
+
+  it.each(['a][b', 'a[0]', ']', '[', 'a['])(
+    'deepObject: a key %j containing a bracket is rejected as ambiguous with nesting',
+    (key) => {
+      expect(err(run('deepObject', true, { [key]: 'v', ok: 1 }))).toMatch(
+        /key containing "\[" or "\]"/u,
+      );
+    },
+  );
+
+  it('delimited: an empty array or object is omitted, like form', () => {
+    expect(ok(run('pipeDelimited', false, [])).query).toBe('');
+    expect(ok(run('spaceDelimited', false, [])).query).toBe('');
+    expect(ok(run('pipeDelimited', false, {})).query).toBe('');
+  });
 });
 
 // #40: a REQUIRED body whose flattened properties are all optional and all
