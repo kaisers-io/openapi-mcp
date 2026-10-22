@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
 import {
   compileEnvelopeValidator,
@@ -216,6 +217,56 @@ describe('mapResponse — HTTP error status (>=400)', () => {
     const text = isError(mapResponse(defaultOpts({ outcome, redactor: forcedResidue })));
     expect(text).toBe('upstream request failed with status 500');
   });
+
+  // Issue #58: secrets are registered as whole header values, so these
+  // bodies — which echo only the credential, a decoded Basic part, or an
+  // encoding the redactor did not know — used to come back verbatim.
+  describe('echoed credentials derived from an Authorization value (#58)', () => {
+    const token = 'example-token-not-a-secret';
+    const basicHeader = `Basic ${Buffer.from('alice:example/pass word-not-a-secret').toString('base64')}`;
+
+    it.each([
+      ['a bare Bearer token', `Bearer ${token}`, `{"error":"invalid api key ${token}"}`, token],
+      [
+        'a decoded Basic user:pass',
+        basicHeader,
+        'login failed for alice:example/pass word-not-a-secret',
+        'pass word',
+      ],
+      [
+        'a decoded Basic password',
+        basicHeader,
+        'bad password example/pass word-not-a-secret',
+        'pass word',
+      ],
+      [
+        'a lowercase %xx password',
+        basicHeader,
+        'pw=example%2fpass%20word-not-a-secret',
+        'pass%20word',
+      ],
+      ['a form-encoded password', basicHeader, 'pw=example%2Fpass+word-not-a-secret', 'pass+word'],
+      [
+        'a JSON \\/-escaped password',
+        basicHeader,
+        String.raw`{"pw":"example\/pass word-not-a-secret"}`,
+        'pass word',
+      ],
+    ])('500 text/plain echoing %s is redacted', (_label, headerValue, body, fragment) => {
+      const redactor = createRedactor([headerValue]);
+      const outcome = response(500, 'text/plain', body);
+      const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
+      expect(text).toMatch(/^upstream request failed with status 500: .*\[redacted\]/u);
+      expect(text).not.toContain(fragment);
+    });
+
+    it('500 application/json echoing a bare Bearer token never leaks', () => {
+      const redactor = createRedactor([`Bearer ${token}`]);
+      const outcome = response(500, 'application/json', `{"error":"invalid api key ${token}"}`);
+      const text = isError(mapResponse(defaultOpts({ outcome, redactor })));
+      expect(text).not.toContain(token);
+    });
+  });
 });
 
 describe('mapResponse — no outputSchema (validator undefined)', () => {
@@ -283,6 +334,14 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     const result = mapResponse(defaultOpts({ outcome }));
     expect(result.isError).toBe(false);
     expect(result.content[0]?.text).toBe('hello world');
+  });
+
+  it('a 200 text/* body echoing a bare Bearer credential is returned redacted (#58)', () => {
+    const redactor = createRedactor(['Bearer example-token-not-a-secret']);
+    const outcome = response(200, 'text/plain', 'your key is example-token-not-a-secret');
+    const result = mapResponse(defaultOpts({ outcome, redactor }));
+    expect(result.isError).toBe(false);
+    expect(result.content[0]?.text).toBe('your key is [redacted]');
   });
 
   it('a body over maxTextBytes is truncated with an explicit marker', () => {

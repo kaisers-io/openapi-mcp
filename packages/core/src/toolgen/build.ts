@@ -9,6 +9,7 @@ import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
 import { explainOutputSchema } from './output-schema.ts';
 import type { JsonSchemaRecord } from './output-schema.ts';
+import { withConvertMemo } from './schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
 
@@ -144,12 +145,15 @@ export const buildTools = (
   const reservedHeaders = new Set([...opts.reservedHeaders].map((name) => name.toLowerCase()));
   // One buildToolEntry call per operation, in namedOperations order — matches
   // the original for-of's iteration (and thus toolName/omission) order exactly.
-  const entries = namedOperations.map((named) =>
-    buildToolEntry(
-      named,
-      reservedHeaders,
-      opts.openapiVersion,
-      opts.defaultResponseIsError === true,
+  // One memo scope per build: shared schema nodes convert once (issue #90)
+  const entries = withConvertMemo(() =>
+    namedOperations.map((named) =>
+      buildToolEntry(
+        named,
+        reservedHeaders,
+        opts.openapiVersion,
+        opts.defaultResponseIsError === true,
+      ),
     ),
   );
   return {

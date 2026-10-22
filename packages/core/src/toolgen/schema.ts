@@ -71,7 +71,14 @@ const malformedKeyword = (
   node: Record<string, unknown>,
   version: OpenapiVersion,
 ): string | undefined => {
-  for (const keyword of ['minLength', 'maxLength', 'minItems', 'maxItems']) {
+  for (const keyword of [
+    'minLength',
+    'maxLength',
+    'minItems',
+    'maxItems',
+    'minProperties',
+    'maxProperties',
+  ]) {
     if (keyword in node && !nonNegInt(node[keyword])) {
       return keyword;
     }
@@ -104,6 +111,9 @@ const malformedKeyword = (
     (!finite(node['multipleOf']) || (node['multipleOf'] as number) <= 0)
   ) {
     return 'multipleOf';
+  }
+  if ('uniqueItems' in node && typeof node['uniqueItems'] !== 'boolean') {
+    return 'uniqueItems';
   }
   if ('pattern' in node && typeof node['pattern'] !== 'string') {
     return 'pattern';
@@ -161,9 +171,12 @@ const KNOWN_KEYWORDS: ReadonlySet<string> = new Set([
   'items',
   'minItems',
   'maxItems',
+  'uniqueItems',
   'properties',
   'required',
   'additionalProperties',
+  'minProperties',
+  'maxProperties',
   // Benign metadata (no validation effect):
   'title',
   'description',
@@ -209,9 +222,12 @@ const ASSERTION_KEYWORDS: ReadonlySet<string> = new Set([
   'items',
   'minItems',
   'maxItems',
+  'uniqueItems',
   'properties',
   'required',
   'additionalProperties',
+  'minProperties',
+  'maxProperties',
 ]);
 
 const valueMatchesType = (value: unknown, type: string): boolean => {
@@ -581,7 +597,42 @@ const openObject = (schema: z.ZodType, mode: SchemaMode): z.ZodType =>
         .pipe(schema)
     : schema;
 
+const ownPropertyCount = (value: unknown): number =>
+  Object.keys(value as Record<string, unknown>).length;
+
+// minProperties / maxProperties (JSON Schema Validation 2020-12 §6.5.1-2)
+// count the instance's own properties — exactly, by refinement on the parsed
+// object (absent optional properties are not materialized by Zod, and a
+// strict object has already rejected undeclared ones). Advertised via .meta in
+// convertSchema.
 const objectSchema = (
+  node: Record<string, unknown>,
+  depth: number,
+  version: OpenapiVersion,
+  mode: SchemaMode,
+): SchemaResult => {
+  const base = objectShapeSchema(node, depth, version, mode);
+  if (!('ok' in base)) {
+    return base;
+  }
+  const min = node['minProperties'];
+  const max = node['maxProperties'];
+  const withMin =
+    typeof min === 'number'
+      ? base.ok.refine((value) => ownPropertyCount(value) >= min, {
+          message: `must have at least ${min} propert${min === 1 ? 'y' : 'ies'}`,
+        })
+      : base.ok;
+  const withMax =
+    typeof max === 'number'
+      ? withMin.refine((value) => ownPropertyCount(value) <= max, {
+          message: `must have at most ${max} propert${max === 1 ? 'y' : 'ies'}`,
+        })
+      : withMin;
+  return { ok: withMax };
+};
+
+const objectShapeSchema = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
@@ -676,6 +727,37 @@ const objectSchema = (
   return { ok: openObject(z.object(shape).catchall(apConv.ok), mode) };
 };
 
+// JSON instance equality (JSON Schema Core 2020-12 §4.2.2): object member
+// order is irrelevant and numbers compare mathematically. A canonical
+// encoding with sorted object keys makes equal instances encode identically
+// (JSON.stringify already maps 1 and 1.0 — the same JS number — alike).
+const canonicalJson = (value: unknown): string => {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalJson(item)).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    const members = Object.keys(value)
+      .toSorted()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`);
+    return `{${members.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+};
+
+// O(n) over the encoded items. A pathological input that cannot be encoded
+// (nesting deep enough to overflow the stack) fails validation closed instead
+// of throwing past Zod — with its own message, so the caller is not told
+// about duplicates that may not exist.
+const uniquenessIssue = (items: readonly unknown[]): string | undefined => {
+  try {
+    return new Set(items.map((item) => canonicalJson(item))).size === items.length
+      ? undefined
+      : 'items must be unique';
+  } catch {
+    return 'items are nested too deeply to check that they are unique (uniqueItems); send a flatter value';
+  }
+};
+
 const arraySchema = (
   node: Record<string, unknown>,
   depth: number,
@@ -689,7 +771,18 @@ const arraySchema = (
   const base = z.array(item.ok);
   const withMin = typeof node['minItems'] === 'number' ? base.min(node['minItems']) : base;
   const withMax = typeof node['maxItems'] === 'number' ? withMin.max(node['maxItems']) : withMin;
-  return { ok: withMax };
+  // uniqueItems is enforced exactly (refine, opaque to z.toJSONSchema) and
+  // advertised via .meta in convertSchema.
+  return node['uniqueItems'] === true
+    ? {
+        ok: withMax.superRefine((items, ctx) => {
+          const message = uniquenessIssue(items);
+          if (message !== undefined) {
+            ctx.addIssue({ code: 'custom', message });
+          }
+        }),
+      }
+    : { ok: withMax };
 };
 
 // --- Static disjointness of oneOf branches (decision D12, #43) -------------
@@ -1142,6 +1235,75 @@ const build = (
   return nullable ? { ok: base.ok.nullable() } : base;
 };
 
+// Per-build memoization (issue #90). Dereferencing shares one output object
+// per $ref target (#89), so the schema a GET, PUT and POST all return is the
+// SAME node, and converting it once per build is enough. The memo is keyed by
+// node identity, version and mode, lives only for one withConvertMemo call (one
+// buildTools run, so nothing leaks across specs), and caches unrepresentable
+// results too, so a hostile spec cannot force the same failing work twice.
+//
+// Depth is the one input besides the node: a nested conversion past
+// MAX_CONVERT_DEPTH is unrepresentable. Each entry therefore records its
+// height (how far below its own depth the conversion reached); it is reused
+// at another depth only if it stays within the budget there, and an entry
+// whose conversion hit the budget is not cached at all — so every result is
+// exactly what an uncached conversion at that depth returns.
+type ConvertMemoEntry = { result: SchemaResult; height: number };
+
+type BuildScope = {
+  // Per node: one entry per `${version}/${mode}` (see memoKey).
+  converted: WeakMap<object, Partial<Record<string, ConvertMemoEntry>>>;
+  // Keyed by Zod schema identity; undefined records a failed emission
+  jsonSchemas: WeakMap<z.ZodType, Record<string, unknown> | undefined>;
+};
+
+// The key must cover EVERY input that changes a conversion's result: node,
+// version, the request/response mode (#33/#47: readOnly/writeOnly handling,
+// open response objects, inclusive response oneOf, and the #39 response-only
+// pattern gate all depend on it) and, via height, depth. A new conversion
+// parameter has to join the key, or the first conversion of a shared node
+// would decide the result for every later use — e.g. a `User` schema shared
+// by a request body and a response would get the request's strict shape.
+const memoKey = (version: OpenapiVersion, mode: SchemaMode): string => `${version}/${mode}`;
+//
+// Imperative on purpose: the scope and the deepest depth reached are ambient
+// state of the current synchronous conversion, threaded implicitly so the
+// recursive converters keep their signatures. Both are only ever set inside
+// withConvertMemo / convertSchema and restored before they return. That is
+// sound only because conversion never awaits: convertSchema and everything
+// it calls must stay synchronous, or another build could observe the scope.
+let activeScope: BuildScope | undefined;
+let deepestDepth = 0;
+
+export const withConvertMemo = <Value>(run: () => Value): Value => {
+  const previous = activeScope;
+  activeScope = { converted: new WeakMap(), jsonSchemas: new WeakMap() };
+  try {
+    return run();
+  } finally {
+    activeScope = previous;
+  }
+};
+
+// z.toJSONSchema of one Zod schema instance, once per build. Callers must not
+// mutate the result: it is shared by every tool whose schema converted to the
+// same instance (the server snapshot freezes it).
+export const memoizedJsonSchema = (
+  schema: z.ZodType,
+  emit: (schema: z.ZodType) => Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  const scope = activeScope;
+  if (scope === undefined) {
+    return emit(schema);
+  }
+  if (scope.jsonSchemas.has(schema)) {
+    return scope.jsonSchemas.get(schema);
+  }
+  const emitted = emit(schema);
+  scope.jsonSchemas.set(schema, emitted);
+  return emitted;
+};
+
 export const convertSchema = (
   node: unknown,
   version: OpenapiVersion = '3.1',
@@ -1154,6 +1316,35 @@ export const convertSchema = (
   // every nested schema. See SchemaMode.
   mode: SchemaMode = 'request',
 ): SchemaResult => {
+  const scope = activeScope;
+  if (scope === undefined || !isRecord(node)) {
+    return convertUncached(node, version, depth, mode);
+  }
+  const key = memoKey(version, mode);
+  const byKey = scope.converted.get(node);
+  const cached = byKey?.[key];
+  if (cached !== undefined && depth + cached.height <= MAX_CONVERT_DEPTH) {
+    deepestDepth = Math.max(deepestDepth, depth + cached.height);
+    return cached.result;
+  }
+  const outer = deepestDepth;
+  deepestDepth = depth;
+  const result = convertUncached(node, version, depth, mode);
+  const reached = deepestDepth;
+  deepestDepth = Math.max(outer, reached);
+  if (reached <= MAX_CONVERT_DEPTH) {
+    scope.converted.set(node, { ...byKey, [key]: { result, height: reached - depth } });
+  }
+  return result;
+};
+
+const convertUncached = (
+  node: unknown,
+  version: OpenapiVersion,
+  depth: number,
+  mode: SchemaMode,
+): SchemaResult => {
+  deepestDepth = Math.max(deepestDepth, depth);
   if (depth > MAX_CONVERT_DEPTH) {
     return { unrepresentable: 'schema nesting exceeds the depth budget' };
   }
@@ -1213,6 +1404,16 @@ export const convertSchema = (
   }
   if (typeof node['multipleOf'] === 'number') {
     meta['multipleOf'] = node['multipleOf'];
+  }
+  // Enforced by refinement in arraySchema / objectSchema, advertised here.
+  if (node['uniqueItems'] === true) {
+    meta['uniqueItems'] = true;
+  }
+  if (typeof node['minProperties'] === 'number') {
+    meta['minProperties'] = node['minProperties'];
+  }
+  if (typeof node['maxProperties'] === 'number') {
+    meta['maxProperties'] = node['maxProperties'];
   }
   const advertised = Object.keys(meta).length > 0 ? built.ok.meta(meta) : built.ok;
   return { ok: withDescription(advertised, node) };
