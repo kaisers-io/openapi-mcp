@@ -14,6 +14,12 @@ const repoFile = (path: string): string =>
 
 type Run = { status: number | null; stdout: string; stderr: string };
 
+// Every case below spawns a Node child (and "accepts exactly the floor" loads the whole CLI),
+// which takes far longer under CPU contention than vitest's 5 s default allows for. The test
+// budget therefore matches the child's own 30 s timeout, so a slow child fails on its own
+// result rather than on a test timeout that hides it (issue #96).
+const SPAWN_BUDGET = { timeout: 30_000 } as const;
+
 const runStub = (stub: string, nodeArgs: readonly string[], args: readonly string[]): Run => {
   const result = spawnSync(process.execPath, [...nodeArgs, stub, ...args], {
     encoding: 'utf8',
@@ -38,7 +44,7 @@ const enginesFloor = (path: string): string => {
   return pkg.engines.node;
 };
 
-describe('Node floor: engines, docs, CI and the bin stub agree', () => {
+describe('Node floor: engines, docs, CI and the bin stub agree', SPAWN_BUDGET, () => {
   const floor = enginesFloor('package.json');
   const match = /^>=(?<major>\d+)\.(?<minor>\d+)$/u.exec(floor);
   const major = Number(match?.groups?.['major']);
@@ -57,7 +63,10 @@ describe('Node floor: engines, docs, CI and the bin stub agree', () => {
   });
 
   it('rejects the last minor below the floor with a one-line hint and exit 1', () => {
-    const below = `${String(major)}.${String(minor - 1)}.0`;
+    // A `.0` floor (e.g. >=26.0) has no lower minor in its major; the newest release
+    // below it is then the previous major's, approximated by an x.99 minor.
+    const below =
+      minor === 0 ? `${String(major - 1)}.99.0` : `${String(major)}.${String(minor - 1)}.0`;
     const result = runStub(bin, asNode(below), ['--version']);
     expect(result.status).toBe(1);
     // Nothing on stdout: the CLI (which would print the version) was never loaded.
@@ -85,7 +94,7 @@ describe('Node floor: engines, docs, CI and the bin stub agree', () => {
 // Temp package directory of the current entry-selection case, removed after each case.
 let pkgDir: string | undefined;
 
-describe('bin stub entry selection', () => {
+describe('bin stub entry selection', SPAWN_BUDGET, () => {
   // An isolated copy of the package layout: only what each case places there exists, so the
   // result does not depend on whether this checkout has been built.
   const makePackage = (files: Record<string, string>): string => {
