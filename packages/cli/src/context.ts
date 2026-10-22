@@ -133,7 +133,12 @@ const rejectUnlessRealDirectory = (path: string, info: Stats): void => {
 // FileHandle.sync() is fsync(2) on Linux. On macOS, plain fsync does not
 // flush the drive's write cache, but libuv's uv_fs_fsync issues
 // fcntl(F_FULLFSYNC) there (falling back to F_BARRIERFSYNC, then fsync), so
-// the same call is a full flush on both supported platforms.
+// the same call is a full flush on both supported platforms. The price is
+// macOS-specific: F_FULLFSYNC typically costs several milliseconds, and every
+// writeFileAtomic pays it twice (file, then directory), so a commit of N
+// objects plus meta.json costs 2(N+1) full flushes. Commits are rare (only on
+// a spec change), so this is accepted; it shows up when benchmarking cold
+// starts on macOS.
 //
 // Some filesystems refuse fsync on a directory descriptor (EINVAL on several
 // FUSE and network mounts, ENOTSUP/EOPNOTSUPP elsewhere). That means "this
@@ -256,6 +261,9 @@ const realCacheFs = (): CacheFs => ({
     // sync() before rename and syncDirectory() after it make the replace
     // crash-durable, not only atomic — see syncDirectory above. A failed
     // file fsync aborts BEFORE the rename, so the previous target survives.
+    // A failed directory fsync comes AFTER it: the call then rejects although
+    // the new content is already visible, with its durability unknown (the
+    // CacheFs contract in core spells out what callers may assume).
     let handle: Awaited<ReturnType<typeof open>> | undefined;
     try {
       handle = await open(tmp, 'wx', 0o600);

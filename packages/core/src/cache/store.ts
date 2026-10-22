@@ -332,7 +332,11 @@ const persistableTextOrThrow = (
 // every write, which would leave old metadata pointing at new bytes both
 // transiently and, after a crash, permanently. meta.json is replaced
 // atomically second, and unreferenced objects are collected only AFTER that
-// commit succeeds, so meta.json is authoritative at every instant.
+// commit succeeds, so meta.json is authoritative at every instant. If the
+// meta.json write rejects, the commit's outcome is unknown, not "not applied":
+// the new meta.json may already be live (see CacheFs.writeFileAtomic). Both
+// outcomes are consistent, because every object either meta.json can name was
+// written and fsynced first, and garbage collection is skipped on rejection.
 const commitEntry = async (
   layout: CacheLayout,
   fs: CacheFs,
