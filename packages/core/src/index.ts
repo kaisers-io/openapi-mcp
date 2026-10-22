@@ -12,9 +12,12 @@ export type { ExitCode, RenderedError } from './errors.ts';
 export { createRedactor } from './redact.ts';
 export type { Redactor } from './redact.ts';
 export {
+  MAX_AGE_DURATION_MS,
   MAX_DURATION_MS,
+  parseAgeDuration,
   parseByteSize,
   parseDuration,
+  zAgeDuration,
   zByteSize,
   zDuration,
 } from './schemas/primitives.ts';
@@ -35,7 +38,12 @@ export {
   type GutterFrameOptions,
   type GutteredBody,
 } from './spec/display.ts';
-export { HEADER_NAME_RE, parseHeaderEnvMapping, resolveHeaderEnvMappings } from './http/headers.ts';
+export {
+  HEADER_NAME_RE,
+  NON_LATIN1_RE,
+  parseHeaderEnvMapping,
+  resolveHeaderEnvMappings,
+} from './http/headers.ts';
 export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';
 export { hashContent, loadSpecFromFile, parseSpecSource } from './spec/load.ts';
 export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
@@ -81,12 +89,13 @@ export type {
 } from './spec/normalize.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
 export type {
+  CacheLockState,
   CacheStatus,
   SpecPipelineDeps,
   SpecPipelineOptions,
   SpecPipelineResult,
 } from './spec/pipeline.ts';
-export type { CacheFs } from './cache/fs.ts';
+export type { CacheFs, CacheRuntime } from './cache/fs.ts';
 export {
   CACHE_KEY_MAX_LENGTH,
   CACHE_MAX_PERSISTED_BYTES,
@@ -102,7 +111,15 @@ export {
   resolveCachePolicy,
 } from './cache/paths.ts';
 export type { CacheLayout, CachePolicy } from './cache/paths.ts';
-export { LOCK_STALE_MS, unlockNamespace, withNamespaceLock } from './cache/lock.ts';
+export {
+  LOCK_RETRY_DELAYS_MS,
+  LOCK_STALE_MS,
+  lockRetrySchedule,
+  tryWithNamespaceLock,
+  unlockNamespace,
+  withNamespaceLock,
+} from './cache/lock.ts';
+export { describeLockHolder } from './cache/lock-holder.ts';
 export {
   CACHE_META_SCHEMA_VERSION,
   LEGACY_CACHE_META_SCHEMA_VERSION,
@@ -119,13 +136,19 @@ export {
   listNamespaceIds,
   promoteCandidate,
   readCacheEntry,
+  readCandidateDocument,
   serializedSizeWithin,
   serializeWithinBudget,
   touchRevalidated,
   writeAccepted,
   writeCandidate,
 } from './cache/store.ts';
-export type { CacheEntry, CacheEntrySummary, CacheReadResult } from './cache/store.ts';
+export type {
+  CacheEntry,
+  CacheEntrySummary,
+  CacheReadResult,
+  CandidateReadResult,
+} from './cache/store.ts';
 export { evaluateFreshness } from './cache/ttl.ts';
 export type { FreshnessDecision } from './cache/ttl.ts';
 export {

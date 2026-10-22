@@ -57,6 +57,15 @@ const META_OUTPUT_SCHEMA: Record<string, unknown> = {
     },
     acceptedContentHash: { type: 'string' },
     deadPatternCount: { type: 'integer' },
+    // Present only when start-up could not record the spec revalidation
+    // because another process holds the cache lock (#65). Host users rarely
+    // see stderr, so the stuck case is surfaced here too.
+    cacheLock: {
+      type: 'string',
+      enum: ['held', 'stale'],
+      description:
+        'Cache metadata not updated at start-up. stale: a dead process left the cache lock; the operator should run "openapi-mcp cache unlock". Tools still work.',
+    },
   },
   required: [
     'specTitle',
@@ -119,6 +128,11 @@ export type SnapshotPipelineInput = {
   contentHash: string;
   displaySource: string;
   deadPatterns: readonly DeadPattern[];
+  // Accepted operations withheld because the pending candidate removed them
+  // (#60). They are reported with the other omissions, each with its reason,
+  // so the meta tool shows exactly why a baseline operation is not a tool.
+  withheldOperations?: readonly OmittedOperation[] | undefined;
+  cacheLock?: 'held' | 'stale' | undefined;
 };
 
 // Recursively freezes a snapshot subgraph so the exposed ServerSnapshot is
@@ -222,7 +236,11 @@ export const buildSnapshot = (
   // Merge BOTH omission sources (normalization-level + toolgen-level) before
   // capping/sanitizing — the COUNT below is the exact TOTAL across both; the
   // REASONS list is a capped, sanitized diagnostic sample of that total.
-  const mergedOmitted: OmittedOperation[] = [...pipeline.spec.omitted, ...built.omitted];
+  const mergedOmitted: OmittedOperation[] = [
+    ...pipeline.spec.omitted,
+    ...built.omitted,
+    ...(pipeline.withheldOperations ?? []),
+  ];
   const meta: MetaSummary = {
     specTitle: pipeline.spec.title,
     specVersion: pipeline.spec.specVersion,
@@ -234,6 +252,7 @@ export const buildSnapshot = (
       .map((omission) => sanitizeOmission(omission)),
     acceptedContentHash: pipeline.contentHash,
     deadPatternCount: pipeline.deadPatterns.length,
+    ...(pipeline.cacheLock === undefined ? {} : { cacheLock: pipeline.cacheLock }),
   };
   return deepFreeze({ tools: all, toolsByName, meta });
 };
