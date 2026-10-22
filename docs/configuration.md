@@ -8,7 +8,15 @@ Nothing here should ever drift from the CLI's own `--help` — if in doubt, run
 There is no separate `openapi-mcp` config file. All configuration is CLI flags and
 environment variables, resolved through your MCP host's own config
 (`.mcp.json` for Claude Code, `config.toml` for Codex). `~/.kaisers-io/openapi-mcp/` holds
-only the on-disk spec cache.
+only caches, all created private (`0700`):
+
+- `cache/`, the on-disk spec cache, managed by `cache list` / `cache clear` and reported by
+  `doctor`;
+- `compile-cache/`, Node's V8 compile cache for the CLI bundle. Every invocation uses it,
+  including `--version` and `--help`, so the first run per user writes it and is slower; later
+  starts are faster. `doctor` and `cache clear` neither report nor clear it. Delete the
+  directory to reset it, and set `NODE_DISABLE_COMPILE_CACHE=1` to turn it off (then nothing
+  is written for it).
 
 ## Grammars
 

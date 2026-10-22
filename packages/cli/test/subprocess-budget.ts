@@ -28,6 +28,7 @@ export const SUBPROCESS_TEST_TIMEOUT_MS = 30_000;
 // LIGHT_SUBPROCESS_FILES below; subprocess-budget.test.ts fails otherwise.
 export const SUBPROCESS_E2E_FILES = [
   'test/bin.test.ts',
+  'test/bin-compile-cache.test.ts',
   'test/cache-concurrency.test.ts',
   'test/serve.test.ts',
   'test/serve-http.test.ts',
