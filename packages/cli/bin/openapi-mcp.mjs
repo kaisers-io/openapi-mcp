@@ -24,13 +24,25 @@ if (!PLATFORMS.includes(process.platform)) {
   process.exit(1);
 }
 
-// REQUIRED must equal `engines.node` in every package.json — test/bin.test.ts enforces that
-// by spawning this stub as the last minor below the floor and as the floor itself.
-const REQUIRED = [24, 11];
+// One [major, minor] floor per supported release line, oldest first. Every line but the last
+// is closed (`^22.19.0`: only 22.x from 22.19); the last one is open (`>=24.11.0`: 24.11 and
+// every later major). A major between two lines (23.x, an end-of-life odd line) is refused.
+// RANGE must equal `engines.node` in every package.json — test/bin.test.ts enforces that by
+// spawning this stub just below and exactly at each line's floor.
+const LINES = [
+  [22, 19],
+  [24, 11],
+];
+const RANGE = LINES.map((line, index) =>
+  index === LINES.length - 1 ? `>=${line.join('.')}.0` : `^${line.join('.')}.0`,
+).join(' || ');
 const found = process.versions.node.split('.').map(Number);
-if (found[0] < REQUIRED[0] || (found[0] === REQUIRED[0] && found[1] < REQUIRED[1])) {
+const newest = LINES[LINES.length - 1];
+const supported =
+  found[0] > newest[0] || LINES.some((line) => found[0] === line[0] && found[1] >= line[1]);
+if (!supported) {
   console.error(
-    `openapi-mcp requires Node >=${REQUIRED.join('.')} (found v${process.versions.node}). ` +
+    `openapi-mcp requires Node ${RANGE} (found v${process.versions.node}). ` +
       'Install a supported Node version (e.g. "nvm install 24") and re-run.',
   );
   process.exit(1);
@@ -38,11 +50,12 @@ if (found[0] < REQUIRED[0] || (found[0] === REQUIRED[0] && found[1] < REQUIRED[1
 
 // Returns the module to load, or undefined when the install is incomplete. Order matters:
 // dist/ (the only code the published tarball ships) first, then the dev fallback to the
-// TypeScript source, which Node 24 runs directly via type stripping. `src/` is never published
-// (package.json `files` is bin + dist), and Node refuses to strip types under node_modules, so
-// the source is a candidate only when it exists, i.e. in a repo checkout without a build — an
-// installed copy that lost dist/ must not chase a file that was never shipped. An explicit
-// source override (e.g. an OPENAPI_MCP_ENTRY=src switch) would slot in ahead of dist here.
+// TypeScript source, which every supported Node (22.19+, 24.11+) runs directly via type
+// stripping. `src/` is never published (package.json `files` is bin + dist), and Node refuses
+// to strip types under node_modules, so the source is a candidate only when it exists, i.e. in
+// a repo checkout without a build — an installed copy that lost dist/ must not chase a file
+// that was never shipped. An explicit source override (e.g. an OPENAPI_MCP_ENTRY=src switch)
+// would slot in ahead of dist here.
 const resolveEntry = (existsSync) => {
   const dist = new URL('../dist/openapi-mcp.mjs', import.meta.url);
   if (existsSync(dist)) {

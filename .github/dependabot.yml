@@ -27,8 +27,8 @@ updates:
         update-types: [minor, patch]
         patterns: ['*']
     ignore:
-      # @types/node must match the oldest supported runtime (engines: node >=24.11), not the newest Node.
-      # Types for a newer major would let code use APIs that do not exist on Node 24. Raise this together
-      # with the engines floor.
+      # @types/node tracks the oldest supported major (22; engines: node ^22.19.0 || >=24.11.0), not the
+      # newest Node. Types for a newer major would let code use APIs that do not exist on Node 22. Raise
+      # this together with the engines range.
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
