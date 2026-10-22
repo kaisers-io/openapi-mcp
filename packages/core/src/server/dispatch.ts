@@ -8,31 +8,28 @@ import {
   wasSecretScanned,
 } from './result.ts';
 import type { DispatchResult, ToolCallOutcome } from './result.ts';
+import type { TraceContext } from './trace.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
 
 // Bounds how many Zod issues are rendered into a validation-failure message —
 // defense in depth against a pathological schema producing thousands of
 // issues for one call.
 const MAX_ISSUE_COUNT = 20;
-// A path segment can be a caller-controlled DYNAMIC key (an object schema
-// using a catchall/`additionalProperties`), not just a fixed property name —
-// cap+sanitize each segment independently so one hostile key cannot itself
-// blow the total-LENGTH budget below. Both this cap and MAX_RENDERED_LENGTH
-// bound UTF-16 CODE UNITS (`sanitizeSpecText`/`sanitizeDisplayText` truncate
-// via JS string `.length`/`.slice`, per `spec/sanitize.ts`) — NOT UTF-8
-// bytes and not Unicode code points either (a surrogate pair counts as 2
-// code units here, though `truncate` takes care never to split one).
+// A path segment can be a caller-controlled DYNAMIC key (a catchall /
+// `additionalProperties` schema) — cap+sanitize each segment so one hostile
+// key cannot blow the total-LENGTH budget below. Both caps bound UTF-16 CODE
+// UNITS (`spec/sanitize.ts` truncates via `.length`/`.slice`), not UTF-8
+// bytes or code points (`truncate` never splits a surrogate pair).
 const MAX_PATH_SEGMENT_LENGTH = 40;
-// The final rendered string is ALSO capped as a whole (not just by issue
-// count) — belt-and-suspenders against a pathological aggregate size even
-// after the per-issue and per-segment caps above. 2048 UTF-16 code units —
-// see the units note above.
+// The final rendered string is ALSO capped as a whole (2048 UTF-16 code
+// units, see above) — belt-and-suspenders against a pathological total.
 const MAX_RENDERED_LENGTH = 2048;
 
 export type ToolExecutor = (
   tool: SnapshotTool,
   args: unknown,
   signal: AbortSignal,
+  trace?: TraceContext,
 ) => Promise<ToolCallOutcome>;
 
 export type MetaExecutor = (
@@ -57,6 +54,8 @@ export type CallRequest = {
   name: string;
   arguments: unknown;
   signal: AbortSignal;
+  // Validated W3C trace context from the request's `_meta` (server/trace.ts).
+  trace?: TraceContext;
 };
 
 type ZodIssueLike = {
@@ -204,12 +203,12 @@ const runRoutedExecutor = async (
   deps: DispatcherDeps,
   tool: SnapshotTool,
   data: unknown,
-  signal: AbortSignal,
+  { signal, trace }: CallRequest,
 ): Promise<ToolCallOutcome> => {
   try {
     return tool.kind === 'meta'
       ? await deps.metaExecutor(deps.snapshot, signal)
-      : await deps.executor(tool, data, signal);
+      : await deps.executor(tool, data, signal, trace);
   } catch {
     // Never surface the raw error — it may carry an upstream secret,
     // internal path, or stack detail. A generic, stable message only.
@@ -270,7 +269,7 @@ export const createDispatcher = (
           outcome: finalizeOutcome(redactedValidationOutcome(parsed.error.issues), deps.redactor),
         };
       }
-      const outcome = await runRoutedExecutor(deps, tool, parsed.data, request.signal);
+      const outcome = await runRoutedExecutor(deps, tool, parsed.data, request);
       return { kind: 'outcome', outcome: finalizeOutcome(outcome, deps.redactor) };
     } catch {
       // Redacts any throw from the lookup/rate stage above (deps.now/consume,

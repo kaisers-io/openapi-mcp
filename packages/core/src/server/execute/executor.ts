@@ -8,6 +8,7 @@ import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
 import { retryableErrorOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
+import type { TraceContext } from '../trace.ts';
 import type { SnapshotTool } from '../types.ts';
 import { deriveAccept } from './accept.ts';
 import { buildRequest } from './request.ts';
@@ -51,6 +52,10 @@ export type ExecutorConfig = {
   // Extra attempts for a transient failure of a retry-safe request
   // (--retries; default 0 = never retry; see retry.ts).
   retries?: number;
+  // Forward a call's validated W3C trace context (from `_meta`) upstream as
+  // traceparent/tracestate headers, same-origin hops only. Off unless set
+  // (serve turns it on; --no-trace-propagation turns it off).
+  propagateTraceContext?: boolean;
   // By tool name; compiled eagerly once at server startup — this module only
   // looks the map up per call.
   validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
@@ -222,6 +227,7 @@ const runUpstreamCall = async (
   tool: SnapshotTool,
   args: unknown,
   signal: AbortSignal,
+  trace: TraceContext | undefined,
 ): Promise<ToolCallOutcome> => {
   const { generated } = tool;
   if (generated === undefined) {
@@ -307,6 +313,15 @@ const runUpstreamCall = async (
     built.ok.contentType,
     built.ok.headers,
   );
+  if (config.propagateTraceContext === true && trace !== undefined) {
+    // Same-origin set only: a trace id is client correlation data, and a
+    // redirect to a foreign origin must not receive it. `traceparent` and
+    // `tracestate` are reserved tool-header names, so only an operator's
+    // own --header could already hold them — and that one wins.
+    for (const [name, value] of Object.entries(trace)) {
+      headers.sameOriginHeaders[name] ??= value;
+    }
+  }
   const retries = Math.min(config.retries ?? 0, MAX_RETRIES);
   const idempotencyKeyField = Object.values(generated.mapper.fields).some(
     (mapping) =>
@@ -388,7 +403,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     now: Date.now,
     ...deps.retry,
   };
-  const execute: ToolExecutor = async (tool, args, signal) => {
+  const execute: ToolExecutor = async (tool, args, signal, trace) => {
     const slot = await slots.acquire(signal, () => deps.transport.timeoutSignal(config.timeoutMs));
     if (slot === 'cancelled') {
       return isError('the request was cancelled');
@@ -400,7 +415,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
       return overloaded('timed out waiting for a free upstream request slot');
     }
     try {
-      return await runUpstreamCall(config, transport, retryDeps, tool, args, signal);
+      return await runUpstreamCall(config, transport, retryDeps, tool, args, signal, trace);
     } catch {
       // Belt-and-suspenders: the dispatcher also catches, but this module
       // never lets a raw throw (a library-internal message, a stack, a

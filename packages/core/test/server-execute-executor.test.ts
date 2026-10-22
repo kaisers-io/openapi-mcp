@@ -1553,3 +1553,58 @@ describe('createExecutor — optional retries for retry-safe requests', () => {
     expect(calls).toHaveLength(1);
   });
 });
+
+describe('createExecutor — W3C trace context propagation', () => {
+  const TRACE = {
+    traceparent: '00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01',
+    tracestate: 'congo=t61rcWkgMzE',
+  };
+
+  const run = async (
+    propagate: boolean | undefined,
+    handler: (call: FetchCall) => Response = () => textResponse(200, ''),
+  ) => {
+    const snapshot = buildToolSnapshot([pingOp]);
+    const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(handler);
+    const executor = createExecutor(
+      baseConfig({
+        validators: validatorsFor(snapshot),
+        ...(propagate === undefined ? {} : { propagateTraceContext: propagate }),
+      }),
+      deps,
+    );
+    await executor(tool, {}, freshSignal(), TRACE);
+    return calls;
+  };
+
+  it('forwards traceparent/tracestate on the same-origin request when enabled', async () => {
+    const [call] = await run(true);
+    expect(call?.init.headers?.['traceparent']).toBe(TRACE.traceparent);
+    expect(call?.init.headers?.['tracestate']).toBe(TRACE.tracestate);
+  });
+
+  it('never forwards it when propagation is off (the core default)', async () => {
+    for (const propagate of [false, undefined]) {
+      const [call] = await run(propagate);
+      expect(call?.init.headers?.['traceparent']).toBeUndefined();
+    }
+  });
+
+  it('never forwards it to a cross-origin redirect target', async () => {
+    const calls = await run(true, (call) =>
+      call.url.startsWith('https://api.example.test')
+        ? new Response(null, { status: 302, headers: { location: 'https://other.example/x' } })
+        : textResponse(200, ''),
+    );
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.init.headers?.['traceparent']).toBe(TRACE.traceparent);
+    expect(calls[1]?.init.headers?.['traceparent']).toBeUndefined();
+    expect(calls[1]?.init.headers?.['tracestate']).toBeUndefined();
+  });
+
+  it('reserves traceparent/tracestate: a spec header parameter of that name is no tool input', () => {
+    expect(SYSTEM_HEADERS.has('traceparent')).toBe(true);
+    expect(SYSTEM_HEADERS.has('tracestate')).toBe(true);
+  });
+});

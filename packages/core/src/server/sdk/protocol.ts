@@ -9,6 +9,8 @@ import { sanitizeSpecText } from '../../spec/sanitize.ts';
 import { createDispatcher } from '../dispatch.ts';
 import type { CallRequest, DispatcherDeps } from '../dispatch.ts';
 import type { ToolCallOutcome } from '../result.ts';
+import { pageTools } from '../tool-list.ts';
+import { traceContextFromMeta } from '../trace.ts';
 import type { ServerSnapshot } from '../types.ts';
 
 // STATIC, package-authored — NEVER spec-derived: the instructions a server
@@ -32,6 +34,62 @@ export type ProtocolSessionOptions = {
   version: string;
   snapshot: ServerSnapshot;
   dispatcherDeps: Omit<DispatcherDeps, 'snapshot'>;
+  // Interval between progress notifications for a call that asked for them
+  // (`_meta.progressToken`); injectable for tests.
+  progressIntervalMs?: number;
+  // Page size for tools/list; injectable for tests.
+  toolsPageSize?: number;
+};
+
+// Upstream calls can take tens of seconds; a client that asked for progress
+// gets one notification when the call starts and one every 5 s after, so it
+// can tell a slow upstream from a hung server. No byte counts are implied.
+export const PROGRESS_INTERVAL_MS = 5000;
+
+type ProgressToken = string | number;
+
+const progressTokenOf = (meta: unknown): ProgressToken | undefined => {
+  if (meta === null || typeof meta !== 'object') {
+    return undefined;
+  }
+  const { progressToken } = meta as { progressToken?: unknown };
+  return typeof progressToken === 'string' ||
+    (typeof progressToken === 'number' && Number.isInteger(progressToken))
+    ? progressToken
+    : undefined;
+};
+
+// Starts the heartbeat and returns its stop function. `progress` strictly
+// increases (the spec's MUST); notification failures are ignored — progress
+// is advisory and must never fail the call.
+const startProgress = (
+  token: ProgressToken,
+  notify: (notification: { method: string; params: Record<string, unknown> }) => Promise<void>,
+  intervalMs: number,
+): (() => void) => {
+  let progress = 0;
+  const sendOnce = async (message: string): Promise<void> => {
+    progress += 1;
+    try {
+      await notify({
+        method: 'notifications/progress',
+        params: { progressToken: token, progress, message },
+      });
+    } catch {
+      // Advisory only: a lost notification never fails the call.
+    }
+  };
+  // Fire-and-forget from a timer callback, which cannot await.
+  const send = (message: string): void => {
+    void sendOnce(message);
+  };
+  send('calling the upstream API');
+  const timer = setInterval(() => {
+    send('still waiting for the upstream API');
+  }, intervalMs);
+  return () => {
+    clearInterval(timer);
+  };
 };
 
 // Reflected verbatim into a protocol error message below — capped so a caller
@@ -111,9 +169,21 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
   );
   const dispatcher = createDispatcher({ snapshot: opts.snapshot, ...opts.dispatcherDeps });
 
-  server.setRequestHandler('tools/list', (): ListToolsResult => ({
-    tools: opts.snapshot.tools.map((tool) => tool.wireTool as unknown as Tool),
-  }));
+  server.setRequestHandler('tools/list', (request): ListToolsResult => {
+    const page = pageTools(
+      opts.snapshot.tools,
+      request.params?.cursor,
+      opts.snapshot.meta.acceptedContentHash,
+      opts.toolsPageSize,
+    );
+    if ('invalidCursor' in page) {
+      throw new ProtocolError(ProtocolErrorCode.InvalidParams, 'invalid tools/list cursor');
+    }
+    return {
+      tools: page.tools.map((tool) => tool.wireTool as unknown as Tool),
+      ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+    };
+  });
 
   server.setRequestHandler('tools/call', async (request, ctx): Promise<CallToolResult> => {
     // Tasks are 2025-era wire vocabulary that the 2026-07-28 line dropped:
@@ -127,12 +197,28 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
         'task-augmented tools/call is not supported',
       );
     }
+    // The request's non-envelope `_meta` keys (the SDK lifts the reserved
+    // io.modelcontextprotocol/* envelope out): progressToken and the W3C
+    // trace context live here.
+    const { _meta: requestMeta } = ctx.mcpReq;
     const call: CallRequest = {
       name: request.params.name,
       arguments: request.params.arguments ?? {},
       signal: ctx.mcpReq.signal,
+      trace: traceContextFromMeta(requestMeta),
     };
-    const result = await dispatcher.call(call);
+    const token = progressTokenOf(requestMeta);
+    const stopProgress =
+      token === undefined
+        ? undefined
+        : startProgress(
+            token,
+            (notification) => ctx.mcpReq.notify(notification),
+            opts.progressIntervalMs ?? PROGRESS_INTERVAL_MS,
+          );
+    // Stopped before the result is returned: progress MUST end with the
+    // request (spec, Progress).
+    const result = await dispatcher.call(call).finally(() => stopProgress?.());
     if (result.kind === 'unknown-tool') {
       // InvalidParams (-32602), NOT MethodNotFound (-32601): the `tools/call`
       // METHOD exists and was dispatched correctly — it is the tool NAME

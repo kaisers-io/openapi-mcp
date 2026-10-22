@@ -73,6 +73,7 @@ const META_OUTPUT_SCHEMA: Record<string, unknown> = {
 
 const metaWireTool = (): WireTool => ({
   name: META_TOOL_NAME,
+  title: 'Server status',
   description:
     "Report this server's accepted spec, tool inventory, and omissions. Read-only, package-authored — never spec-derived.",
   inputSchema: z.toJSONSchema(META_INPUT_SCHEMA) as Record<string, unknown>,
@@ -83,13 +84,36 @@ const metaWireTool = (): WireTool => ({
   annotations: { readOnlyHint: true, openWorldHint: false },
 });
 
-const wireToolOf = (generated: GeneratedTool): WireTool => ({
-  name: generated.toolName,
-  description: generated.description,
-  inputSchema: generated.wireSchema as Record<string, unknown>,
-  ...(generated.outputSchema === undefined ? {} : { outputSchema: generated.outputSchema }),
-  annotations: generated.annotations as unknown as Record<string, unknown>,
-});
+// Clients show `title` in tool pickers and approval prompts, so it is kept
+// short. `summary` already went through normalizeSpec's sanitizeSpecText;
+// it is re-capped here for display.
+const TITLE_MAX = 80;
+const titleOf = (generated: GeneratedTool): string | undefined => {
+  const { summary } = generated.operation;
+  const title = summary === undefined ? '' : sanitizeSpecText(summary, TITLE_MAX);
+  return title === '' ? undefined : title;
+};
+
+// Code-point order (never locale-dependent): `<` on strings compares UTF-16
+// code units, identical everywhere.
+const byName = (first: SnapshotTool, second: SnapshotTool): number => {
+  if (first.name === second.name) {
+    return 0;
+  }
+  return first.name < second.name ? -1 : 1;
+};
+
+const wireToolOf = (generated: GeneratedTool): WireTool => {
+  const title = titleOf(generated);
+  return {
+    name: generated.toolName,
+    ...(title === undefined ? {} : { title }),
+    description: generated.description,
+    inputSchema: generated.wireSchema as Record<string, unknown>,
+    ...(generated.outputSchema === undefined ? {} : { outputSchema: generated.outputSchema }),
+    annotations: generated.annotations as unknown as Record<string, unknown>,
+  };
+};
 
 const assertObjectRoot = (
   toolName: string,
@@ -190,9 +214,12 @@ export const buildSnapshot = (
     wireTool: metaWireTool(),
     inputSchema: META_INPUT_SCHEMA,
   };
-  // Meta tool first: a stable, predictable tools/list order that does not
-  // depend on operation ordering in the spec.
-  const all = [metaTool, ...upstreamTools];
+  // Meta tool first, then the upstream tools sorted by name: the tools/list
+  // order (and therefore its bytes, which clients and prompt caches key on)
+  // depends only on WHICH operations exist, never on the order of keys in
+  // the spec document — a YAML-to-JSON round trip or a registry that
+  // re-serializes the spec cannot reorder the list.
+  const all = [metaTool, ...upstreamTools.toSorted(byName)];
   // Null-prototype: tool names are sanitized identifiers already, but a null
   // prototype is the safe default regardless — `__proto__`/`constructor` are
   // just ordinary own keys here, never a prototype-pollution vector, and

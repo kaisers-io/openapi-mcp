@@ -130,6 +130,9 @@ export type ResolvedApiConfig = {
   // Extra attempts for transient failures of retry-safe requests
   // (--retries; 0 = off).
   retries: number;
+  // Forward a call's W3C trace context (traceparent/tracestate from the MCP
+  // request's _meta) to the upstream; --no-trace-propagation turns it off.
+  propagateTraceContext: boolean;
 };
 
 export type ApiCmdOpts = {
@@ -147,6 +150,8 @@ export type ApiCmdOpts = {
   rateLimit: string;
   requestTimeout: string;
   retries: string;
+  // Commander's `--no-trace-propagation` sets this false (default true).
+  tracePropagation?: boolean;
 };
 
 // The --base-url/--header-env/--header/--max-response-bytes/
@@ -191,6 +196,10 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
       '--retries <n>',
       'retry a transient upstream failure (429/502/503/504, connection error) up to n times (0-3) for GET/HEAD/PUT/DELETE, and for POST/PATCH only with an Idempotency-Key header',
       '0',
+    )
+    .option(
+      '--no-trace-propagation',
+      "do not forward a call's W3C trace context (traceparent/tracestate) to the upstream API",
     );
 
 // Shared by both header groups so the name/value size checks are defined
@@ -437,5 +446,6 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
     rateLimit: parseRateLimit(cmdOpts.rateLimit),
     requestTimeoutMs: parseRequestTimeout(cmdOpts.requestTimeout),
     retries: parseRetries(cmdOpts.retries),
+    propagateTraceContext: cmdOpts.tracePropagation !== false,
   };
 };

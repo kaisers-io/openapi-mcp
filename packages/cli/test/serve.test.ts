@@ -85,11 +85,11 @@ const sendModern = (
 };
 
 // The tools/list order is fixed by the snapshot, not by the wire: the meta tool is
-// always first, then the spec's operations in document order (`legacyList` is
-// omitted upstream — it carries a cookie parameter). Pinning the exact array
+// always first, then the spec's operations sorted by tool name, independent of
+// document order (`legacyList` is omitted upstream — it carries a cookie parameter). Pinning the exact array
 // (not a containment check) is what makes a reordering of the derived list a
 // test failure rather than an invisible change for every cached client.
-const EXPECTED_TOOL_ORDER = ['openapi_mcp_status', 'listPets', 'createPet'];
+const EXPECTED_TOOL_ORDER = ['openapi_mcp_status', 'createPet', 'listPets'];
 
 type Collected = {
   stdoutLines: string[];

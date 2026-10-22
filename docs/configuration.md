@@ -59,6 +59,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--request-timeout <duration>` | no | deadline for each upstream API request (independent of `--timeout`, which covers the spec fetch) | `30s` |
 | `--retries <n>` | no | retry a transient upstream failure up to `n` times (0–3), only for retry-safe requests (see below) | `0` |
+| `--no-trace-propagation` | no | do not forward a call's W3C trace context (`_meta.traceparent`/`tracestate`) to the upstream API | forwarded |
 | `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
 | `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
@@ -110,6 +111,11 @@ Notes:
   exponential with full jitter (250 ms base, 5 s cap), or the upstream's `Retry-After` when
   it sends one. Retries stay within `--request-timeout`, the call's concurrency slot and its
   single rate-limit charge.
+- Trace context: when a `tools/call` carries a valid W3C `traceparent` (and optionally
+  `tracestate`) in `_meta`, it is sent to the upstream as the same-named headers, on
+  same-origin hops only. An invalid value is dropped. Tool arguments can never set these
+  headers. `--no-trace-propagation` turns this off, because it shares the client's trace IDs
+  with the upstream.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly
