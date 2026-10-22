@@ -46,6 +46,8 @@ export type StreamableHttpOptions = {
   version: string;
   snapshot: ServerSnapshot;
   dispatcherDeps: Omit<DispatcherDeps, 'snapshot'>;
+  // Page size for tools/list; undefined = no paging (see tool-list.ts).
+  toolsPageSize?: number;
   guard: RequestGuardOptions | OAuthGuardOptions;
   port: number;
   // Bind address; defaults to 127.0.0.1. A non-loopback address requires
@@ -236,6 +238,7 @@ export const createStreamableHttpServer = (
         version: opts.version,
         snapshot: opts.snapshot,
         dispatcherDeps: opts.dispatcherDeps,
+        ...(opts.toolsPageSize === undefined ? {} : { toolsPageSize: opts.toolsPageSize }),
       }),
     {
       // Stated explicitly rather than left to the option's default: a

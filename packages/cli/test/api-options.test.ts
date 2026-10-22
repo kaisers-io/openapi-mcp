@@ -97,6 +97,21 @@ describe('resolveApiConfig — --header-env (secret)', () => {
     expect((caught as OpenapiMcpError).message).not.toContain('injected');
   });
 
+  it('fails on a character above U+00FF in the resolved value, never echoing it', () => {
+    const secret = 'Bearer tök€n-value';
+    let caught: unknown;
+    try {
+      resolve(['--header-env', 'Authorization=API_KEY'], { API_KEY: secret });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(OpenapiMcpError);
+    expect((caught as OpenapiMcpError).code).toBe('usage');
+    expect((caught as OpenapiMcpError).message).toContain('API_KEY');
+    expect((caught as OpenapiMcpError).message).toContain('above U+00FF');
+    expect((caught as OpenapiMcpError).message).not.toContain('tök');
+  });
+
   it('rejects case-insensitive duplicates within the --header-env group', () => {
     expectUsageError(
       () =>
@@ -149,6 +164,19 @@ describe('resolveApiConfig — --header (static)', () => {
   it('rejects a control character in the value', () => {
     const hostile = `v${String.fromCodePoint(10)}injected`;
     expectUsageError(() => resolve(['--header', `X-Trace:${hostile}`]), 'X-Trace');
+  });
+
+  // A header value travels as bytes; undici refuses a code point above U+00FF
+  // only when the request is sent, as an opaque transport failure on every
+  // tool call. Refused at startup instead, naming the header and the rule.
+  it('rejects a value with a character above U+00FF at startup, naming the rule', () => {
+    expectUsageError(() => resolve(['--header', 'X-Team: Zürich-€']), 'X-Team');
+    expectUsageError(() => resolve(['--header', 'X-Team: Zürich-€']), 'above U+00FF');
+  });
+
+  it('still accepts a Latin-1 value (U+0080..U+00FF are valid header bytes)', () => {
+    const config = resolve(['--header', 'X-Team: Zürich']);
+    expect(config.staticHeaders).toContainEqual({ name: 'X-Team', value: 'Zürich' });
   });
 
   it.each([
@@ -406,5 +434,87 @@ describe('resolveApiConfig — startup budgets', () => {
       args.push('--header', `X-Agg${index}:${'a'.repeat(8000)}`);
     }
     expectUsageError(() => resolve(args), '');
+  });
+});
+
+describe('--max-concurrency and --rate-limit', () => {
+  it('defaults to 16 concurrent upstream calls and 120 calls per minute (unchanged)', () => {
+    const config = resolve([]);
+    expect(config.maxConcurrency).toBe(16);
+    expect(config.rateLimit).toEqual({ maxCalls: 120, windowMs: 60_000 });
+  });
+
+  it('parses explicit values', () => {
+    const config = resolve(['--max-concurrency', '4', '--rate-limit', '10/1s']);
+    expect(config.maxConcurrency).toBe(4);
+    expect(config.rateLimit).toEqual({ maxCalls: 10, windowMs: 1000 });
+    expect(resolve(['--rate-limit', '5000/2h']).rateLimit).toEqual({
+      maxCalls: 5000,
+      windowMs: 7_200_000,
+    });
+  });
+
+  it.each(['0', '-1', '1.5', '', 'abc', '16x', '257', '1e2', ' 4'])(
+    'rejects --max-concurrency %j',
+    (raw) => {
+      expectUsageError(() => resolve(['--max-concurrency', raw]), '--max-concurrency');
+    },
+  );
+
+  it.each([
+    '0/1m',
+    '-1/1m',
+    '1.5/1m',
+    '/1m',
+    '10',
+    '10/',
+    '10/0s',
+    '10/1.5s',
+    '10/1w',
+    '100001/1m',
+    '10/30d',
+    'x/1m',
+  ])('rejects --rate-limit %j', (raw) => {
+    expectUsageError(() => resolve(['--rate-limit', raw]), '--rate-limit');
+  });
+
+  it('rejects a missing value', () => {
+    expect(() => parseApiCmdOpts(['--max-concurrency'])).toThrow(/argument missing/u);
+    expect(() => parseApiCmdOpts(['--rate-limit'])).toThrow(/argument missing/u);
+  });
+});
+
+describe('--request-timeout', () => {
+  it('defaults to 30s, independent of the spec fetch --timeout', () => {
+    expect(resolve([]).requestTimeoutMs).toBe(30_000);
+  });
+
+  it('parses a duration', () => {
+    expect(resolve(['--request-timeout', '2m']).requestTimeoutMs).toBe(120_000);
+  });
+
+  it.each(['0s', '10', '1.5s', 'fast', '30d'])('rejects %j', (raw) => {
+    expectUsageError(() => resolve(['--request-timeout', raw]), '--request-timeout');
+  });
+});
+
+describe('--retries', () => {
+  it('defaults to 0 (off)', () => {
+    expect(resolve([]).retries).toBe(0);
+  });
+
+  it('accepts 0 to 3', () => {
+    expect(resolve(['--retries', '3']).retries).toBe(3);
+  });
+
+  it.each(['4', '-1', '1.5', 'x', '', '01'])('rejects %j', (raw) => {
+    expectUsageError(() => resolve(['--retries', raw]), '--retries');
+  });
+});
+
+describe('--no-trace-propagation', () => {
+  it('propagates trace context by default and turns it off with the flag', () => {
+    expect(resolve([]).propagateTraceContext).toBe(true);
+    expect(resolve(['--no-trace-propagation']).propagateTraceContext).toBe(false);
   });
 });

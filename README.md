@@ -31,7 +31,9 @@ Four pillars:
 
 ## Install
 
-Requirements: Node.js `>=24.11`, macOS or Linux.
+Requirements: Node.js `>=24.11`, macOS or Linux. Windows is not supported natively (the cache relies on POSIX file
+permissions and rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/). Other POSIX systems
+(e.g. FreeBSD) are refused because they are untested, not because they are known to be unsafe.
 
 ```bash
 npm i -g @kaisers-io/openapi-mcp
@@ -46,10 +48,6 @@ openapi-mcp doctor
 
 `openapi-mcp doctor` prints CLI/Node versions and the effective cache root — a good first
 check when something looks wrong.
-
-The GitHub repository is currently private, so `npm i -g @kaisers-io/openapi-mcp` and the
-`npx` invocations below only work for accounts with registry/repo access until
-`openapi-mcp` goes public.
 
 ## Quickstart
 
@@ -163,6 +161,11 @@ Run **one `openapi-mcp` server per API per environment** — dev/stage/prod are 
 entries with different spec URLs, credentials, and `--cache-key`s, not flags on a shared
 server.
 
+A refused call (`--max-concurrency` queue full or wait timed out, or over `--rate-limit`) is a
+tool error whose result `_meta` carries `"openapi-mcp/error"` (`overloaded` | `rate_limited`)
+and `"openapi-mcp/retryAfterMs"`. Keys under `openapi-mcp/` in `_meta` are part of the public
+contract; see [docs/configuration.md](docs/configuration.md).
+
 ## Filtering
 
 Tool exposure is controlled with repeatable `--allow`/`--deny` patterns, matched against
@@ -182,6 +185,16 @@ Rules, no exceptions:
 Pass `--strict-filters` to turn a dead pattern (one that matches nothing) into a startup
 error instead of a warning — useful once a filter set is stable and you want drift to fail
 loudly. Full flag reference: [`docs/configuration.md`](docs/configuration.md).
+
+### Large APIs: `--tool-mode discover`
+
+By default every exposed operation is its own MCP tool, and every tool's schemas are sent to
+the model up front — about 30k tokens for DigitalOcean's read-only operations. With
+`--tool-mode discover` the server lists three tools instead — `search_operations`,
+`describe_operation`, `call_operation` — and `tools/list` stays around 4 KB however many
+operations are exposed (up to 4096). Filters, validation and redaction apply exactly as for a
+direct call. `--tool-mode auto` picks `discover` above 64 exposed operations. Details and
+trade-offs: [Tool modes](docs/configuration.md#tool-modes).
 
 ## Secrets
 
@@ -205,13 +218,20 @@ See [`docs/security.md`](docs/security.md) for the full threat model.
 
 ## Caching & refresh
 
-Specs are cached under `~/.kaisers-io/openapi-mcp/cache/<namespace>/`, refreshed on a timer
-(`--ttl`, default `1h`) using conditional requests (ETag/Last-Modified).
+Specs are cached under `~/.kaisers-io/openapi-mcp/cache/<namespace>/` and re-validated at
+startup once the TTL has expired (`--ttl`, default `1h`), using conditional requests
+(ETag/Last-Modified). A running server does not refresh its tool list; restart it to pick up
+a newer spec.
 
 Refresh is **fail-closed**: the cache holds an accepted baseline and, separately, at most one
 pending candidate. A changed spec fetched at runtime is validated and written as a candidate
-only — it never activates automatically. The only automatic change is a **removal** (an
-operation gone from the candidate is disabled immediately, the fail-safe direction).
+only — it never activates automatically. The only automatic change is a **removal**: while
+the candidate waits, an accepted operation that the candidate no longer has (same method and
+path) is withheld, on every start, and listed in a warning and in `openapi_mcp_status`. That
+is the fail-safe direction. Operations present in both keep their accepted definition. Paths
+are compared with parameter names ignored (`/pets/{petId}` and `/pets/{id}` are the same
+operation), and `servers` is not compared: a candidate that only moves the base path (say
+`/v1` to `/v2`) withholds nothing, and the move waits for promotion like any other change.
 Everything else (new tools, changed descriptions or input schemas, method/path/base-URL
 changes, auth-scheme changes) waits for an explicit decision:
 
@@ -236,15 +256,20 @@ Full flag reference, including duration and size grammar: [`docs/configuration.m
 
 ## HTTP transport
 
-`--http` starts a Streamable HTTP server bound to `127.0.0.1` only, instead of stdio.
-`--http-token-env <ENV>` is **mandatory** with `--http` — the CLI refuses to start without it,
-since loopback binding alone does not authenticate local callers:
+`--http` starts a Streamable HTTP server bound to `127.0.0.1`, instead of stdio. In the default
+static mode, `--http-token-env <ENV>` is **mandatory** with `--http` — the CLI refuses to start
+without it, since loopback binding alone does not authenticate local callers:
 
 ```bash
 export TOKEN=$(openssl rand -base64 32)
 openapi-mcp serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
+
+The token must be exactly 32 bytes from a cryptographically secure random source, encoded as
+padded Base64 (what `openssl rand -base64 32` prints) or unpadded Base64URL; any other shape,
+including hex, is rejected at startup. Exact rules and an openssl-free generator:
+[`docs/security.md`](docs/security.md#http-mode-authentication-and-limits).
 
 Clients must send `Authorization: Bearer <token>`. `--port` defaults to `3044`.
 

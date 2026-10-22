@@ -117,4 +117,32 @@ describe('createRateLimiter — sliding window', () => {
     // if the window had rewound and expired the entry above.
     expect(limiter.consume(500)).toBe(false);
   });
+
+  it('retryAfterMs is exactly oldestTimestamp + windowMs - now once exhausted, and 0 while there is room', () => {
+    const limiter = createRateLimiter({ maxCalls: 2, windowMs: 1000 });
+    expect(limiter.retryAfterMs(0)).toBe(0);
+    expect(limiter.consume(100)).toBe(true);
+    expect(limiter.retryAfterMs(150)).toBe(0); // One slot still free
+    expect(limiter.consume(400)).toBe(true);
+    expect(limiter.consume(500)).toBe(false);
+    expect(limiter.retryAfterMs(500)).toBe(600); // 100 + 1000 - 500
+    expect(limiter.retryAfterMs(1099)).toBe(1);
+    // At exactly oldest + windowMs the oldest entry has expired: a retry
+    // now succeeds, matching the window-boundary rule consume() uses.
+    expect(limiter.retryAfterMs(1100)).toBe(0);
+    expect(limiter.consume(1100)).toBe(true);
+    expect(limiter.retryAfterMs(1100)).toBe(300); // Oldest is now 400
+  });
+
+  it('retryAfterMs never goes negative, records no call, and is a full window for a non-finite clock', () => {
+    const limiter = createRateLimiter({ maxCalls: 1, windowMs: 1000 });
+    expect(limiter.consume(2000)).toBe(true);
+    // A decreasing clock is clamped like consume(): still 1000 ms away, not 2500.
+    expect(limiter.retryAfterMs(500)).toBe(1000);
+    for (let index = 0; index < 5; index += 1) {
+      expect(limiter.retryAfterMs(2500)).toBe(500);
+    }
+    expect(limiter.retryAfterMs(Number.NaN)).toBe(1000);
+    expect(limiter.consume(3000)).toBe(true);
+  });
 });

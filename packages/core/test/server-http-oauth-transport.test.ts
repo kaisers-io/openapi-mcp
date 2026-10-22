@@ -17,8 +17,8 @@ import type { TestIssuer, TestKey } from './helpers/oauth-issuer.ts';
 
 // The HTTP front door in OAuth resource-server mode, end to end over real
 // sockets: Protected Resource Metadata, the 401/403 challenges, and a valid
-// token reaching the MCP handler. Ports 4660-4669 are disjoint from the
-// other HTTP suites (core 4610-4651, CLI 3999/4083/4177/4271).
+// token reaching the MCP handler. Ports 4660-4669 and 4680 are disjoint from
+// the other HTTP suites (core 4610-4651 and 4670-4673, CLI 3999/4083/4177/4271).
 
 const namedOp: NamedOperation = {
   toolName: 'listThings',
@@ -39,6 +39,16 @@ const snapshot = buildSnapshot(
     displaySource: 's',
     deadPatterns: [],
   },
+);
+const discoverSnapshot = buildSnapshot(
+  buildTools([namedOp], { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' }),
+  {
+    spec: { title: 't', specVersion: '1', omitted: [] },
+    contentHash: 'h',
+    displaySource: 's',
+    deadPatterns: [],
+  },
+  { toolMode: 'discover' },
 );
 
 const MODERN_ENVELOPE = {
@@ -61,7 +71,7 @@ const running: Running[] = [];
 // One distinct port per rejection case (see the port note above).
 const rejectionPorts = [4662, 4663, 4664, 4665];
 
-const start = async (port: number): Promise<Running> => {
+const start = async (port: number, served = snapshot): Promise<Running> => {
   const key = makeKey('ES256', 'k1');
   const issuer = await startIssuer([key]);
   const audience = `http://127.0.0.1:${String(port)}/mcp`;
@@ -92,7 +102,7 @@ const start = async (port: number): Promise<Running> => {
   entry.server = createStreamableHttpServer({
     name: 'oauth-test',
     version: '1.0.0',
-    snapshot,
+    snapshot: served,
     dispatcherDeps: {
       limiter: { consume: () => true },
       now: () => Date.now(),
@@ -241,6 +251,19 @@ describe('Streamable HTTP — OAuth resource-server mode', () => {
       arguments: {},
     });
     expect(called.status).toBe(200);
+    expect(entry.executorCalls).toBe(1);
+  });
+
+  it('puts call_operation (discover mode) behind the same token check as any direct tool call', async () => {
+    const entry = await start(4680, discoverSnapshot);
+    const params = { name: 'call_operation', arguments: { name: 'listThings' } };
+    const anonymous = await call(entry, undefined, 'tools/call', params);
+    expect(anonymous.status).toBe(401);
+    const unscoped = await call(entry, tokenFor(entry, { scope: 'other' }), 'tools/call', params);
+    expect(unscoped.status).toBe(403);
+    expect(entry.executorCalls).toBe(0);
+    const allowed = await call(entry, tokenFor(entry), 'tools/call', params);
+    expect(allowed.status).toBe(200);
     expect(entry.executorCalls).toBe(1);
   });
 

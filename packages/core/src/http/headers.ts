@@ -6,6 +6,12 @@ const ENV_VAR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/u;
 // Any C0 control or DEL in a header value is a request-smuggling vector
 // oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it rejects them)
 const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
+// A header value travels as bytes (RFC 9110 §5.5); undici, like the Fetch
+// standard, requires a ByteString and only throws when the request is sent,
+// as an opaque transport failure on every call. U+0080..U+00FF pass and are
+// sent as single bytes, which the receiver reads as Latin-1 (ISO-8859-1).
+// oxlint-disable-next-line no-control-regex -- the range starts at U+0000 only to state "every Latin-1 code point"; the negated class matches nothing below U+0100
+export const NON_LATIN1_RE = /[^\u0000-\u00FF]/u;
 
 export type HeaderEnvMapping = {
   headerName: string;
@@ -64,6 +70,12 @@ export const resolveHeaderEnvMappings = (
       // Never echo the value: it is a secret
       throw usageError(
         `value of environment variable "${mapping.envVar}" contains control characters`,
+      );
+    }
+    if (NON_LATIN1_RE.test(value)) {
+      // Never echo the value: it is a secret
+      throw usageError(
+        `value of environment variable "${mapping.envVar}" (for header "${mapping.headerName}") contains a character above U+00FF, which an HTTP header cannot carry — set it to ASCII or Latin-1 text`,
       );
     }
     resolved.push({ name: mapping.headerName, value });
