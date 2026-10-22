@@ -14,3 +14,9 @@
   keep-alive connections per origin and trust policy instead of opening a new TCP/TLS
   connection per call. DNS is still validated for every new socket; an idle connection is
   closed after 30 s and every pooled agent is re-resolved after 5 min.
+
+- **Parallel tool calls queue instead of failing (#64).** A call past `--max-concurrency`
+  (new flag, default `16`) waits in a bounded FIFO queue (4 × the limit). The queue wait
+  and the upstream request share one time budget: the wait takes at most half of it. A
+  refused call (`overloaded`, or over the new `--rate-limit`, default `120/1m`) is a tool
+  error whose `_meta` carries `openapi-mcp/error` and `openapi-mcp/retryAfterMs`.
