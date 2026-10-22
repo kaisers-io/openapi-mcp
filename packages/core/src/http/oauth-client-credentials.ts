@@ -1,5 +1,6 @@
-import { Buffer } from 'node:buffer';
 import type { RuntimeRedactor } from '../redact.ts';
+import { clientSecretBasic } from './oauth-client-auth.ts';
+import type { ClientAuthMethod } from './oauth-client-auth.ts';
 import { pinnedRequest } from './pinned-dispatcher.ts';
 import type { PinnedDeps, PinnedErrorReason } from './pinned-dispatcher.ts';
 
@@ -18,8 +19,6 @@ import type { PinnedDeps, PinnedErrorReason } from './pinned-dispatcher.ts';
 // exactly like a startup secret. Nothing from the token endpoint's body is
 // ever echoed: an error carries only a status and, when it is one of RFC
 // 6749 §5.2's registered codes, that code.
-
-export type ClientAuthMethod = 'client_secret_basic' | 'client_secret_post';
 
 export type ClientCredentialsConfig = {
   tokenUrl: URL;
@@ -93,15 +92,6 @@ const TRANSPORT_FAILURES: Readonly<Record<PinnedErrorReason, string>> = {
   'redirect-invalid': 'the token endpoint redirected, which is never followed',
   network: 'the token endpoint could not be reached',
 };
-
-// RFC 6749 §2.3.1: the client id and secret are each encoded with the
-// application/x-www-form-urlencoded algorithm (Appendix B) BEFORE being
-// joined with ":" and Base64-encoded for HTTP Basic.
-const formEncode = (value: string): string =>
-  new URLSearchParams([['', value]]).toString().slice(1);
-
-export const clientSecretBasic = (clientId: string, clientSecret: string): string =>
-  `Basic ${Buffer.from(`${formEncode(clientId)}:${formEncode(clientSecret)}`, 'utf8').toString('base64')}`;
 
 const failure = (detail: string): TokenResult => ({
   error: `could not obtain an OAuth2 access token: ${detail}`,
