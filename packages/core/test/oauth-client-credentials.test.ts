@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { Response } from 'undici';
 import { clientSecretBasic, createClientCredentialsSource, createRedactor } from '../src/index.ts';
-import type { ClientCredentialsConfig, PinnedDeps, RuntimeRedactor } from '../src/index.ts';
+import type {
+  ClientCredentialsConfig,
+  PinnedDeps,
+  RuntimeRedactor,
+  TokenResult,
+  TokenSource,
+} from '../src/index.ts';
 
 // Token-cache unit tests with a FAKE clock and a fake undici fetch — the
 // real pinnedRequest still runs, so the egress/redirect behaviour asserted
@@ -165,25 +171,84 @@ describe('client-credentials token source — cache, refresh margin, single-flig
   });
 
   it('invalidate drops the cached token; a stale token is ignored', async () => {
-    const { source, calls } = harness(numbered);
+    const { source, calls, advance } = harness(numbered);
     await source.getToken();
-    source.invalidate('access-token-number-1');
+    advance(30_000);
+    expect(source.invalidate('access-token-number-1')).toBe(true);
     expect(await source.getToken()).toEqual({ ok: 'access-token-number-2' });
-    // A late 401 for the OLD token must not discard the fresh one.
-    source.invalidate('access-token-number-1');
+    // A late 401 for the OLD token must not discard the fresh one (and the
+    // caller should replay with the fresh one).
+    expect(source.invalidate('access-token-number-1')).toBe(true);
     expect(await source.getToken()).toEqual({ ok: 'access-token-number-2' });
     expect(calls).toHaveLength(2);
   });
 
-  it('does not cache a failure: the next call tries again', async () => {
-    const { source, calls } = harness((call, index) =>
+  it('answers a failure from memory for 5 s, then tries again', async () => {
+    const { source, calls, advance } = harness((call, index) =>
       index === 0 ? new Response('down', { status: 503 }) : numbered(call, index),
     );
-    expect(await source.getToken()).toEqual({
+    const down = {
       error: 'could not obtain an OAuth2 access token: the token endpoint answered HTTP 503',
-    });
+    };
+    expect(await source.getToken()).toEqual(down);
+    advance(4999);
+    expect(await source.getToken()).toEqual(down);
+    expect(calls).toHaveLength(1);
+    advance(1);
     expect(await source.getToken()).toEqual({ ok: 'access-token-number-2' });
     expect(calls).toHaveLength(2);
+  });
+
+  it('after an invalidation, keeps the replacement for 30 s and says not to replay', async () => {
+    const { source, calls, advance } = harness(numbered);
+    await source.getToken();
+    // The first 401 always gets a fresh token, even for a just-minted one.
+    expect(source.invalidate('access-token-number-1')).toBe(true);
+    expect(await source.getToken()).toEqual({ ok: 'access-token-number-2' });
+    advance(29_999);
+    expect(source.invalidate('access-token-number-2')).toBe(false);
+    expect(await source.getToken()).toEqual({ ok: 'access-token-number-2' });
+    advance(1);
+    expect(source.invalidate('access-token-number-2')).toBe(true);
+    expect(await source.getToken()).toEqual({ ok: 'access-token-number-3' });
+    expect(calls).toHaveLength(3);
+  });
+});
+
+describe('client-credentials token source — an upstream that always answers 401', () => {
+  // The executor's 401 path: invalidate, and replay with a new token only
+  // when invalidate says so.
+  const callAgainst401 = async (source: TokenSource): Promise<TokenResult> => {
+    const first = await source.getToken();
+    if ('error' in first || !source.invalidate(first.ok)) {
+      return first;
+    }
+    return await source.getToken();
+  };
+
+  it('mints at most one token per 30 s however many calls fail (300 calls, 1 s apart)', async () => {
+    const { source, calls, advance } = harness(numbered);
+    for (let index = 0; index < 300; index += 1) {
+      // Sequential on purpose: one tool call after the other.
+      expect('ok' in (await callAgainst401(source))).toBe(true);
+      advance(1000);
+    }
+    expect(calls.length).toBeLessThanOrEqual(11);
+  });
+
+  it('never exhausts the redaction budget, even when every call mints (300 calls, 31 s apart)', async () => {
+    const { source, calls, advance, redactor } = harness(numbered);
+    let last: TokenResult = { error: 'none yet' };
+    for (let index = 0; index < 300; index += 1) {
+      last = await callAgainst401(source);
+      expect(last).not.toHaveProperty('error');
+      advance(31_000);
+    }
+    expect(calls.length).toBeGreaterThan(256);
+    // The token in use is still redacted; the oldest replaced ones made room.
+    const current = 'ok' in last ? last.ok : '';
+    expect(redactor.redactString(current)).toBe('[redacted]');
+    expect(redactor.redactString('access-token-number-1')).toBe('access-token-number-1');
   });
 });
 

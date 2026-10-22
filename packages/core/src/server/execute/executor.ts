@@ -45,7 +45,7 @@ export type ExecutorConfig = {
   // By tool name; compiled eagerly once at server startup — this module only
   // looks the map up per call.
   validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
-  // OAuth2 client-credentials (--oauth-*): every call carries
+  // OAuth2 client-credentials (--upstream-oauth-*): every call carries
   // `Authorization: Bearer <token>` from this source, and an upstream 401
   // invalidates the token and replays the request ONCE with a fresh one.
   // `envVarHint` names the client id/secret env vars for error hints.
@@ -54,7 +54,7 @@ export type ExecutorConfig = {
   oauth?: {
     tokens: {
       getToken: () => Promise<{ ok: string } | { error: string }>;
-      invalidate: (token: string) => void;
+      invalidate: (token: string) => boolean;
     };
     envVarHint: string;
   };
@@ -171,7 +171,7 @@ const assembleHeaders = (
     sameOriginHeaders[header.name.toLowerCase()] = header.value;
   }
   // The OAuth2 access token, last of all. --header-env Authorization is a
-  // startup usage error alongside --oauth-*, so nothing is overwritten.
+  // startup usage error alongside --upstream-oauth-*, so nothing is overwritten.
   if (bearer !== undefined) {
     sameOriginHeaders['authorization'] = `Bearer ${bearer}`;
   }
@@ -287,7 +287,7 @@ const runUpstreamCall = async (
   if (finalUrl.origin !== base.origin || !withinBasePath(finalUrl.pathname, base.pathname)) {
     return isError('the final request URL escaped the configured base URL');
   }
-  // One wire attempt with the given bearer token (none without --oauth-*).
+  // One wire attempt with the given bearer token (none without --upstream-oauth-*).
   // The final budgets are re-checked per attempt: a refreshed token can
   // differ in length.
   const attempt = async (bearer: string | undefined): Promise<PinnedOutcome | undefined> => {
@@ -317,16 +317,18 @@ const runUpstreamCall = async (
     return tokenError(first.error);
   }
   let outcome = await attempt(first?.ok);
-  // Exactly one replay on 401: the request was not authorized, so it had no
+  // At most one replay on 401: the request was not authorized, so it had no
   // effect — replaying it once (writes included) with a fresh token is safe.
-  // A second 401 is returned like any other.
+  // No replay when the token source keeps the token (it was minted moments
+  // ago, so a new one would be rejected the same way). A second 401 is
+  // returned like any other.
   if (
     oauth !== undefined &&
     first !== undefined &&
     outcome?.kind === 'response' &&
-    outcome.status === 401
+    outcome.status === 401 &&
+    oauth.tokens.invalidate(first.ok)
   ) {
-    oauth.tokens.invalidate(first.ok);
     const fresh = await oauth.tokens.getToken();
     if ('error' in fresh) {
       return tokenError(fresh.error);

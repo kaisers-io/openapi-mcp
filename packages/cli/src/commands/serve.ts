@@ -317,11 +317,13 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // secret, so it is resolved and checked here, at startup — shape and
       // origin (resolveTokenUrl), then the same bounded egress
       // classification as an untrusted base (metadata never; private only
-      // with --allow-private-network — even for --oauth-token-url). The
+      // with --allow-private-network — even for --upstream-oauth-token-url). The
       // per-request DNS pin remains the runtime control.
       const { oauth } = apiConfig;
       const tokenUrl =
-        oauth === undefined ? undefined : resolveTokenUrl(oauth, result.spec, resolvedBase.url);
+        oauth === undefined
+          ? undefined
+          : resolveTokenUrl(oauth, result.spec, resolvedBase, specSourceIsFile);
       if (tokenUrl !== undefined) {
         try {
           await assertAllowedRedirectTarget(

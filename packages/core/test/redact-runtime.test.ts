@@ -40,6 +40,29 @@ describe('createRedactor — registerRuntimeSecret', () => {
     expect(redactor.redactString('second-runtime-token')).toBe('[redacted]');
   });
 
+  it('makes room by evicting the OLDEST retired (replaced) secret, never one in use', () => {
+    const redactor = createRedactor([]);
+    for (let index = 0; index < 256; index += 1) {
+      redactor.registerRuntimeSecret(`live-runtime-token-${String(index)}`, 1000, 0);
+    }
+    redactor.retireRuntimeSecret('live-runtime-token-7');
+    redactor.retireRuntimeSecret('live-runtime-token-3');
+    redactor.registerRuntimeSecret('replacement-token-a', 1000, 0);
+    // Insertion order decides: token-3 was registered before token-7.
+    expect(redactor.redactString('live-runtime-token-3')).toBe('live-runtime-token-3');
+    expect(redactor.redactString('live-runtime-token-7')).toBe('[redacted]');
+    redactor.registerRuntimeSecret('replacement-token-b', 1000, 0);
+    expect(redactor.redactString('live-runtime-token-7')).toBe('live-runtime-token-7');
+    expect(() => redactor.registerRuntimeSecret('replacement-token-c', 1000, 0)).toThrow(
+      /too many unexpired runtime secrets/u,
+    );
+    expect(redactor.redactString('replacement-token-a replacement-token-b')).toBe(
+      '[redacted] [redacted]',
+    );
+    // Retiring an unknown secret is a no-op.
+    expect(() => redactor.retireRuntimeSecret('never-registered')).not.toThrow();
+  });
+
   it('never evicts an unexpired secret: registration fails once the budget is full', () => {
     const redactor = createRedactor([]);
     for (let index = 0; index < 256; index += 1) {

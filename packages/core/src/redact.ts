@@ -121,12 +121,17 @@ export type RuntimeRedactor = Redactor & {
   // `retainUntilMs` is when the secret stops being a usable credential
   // (its expiry); only then may it be dropped to make room for a new one.
   registerRuntimeSecret: (secret: string, retainUntilMs: number, nowMs: number) => void;
+  // Marks a registered runtime secret as REPLACED: its owner has a newer
+  // credential and will never send this one again. It stays redacted, but
+  // may be evicted to make room once the budget is full.
+  retireRuntimeSecret: (secret: string) => void;
 };
 
-// Bounds the runtime registrations held at once. Only an entry past its
-// retainUntilMs is ever evicted — a still-valid credential is never dropped
-// to make room; registration fails instead.
-const MAX_RUNTIME_SECRETS = 256;
+// Bounds the runtime registrations held at once. An entry past its
+// retainUntilMs is dropped first; when that is not enough, the OLDEST
+// retired (replaced, no longer sent) entry makes room. A credential still in
+// use is never dropped — registration fails instead.
+export const MAX_RUNTIME_SECRETS = 256;
 
 // The validated needle set for one secret. Throws on a value that cannot be
 // redacted safely: empty, over the length budget, or yielding a needle
@@ -148,7 +153,7 @@ const needlesOf = (secret: string): string[] => {
   return needles;
 };
 
-type RuntimeSecret = { needles: readonly string[]; retainUntilMs: number };
+type RuntimeSecret = { needles: readonly string[]; retainUntilMs: number; retired: boolean };
 
 export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor => {
   if (rawSecrets.length > MAX_SECRETS) {
@@ -178,13 +183,29 @@ export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor =
       }
     }
     if (!runtime.has(secret) && runtime.size >= MAX_RUNTIME_SECRETS) {
-      // Rebuild anyway: expired entries may have been pruned above.
-      findSpans = build();
-      throw validationError('too many unexpired runtime secrets to redact');
+      // Map iteration is insertion order: the first retired entry is the
+      // oldest replaced credential.
+      const oldestRetired = [...runtime].find(([, entry]) => entry.retired)?.[0];
+      if (oldestRetired === undefined) {
+        // Rebuild anyway: expired entries may have been pruned above.
+        findSpans = build();
+        throw validationError('too many unexpired runtime secrets to redact');
+      }
+      runtime.delete(oldestRetired);
     }
     const previous = runtime.get(secret)?.retainUntilMs ?? retainUntilMs;
-    runtime.set(secret, { needles, retainUntilMs: Math.max(previous, retainUntilMs) });
+    runtime.set(secret, {
+      needles,
+      retainUntilMs: Math.max(previous, retainUntilMs),
+      retired: false,
+    });
     findSpans = build();
+  };
+  const retireRuntimeSecret = (secret: string): void => {
+    const entry = runtime.get(secret);
+    if (entry !== undefined) {
+      entry.retired = true;
+    }
   };
   // `value` is unbounded untrusted text (a response body, a request, etc.):
   // one matcher pass over it, then one join — a clean value is returned
@@ -237,5 +258,5 @@ export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor =
     }
     return value;
   };
-  return { redactString, redactJson, scanForSecret, registerRuntimeSecret };
+  return { redactString, redactJson, scanForSecret, registerRuntimeSecret, retireRuntimeSecret };
 };

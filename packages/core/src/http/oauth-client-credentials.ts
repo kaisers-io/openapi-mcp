@@ -39,10 +39,17 @@ export type TokenSource = {
   // A cached token while it is fresh; otherwise one shared token request
   // (single-flight) whose result every concurrent caller receives.
   getToken: () => Promise<TokenResult>;
-  // Drops `token` from the cache if it is still the cached one, so the next
-  // getToken fetches a new token. A stale token (already replaced by a
-  // concurrent refresh) is ignored, so N parallel 401s cause ONE refetch.
-  invalidate: (token: string) => void;
+  // Called after the upstream answered 401 for `token`. Returns whether a
+  // replay with getToken()'s next token is worthwhile:
+  // - `token` is no longer the cached one (a concurrent refresh replaced
+  //   it): true, nothing dropped — N parallel 401s cause ONE refetch;
+  // - the previous invalidation was less than INVALIDATE_COOLDOWN_MS ago:
+  //   false, the token is kept — its replacement is being rejected too,
+  //   which points at the upstream (audience, permissions), not at the
+  //   token, and minting again would only churn the authorization server
+  //   and the redaction registry;
+  // - otherwise it is dropped and true is returned.
+  invalidate: (token: string) => boolean;
 };
 
 // A token response is a small JSON object; anything larger is not one.
@@ -122,6 +129,14 @@ const lifetimeMs = (raw: unknown): number | undefined => {
 
 type Cached = { token: string; refreshAtMs: number };
 
+// At most one 401-driven invalidation (and so one replacement token) per
+// this window (see invalidate).
+const INVALIDATE_COOLDOWN_MS = 30_000;
+// A failed token request is answered from memory for this long, so an
+// authorization-server outage costs it one request per window, not one per
+// tool call.
+const FAILURE_BACKOFF_MS = 5000;
+
 type Parsed = { token: string; lifetime: number | undefined } | { error: string };
 
 const parseTokenResponse = (status: number, body: Uint8Array): Parsed => {
@@ -167,6 +182,9 @@ export const createClientCredentialsSource = (
   }
   const body = new TextEncoder().encode(new URLSearchParams(form).toString());
   let cached: Cached | undefined;
+  let lastIssued: string | undefined;
+  let lastInvalidatedAtMs: number | undefined;
+  let lastFailure: { result: TokenResult; untilMs: number } | undefined;
   let inFlight: Promise<TokenResult> | undefined;
 
   const fetchToken = async (): Promise<TokenResult> => {
@@ -213,32 +231,56 @@ export const createClientCredentialsSource = (
         : issuedAtMs +
           lifetime -
           Math.min(MAX_REFRESH_MARGIN_MS, lifetime * REFRESH_MARGIN_FRACTION);
+    // The previous token is now provably replaced: it is never sent again,
+    // so the redactor may let it go first when its budget runs out (it
+    // stays redacted until then).
+    if (lastIssued !== undefined && lastIssued !== token) {
+      config.redactor.retireRuntimeSecret(lastIssued);
+    }
+    lastIssued = token;
     cached = { token, refreshAtMs };
     return { ok: token };
   };
 
   // The single-flight slot is cleared once the shared request settles, so
-  // the next stale-cache call starts a new one.
+  // the next stale-cache call starts a new one. A failure is remembered for
+  // FAILURE_BACKOFF_MS.
   const shared = async (): Promise<TokenResult> => {
     try {
-      return await fetchToken();
+      const result = await fetchToken();
+      lastFailure =
+        'error' in result ? { result, untilMs: config.now() + FAILURE_BACKOFF_MS } : undefined;
+      return result;
     } finally {
       inFlight = undefined;
     }
   };
 
   const getToken = async (): Promise<TokenResult> => {
-    if (cached !== undefined && config.now() < cached.refreshAtMs) {
+    const nowMs = config.now();
+    if (cached !== undefined && nowMs < cached.refreshAtMs) {
       return { ok: cached.token };
+    }
+    if (lastFailure !== undefined && nowMs < lastFailure.untilMs) {
+      return lastFailure.result;
     }
     inFlight ??= shared();
     return await inFlight;
   };
 
-  const invalidate = (token: string): void => {
-    if (cached?.token === token) {
-      cached = undefined;
+  const invalidate = (token: string): boolean => {
+    if (cached?.token !== token) {
+      return true;
     }
+    if (
+      lastInvalidatedAtMs !== undefined &&
+      config.now() - lastInvalidatedAtMs < INVALIDATE_COOLDOWN_MS
+    ) {
+      return false;
+    }
+    lastInvalidatedAtMs = config.now();
+    cached = undefined;
+    return true;
   };
 
   return { getToken, invalidate };

@@ -66,8 +66,11 @@ const snapshot = buildSnapshot(
 const tool = (name: string): SnapshotTool => snapshot.toolsByName[name] as SnapshotTool;
 
 // Hands out tok-1, tok-2, ... ; invalidate() is recorded.
+// With `keep`, invalidate() declines (a just-minted token, see
+// TokenSource.invalidate) and the cached token stays.
 const fakeTokens = (
   results?: TokenResult[],
+  keep = false,
 ): { source: TokenSource; invalidated: string[]; fetched: () => number } => {
   let current: string | undefined;
   let count = 0;
@@ -88,9 +91,13 @@ const fakeTokens = (
       },
       invalidate: (token) => {
         invalidated.push(token);
+        if (keep) {
+          return false;
+        }
         if (token === current) {
           current = undefined;
         }
+        return true;
       },
     },
     invalidated,
@@ -183,6 +190,15 @@ describe('createExecutor — OAuth2 client credentials', () => {
     );
     expect(seen).toHaveLength(2);
     expect(tokens.fetched()).toBe(2);
+  });
+
+  it('does not replay when the token source keeps the token (minted moments ago)', async () => {
+    const tokens = fakeTokens(undefined, true);
+    const { outcome, seen } = await run('ping', {}, [401, 204], tokens.source);
+    expect(outcome.isError).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(tokens.invalidated).toEqual(['oauth-access-token-1']);
+    expect(tokens.fetched()).toBe(1);
   });
 
   it('403 is not retried (the token was accepted, the action was not)', async () => {

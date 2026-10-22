@@ -199,11 +199,11 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
         '--base-url',
         `http://127.0.0.1:${String(mock.port)}`,
         '--trust-spec-updates',
-        '--oauth-client-id-env',
+        '--upstream-oauth-client-id-env',
         'CLIENT_ID',
-        '--oauth-client-secret-env',
+        '--upstream-oauth-client-secret-env',
         'CLIENT_SECRET',
-        '--oauth-scope',
+        '--upstream-oauth-scope',
         'read',
         ...extraArgs,
       ],
@@ -337,7 +337,7 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
   it('a token endpoint error names the env vars and never echoes the endpoint body', async () => {
     const session = await start('/oauth/token', [
       ...allowPrivate,
-      '--oauth-client-auth',
+      '--upstream-oauth-client-auth',
       'client_secret_post',
     ]);
     // A client_secret_post request sends no Basic header, which this mock rejects with

@@ -7,11 +7,16 @@ import { testContext } from '../src/context.ts';
 import { resolveTokenUrl } from '../src/oauth-options.ts';
 import type { ResolvedOAuthConfig } from '../src/oauth-options.ts';
 
-// --oauth-* option parsing and token-URL selection (in-process; the
+// --upstream-oauth-* option parsing and token-URL selection (in-process; the
 // subprocess E2E lives in serve-oauth.test.ts).
 
 const ENV = { CID: 'demo-client', CSECRET: 'example-token-not-a-secret' };
-const BASE_FLAGS = ['--oauth-client-id-env', 'CID', '--oauth-client-secret-env', 'CSECRET'];
+const BASE_FLAGS = [
+  '--upstream-oauth-client-id-env',
+  'CID',
+  '--upstream-oauth-client-secret-env',
+  'CSECRET',
+];
 
 const resolve = (args: readonly string[], env: Record<string, string | undefined> = ENV) => {
   const command = registerApiOptions(new Command()).exitOverride();
@@ -30,13 +35,19 @@ const usageMessage = (fn: () => unknown): string => {
   return expect.unreachable('expected a usage error');
 };
 
-describe('--oauth-* option resolution', () => {
-  it('is absent without any --oauth-* flag', () => {
+describe('--upstream-oauth-* option resolution', () => {
+  it('is absent without any --upstream-oauth-* flag', () => {
     expect(resolve([]).oauth).toBeUndefined();
   });
 
   it('reads id and secret from env, defaults to client_secret_basic, dedupes scopes', () => {
-    const config = resolve([...BASE_FLAGS, '--oauth-scope', 'read', '--oauth-scope', 'read']);
+    const config = resolve([
+      ...BASE_FLAGS,
+      '--upstream-oauth-scope',
+      'read',
+      '--upstream-oauth-scope',
+      'read',
+    ]);
     expect(config.oauth).toMatchObject({
       clientId: 'demo-client',
       clientSecret: 'example-token-not-a-secret',
@@ -57,11 +68,13 @@ describe('--oauth-* option resolution', () => {
     expect(redactor.redactString('demo-client')).toBe('demo-client');
   });
 
-  it('requires BOTH env flags whenever any --oauth-* flag is used', () => {
-    expect(usageMessage(() => resolve(['--oauth-client-id-env', 'CID']))).toContain(
-      'requires both --oauth-client-id-env and --oauth-client-secret-env',
+  it('requires BOTH env flags whenever any --upstream-oauth-* flag is used', () => {
+    expect(usageMessage(() => resolve(['--upstream-oauth-client-id-env', 'CID']))).toContain(
+      '--upstream-oauth-client-id-env requires both --upstream-oauth-client-id-env <ENV> and --upstream-oauth-client-secret-env <ENV>',
     );
-    expect(usageMessage(() => resolve(['--oauth-scope', 'read']))).toContain('requires both');
+    expect(usageMessage(() => resolve(['--upstream-oauth-scope', 'read']))).toContain(
+      'requires both',
+    );
   });
 
   it('is a usage error together with --header-env Authorization', () => {
@@ -72,7 +85,9 @@ describe('--oauth-* option resolution', () => {
 
   it('rejects a missing env value without echoing anything secret', () => {
     const message = usageMessage(() => resolve(BASE_FLAGS, { CID: 'demo-client' }));
-    expect(message).toContain('"CSECRET" (for --oauth-client-secret-env) is not set or empty');
+    expect(message).toContain(
+      '"CSECRET" (for --upstream-oauth-client-secret-env) is not set or empty',
+    );
   });
 
   it('rejects control characters, bad env names, bad scopes and an unknown auth method', () => {
@@ -81,24 +96,31 @@ describe('--oauth-* option resolution', () => {
     );
     expect(
       usageMessage(() =>
-        resolve(['--oauth-client-id-env', '1BAD', '--oauth-client-secret-env', 'CSECRET']),
+        resolve([
+          '--upstream-oauth-client-id-env',
+          '1BAD',
+          '--upstream-oauth-client-secret-env',
+          'CSECRET',
+        ]),
       ),
     ).toContain('invalid env var name');
-    expect(usageMessage(() => resolve([...BASE_FLAGS, '--oauth-scope', 'a b']))).toContain(
-      'invalid --oauth-scope',
+    expect(usageMessage(() => resolve([...BASE_FLAGS, '--upstream-oauth-scope', 'a b']))).toContain(
+      'invalid --upstream-oauth-scope',
     );
     expect(
-      usageMessage(() => resolve([...BASE_FLAGS, '--oauth-client-auth', 'private_key_jwt'])),
-    ).toContain('--oauth-client-auth must be one of');
+      usageMessage(() =>
+        resolve([...BASE_FLAGS, '--upstream-oauth-client-auth', 'private_key_jwt']),
+      ),
+    ).toContain('--upstream-oauth-client-auth must be one of');
   });
 
-  it('validates --oauth-token-url: https (or loopback http), no userinfo, no fragment', () => {
+  it('validates --upstream-oauth-token-url: https (or loopback http), no userinfo, no fragment', () => {
     expect(
-      resolve([...BASE_FLAGS, '--oauth-token-url', 'https://auth.example/t?x=1']).oauth
+      resolve([...BASE_FLAGS, '--upstream-oauth-token-url', 'https://auth.example/t?x=1']).oauth
         ?.tokenUrlOverride?.href,
     ).toBe('https://auth.example/t?x=1');
     expect(
-      resolve([...BASE_FLAGS, '--oauth-token-url', 'http://127.0.0.1:8080/t']).oauth,
+      resolve([...BASE_FLAGS, '--upstream-oauth-token-url', 'http://127.0.0.1:8080/t']).oauth,
     ).toBeDefined();
     for (const [url, part] of [
       ['http://auth.example/t', 'must use https'],
@@ -106,9 +128,9 @@ describe('--oauth-* option resolution', () => {
       ['https://auth.example/t#f', 'fragment'],
       ['not a url', 'must be an absolute https URL'],
     ] as const) {
-      expect(usageMessage(() => resolve([...BASE_FLAGS, '--oauth-token-url', url]))).toContain(
-        part,
-      );
+      expect(
+        usageMessage(() => resolve([...BASE_FLAGS, '--upstream-oauth-token-url', url])),
+      ).toContain(part);
     }
   });
 });
@@ -124,46 +146,92 @@ describe('resolveTokenUrl', () => {
     flows: ['clientCredentials'],
     clientCredentials: { tokenUrl, scopes: [] },
   });
-  const base = new URL('https://api.example.com/v1');
+  const operatorBase = { url: new URL('https://api.example.com/v1'), trusted: true };
 
   it('resolves a relative spec tokenUrl against the API base', () => {
     expect(
-      resolveTokenUrl(oauth(), { securitySchemes: [cc('a', '/oauth/token')] }, base).href,
+      resolveTokenUrl(oauth(), { securitySchemes: [cc('a', '/oauth/token')] }, operatorBase, false)
+        .href,
     ).toBe('https://api.example.com/oauth/token');
   });
 
   it('refuses a cross-origin spec tokenUrl, but accepts the operator override', () => {
     const spec = { securitySchemes: [cc('a', 'https://auth.example.com/token')] };
-    expect(usageMessage(() => resolveTokenUrl(oauth(), spec, base))).toContain(
+    expect(usageMessage(() => resolveTokenUrl(oauth(), spec, operatorBase, false))).toContain(
       'is not on the API origin',
     );
     const override = new URL('https://auth.example.com/token');
-    expect(resolveTokenUrl(oauth({ tokenUrlOverride: override }), spec, base)).toBe(override);
+    expect(resolveTokenUrl(oauth({ tokenUrlOverride: override }), spec, operatorBase, false)).toBe(
+      override,
+    );
   });
 
-  it('needs --oauth-scheme when several schemes qualify, and checks the name', () => {
+  it('needs --upstream-oauth-scheme when several schemes qualify, and checks the name', () => {
     const spec = { securitySchemes: [cc('a', '/t1'), cc('b', '/t2')] };
-    expect(usageMessage(() => resolveTokenUrl(oauth(), spec, base))).toContain(
-      'pass --oauth-scheme',
+    expect(usageMessage(() => resolveTokenUrl(oauth(), spec, operatorBase, false))).toContain(
+      'pass --upstream-oauth-scheme',
     );
-    expect(resolveTokenUrl(oauth({ scheme: 'b' }), spec, base).pathname).toBe('/t2');
-    expect(usageMessage(() => resolveTokenUrl(oauth({ scheme: 'c' }), spec, base))).toContain(
-      'available: "a", "b"',
-    );
+    expect(resolveTokenUrl(oauth({ scheme: 'b' }), spec, operatorBase, false).pathname).toBe('/t2');
+    expect(
+      usageMessage(() => resolveTokenUrl(oauth({ scheme: 'c' }), spec, operatorBase, false)),
+    ).toContain('available: "a", "b"');
   });
 
-  it('needs --oauth-token-url when the spec declares no client-credentials flow', () => {
-    expect(usageMessage(() => resolveTokenUrl(oauth(), {}, base))).toContain(
-      'pass --oauth-token-url',
+  it('needs --upstream-oauth-token-url when the spec declares no client-credentials flow', () => {
+    expect(usageMessage(() => resolveTokenUrl(oauth(), {}, operatorBase, false))).toContain(
+      'pass --upstream-oauth-token-url',
     );
     const override = new URL('https://auth.example.com/token');
-    expect(resolveTokenUrl(oauth({ tokenUrlOverride: override }), {}, base)).toBe(override);
+    expect(resolveTokenUrl(oauth({ tokenUrlOverride: override }), {}, operatorBase, false)).toBe(
+      override,
+    );
   });
 
   it('rejects an insecure spec tokenUrl on a non-loopback origin', () => {
     const httpBase = new URL('http://api.example.com/');
     expect(
-      usageMessage(() => resolveTokenUrl(oauth(), { securitySchemes: [cc('a', '/t')] }, httpBase)),
+      usageMessage(() =>
+        resolveTokenUrl(
+          oauth(),
+          { securitySchemes: [cc('a', '/t')] },
+          { url: httpBase, trusted: true },
+          false,
+        ),
+      ),
     ).toContain('must use https');
+  });
+
+  it('allows cleartext only for literal loopback, never *.localhost', () => {
+    const spec = { securitySchemes: [cc('a', '/t')] };
+    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+      const local = { url: new URL(`http://${host}:8080/`), trusted: true };
+      expect(resolveTokenUrl(oauth(), spec, local, false).protocol).toBe('http:');
+    }
+    const named = { url: new URL('http://api.localhost:8080/'), trusted: true };
+    expect(usageMessage(() => resolveTokenUrl(oauth(), spec, named, false))).toContain(
+      'must use https',
+    );
+    expect(
+      usageMessage(() =>
+        resolve([...BASE_FLAGS, '--upstream-oauth-token-url', 'http://a.localhost/t']),
+      ),
+    ).toContain('must use https');
+  });
+
+  it('needs --base-url or --upstream-oauth-token-url when the spec comes from a URL', () => {
+    const spec = { securitySchemes: [cc('a', '/oauth/token')] };
+    const specChosen = { url: new URL('https://api.example.com/v1'), trusted: false };
+    expect(usageMessage(() => resolveTokenUrl(oauth(), spec, specChosen, false))).toContain(
+      'pass --base-url <url> or --upstream-oauth-token-url <url>',
+    );
+    // A local spec file is the operator's own: its servers entry is trusted
+    // to name the API, as before.
+    expect(resolveTokenUrl(oauth(), spec, specChosen, true).href).toBe(
+      'https://api.example.com/oauth/token',
+    );
+    const override = new URL('https://auth.example.com/token');
+    expect(resolveTokenUrl(oauth({ tokenUrlOverride: override }), spec, specChosen, false)).toBe(
+      override,
+    );
   });
 });

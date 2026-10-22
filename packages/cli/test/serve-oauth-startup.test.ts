@@ -41,9 +41,9 @@ describe('serve — OAuth2 token URL startup checks (in-process)', () => {
       'oauth.json',
       '--base-url',
       'http://127.0.0.1:9',
-      '--oauth-client-id-env',
+      '--upstream-oauth-client-id-env',
       'CLIENT_ID',
-      '--oauth-client-secret-env',
+      '--upstream-oauth-client-secret-env',
       'CLIENT_SECRET',
       ...extra,
     ]);
@@ -60,25 +60,25 @@ describe('serve — OAuth2 token URL startup checks (in-process)', () => {
   it('refuses a cloud-metadata token URL even with --allow-private-network', async () => {
     const text = await runServe('/t', [
       '--allow-private-network',
-      '--oauth-token-url',
+      '--upstream-oauth-token-url',
       'http://169.254.169.254/t',
     ]);
     expect(text).toContain('must use https');
     const https = await runServe('/t', [
       '--allow-private-network',
-      '--oauth-token-url',
+      '--upstream-oauth-token-url',
       'https://169.254.169.254/t',
     ]);
     expect(https).toContain('cloud-metadata');
   });
 
-  it('refuses a cross-origin spec token URL unless --oauth-token-url confirms it', async () => {
+  it('refuses a cross-origin spec token URL unless --upstream-oauth-token-url confirms it', async () => {
     const text = await runServe('https://auth.example.com/oauth/token', []);
     expect(text).toContain('is not on the API origin');
-    expect(text).toContain('--oauth-token-url');
+    expect(text).toContain('--upstream-oauth-token-url');
   });
 
-  it('refuses --oauth-* together with --header-env Authorization', async () => {
+  it('refuses --upstream-oauth-* together with --header-env Authorization', async () => {
     const text = await runServe('/oauth/token', ['--header-env', 'Authorization=CLIENT_SECRET']);
     expect(text).toContain('cannot be combined with --header-env Authorization');
   });

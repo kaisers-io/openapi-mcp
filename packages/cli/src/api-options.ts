@@ -111,7 +111,7 @@ export type ResolvedApiConfig = {
   secretValues: string[];
   maxResponseBytes: number;
   allowInsecureHttp: boolean;
-  // Present iff --oauth-* was given (see oauth-options.ts).
+  // Present iff --upstream-oauth-* was given (see oauth-options.ts).
   oauth?: ResolvedOAuthConfig;
 };
 
@@ -156,26 +156,26 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
       'permit an operator credential (--header-env) over cleartext http to a non-loopback origin',
     )
     .option(
-      '--oauth-client-id-env <ENV>',
+      '--upstream-oauth-client-id-env <ENV>',
       'OAuth2 client-credentials: env var holding the client id',
     )
     .option(
-      '--oauth-client-secret-env <ENV>',
+      '--upstream-oauth-client-secret-env <ENV>',
       'OAuth2 client-credentials: env var holding the client secret (secret)',
     )
     .option(
-      '--oauth-scheme <name>',
+      '--upstream-oauth-scheme <name>',
       'which oauth2 securitySchemes entry to use when the spec declares several',
     )
     .option(
-      '--oauth-scope <scope>',
+      '--upstream-oauth-scope <scope>',
       'scope to request (repeatable; none by default)',
       collect,
       [] as readonly string[],
     )
-    .option('--oauth-token-url <url>', "override the spec's clientCredentials tokenUrl")
+    .option('--upstream-oauth-token-url <url>', "override the spec's clientCredentials tokenUrl")
     .option(
-      '--oauth-client-auth <method>',
+      '--upstream-oauth-client-auth <method>',
       'client authentication: client_secret_basic or client_secret_post',
       'client_secret_basic',
     );
