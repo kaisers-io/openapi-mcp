@@ -59,7 +59,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
-| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
+| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
 
 Notes:
 

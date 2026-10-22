@@ -122,9 +122,23 @@ callers — any other local process could otherwise reach tools that carry your 
 credentials — so:
 
 - `--http-token-env <ENV>` is **mandatory** with `--http`; startup fails closed without it.
-  The token must be at least 32 ASCII characters from the Base64/Base64URL alphabet (the
-  README's example generates one with `openssl rand -base64 32`); shorter, non-ASCII, or
-  header-hostile values are rejected at startup.
+  The token must encode exactly 32 bytes (256 bits), in one of two forms:
+  - 44 characters of padded standard Base64 — alphabet `A-Z a-z 0-9 + /`, ending in exactly
+    one `=` (the output of `openssl rand -base64 32`), or
+  - 43 characters of unpadded Base64URL — alphabet `A-Z a-z 0-9 - _`, no `=`.
+
+  Everything else is rejected at startup: other lengths, hex strings (`openssl rand -hex 32`),
+  missing or extra padding, mixing the two alphabets, and surrounding whitespace or newlines.
+  The format check cannot tell a random token from a guessable one, so generate it with a
+  cryptographically secure random source — never a password, a hand-typed string, or a
+  derivation of other data:
+
+  ```bash
+  export TOKEN=$(openssl rand -base64 32)
+  # or, without openssl:
+  export TOKEN=$(node -p "require('node:crypto').randomBytes(32).toString('base64url')")
+  ```
+
 - Clients authenticate with `Authorization: Bearer <token>`, compared using a constant-time
   digest comparison (both sides hashed, length-safe, no early exit on a length mismatch) to
   avoid timing side channels.
