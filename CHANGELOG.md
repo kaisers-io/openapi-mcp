@@ -48,3 +48,9 @@
   returns `pagination.next`: the arguments for the next call (never a URL), decoded to the
   tool's own parameter types, or `null` when no next page is known (not proof that the data
   is exhausted). Its output schema gains an optional `pagination` property.
+
+- **Opt-in retries for retry-safe requests (#82).** `--retries <n>` (0–3, default `0`)
+  retries 429/502/503/504 and connection errors before any response for GET, HEAD, PUT and
+  DELETE (DELETE not after a connection error), and for POST/PATCH only when the operation
+  declares an `Idempotency-Key` header. The key used is returned as
+  `_meta["openapi-mcp/idempotencyKey"]`. Retries stay within `--request-timeout`.
