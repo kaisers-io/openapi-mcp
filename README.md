@@ -199,7 +199,8 @@ trade-offs: [Tool modes](docs/configuration.md#tool-modes).
 ## Secrets
 
 Secrets are read **exclusively** from environment variables named by `--spec-header-env`
-(spec fetch), `--header-env` (API requests), and `--http-token-env` (HTTP transport) — never
+(spec fetch), `--header-env` and `--upstream-oauth-client-id-env`/`--upstream-oauth-client-secret-env` (API
+requests; the latter for OAuth2 client credentials), and `--http-token-env` (HTTP transport) — never
 from argv, config files, or the model context:
 
 - `--spec-header-env Header=ENV` / `--header-env Header=ENV` — **equals** syntax; the value

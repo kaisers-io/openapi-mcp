@@ -58,6 +58,12 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body **and** the outgoing request body (see below) | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
+| `--upstream-oauth-client-id-env <ENV>` | no | OAuth2 client-credentials: env var holding the client id | none |
+| `--upstream-oauth-client-secret-env <ENV>` | no | OAuth2 client-credentials: env var holding the client secret (secret) | none |
+| `--upstream-oauth-scheme <name>` | no | which oauth2 `securitySchemes` entry to use when several have a `clientCredentials` flow | the only one |
+| `--upstream-oauth-scope <scope>` | yes | scope to request | none |
+| `--upstream-oauth-token-url <url>` | no | override (or confirm a cross-origin) spec `tokenUrl` | spec `tokenUrl` |
+| `--upstream-oauth-client-auth <method>` | no | `client_secret_basic` or `client_secret_post` (RFC 6749 §2.3.1) | `client_secret_basic` |
 | `--request-timeout <duration>` | no | time budget for each upstream tool call, queue wait included (independent of `--timeout`, which covers the spec fetch) | `30s` |
 | `--retries <n>` | no | retry a transient upstream failure up to `n` times (0–3), only for retry-safe requests (see below) | `0` |
 | `--no-trace-propagation` | no | do not forward a call's W3C trace context (`_meta.traceparent`/`tracestate`) to the upstream API | forwarded |
@@ -169,10 +175,12 @@ Notes:
   `outcome` is one of `ok`, `http_error`, `response_error`, `secret_withheld` (the upstream
   answered, but the result contained a configured secret and the client got an error),
   `validation_error` (bad arguments), `refused` (local policy: the cleartext credential gate
-  or the outbound size budget), `rate_limited`, `overloaded`, `egress_denied`, `timeout`,
+  or the outbound size budget), `token_error` (no upstream OAuth2 access token could be
+  obtained, so no request was sent), `rate_limited`, `overloaded`, `egress_denied`, `timeout`,
   `cancelled`, `network_error` or `internal_error`. `upstreamMs` runs from the first request
   to the final outcome, so with `--retries` it includes every attempt and the backoff or
-  `Retry-After` waits between them; `attempts` says how many requests were sent. Arguments,
+  `Retry-After` waits between them; `attempts` says how many requests were sent (a `401`
+  token replay included). Arguments,
   header values, filled URLs and bodies are never logged, and every string is redacted.
   Whether or not `--log` is set, `openapi_mcp_status` reports process-local counters under
   `calls`: the total, counts by outcome, and p50/p95 of `upstreamMs` over the last 512 calls.
@@ -217,6 +225,44 @@ Notes:
   a spec above 4096 operations has to be split. When a refreshed spec is stored as a
   candidate that would expose more than 512 tools under the current filters, the run warns,
   since the server would refuse to start after `cache promote`.
+
+OAuth2 client credentials (RFC 6749 §4.4): with `--upstream-oauth-client-id-env` and
+`--upstream-oauth-client-secret-env` (both required together), `serve` obtains the access token itself
+and sends it as `Authorization: Bearer <token>` on every API request.
+
+- The token URL is the selected scheme's `flows.clientCredentials.tokenUrl` (relative URLs
+  resolve against the API base URL), or `--upstream-oauth-token-url`. A spec token URL on a different
+  origin than the API base is a startup error unless `--upstream-oauth-token-url` names it — the client
+  secret is sent there. When the spec is fetched from a URL, `--base-url` or
+  `--upstream-oauth-token-url` is required: otherwise the spec alone would choose both the API
+  origin and where the client secret goes. The token URL must be `https` (`http` only for a
+  literal loopback host: `localhost`, `127.0.0.0/8`, `::1` — not `*.localhost`), and it goes
+  through the same egress policy as API requests: cloud-metadata addresses are always refused,
+  private and loopback addresses need `--allow-private-network`, DNS is pinned, and a redirect
+  from the token endpoint is never followed.
+- Tokens are cached in memory only and refreshed 60 s (or 10 % of the lifetime, whichever is
+  smaller) before `expires_in`; without `expires_in` a token is reused for at most an hour.
+  Concurrent calls share one token request. A failed token request is answered from memory for
+  5 s, so an authorization-server outage costs it one request per 5 s, not one per tool call.
+  The token request is bounded by `--request-timeout`; when a call has to wait for a token,
+  that wait counts against the call's own `--request-timeout` budget.
+- An upstream `401` discards the token, fetches a new one and replays the request exactly
+  once (a 401 means the request was not authorized, so this applies to writes too). A second
+  `401` is returned as usual. Within 30 s of such a replacement, a further `401` keeps the
+  current token and is returned without a replay: an upstream that rejects fresh tokens
+  (wrong audience, missing permission) is not fixed by minting more of them.
+  The replay is separate from `--retries`: a `401` is never retried as a transient failure,
+  retries spent before the `401` do not prevent the replay, and the replay does not use up a
+  retry. Both stay within the call's `--request-timeout`, and a `POST`/`PATCH` replay carries
+  the same `Idempotency-Key`.
+- Neither the client secret nor an access token is ever written to the call log, the
+  `openapi_mcp_status` counters or a tool result: both are registered with the redactor (an
+  access token as soon as it is issued). A call whose token could not be obtained is logged
+  with the outcome `token_error`.
+- Scopes are only what `--upstream-oauth-scope` lists; they are not inferred from `security`.
+- `--upstream-oauth-*` together with `--header-env Authorization=...` is a usage error. The
+  authorization-code, device-code and password flows, mTLS and `private_key_jwt` are not
+  supported.
 
 Example:
 

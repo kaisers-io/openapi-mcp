@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { validationError } from './errors.ts';
 import { createMatcher, replaceSpans } from './redact-match.ts';
+import type { Span } from './redact-match.ts';
 
 const MAX_SECRETS = 64; // Bound construction cost
 const MAX_SECRET_LENGTH = 8192; // Bound per-needle scan cost
@@ -109,44 +110,103 @@ export type Redactor = {
   scanForSecret: (value: unknown) => boolean;
 };
 
-export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
+// The redactor createRedactor returns: the read side every output channel
+// uses, plus append-only registration for the one owner of runtime secrets.
+export type RuntimeRedactor = Redactor & {
+  // Registers a secret obtained AFTER startup (an OAuth2 access token) so
+  // every later redaction covers it. Must be called before the secret is
+  // first used. Throws a validationError, registering nothing, when the
+  // value fails the same checks a startup secret does or the runtime budget
+  // is exhausted — the caller must then not use the secret (fail closed).
+  // `retainUntilMs` is when the secret stops being a usable credential
+  // (its expiry); only then may it be dropped to make room for a new one.
+  registerRuntimeSecret: (secret: string, retainUntilMs: number, nowMs: number) => void;
+  // Marks a registered runtime secret as REPLACED: its owner has a newer
+  // credential and will never send this one again. It stays redacted, but
+  // may be evicted to make room once the budget is full.
+  retireRuntimeSecret: (secret: string) => void;
+};
+
+// Bounds the runtime registrations held at once. An entry past its
+// retainUntilMs is dropped first; when that is not enough, the OLDEST
+// retired (replaced, no longer sent) entry makes room. A credential still in
+// use is never dropped — registration fails instead.
+export const MAX_RUNTIME_SECRETS = 256;
+
+// The validated needle set for one secret. Throws on a value that cannot be
+// redacted safely: empty, over the length budget, or yielding a needle
+// that is a substring of the marker (the replacement would reintroduce it,
+// silently defeating redaction).
+const needlesOf = (secret: string): string[] => {
+  if (secret === '') {
+    throw validationError('cannot register an empty secret with the redactor');
+  }
+  if (secret.length > MAX_SECRET_LENGTH) {
+    throw validationError('secret exceeds the redaction length budget');
+  }
+  const needles = [secret, ...derivedSecretsOf(secret)].flatMap((part) => variantsOf(part));
+  if (needles.some((needle) => REDACTED.includes(needle))) {
+    throw validationError(
+      'a configured secret is too trivial to redact safely (it is a substring of the redaction marker)',
+    );
+  }
+  return needles;
+};
+
+type RuntimeSecret = { needles: readonly string[]; retainUntilMs: number; retired: boolean };
+
+export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor => {
   if (rawSecrets.length > MAX_SECRETS) {
     throw validationError(`too many secrets to redact (${rawSecrets.length} > ${MAX_SECRETS})`);
   }
-  const needles = new Set<string>();
-  // Imperative on purpose (like headers.ts's mapping loop): each secret is
-  // validated — and, on failure, THROWS — in encounter order, while
-  // `needles` accumulates variant strings across iterations. A `flatMap`
-  // whose callback threw would be technically equivalent but would hide
-  // that side effect inside a mapping; the explicit loop keeps it visible.
-  for (const secret of rawSecrets) {
-    if (secret === '') {
-      throw validationError('cannot register an empty secret with the redactor');
-    }
-    if (secret.length > MAX_SECRET_LENGTH) {
-      throw validationError('secret exceeds the redaction length budget');
-    }
-    for (const part of [secret, ...derivedSecretsOf(secret)]) {
-      for (const variant of variantsOf(part)) {
-        needles.add(variant);
-      }
-    }
-  }
+  // Each secret is validated — and, on failure, THROWS — in encounter order.
+  const staticNeedles = rawSecrets.flatMap((secret) => needlesOf(secret));
+  const runtime = new Map<string, RuntimeSecret>();
   // Longest first: an encoding variant that contains a shorter needle as a
   // substring must still redact as the whole variant (createMatcher takes
-  // the first — longest — needle matching at each position).
-  const ordered = [...needles].toSorted((first, second) => second.length - first.length);
-  // Fail closed at construction: a needle that is itself a substring of the
-  // marker would be reintroduced into the output by the very replacement
-  // meant to remove it, silently defeating redaction.
-  for (const needle of ordered) {
-    if (REDACTED.includes(needle)) {
-      throw validationError(
-        'a configured secret is too trivial to redact safely (it is a substring of the redaction marker)',
-      );
+  // the first — longest — needle matching at each position). Rebuilt only
+  // when the runtime set changes (a token refresh, minutes apart), never
+  // per redaction.
+  const build = (): ((value: string, firstOnly: boolean) => Span[]) => {
+    const needles = new Set([
+      ...staticNeedles,
+      ...[...runtime.values()].flatMap((entry) => entry.needles),
+    ]);
+    return createMatcher([...needles].toSorted((first, second) => second.length - first.length));
+  };
+  let findSpans = build();
+  const registerRuntimeSecret = (secret: string, retainUntilMs: number, nowMs: number): void => {
+    const needles = needlesOf(secret);
+    for (const [value, entry] of runtime) {
+      if (entry.retainUntilMs <= nowMs) {
+        runtime.delete(value);
+      }
     }
-  }
-  const findSpans = createMatcher(ordered);
+    if (!runtime.has(secret) && runtime.size >= MAX_RUNTIME_SECRETS) {
+      // Map iteration is insertion order: the first retired entry is the
+      // oldest replaced credential.
+      const oldestRetired = [...runtime].find(([, entry]) => entry.retired)?.[0];
+      if (oldestRetired === undefined) {
+        // Rebuild anyway: expired entries may have been pruned above.
+        findSpans = build();
+        throw validationError('too many unexpired runtime secrets to redact');
+      }
+      runtime.delete(oldestRetired);
+    }
+    const previous = runtime.get(secret)?.retainUntilMs ?? retainUntilMs;
+    runtime.set(secret, {
+      needles,
+      retainUntilMs: Math.max(previous, retainUntilMs),
+      retired: false,
+    });
+    findSpans = build();
+  };
+  const retireRuntimeSecret = (secret: string): void => {
+    const entry = runtime.get(secret);
+    if (entry !== undefined) {
+      entry.retired = true;
+    }
+  };
   // `value` is unbounded untrusted text (a response body, a request, etc.):
   // one matcher pass over it, then one join — a clean value is returned
   // as-is without any copy.
@@ -198,5 +258,5 @@ export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
     }
     return value;
   };
-  return { redactString, redactJson, scanForSecret };
+  return { redactString, redactJson, scanForSecret, registerRuntimeSecret, retireRuntimeSecret };
 };

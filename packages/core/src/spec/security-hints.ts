@@ -2,10 +2,8 @@ import { HEADER_NAME_RE } from '../http/headers.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText } from './sanitize.ts';
 import type { SecurityRequirement, SecurityScheme } from './security.ts';
 
-// Operator-facing hints about the credentials a spec expects (`tools`
-// lines and `data.security`, `serve` startup warnings), built on the
-// schemes and requirements security.ts extracts. Display only: nothing
-// here changes how a request is built. Spec text is sanitized here.
+// Operator-facing credential hints (`tools`, `serve` startup warnings) on
+// top of security.ts. Display only; spec text is sanitized here.
 
 const show = (text: string): string => sanitizeSpecText(text, DISPLAY_TEXT_MAX);
 
@@ -13,13 +11,14 @@ const show = (text: string): string => sanitizeSpecText(text, DISPLAY_TEXT_MAX);
 export type ConfiguredCredentials = {
   // Lowercased names of every --header / --header-env header.
   headerNames: ReadonlySet<string>;
+  // --upstream-oauth-client-*-env set: their token (in Authorization)
+  // satisfies any oauth2 scheme with a clientCredentials flow.
+  oauthClientCredentials?: boolean;
 };
 
-// HTTP authentication schemes that a static header can carry. Everything in
-// CHALLENGE_HTTP_SCHEMES is a challenge/response exchange (RFC 9110 §11,
-// RFC 7616, RFC 4559, RFC 7486, RFC 7804/7804bis) that needs a per-request
-// computation; any other registered or custom scheme is assumed to take a
-// static credential (`Authorization: <scheme> <credentials>`).
+// Challenge/response HTTP auth schemes (RFC 7616, 4559, 7486, 7804) need a
+// per-request computation; any other registered or custom scheme is assumed
+// to take a static `Authorization: <scheme> <credentials>`.
 const CHALLENGE_HTTP_SCHEMES: ReadonlySet<string> = new Set([
   'digest',
   'negotiate',
@@ -89,14 +88,21 @@ const alternativeSatisfied = (
   byName: ReadonlyMap<string, SecurityScheme>,
   configured: ConfiguredCredentials,
 ): boolean => {
-  const headers = Object.keys(alternative).map((name) => {
-    const scheme = byName.get(name);
-    return scheme === undefined ? undefined : headerOf(scheme);
-  });
-  return (
-    headers.every((header) => header !== undefined && configured.headerNames.has(header)) &&
-    headers.filter((header) => header === 'authorization').length <= 1
-  );
+  const schemes = Object.keys(alternative).map((name) => byName.get(name));
+  const supplied = (scheme: SecurityScheme | undefined): boolean => {
+    const header = scheme === undefined ? undefined : headerOf(scheme);
+    const viaClientCredentials =
+      scheme?.type === 'oauth2' && scheme.clientCredentials !== undefined;
+    return (
+      header !== undefined &&
+      (configured.headerNames.has(header) ||
+        (viaClientCredentials && configured.oauthClientCredentials === true))
+    );
+  };
+  const authorizationCount = schemes.filter(
+    (scheme) => scheme !== undefined && headerOf(scheme) === 'authorization',
+  ).length;
+  return schemes.every((scheme) => supplied(scheme)) && authorizationCount <= 1;
 };
 
 const authorizationHint = (example: string): string =>
@@ -144,7 +150,7 @@ const supplyHint = (scheme: SecurityScheme): string => {
     case 'oauth2': {
       return scheme.clientCredentials === undefined
         ? `interactive OAuth flows are not supported; ${authorizationHint('Bearer <token>')} with a token obtained elsewhere`
-        : authorizationHint('Bearer <token>');
+        : `pass --upstream-oauth-client-id-env <ENV> and --upstream-oauth-client-secret-env <ENV>, or ${authorizationHint('Bearer <token>')}`;
     }
     default: {
       return `${authorizationHint('Bearer <token>')} with a token obtained elsewhere`;
