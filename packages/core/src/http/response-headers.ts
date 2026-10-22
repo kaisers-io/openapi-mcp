@@ -64,21 +64,66 @@ export const captureResponseHeaders = (
 // undefined when the value is neither form. Capped at one day so a hostile
 // value cannot advertise an absurd wait.
 const MAX_RETRY_AFTER_MS = 86_400_000;
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const TIME = String.raw`(?<h>\d{2}):(?<m>\d{2}):(?<s>\d{2})`;
+// RFC 9110 §5.6.7: a recipient MUST accept all three HTTP-date formats
+// (IMF-fixdate, obsolete RFC 850, asctime). Each is parsed into UTC fields
+// here, never through Date.parse, which reads the asctime form as LOCAL time.
+const HTTP_DATE_RES = [
+  new RegExp(
+    String.raw`^[A-Z][a-z]{2}, (?<d>\d{2}) (?<mon>[A-Z][a-z]{2}) (?<y>\d{4}) ${TIME} GMT$`,
+    'u',
+  ),
+  new RegExp(
+    String.raw`^[A-Z][a-z]{5,8}, (?<d>\d{2})-(?<mon>[A-Z][a-z]{2})-(?<yy>\d{2}) ${TIME} GMT$`,
+    'u',
+  ),
+  new RegExp(
+    String.raw`^[A-Z][a-z]{2} (?<mon>[A-Z][a-z]{2}) (?<d>[ \d]\d) ${TIME} (?<y>\d{4})$`,
+    'u',
+  ),
+];
+
+// A two-digit RFC 850 year that would land more than 50 years in the future
+// is in the past century (RFC 9110 §5.6.7).
+const fullYear = (groups: Record<string, string | undefined>, nowMs: number): number => {
+  if (groups['yy'] === undefined) {
+    return Number(groups['y']);
+  }
+  const nowYear = new Date(nowMs).getUTCFullYear();
+  const candidate = Math.floor(nowYear / 100) * 100 + Number(groups['yy']);
+  return candidate > nowYear + 50 ? candidate - 100 : candidate;
+};
+
+const parseHttpDate = (value: string, nowMs: number): number | undefined => {
+  const groups = HTTP_DATE_RES.map((re) => re.exec(value)?.groups).find(
+    (match) => match !== undefined,
+  );
+  const monthIndex = MONTHS.indexOf(groups?.['mon'] ?? '');
+  if (groups === undefined || monthIndex === -1) {
+    return undefined;
+  }
+  const at = Date.UTC(
+    fullYear(groups, nowMs),
+    monthIndex,
+    Number(groups['d']),
+    Number(groups['h']),
+    Number(groups['m']),
+    Number(groups['s']),
+  );
+  return Number.isFinite(at) ? at : undefined;
+};
+
 export const parseRetryAfter = (value: string, nowMs: number): number | undefined => {
   const trimmed = value.trim();
   if (/^\d+$/u.test(trimmed)) {
     return Math.min(Number(trimmed) * 1000, MAX_RETRY_AFTER_MS);
   }
-  // An HTTP-date always names a weekday and "GMT"; anything else (a bare
-  // number with a sign or decimals, free text) is not a valid Retry-After.
-  if (!/^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/u.test(trimmed)) {
-    return undefined;
-  }
-  const at = Date.parse(trimmed);
-  if (!Number.isFinite(at)) {
-    return undefined;
-  }
-  return Math.min(Math.max(0, at - nowMs), MAX_RETRY_AFTER_MS);
+  // Anything else (a number with a sign or decimals, free text, an ISO
+  // date) is not a valid Retry-After.
+  const at = parseHttpDate(trimmed, nowMs);
+  return at === undefined ? undefined : Math.min(Math.max(0, at - nowMs), MAX_RETRY_AFTER_MS);
 };
 
 export type LinkValue = {

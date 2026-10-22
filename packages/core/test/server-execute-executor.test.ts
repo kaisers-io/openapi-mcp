@@ -662,6 +662,44 @@ describe('createExecutor — global concurrency queue', () => {
     await expect(first).resolves.toMatchObject({ isError: false });
     expect(gated.started()).toBe(1);
   });
+
+  it('charges the queue wait against one call budget: wait <= half, upstream gets the rest', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const requested: number[] = [];
+    let clock = 0;
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, timeoutMs: 5000, validators: validatorsFor(snapshot) }),
+      {
+        transport: {
+          fetch: gated.fetch,
+          resolve: rejectingResolve,
+          timeoutSignal: (ms) => {
+            requested.push(ms);
+            return new AbortController().signal;
+          },
+        },
+        now: () => clock,
+      },
+    );
+    const first = executor(tool, {}, freshSignal());
+    await flush();
+    // Uncontended: the upstream request gets the whole budget.
+    expect(requested).toEqual([5000]);
+    const queued = executor(tool, {}, freshSignal());
+    await flush();
+    // The wait itself is bounded by half the budget.
+    expect(requested).toEqual([5000, 2500]);
+    clock = 1200;
+    gated.releaseOne();
+    await expect(first).resolves.toMatchObject({ isError: false });
+    await flush();
+    // The queued call's upstream request gets only what is left (5000 - 1200),
+    // so queue wait + upstream never exceed the configured timeout.
+    expect(requested).toEqual([5000, 2500, 3800]);
+    gated.releaseOne();
+    await expect(queued).resolves.toMatchObject({ isError: false });
+  });
 });
 
 describe('createExecutor — upstream connection reuse', () => {
@@ -1076,6 +1114,33 @@ describe('createExecutor — forwarded upstream response headers', () => {
     expect(outcome.content.at(-1)?.text).toBe('headers:\nx-total-count: 1');
   });
 
+  it('drops a header whose NAME carries a registered secret, in a structured result too', async () => {
+    const { outcome, tool } = await run(
+      idPathOp,
+      () =>
+        new Response('{"id":1}', {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            [`x-ratelimit-${SECRET}`]: '1',
+            'x-total-count': '1',
+          },
+        }),
+      { id: '1' },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 1 },
+      headers: { 'x-total-count': '1' },
+    });
+    expect(compileEnvelopeValidator(tool.wireTool.outputSchema)?.(outcome.structuredContent)).toBe(
+      true,
+    );
+    expect(JSON.stringify(outcome)).not.toContain(SECRET);
+  });
+
   it('forwards a same-origin Location as a path, and drops a foreign one', async () => {
     const created = await run(
       createThingOp,
@@ -1316,6 +1381,108 @@ describe('createExecutor — pagination hints', () => {
     expect(nextOf(last.outcome)).toBeNull();
   });
 
+  const issuesOp = (explodeLabels: boolean): NamedOperation => ({
+    toolName: 'listIssues',
+    operation: {
+      method: 'get',
+      path: '/issues',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'cursor', in: 'query', schema: { type: 'string' } },
+        { name: 'page', in: 'query', schema: { type: 'integer' } },
+        { name: 'archived', in: 'query', schema: { type: 'boolean' } },
+        {
+          name: 'labels',
+          in: 'query',
+          style: 'form',
+          explode: explodeLabels,
+          schema: { type: 'array', items: { type: 'string' } },
+        },
+      ],
+      responses: {
+        '200': {
+          description: 'ok',
+          headers: { Link: { schema: { type: 'string' } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { items: { type: 'array' }, next_cursor: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const acceptedAsInput = (tool: SnapshotTool, next: unknown): boolean | undefined =>
+    tool.generated?.inputSchema.safeParse(next).success;
+
+  it('keeps carried boolean/array arguments in a body-cursor hint, and the 200 stays valid', async () => {
+    const { outcome, valid, tool } = await call(
+      issuesOp(false),
+      page(undefined, { items: [], next_cursor: 'c2' }),
+      { archived: true, labels: ['a', 'b'] },
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ archived: true, labels: ['a', 'b'], cursor: 'c2' });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it.each([
+    [false, '<https://api.example.test/issues?page=2&archived=true&labels=a,b>; rel="next"'],
+    [true, '<https://api.example.test/issues?page=2&archived=true&labels=a&labels=b>; rel="next"'],
+  ])(
+    'decodes Link values per declared type and style (labels explode=%s), round-tripping the input schema',
+    async (explode, link) => {
+      const { outcome, valid, tool } = await call(issuesOp(explode), page(link, {}), {
+        archived: true,
+        labels: ['a', 'b'],
+      });
+      expect(outcome.isError).toBe(false);
+      expect(valid).toBe(true);
+      const next = nextOf(outcome);
+      expect(next).toEqual({ page: 2, archived: true, labels: ['a', 'b'] });
+      expect(acceptedAsInput(tool, next)).toBe(true);
+    },
+  );
+
+  it.each([
+    ['a non-boolean value for a boolean field', 'archived=maybe'],
+    ['a repeated key for an explode=false array', 'labels=a&labels=b'],
+  ])('yields next: null for %s', async (_label, query) => {
+    const { outcome, valid } = await call(
+      issuesOp(false),
+      page(`<https://api.example.test/issues?page=2&${query}>; rel="next"`, {}),
+      {},
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('yields next: null for a hint the tool input schema would reject (enum)', async () => {
+    const enumOp: NamedOperation = {
+      ...listReposOp,
+      operation: {
+        ...listReposOp.operation,
+        parameters: listReposOp.operation.parameters.map((param) =>
+          param['name'] === 'sort'
+            ? { ...param, schema: { type: 'string', enum: ['created'] } }
+            : param,
+        ),
+      },
+    };
+    const link = '<https://api.example.test/orgs/acme/repos?page=2&sort=pushed>; rel="next"';
+    const { outcome, valid } = await call(enumOp, page(link), { org: 'acme' });
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
   it('maps Stripe-style has_more + last id to starting_after', async () => {
     const more = await call(
       stripeOp,
@@ -1474,6 +1641,30 @@ describe('createExecutor — optional retries for retry-safe requests', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('never retries DELETE after an ambiguous connection error, but does after a 503', async () => {
+    const deleteOp: NamedOperation = {
+      ...pingOp,
+      toolName: 'deleteThing',
+      operation: { ...pingOp.operation, method: 'delete' },
+    };
+    // The upstream may have deleted the resource and lost the connection
+    // while answering: a retry would then report 404 for a successful delete.
+    const reset = scripted(['reset', 200]);
+    const failed = await run(deleteOp, reset.deps, 2);
+    expect(failed.isError).toBe(true);
+    expect(reset.calls).toHaveLength(1);
+    const busy = scripted([503, 200]);
+    const outcome = await run(deleteOp, busy.deps, 2);
+    expect(outcome.isError).toBe(false);
+    expect(busy.calls).toHaveLength(2);
+  });
+
+  it('ignores Retry-After on a 502/504 (honoured only on 429/503)', async () => {
+    const { deps, sleeps } = scripted([502, 200], { 'retry-after': '3' });
+    await run(pingOp, deps, 1);
+    expect(sleeps).toEqual([125]);
+  });
+
   it.each([400, 401, 403, 404, 409, 500, 501])('never retries a %i', async (status) => {
     const { deps, calls } = scripted([status, 200]);
     await run(pingOp, deps, 3);
@@ -1495,6 +1686,17 @@ describe('createExecutor — optional retries for retry-safe requests', () => {
     const keys = calls.map((call) => call.init.headers?.['idempotency-key']);
     expect(keys[0]).toMatch(/^[\da-f-]{36}$/u);
     expect(new Set(keys).size).toBe(1);
+    // Echoed, so the caller can repeat a failed call with the same key.
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toBe(keys[0]);
+  });
+
+  it('echoes the key in _meta when the call finally fails too', async () => {
+    const { deps, calls } = scripted([503, 503]);
+    const outcome = await run(idemOp, deps, 1, { sku: 'a' });
+    expect(outcome.isError).toBe(true);
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toBe(
+      calls[0]?.init.headers?.['idempotency-key'],
+    );
   });
 
   it("keeps the caller's own Idempotency-Key on every attempt", async () => {
@@ -1512,8 +1714,9 @@ describe('createExecutor — optional retries for retry-safe requests', () => {
 
   it('does not add an Idempotency-Key when retries are off', async () => {
     const { deps, calls } = scripted([201]);
-    await run(idemOp, deps, 0, { sku: 'a' });
+    const outcome = await run(idemOp, deps, 0, { sku: 'a' });
     expect(calls[0]?.init.headers?.['idempotency-key']).toBeUndefined();
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toBeUndefined();
   });
 
   it('waits for a 429 Retry-After instead of the jittered delay', async () => {

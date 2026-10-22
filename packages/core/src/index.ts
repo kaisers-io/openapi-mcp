@@ -170,6 +170,8 @@ export type {
   WireSchema,
 } from './toolgen/index.ts';
 export {
+  BOUNDARY_WITHHELD_ERROR_TEXT,
+  BOUNDARY_WITHHELD_SUCCESS_TEXT,
   buildSnapshot,
   constantTimeEquals,
   createDispatcher,

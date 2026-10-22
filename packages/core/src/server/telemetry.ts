@@ -13,7 +13,13 @@ export type CallOutcomeKind =
   | 'ok'
   | 'http_error'
   | 'response_error'
+  // The upstream answered, but the result carried a registered secret and
+  // was withheld at the dispatch boundary (the client got an error).
+  | 'secret_withheld'
   | 'validation_error'
+  // Refused by local policy before any request was sent (cleartext
+  // credential gate, outbound size budget) — configuration, not arguments.
+  | 'refused'
   | 'rate_limited'
   | 'overloaded'
   | 'egress_denied'
@@ -31,7 +37,13 @@ export type CallTelemetry = {
   status?: number;
   responseBytes?: number;
   queuedMs?: number;
+  // From the first request to the final outcome: with --retries this
+  // includes every attempt AND the backoff / Retry-After waits between them
+  // (see `attempts`), so it measures the call as the client experienced it,
+  // not the API's own latency.
   upstreamMs?: number;
+  // Upstream requests sent for this call (1 + retries).
+  attempts?: number;
 };
 
 export type CallRecord = CallTelemetry & {
@@ -41,10 +53,25 @@ export type CallRecord = CallTelemetry & {
 
 export type CallObserver = (record: CallRecord) => void;
 
-const VALIDATION_PREFIX = 'invalid tool arguments';
+// Outcomes the dispatcher produces itself (argument validation, a result
+// withheld at the boundary) are tagged by object identity where they are
+// built, instead of being recognised from their wording. A WeakMap holds no
+// reference and adds nothing a client can see.
+const outcomeTags = new WeakMap<ToolCallOutcome, CallOutcomeKind>();
 
-// Outcomes the executor never saw (rate limit, argument validation) are
-// recognised from the dispatcher's own fixed outcomes.
+export const tagOutcome = (outcome: ToolCallOutcome, kind: CallOutcomeKind): ToolCallOutcome => {
+  outcomeTags.set(outcome, kind);
+  return outcome;
+};
+
+// For a step that rebuilds an outcome (the boundary finalizer): the new
+// object keeps the original's tag.
+export const carryOutcomeTag = (from: ToolCallOutcome, to: ToolCallOutcome): ToolCallOutcome => {
+  const kind = outcomeTags.get(from);
+  return kind === undefined ? to : tagOutcome(to, kind);
+};
+
+// Outcomes the executor never saw (rate limit, argument validation).
 const classifyLocal = (outcome: ToolCallOutcome): CallOutcomeKind => {
   if (!outcome.isError) {
     return 'ok';
@@ -52,9 +79,27 @@ const classifyLocal = (outcome: ToolCallOutcome): CallOutcomeKind => {
   if (outcome.meta?.['openapi-mcp/error'] === 'rate_limited') {
     return 'rate_limited';
   }
-  return outcome.content[0]?.text.startsWith(VALIDATION_PREFIX) === true
-    ? 'validation_error'
-    : 'internal_error';
+  return outcomeTags.get(outcome) ?? 'internal_error';
+};
+
+// The executor's report describes the upstream call; the dispatcher can
+// still turn a success into an error afterwards (a secret withheld at the
+// boundary). The record must say what the CLIENT got, never "ok" for an
+// error.
+const finalTelemetry = (
+  reported: CallTelemetry | undefined,
+  outcome: ToolCallOutcome,
+): CallTelemetry => {
+  if (reported === undefined) {
+    return { outcome: classifyLocal(outcome) };
+  }
+  const tag = outcomeTags.get(outcome);
+  if (tag !== undefined) {
+    return { ...reported, outcome: tag };
+  }
+  return outcome.isError && reported.outcome === 'ok'
+    ? { ...reported, outcome: 'response_error' }
+    : reported;
 };
 
 // Wraps a dispatcher's `call`: times it, collects the executor's report,
@@ -79,7 +124,7 @@ export const observeCalls =
     if (result.kind === 'outcome') {
       try {
         observe({
-          ...(reported ?? { outcome: classifyLocal(result.outcome) }),
+          ...finalTelemetry(reported, result.outcome),
           tool: request.name,
           latencyMs: Math.max(0, now() - started),
         });
@@ -106,6 +151,7 @@ export const formatCallLog = (record: CallRecord, redactor: Redactor, ts: Date):
     ...(record.responseBytes === undefined ? {} : { responseBytes: record.responseBytes }),
     ...(record.queuedMs === undefined ? {} : { queuedMs: record.queuedMs }),
     ...(record.upstreamMs === undefined ? {} : { upstreamMs: record.upstreamMs }),
+    ...(record.attempts === undefined ? {} : { attempts: record.attempts }),
   });
 };
 

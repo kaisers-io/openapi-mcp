@@ -83,11 +83,14 @@ const config = (
 };
 
 // A full dispatcher -> executor -> fake transport pipeline with a fake clock.
-const pipeline = (fetch: PinnedDeps['fetch'], options: { consume?: () => boolean } = {}) => {
+const pipeline = (
+  fetch: PinnedDeps['fetch'],
+  options: { consume?: () => boolean; overrides?: Partial<ExecutorConfig> } = {},
+) => {
   const snapshot = snapshotOf([getPet]);
   const records: CallRecord[] = [];
   let clock = 1000;
-  const executor = createExecutor(config(snapshot), {
+  const executor = createExecutor(config(snapshot, options.overrides), {
     transport: {
       fetch,
       resolve: () => Promise.reject(new Error('no DNS in this suite')),
@@ -175,6 +178,55 @@ describe('call records — one per call, classified', () => {
     ]);
   });
 
+  it.each<[string, Partial<ExecutorConfig>]>([
+    [
+      'the cleartext credential gate',
+      {
+        baseUrl: 'http://api.example.test',
+        secretHeaders: [{ name: 'Authorization', value: `Bearer ${SECRET}`, envVar: 'API_TOKEN' }],
+      },
+    ],
+    [
+      'the outbound budget',
+      { outboundBudgets: { maxUrlLength: 10, maxHeaderBytes: 16_384, maxBodyBytes: 65_536 } },
+    ],
+  ])('classifies a refusal by %s as refused, not validation_error', async (_label, overrides) => {
+    const { call, records } = pipeline(ok200, { overrides });
+    await call({ petId: '1' });
+    expect(records.map((record) => record.outcome)).toEqual(['refused']);
+  });
+
+  it('records secret_withheld when the boundary turns a reported success into an error', async () => {
+    const snapshot = snapshotOf([getPet]);
+    const records: CallRecord[] = [];
+    const executor: ToolExecutor = (_tool, _args, _signal, _trace, report) => {
+      report?.({ outcome: 'ok', method: 'GET', pathTemplate: '/pet/{petId}', status: 200 });
+      return Promise.resolve({
+        isError: false,
+        content: [{ type: 'text', text: '{}' }],
+        structuredContent: { status: 200, contentType: 'application/json', data: { t: SECRET } },
+      });
+    };
+    const dispatcher = createDispatcher({
+      snapshot,
+      limiter: { consume: () => true, retryAfterMs: () => 0 },
+      now: () => 0,
+      executor,
+      metaExecutor: createMetaExecutor(),
+      redactor: createRedactor([SECRET]),
+      onCall: (record) => records.push(record),
+    });
+    const result = await dispatcher.call({
+      name: 'getPetById',
+      arguments: { petId: '1' },
+      signal: new AbortController().signal,
+    });
+    expect(result).toMatchObject({ kind: 'outcome', outcome: { isError: true } });
+    expect(records).toEqual([
+      expect.objectContaining({ outcome: 'secret_withheld', status: 200, method: 'GET' }),
+    ]);
+  });
+
   it('does not record an unknown tool (a protocol error, not a tool call)', async () => {
     const { dispatcher, records } = pipeline(ok200);
     await dispatcher.call({ name: 'nope', arguments: {}, signal: new AbortController().signal });
@@ -226,6 +278,7 @@ describe('formatCallLog', () => {
       responseBytes: expect.any(Number) as number,
       queuedMs: 0,
       upstreamMs: expect.any(Number) as number,
+      attempts: 1,
     });
     expect(line).not.toContain(MARKER);
     expect(line).not.toContain(SECRET);

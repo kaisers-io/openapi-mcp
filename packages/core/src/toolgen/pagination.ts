@@ -1,14 +1,22 @@
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { RequestMapper } from './layout.ts';
+import { fieldOf, hintValue, linkValue } from './pagination-values.ts';
+import type { PaginationField } from './pagination-values.ts';
+
+export type { PaginationField } from './pagination-values.ts';
 
 // Pagination support, decided once at tool-generation time from the spec
 // alone (no runtime guessing from response data): an operation is
 // "paginated" when it is a GET and either has a query parameter with a
-// well-known pagination name, or declares a `Link` response header. For
+// well-known page/cursor name, or declares a `Link` response header. For
 // such a tool the result carries `pagination.next`: the ARGUMENTS for the
-// next call — never a URL — or null when no next page is known.
+// next call — never a URL — or null when no next page is known (the last
+// page, or the upstream did not say; null never claims "exhausted").
 
-// Query parameter names treated as page/cursor/size controls.
+// Query parameter names that select a page or cursor. Size and position
+// controls (`limit`, `offset`, `per_page`, `page_size`) alone do not make an
+// operation paginated: without a Link header or a body cursor no hint could
+// ever be derived for them, so `next` would always be null.
 const PAGINATION_PARAMS: ReadonlySet<string> = new Set([
   'cursor',
   'page_token',
@@ -16,11 +24,6 @@ const PAGINATION_PARAMS: ReadonlySet<string> = new Set([
   'after',
   'starting_after',
   'page',
-  'offset',
-  'limit',
-  'per_page',
-  'page_size',
-  'pagesize',
 ]);
 
 // Body cursor conventions: a response property whose value is the cursor
@@ -32,8 +35,6 @@ const BODY_CURSORS: readonly { property: string; param: string }[] = [
   { property: 'next_page_token', param: 'page_token' },
   { property: 'nextPageToken', param: 'pageToken' },
 ];
-
-export type PaginationField = { field: string; numeric: boolean };
 
 export type PaginationPlan = {
   // Query wire name -> the tool field carrying it.
@@ -59,15 +60,6 @@ const declaresLinkHeader = (responses: Readonly<Record<string, unknown>>): boole
       Object.keys(response['headers']).some((name) => name.toLowerCase() === 'link'),
   );
 
-const isNumericSchema = (schema: unknown): boolean => {
-  if (!isRecord(schema)) {
-    return false;
-  }
-  const { type } = schema;
-  const types = Array.isArray(type) ? type : [type];
-  return types.includes('integer') || types.includes('number');
-};
-
 export const detectPagination = (
   operation: OperationRecord,
   mapper: RequestMapper,
@@ -81,7 +73,7 @@ export const detectPagination = (
   const carried: string[] = [];
   for (const [field, mapping] of Object.entries(mapper.fields)) {
     if (mapping.destination === 'query') {
-      query[mapping.wireName] = { field, numeric: isNumericSchema(properties[field]) };
+      query[mapping.wireName] = fieldOf(field, properties[field], mapping.explode);
     } else {
       carried.push(field);
     }
@@ -107,36 +99,13 @@ export const detectPagination = (
 export const PAGINATION_SCHEMA: Readonly<Record<string, unknown>> = {
   type: 'object',
   properties: {
-    next: {
-      type: ['object', 'null'],
-      additionalProperties: { type: ['string', 'number'] },
-    },
+    // Any argument object: `next` carries the call's other arguments too
+    // (booleans, arrays, ...). It is checked against the tool's own input
+    // schema at run time instead (an invalid hint becomes null).
+    next: { type: ['object', 'null'] },
   },
   required: ['next'],
   additionalProperties: false,
-};
-
-// Hint values become the NEXT call's arguments, so they must be safe as
-// such: bounded, printable, and (for numeric fields) actually numeric.
-const MAX_HINT_VALUE_LENGTH = 1024;
-// oxlint-disable-next-line no-control-regex -- matching control characters is the point (a value carrying one is refused)
-const CONTROL_RE = /[\u0000-\u001F\u007F]/u;
-const NUMERIC_RE = /^-?\d+(?:\.\d+)?$/u;
-
-const hintValue = (raw: unknown, field: PaginationField): string | number | undefined => {
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    return field.numeric ? raw : String(raw);
-  }
-  if (typeof raw !== 'string' || raw === '' || raw.length > MAX_HINT_VALUE_LENGTH) {
-    return undefined;
-  }
-  if (CONTROL_RE.test(raw)) {
-    return undefined;
-  }
-  if (!field.numeric) {
-    return raw;
-  }
-  return NUMERIC_RE.test(raw) ? Number(raw) : undefined;
 };
 
 export type HintInput = {
@@ -197,14 +166,13 @@ const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | und
     return {};
   }
   const mapped: Args = carriedArgs(plan, input.args);
-  const seen = new Set<string>();
-  for (const [name, raw] of target.searchParams) {
+  for (const name of new Set(target.searchParams.keys())) {
     const field = plan.query[name];
-    const value = field === undefined ? undefined : hintValue(raw, field);
-    if (field === undefined || value === undefined || seen.has(name)) {
+    const value =
+      field === undefined ? undefined : linkValue(target.searchParams.getAll(name), field);
+    if (field === undefined || value === undefined) {
       return {};
     }
-    seen.add(name);
     mapped[field.field] = value;
   }
   return { next: mapped };

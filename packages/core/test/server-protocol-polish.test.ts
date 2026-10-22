@@ -108,6 +108,16 @@ describe('tools/list — pagination', () => {
     expect(result.nextCursor).toBeUndefined();
   });
 
+  it('does not page by default, even far past 100 tools (hosts that ignore nextCursor)', async () => {
+    const lots = Array.from({ length: 150 }, (_unused, index) =>
+      getOp(`bulk${String(index)}`, `/b${String(index)}`),
+    );
+    const client = await connect(lots);
+    const first = await client.request({ method: 'tools/list', params: {} });
+    expect(first.tools).toHaveLength(151);
+    expect(first.nextCursor).toBeUndefined();
+  });
+
   it('pages with an opaque cursor and returns every tool exactly once', async () => {
     const client = await connect(many, { toolsPageSize: 3 });
     // The raw first page (Client.listTools() without a cursor follows
@@ -203,7 +213,9 @@ describe('tools/call — W3C trace context', () => {
   });
 
   it.each([
-    ['an unknown version', 'ff-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01'],
+    ['the invalid version ff', 'ff-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01'],
+    ['version 00 with a trailing field', `${PARENT}-extra`],
+    ['a higher version glued to an extra field', `01${PARENT.slice(2)}extra`],
     ['an all-zero trace id', '00-00000000000000000000000000000000-00f067aa0ba902b7-01'],
     ['an all-zero parent id', '00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01'],
     ['upper-case hex', '00-0AF7651916CD43DD8448EB211C80319C-00F067AA0BA902B7-01'],
@@ -211,6 +223,14 @@ describe('tools/call — W3C trace context', () => {
     ['a non-string', 42],
   ])('drops a traceparent with %s', (_label, traceparent) => {
     expect(traceContextFromMeta({ traceparent, tracestate: 'a=b' })).toEqual({});
+  });
+
+  it('reads a higher traceparent version by the version-00 layout and forwards it as 00', () => {
+    const higher = `01${PARENT.slice(2)}`;
+    expect(traceContextFromMeta({ traceparent: higher })).toEqual({ traceparent: PARENT });
+    expect(traceContextFromMeta({ traceparent: `${higher}-future-field` })).toEqual({
+      traceparent: PARENT,
+    });
   });
 
   it('keeps a valid traceparent but drops a malformed tracestate', () => {
