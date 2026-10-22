@@ -1088,3 +1088,39 @@ describe('buildRequest — query deepObject / spaceDelimited / pipeDelimited (#5
     expect(ok(run('pipeDelimited', false, {})).query).toBe('');
   });
 });
+
+// #40: a REQUIRED body whose flattened properties are all optional and all
+// absent is still sent — as an empty object — instead of silently dropped.
+describe('buildRequest — required empty body (#40)', () => {
+  const mapper = (bodyContentType: string, bodyRequired: boolean): RequestMapper => ({
+    bodyMode: 'flattened',
+    bodyContentType,
+    ...(bodyRequired ? { bodyRequired: true } : {}),
+    fields: { note: { destination: 'body', bodyPath: ['note'], required: false } },
+  });
+
+  it('sends {} with the JSON content type when the body is required', () => {
+    const built = ok(buildRequest(mapper('application/json', true), 'post', '/x', {}, budgets));
+    expect(built.contentType).toBe('application/json');
+    expect(new TextDecoder().decode(built.body)).toBe('{}');
+  });
+
+  it('sends an empty form body with its content type when the body is required', () => {
+    const built = ok(
+      buildRequest(mapper('application/x-www-form-urlencoded', true), 'post', '/x', {}, budgets),
+    );
+    expect(built.contentType).toBe('application/x-www-form-urlencoded');
+    expect(built.body?.byteLength).toBe(0);
+  });
+
+  it('keeps an optional, entirely absent body absent', () => {
+    const built = ok(buildRequest(mapper('application/json', false), 'post', '/x', {}, budgets));
+    expect(built.body).toBeUndefined();
+    expect(built.contentType).toBeUndefined();
+  });
+
+  it('still never sends a body for GET', () => {
+    const built = ok(buildRequest(mapper('application/json', true), 'get', '/x', {}, budgets));
+    expect(built.body).toBeUndefined();
+  });
+});

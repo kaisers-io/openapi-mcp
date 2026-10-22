@@ -340,6 +340,41 @@ describe('createExecutor — header assembly', () => {
     expect(JSON.parse(new TextDecoder().decode(body))).toEqual({ name: 'widget' });
   });
 
+  it('sends the bytes {} for a required body whose properties are all optional (#40)', async () => {
+    const noteOp: NamedOperation = {
+      toolName: 'touchThing',
+      operation: {
+        method: 'post',
+        path: '/things',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { note: { type: 'string' } },
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+        responses: { '200': { description: 'ok' } },
+      },
+    };
+    const snapshot = buildToolSnapshot([noteOp]);
+    const tool = snapshot.toolsByName['touchThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    const outcome = await executor(tool, {}, freshSignal());
+    expect(outcome.isError).toBe(false);
+    const headers = calls[0]?.init.headers ?? {};
+    expect(headers['content-type']).toBe('application/json');
+    expect(new TextDecoder().decode(calls[0]?.init.body as Uint8Array)).toBe('{}');
+  });
+
   it('rejects a tool argument whose header name collides with a reserved header (defensive re-check)', async () => {
     const snapshot = buildToolSnapshot([forcedHeaderOp]);
     const tool = snapshot.toolsByName['forcedHeaderThing'] as SnapshotTool;

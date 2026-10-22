@@ -36,6 +36,16 @@ export type RequestMapper = {
   // variant, or `application/x-www-form-urlencoded`. Sent verbatim as the
   // Content-Type; buildRequest picks the encoding from its essence.
   bodyContentType?: string;
+  // `requestBody.required: true` (OAS 3.1.1 §4.8.13.1). Body PRESENCE is part
+  // of the contract and cannot be inferred from which flattened fields are
+  // populated: a required body whose properties are all optional must still
+  // be sent (as `{}`) when every field is absent (#40).
+  // Encoding is deliberately asymmetric: the key is present (and `true`) only
+  // for a required body, and ABSENT — never `false` — for an optional one, so
+  // a mapper for an optional body stays byte-identical to the pre-#40 shape.
+  // Anything that serializes, compares or memoizes mappers must treat a
+  // missing key as "optional", not as "unknown".
+  bodyRequired?: true;
   fields: Record<string, FieldMapping>;
 };
 
@@ -240,6 +250,7 @@ type BodyResult = {
   fields: Field[];
   mode: 'flattened' | 'single' | 'none';
   contentType?: string;
+  required?: true;
 };
 
 // Keys allowed on a body object-root for it to be FLATTENED. Anything else
@@ -458,7 +469,14 @@ const bodyFields = (
         ...(bodyRequired ? {} : { bodyGroup: { requiredWhenPresent: propRequired } }),
       });
     }
-    return { ok: { fields, mode: 'flattened', contentType: media.contentType } };
+    return {
+      ok: {
+        fields,
+        mode: 'flattened',
+        contentType: media.contentType,
+        ...(bodyRequired ? { required: true as const } : {}),
+      },
+    };
   }
   const converted = convertSchema(root ?? {}, version, 0);
   if (!('ok' in converted)) {
@@ -478,6 +496,7 @@ const bodyFields = (
       ],
       mode: 'single',
       contentType: media.contentType,
+      ...(bodyRequired ? { required: true as const } : {}),
     },
   };
 };
@@ -681,6 +700,7 @@ export const buildLayout = (
   const mapper: RequestMapper = {
     bodyMode: body.ok.mode,
     ...(body.ok.contentType === undefined ? {} : { bodyContentType: body.ok.contentType }),
+    ...(body.ok.required === true ? { bodyRequired: true as const } : {}),
     fields,
   };
   return { ok: { inputSchema, mapper } };
