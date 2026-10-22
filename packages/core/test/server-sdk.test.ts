@@ -140,7 +140,7 @@ const connectPair = async (overrides: SessionOverrides = {}) => {
     version: '1.0.0',
     snapshot,
     dispatcherDeps: {
-      limiter: { consume: () => true }, // Always-permitting: rate exhaustion cannot fake a pass
+      limiter: { consume: () => true, retryAfterMs: () => 0 }, // Always-permitting: rate exhaustion cannot fake a pass
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
@@ -280,7 +280,7 @@ describe('createProtocolSession — InMemory integration', () => {
       version: '1.0.0',
       snapshot,
       dispatcherDeps: {
-        limiter: { consume: () => true },
+        limiter: { consume: () => true, retryAfterMs: () => 0 },
         now: () => 0,
         executor: () => Promise.resolve({ isError: false, content: [] }),
         metaExecutor: createMetaExecutor(),
@@ -378,5 +378,82 @@ describe('createProtocolSession — InMemory integration', () => {
     // Invalid hint values throw a RangeError at Server construction, so a
     // successful session proves the SDK accepted the configured shape.
     await expect(connectPair()).resolves.toBeDefined();
+  });
+});
+
+describe('createProtocolSession — discover tool mode (issue #38)', () => {
+  const buildDiscoverSnapshot = () => {
+    const built = buildTools([namedOp, namedOpWithOutput], {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    return buildSnapshot(
+      built,
+      {
+        spec: { title: FIXTURE_SPEC_TITLE, specVersion: '1.0.0', omitted: [] },
+        contentHash: 'h',
+        displaySource: 's',
+        deadPatterns: [],
+      },
+      { toolMode: 'discover' },
+    );
+  };
+
+  // A real SDK client validates every structuredContent against the tool's
+  // declared outputSchema, so these calls also prove the discovery tools'
+  // output schemas describe what they return.
+  it('serves search -> describe -> call to a real client, with static discover-mode instructions', async () => {
+    const executor = vi.fn<ToolExecutor>(() =>
+      Promise.resolve({ isError: false, content: [{ type: 'text', text: 'created' }] as const }),
+    );
+    const { client } = await connectPair({ executor, snapshot: buildDiscoverSnapshot() });
+    const instructions = client.getInstructions();
+    expect(instructions).toContain('search_operations');
+    expect(instructions).toContain('call_operation');
+    expect(instructions).not.toContain(FIXTURE_SPEC_TITLE);
+
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name)).toEqual([
+      'openapi_mcp_status',
+      'search_operations',
+      'describe_operation',
+      'call_operation',
+    ]);
+
+    const found = await client.callTool({
+      name: 'search_operations',
+      arguments: { query: 'output' },
+    });
+    expect(found.isError).not.toBe(true);
+    expect(found.structuredContent).toMatchObject({
+      results: [{ name: 'createThingWithOutput', method: 'POST', path: '/things-with-output' }],
+    });
+
+    const described = await client.callTool({
+      name: 'describe_operation',
+      arguments: { name: 'createThingWithOutput' },
+    });
+    expect(described.isError).not.toBe(true);
+    expect(described.structuredContent).toMatchObject({
+      name: 'createThingWithOutput',
+      inputSchema: { type: 'object' },
+      outputSchema: { type: 'object' },
+    });
+
+    const called = await client.callTool({
+      name: 'call_operation',
+      arguments: { name: 'createThing', arguments: { id: 'a1' } },
+    });
+    expect(called).toMatchObject({ isError: false, content: [{ type: 'text', text: 'created' }] });
+    expect(executor).toHaveBeenCalledTimes(1);
+    expect(executor.mock.calls[0]?.[0].name).toBe('createThing');
+    expect(executor.mock.calls[0]?.[1]).toEqual({ id: 'a1' });
+  });
+
+  it('answers a direct call of an operation name with the unknown-tool protocol error, like any unlisted name', async () => {
+    const { client } = await connectPair({ snapshot: buildDiscoverSnapshot() });
+    await expect(
+      client.callTool({ name: 'createThing', arguments: { id: 'a1' } }),
+    ).rejects.toMatchObject({ code: ProtocolErrorCode.InvalidParams });
   });
 });

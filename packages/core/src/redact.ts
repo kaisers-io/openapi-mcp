@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { validationError } from './errors.ts';
+import { createMatcher, replaceSpans } from './redact-match.ts';
 
 const MAX_SECRETS = 64; // Bound construction cost
 const MAX_SECRET_LENGTH = 8192; // Bound per-needle scan cost
@@ -7,15 +8,99 @@ const MIN_VARIANT_LENGTH = 8; // Encoding variants only for 8+ char secrets
 const REDACTED = '[redacted]';
 
 // The literal needles for one secret: the raw value, plus (for 8+ chars) the
-// bounded standard-Base64, Base64URL, and percent-encoded forms. All literal
-// strings — matched via split/join, never a built RegExp (no ReDoS surface).
+// bounded encoded forms an upstream plausibly echoes it in — standard
+// Base64, Base64URL, percent-encoding with upper- AND lowercase hex (RFC 3986
+// §2.1 makes them equivalent and some servers emit lowercase),
+// application/x-www-form-urlencoded (space as `+`, per the WHATWG URL
+// serializer), and the JSON-string-escaped body (`JSON.stringify` escapes,
+// plus `/` as `\/`, which PHP's json_encode and others emit). The JSON forms
+// matter for TEXT bodies: an `application/json` body is already covered by
+// response.ts's parse-and-scan-structure path, but a text/plain or HTML
+// error page that embeds a JSON snippet is only ever string-redacted.
+// All literal strings — matched literally by redact-match.ts, never a built
+// RegExp (no ReDoS surface; the one RegExp below is a fixed pattern applied
+// to the ENCODED secret, not built from it). Callers dedupe through a Set,
+// so a secret with no special characters costs no extra needles for the
+// forms that collapse to the raw value.
 const variantsOf = (secret: string): string[] => {
   if (secret.length < MIN_VARIANT_LENGTH) {
     return [secret];
   }
   const std = Buffer.from(secret, 'utf8').toString('base64');
   const url = std.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
-  return [secret, std, url, encodeURIComponent(secret)];
+  const pct = encodeURIComponent(secret);
+  const pctLower = pct.replaceAll(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase());
+  const form = new URLSearchParams([['', secret]]).toString().slice(1);
+  const json = JSON.stringify(secret).slice(1, -1);
+  return [secret, std, url, pct, pctLower, form, json, json.replaceAll('/', String.raw`\/`)];
+};
+
+// RFC 9110 §5.6.2 `token` (the auth-scheme) followed by whitespace and ONE
+// further whitespace-free run — the `auth-scheme 1*SP token68` shape of
+// RFC 9110 §11.4 (`Bearer x`, `Token x`, `Basic x`, `ApiKey x`). A fixed,
+// linear pattern (the three character classes are pairwise disjoint, so
+// there is no backtracking ambiguity) over a value already capped at
+// MAX_SECRET_LENGTH. Deliberately NOT a generic "last whitespace-separated
+// token": the scheme must be a bare token (no `/`, `(`, `;`...), so a
+// static header such as `User-Agent: client/1.2 extra-info` or
+// `Accept: text/html, application/json` never has a fragment of it promoted
+// to a needle. The auth-param list form (`Digest username="..", ...`) is
+// intentionally out of scope: its values are per-request digests, not a
+// reusable credential, and it contains several spaces.
+const AUTH_CREDENTIALS_RE = /^(?<scheme>[!#$%&'*+.^_`|~0-9A-Za-z-]+)[ \t]+(?<credential>\S+)$/u;
+
+// Strict UTF-8 decode for a Basic credential: a password that does not
+// decode cleanly is not text an upstream could echo as text.
+const strictUtf8 = new TextDecoder('utf-8', { fatal: true });
+
+// RFC 7617 §2: `Basic base64(user-id ":" password)`. Returns the decoded
+// `user:pass` and the password, or nothing when the credential is not
+// canonical Base64 (Buffer.from is lenient — it skips invalid characters —
+// so the round-trip check rejects anything that is not exactly what an
+// encoder would have produced) or carries no colon.
+const basicParts = (credential: string): string[] => {
+  const bytes = Buffer.from(credential, 'base64');
+  if (bytes.toString('base64') !== credential) {
+    return [];
+  }
+  let decoded: string;
+  try {
+    decoded = strictUtf8.decode(bytes);
+  } catch {
+    return [];
+  }
+  // RFC 7617 §2: the user-id cannot contain a colon, so the FIRST colon is
+  // the separator and the password may itself contain colons.
+  const colon = decoded.indexOf(':');
+  return colon === -1 ? [] : [decoded, decoded.slice(colon + 1)];
+};
+
+// The secrets DERIVED from one registered value, beyond the value itself.
+// A header secret is registered as its whole value (`Bearer <token>`), but
+// an upstream that echoes the credential ("invalid api key <token>") echoes
+// only the part after the scheme — so that part is a secret in its own
+// right. For Basic, the decoded `user:pass` and the password are, too
+// (login-failure messages commonly name them). The user-id ALONE is never
+// derived: it is an identifier, not a secret, and is often a short common
+// word. Every derived part shorter than MIN_VARIANT_LENGTH is dropped, so a
+// short password or token fragment cannot become a needle that redacts
+// ordinary text or collides with the marker (the marker guard in
+// createRedactor still runs over every derived needle — fail closed).
+// Auth-scheme matching is case-insensitive (RFC 9110 §11.1).
+//
+// This lives HERE rather than at registration (api-options.ts) on purpose:
+// createRedactor is the single choke point that every secret source feeds
+// (spec-fetch headers, --header/--header-env, the HTTP bearer token — see
+// serve.ts), so deriving here covers all of them uniformly and keeps the
+// MAX_SECRETS / length budgets and the marker guard in one place.
+const derivedSecretsOf = (secret: string): string[] => {
+  const match = AUTH_CREDENTIALS_RE.exec(secret);
+  if (match === null) {
+    return [];
+  }
+  const { scheme = '', credential = '' } = match.groups ?? {};
+  const parts = [credential, ...(scheme.toLowerCase() === 'basic' ? basicParts(credential) : [])];
+  return parts.filter((part) => part.length >= MIN_VARIANT_LENGTH);
 };
 
 export type Redactor = {
@@ -41,12 +126,15 @@ export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
     if (secret.length > MAX_SECRET_LENGTH) {
       throw validationError('secret exceeds the redaction length budget');
     }
-    for (const variant of variantsOf(secret)) {
-      needles.add(variant);
+    for (const part of [secret, ...derivedSecretsOf(secret)]) {
+      for (const variant of variantsOf(part)) {
+        needles.add(variant);
+      }
     }
   }
   // Longest first: an encoding variant that contains a shorter needle as a
-  // substring must still redact as the whole variant.
+  // substring must still redact as the whole variant (createMatcher takes
+  // the first — longest — needle matching at each position).
   const ordered = [...needles].toSorted((first, second) => second.length - first.length);
   // Fail closed at construction: a needle that is itself a substring of the
   // marker would be reintroduced into the output by the very replacement
@@ -58,21 +146,15 @@ export const createRedactor = (rawSecrets: readonly string[]): Redactor => {
       );
     }
   }
-  // Imperative on purpose: `value` is unbounded untrusted text (a response
-  // body, a request, etc.) — the streaming replace-in-place shape here
-  // avoids building intermediate closures/arrays over that text beyond what
-  // split/join already require per matched needle.
+  const findSpans = createMatcher(ordered);
+  // `value` is unbounded untrusted text (a response body, a request, etc.):
+  // one matcher pass over it, then one join — a clean value is returned
+  // as-is without any copy.
   const redactString = (value: string): string => {
-    let out = value;
-    for (const needle of ordered) {
-      if (out.includes(needle)) {
-        out = out.split(needle).join(REDACTED);
-      }
-    }
-    return out;
+    const spans = findSpans(value, false);
+    return spans.length === 0 ? value : replaceSpans(value, spans, REDACTED);
   };
-  const stringHasSecret = (value: string): boolean =>
-    ordered.some((needle) => value.includes(needle));
+  const stringHasSecret = (value: string): boolean => findSpans(value, true).length > 0;
   // Contract: operates on JSON-compatible data only (JSON.parse output or the
   // built envelope) — symbol/non-enumerable keys and cycles are out of
   // contract; a pathologically deep input throws, mapped by the executor to

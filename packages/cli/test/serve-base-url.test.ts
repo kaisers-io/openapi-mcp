@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { NormalizedSpec } from '@kaisers-io/openapi-mcp-core';
-import { assertBaseUrlShape, resolveBaseUrl } from '../src/commands/serve.ts';
+import {
+  assertBaseUrlShape,
+  resolveBaseUrl,
+  resolveHttpConfig,
+} from '../src/commands/serve-action.ts';
+import type { ServeCmdOpts } from '../src/commands/serve-action.ts';
+import type { CliContext } from '../src/context.ts';
 
 // In-process unit coverage for the base-URL resolution helpers serve.ts's
 // action body wires together — the CLI's own serve.test.ts/
@@ -75,6 +81,33 @@ describe('resolveBaseUrl', () => {
       /--base-url/u,
     );
   });
+
+  describe('a server URL rejected for size (issue #37)', () => {
+    const rejected: NormalizedSpec = { ...baseSpec, serverUrlRejected: { expandedBytes: 10_000 } };
+
+    it('--base-url still works', () => {
+      expect(
+        resolveBaseUrl('https://operator.example/', rejected, 'https://spec.example/o.json', false),
+      ).toEqual({ url: new URL('https://operator.example/'), trusted: true });
+    });
+
+    it('a URL spec does NOT fall back to the document origin: usage error naming --base-url and the budget', () => {
+      let caught: unknown;
+      try {
+        resolveBaseUrl(undefined, rejected, 'https://spec.example/openapi.json', false);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({ code: 'usage' });
+      expect((caught as Error).message).toMatch(/2048-byte server URL budget.*--base-url/u);
+    });
+
+    it('a file spec is the same usage error', () => {
+      expect(() => resolveBaseUrl(undefined, rejected, './openapi.json', true)).toThrow(
+        /budget\) — pass --base-url/u,
+      );
+    });
+  });
 });
 
 describe('assertBaseUrlShape', () => {
@@ -99,5 +132,57 @@ describe('assertBaseUrlShape', () => {
 
   it('rejects a fragment', () => {
     expect(() => assertBaseUrlShape(new URL('https://api.example.com/#frag'))).toThrow(/fragment/u);
+  });
+});
+
+// In-process: the spawned serve E2E suites exercise these branches too, but
+// v8 coverage never sees inside a child process
+describe('resolveHttpConfig', () => {
+  const token = 'A'.repeat(43);
+  const ctxWith = (env: Record<string, string>): CliContext => ({ env }) as unknown as CliContext;
+  const command = (
+    portSource: 'cli' | 'default' = 'default',
+  ): Parameters<typeof resolveHttpConfig>[0] =>
+    ({
+      getOptionValueSource: (name: string) => (name === 'port' ? portSource : undefined),
+    }) as unknown as Parameters<typeof resolveHttpConfig>[0];
+  const opts = (extra: Partial<ServeCmdOpts>): ServeCmdOpts =>
+    ({ port: '3044', ...extra }) as ServeCmdOpts;
+
+  it('is undefined for stdio, and rejects orphaned HTTP-only flags', () => {
+    expect(resolveHttpConfig(command(), opts({}), ctxWith({}))).toBeUndefined();
+    expect(() => resolveHttpConfig(command('cli'), opts({}), ctxWith({}))).toThrow(
+      /require --http/u,
+    );
+    expect(() => resolveHttpConfig(command(), opts({ httpTokenEnv: 'T' }), ctxWith({}))).toThrow(
+      /require --http/u,
+    );
+  });
+
+  it('requires a set, 32-byte token env var', () => {
+    expect(() => resolveHttpConfig(command(), opts({ http: true }), ctxWith({}))).toThrow(
+      /--http requires --http-token-env/u,
+    );
+    const withEnv = opts({ http: true, httpTokenEnv: 'T' });
+    expect(() => resolveHttpConfig(command(), withEnv, ctxWith({}))).toThrow(/is not set/u);
+    expect(() => resolveHttpConfig(command(), withEnv, ctxWith({ T: 'short' }))).toThrow(
+      /32 bytes/u,
+    );
+    expect(resolveHttpConfig(command(), withEnv, ctxWith({ T: token }))).toEqual({
+      token,
+      port: 3044,
+    });
+  });
+
+  it('rejects an invalid port', () => {
+    for (const port of ['0', '65536', 'x', '1.5']) {
+      expect(() =>
+        resolveHttpConfig(
+          command('cli'),
+          opts({ http: true, httpTokenEnv: 'T', port }),
+          ctxWith({ T: token }),
+        ),
+      ).toThrow(/not a valid port/u);
+    }
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { testContext } from '../src/context.ts';
-import { createTransportWarningRoute } from '../src/commands/serve.ts';
+import { createTransportWarningRoute } from '../src/commands/serve-action.ts';
 
 // In-process unit coverage for the bounded stderr route serve.ts hands both
 // transports as their out-of-band error sink. The E2E suites drive the route
