@@ -404,7 +404,9 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       throw usageError(`--http-auth must be "static" or "oauth", not "${cmdOpts.httpAuth}"`);
     }
     if (cmdOpts.httpAuth === 'static' && (oauthFlagGiven || cmdOpts.httpHost !== undefined)) {
-      throw usageError('--http-host, --oauth-issuer, --oauth-audience and --oauth-required-scope require --http-auth oauth');
+      throw usageError(
+        '--http-host, --oauth-issuer, --oauth-audience and --oauth-required-scope require --http-auth oauth',
+      );
     }
     const port = Number(cmdOpts.port);
     if (!Number.isInteger(port) || port <= 0 || port > 65_535) {

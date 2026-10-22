@@ -104,7 +104,7 @@ const start = async (port: number, served = snapshot): Promise<Running> => {
     version: '1.0.0',
     snapshot: served,
     dispatcherDeps: {
-      limiter: { consume: () => true },
+      limiter: { consume: () => true, retryAfterMs: () => 0 },
       now: () => Date.now(),
       executor,
       metaExecutor: createMetaExecutor(),
@@ -298,7 +298,7 @@ describe('Streamable HTTP — bind address', () => {
         version: '1',
         snapshot,
         dispatcherDeps: {
-          limiter: { consume: () => true },
+          limiter: { consume: () => true, retryAfterMs: () => 0 },
           now: () => Date.now(),
           executor: () => Promise.resolve(textOutcome('x', false)),
           metaExecutor: createMetaExecutor(),
