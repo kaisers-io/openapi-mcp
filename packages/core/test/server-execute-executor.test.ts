@@ -1625,9 +1625,12 @@ describe('createExecutor — pagination hints', () => {
     },
   );
 
-  it('yields next: null for a pipe-delimited array parameter (not decoded yet, #145)', async () => {
+  // #108's styles (#145): a delimited array's value is split on its own
+  // delimiter; a deepObject field (JSON:API `page[number]`, `filter[x]`) is
+  // reassembled from its `name[key]` parameters, declared keys only.
+  const withLabels = (style: string): NamedOperation => {
     const op = issuesOp(false);
-    const piped: NamedOperation = {
+    return {
       ...op,
       operation: {
         ...op.operation,
@@ -1636,21 +1639,158 @@ describe('createExecutor — pagination hints', () => {
           {
             name: 'labels',
             in: 'query',
-            style: 'pipeDelimited',
+            style,
             explode: false,
             schema: { type: 'array', items: { type: 'string' } },
           },
         ],
       },
     };
-    const { outcome, valid } = await call(
-      piped,
-      page('<https://api.example.test/issues?page=2&labels=a|b>; rel="next"', {}),
-      {},
-    );
+  };
+  const issuesLink = (query: string) =>
+    page(`<https://api.example.test/issues?page=2&${query}>; rel="next"`, {});
+
+  it.each([
+    ['pipeDelimited', 'labels=a|b'],
+    ['pipeDelimited', 'labels=a%7Cb'],
+    ['spaceDelimited', 'labels=a%20b'],
+    ['spaceDelimited', 'labels=a+b'],
+  ])('decodes a %s array (%s), round-tripping the input schema', async (style, query) => {
+    const { outcome, valid, tool, calls } = await call(withLabels(style), issuesLink(query), {
+      labels: ['a', 'b'],
+    });
+    expect(calls[0]?.url).toContain(style === 'pipeDelimited' ? 'labels=a%7Cb' : 'labels=a%20b');
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ page: 2, labels: ['a', 'b'] });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it('splits a delimited array only on its own delimiter', async () => {
+    const { outcome } = await call(withLabels('pipeDelimited'), issuesLink('labels=a,b'), {});
+    expect(nextOf(outcome)).toEqual({ page: 2, labels: ['a,b'] });
+  });
+
+  it.each([
+    ['an empty item', 'labels=a||b'],
+    ['a repeated key', 'labels=a|b&labels=c'],
+  ])('yields next: null for a pipe-delimited array with %s', async (_label, query) => {
+    const { outcome, valid } = await call(withLabels('pipeDelimited'), issuesLink(query), {});
     expect(outcome.isError).toBe(false);
     expect(valid).toBe(true);
     expect(nextOf(outcome)).toBeNull();
+  });
+
+  // A JSON:API collection: `page` and `filter` are deepObject parameters
+  // (https://jsonapi.org/format/#fetching-pagination), plus a form `sort`.
+  const jsonApiParams: Record<string, unknown>[] = [
+    {
+      name: 'page',
+      in: 'query',
+      style: 'deepObject',
+      explode: true,
+      schema: {
+        type: 'object',
+        properties: { number: { type: 'integer' }, size: { type: 'integer' } },
+      },
+    },
+    {
+      name: 'filter',
+      in: 'query',
+      style: 'deepObject',
+      explode: true,
+      schema: {
+        type: 'object',
+        properties: { status: { type: 'string' }, featured: { type: 'boolean' } },
+      },
+    },
+    { name: 'sort', in: 'query', schema: { type: 'string' } },
+  ];
+  const jsonApiOp = (parameters: Record<string, unknown>[] = jsonApiParams): NamedOperation => ({
+    toolName: 'listArticles',
+    operation: {
+      method: 'get',
+      path: '/articles',
+      tags: [],
+      deprecated: false,
+      parameters,
+      responses: {
+        '200': {
+          description: 'ok',
+          headers: { Link: { schema: { type: 'string' } } },
+          content: { 'application/json': { schema: { type: 'object' } } },
+        },
+      },
+    },
+  });
+  const articles = (query: string) =>
+    page(`<https://api.example.test/articles?${query}>; rel="next"`, { data: [] });
+
+  it('maps JSON:API page[number]/page[size] and filter[x] back onto deepObject fields', async () => {
+    const { outcome, valid, tool, calls } = await call(
+      jsonApiOp(),
+      articles(
+        'page%5Bnumber%5D=2&page%5Bsize%5D=10&filter[status]=published&filter[featured]=true&sort=-created',
+      ),
+      { page: { size: 10 }, filter: { status: 'published', featured: true }, sort: '-created' },
+    );
+    expect(calls[0]?.url).toBe(
+      'https://api.example.test/articles?page%5Bsize%5D=10&filter%5Bstatus%5D=published&filter%5Bfeatured%5D=true&sort=-created',
+    );
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({
+      page: { number: 2, size: 10 },
+      filter: { status: 'published', featured: true },
+      sort: '-created',
+    });
+    expect(acceptedAsInput(tool, next)).toBe(true);
+  });
+
+  it.each([
+    ['a key the deepObject schema does not declare', 'page[number]=2&page[cursor]=x'],
+    ['a nested bracket key', 'page[number]=2&filter[author][name]=x'],
+    ['an empty bracket key', 'page[]=2'],
+    ['a repeated deepObject key', 'page[number]=2&page[number]=3'],
+    ['the bare deepObject name', 'page=2'],
+    ['a bracket key on a form field', 'page[number]=2&sort[by]=x'],
+    ['a value that does not decode to the property type', 'page[number]=two'],
+    ['a bracket key on an undeclared parameter', 'page[number]=2&fields[articles]=title'],
+    ['an inherited property name as key', 'page[number]=2&page[__proto__]=1'],
+    ['an inherited property name as parameter', 'page[number]=2&constructor=x'],
+    ['an inherited property name as deepObject owner', 'page[number]=2&toString[a]=x'],
+  ])('yields next: null for %s', async (_label, query) => {
+    const { outcome, valid } = await call(jsonApiOp(), articles(query), {});
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('yields next: null when a bracket name is both a form parameter and a deepObject key', async () => {
+    // `page[number]` is declared literally as a form parameter AND is
+    // `page.number` of the deepObject: the link cannot say which one it means.
+    const op = jsonApiOp([
+      ...jsonApiParams,
+      { name: 'page[number]', in: 'query', schema: { type: 'integer' } },
+    ]);
+    const { outcome, valid } = await call(op, articles('page[number]=2'), {});
+    expect(outcome.isError).toBe(false);
+    expect(valid).toBe(true);
+    expect(nextOf(outcome)).toBeNull();
+  });
+
+  it('still maps a literal bracket-named form parameter when no deepObject claims it', async () => {
+    const op = jsonApiOp([
+      { name: 'page[number]', in: 'query', schema: { type: 'integer' } },
+      { name: 'page[size]', in: 'query', schema: { type: 'integer' } },
+    ]);
+    const { outcome, valid, tool } = await call(op, articles('page[number]=2&page[size]=5'), {});
+    expect(valid).toBe(true);
+    const next = nextOf(outcome);
+    expect(next).toEqual({ 'page[number]': 2, 'page[size]': 5 });
+    expect(acceptedAsInput(tool, next)).toBe(true);
   });
 
   it.each([

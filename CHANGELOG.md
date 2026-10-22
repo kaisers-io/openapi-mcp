@@ -73,6 +73,13 @@
   tool's own parameter types, or `null` when no next page is known (not proof that the data
   is exhausted). Its output schema gains an optional `pagination` property.
 
+- **Next-page hints for `deepObject` and delimited query parameters (#145).** A `Link`
+  next target using JSON:API-style `page[number]=2&page[size]=10` or `filter[status]=x` now
+  maps back onto the tool's `deepObject` parameters (declared keys only), and space- or
+  pipe-delimited array values are split on their delimiter. Before, these links gave
+  `next: null`. Anything ambiguous (an undeclared or nested key, a repeated key, a name
+  that is both a literal parameter and a `deepObject` key) still gives `null`.
+
 - **Opt-in retries for retry-safe requests (#82).** `--retries <n>` (0–3, default `0`)
   retries 429/502/503/504 and connection errors before any response for GET, HEAD, PUT and
   DELETE (DELETE not after a connection error), and for POST/PATCH only when the operation

@@ -1,7 +1,7 @@
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { RequestMapper } from './layout.ts';
-import { fieldOf, hintValue, linkValue } from './pagination-values.ts';
-import type { PaginationField } from './pagination-values.ts';
+import { deepObjectValue, fieldOf, hintValue, linkValue } from './pagination-values.ts';
+import type { HintScalar, PaginationField } from './pagination-values.ts';
 
 export type { PaginationField } from './pagination-values.ts';
 
@@ -73,13 +73,7 @@ export const detectPagination = (
   const carried: string[] = [];
   for (const [field, mapping] of Object.entries(mapper.fields)) {
     if (mapping.destination === 'query') {
-      // Link values are decoded by the form style only; the other query
-      // styles (deepObject, space/pipe-delimited) cannot carry a hint yet
-      // (follow-up #145), so a next link using them yields null.
-      query[mapping.wireName] =
-        mapping.style === 'form'
-          ? fieldOf(field, properties[field], mapping.explode)
-          : { field, kind: 'unsupported' };
+      query[mapping.wireName] = fieldOf(field, properties[field], mapping);
     } else {
       carried.push(field);
     }
@@ -150,12 +144,53 @@ const parseUrl = (raw: string, base?: string): URL | undefined => {
   }
 };
 
+// A deepObject parameter on the wire: `name[key]`, exactly one level, with
+// neither part empty nor containing a bracket (the serializer refuses
+// bracketed keys as ambiguous with nesting, #108). Brackets may arrive
+// percent-encoded (`%5B`/`%5D`); URLSearchParams has decoded them by now.
+const DEEP_OBJECT_KEY_RE = /^(?<name>[^[\]]+)\[(?<key>[^[\]]+)\]$/u;
+
+// One next-link query parameter mapped onto the tool's fields: a form or
+// delimited field by its wire name, or one property of a deepObject field
+// by `name[key]`. A name both could claim (a parameter literally declared
+// as `page[number]` next to a deepObject `page`) is ambiguous: no mapping.
+type LinkParam =
+  | { field: PaginationField; value: HintScalar | HintScalar[] }
+  | { field: PaginationField; key: string; value: HintScalar };
+
+// The tool field for a query wire name: own entries only, so a link
+// parameter named `constructor` or `__proto__` never resolves to
+// Object.prototype's members.
+const queryField = (plan: PaginationPlan, name: string): PaginationField | undefined =>
+  Object.hasOwn(plan.query, name) ? plan.query[name] : undefined;
+
+const linkParam = (
+  plan: PaginationPlan,
+  name: string,
+  raws: readonly string[],
+): LinkParam | undefined => {
+  const direct = queryField(plan, name);
+  const { name: owned, key } = DEEP_OBJECT_KEY_RE.exec(name)?.groups ?? {};
+  const owner = owned === undefined ? undefined : queryField(plan, owned);
+  const deep = owner?.kind === 'object' ? owner : undefined;
+  if (direct !== undefined && deep !== undefined) {
+    return undefined;
+  }
+  if (deep !== undefined && key !== undefined) {
+    const value = deepObjectValue(raws, deep, key);
+    return value === undefined ? undefined : { field: deep, key, value };
+  }
+  const value = direct === undefined ? undefined : linkValue(raws, direct);
+  return direct === undefined || value === undefined ? undefined : { field: direct, value };
+};
+
 // From `Link: <...>; rel="next"`: only a target with the SAME origin and
 // path as the request is accepted, and every one of its query parameters
-// must map onto one of the tool's own query fields — otherwise no hint.
-// A hostile upstream therefore cannot steer the next call to another host,
-// path or parameter. Returns `{ next }` whenever a Link header was sent
-// (its verdict is final), undefined when there was none.
+// must map onto one of the tool's own query fields (a deepObject field's
+// properties included) — otherwise no hint. A hostile upstream therefore
+// cannot steer the next call to another host, path or parameter. Returns
+// `{ next }` whenever a Link header was sent (its verdict is final),
+// undefined when there was none.
 const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | undefined => {
   if (input.links === undefined) {
     return undefined;
@@ -172,14 +207,24 @@ const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | und
     return {};
   }
   const mapped: Args = carriedArgs(plan, input.args);
+  // The deepObject properties, collected per field and assembled at the end
+  // with Object.fromEntries (own data properties, whatever the key).
+  const objects = new Map<string, [string, HintScalar][]>();
   for (const name of new Set(target.searchParams.keys())) {
-    const field = plan.query[name];
-    const value =
-      field === undefined ? undefined : linkValue(target.searchParams.getAll(name), field);
-    if (field === undefined || value === undefined) {
+    const param = linkParam(plan, name, target.searchParams.getAll(name));
+    if (param === undefined) {
       return {};
     }
-    mapped[field.field] = value;
+    if ('key' in param) {
+      const entries = objects.get(param.field.field) ?? [];
+      entries.push([param.key, param.value]);
+      objects.set(param.field.field, entries);
+    } else {
+      mapped[param.field.field] = param.value;
+    }
+  }
+  for (const [field, entries] of objects) {
+    mapped[field] = Object.fromEntries(entries);
   }
   return { next: mapped };
 };
