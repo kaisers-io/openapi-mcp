@@ -745,13 +745,16 @@ const canonicalJson = (value: unknown): string => {
 };
 
 // O(n) over the encoded items. A pathological input that cannot be encoded
-// (e.g. nesting deep enough to overflow the stack) is treated as NOT unique,
-// so validation fails closed instead of throwing past Zod.
-const allDistinct = (items: readonly unknown[]): boolean => {
+// (nesting deep enough to overflow the stack) fails validation closed instead
+// of throwing past Zod — with its own message, so the caller is not told
+// about duplicates that may not exist.
+const uniquenessIssue = (items: readonly unknown[]): string | undefined => {
   try {
-    return new Set(items.map((item) => canonicalJson(item))).size === items.length;
+    return new Set(items.map((item) => canonicalJson(item))).size === items.length
+      ? undefined
+      : 'items must be unique';
   } catch {
-    return false;
+    return 'items are nested too deeply to check that they are unique (uniqueItems); send a flatter value';
   }
 };
 
@@ -771,7 +774,14 @@ const arraySchema = (
   // uniqueItems is enforced exactly (refine, opaque to z.toJSONSchema) and
   // advertised via .meta in convertSchema.
   return node['uniqueItems'] === true
-    ? { ok: withMax.refine((items) => allDistinct(items), { message: 'items must be unique' }) }
+    ? {
+        ok: withMax.superRefine((items, ctx) => {
+          const message = uniquenessIssue(items);
+          if (message !== undefined) {
+            ctx.addIssue({ code: 'custom', message });
+          }
+        }),
+      }
     : { ok: withMax };
 };
 

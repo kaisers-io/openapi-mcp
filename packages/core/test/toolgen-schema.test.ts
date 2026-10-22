@@ -1310,6 +1310,19 @@ describe('convertSchema — uniqueItems / minProperties / maxProperties (#71)', 
     expect(numbers.safeParse([1, 1.5]).success).toBe(true);
   });
 
+  it('uniqueItems: an item too deep to encode fails with its own message, not "must be unique"', () => {
+    const s = ok(convertSchema({ type: 'array', uniqueItems: true }));
+    let deep: unknown = [];
+    for (let level = 0; level < 200_000; level += 1) {
+      deep = [deep];
+    }
+    const result = s.safeParse([deep, 1]);
+    expect(result.success).toBe(false);
+    const messages = result.error?.issues.map((issue) => issue.message) ?? [];
+    expect(messages.join(' ')).toMatch(/nested too deeply/u);
+    expect(messages.join(' ')).not.toMatch(/must be unique/u);
+  });
+
   it('uniqueItems:false is a no-op', () => {
     const s = ok(convertSchema({ type: 'array', items: { type: 'string' }, uniqueItems: false }));
     expect(s.safeParse(['a', 'a']).success).toBe(true);
