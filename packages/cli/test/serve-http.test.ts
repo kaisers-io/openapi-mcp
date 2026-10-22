@@ -5,12 +5,11 @@ import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { CLI_ENTRY, stopChild } from './cli-subprocess.ts';
+import { CLI_ENTRY, FIXTURES_DIR, stopChild } from './cli-subprocess.ts';
 import { SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
-const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
+const fixturesDir = FIXTURES_DIR;
 // A real 43-char unpadded Base64URL token decoding to exactly 32 bytes (256
 // bits) — the shape `isValidBearerToken` requires; a bare ">=32 chars"
 // string such as 'A'.repeat(32) does not decode to 32 bytes and is REJECTED

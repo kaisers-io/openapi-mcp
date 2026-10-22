@@ -5,8 +5,8 @@ import type { IncomingMessage, Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CLI_ENTRY, stopChild } from './cli-subprocess.ts';
 
 // End-to-end proof for OAuth2 client-credentials (#55): a REAL `serve`
 // subprocess against ONE local server that is both the authorization server
@@ -142,8 +142,6 @@ const specFor = (tokenUrl: string): string =>
     },
   });
 
-const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
-
 type RpcResponse = { id?: number; result?: Record<string, unknown> };
 
 type Session = {
@@ -164,12 +162,9 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
   let mock: Mock | undefined;
 
   afterEach(async () => {
-    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
-      const exited = new Promise<void>((resolve) => {
-        child?.once('exit', () => resolve());
-      });
-      child.kill('SIGKILL');
-      await exited;
+    if (child !== undefined) {
+      // Graceful, so the child writes its coverage (cli-subprocess.ts)
+      await stopChild(child);
     }
     child = undefined;
     await mock?.close();
@@ -192,7 +187,7 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
     child = spawn(
       process.execPath,
       [
-        bin,
+        CLI_ENTRY,
         'serve',
         '--spec',
         specPath,

@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 // globally installed tarball in CI.
 export const CLI_ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 
+// The specs and other inputs the subprocess suites start the CLI with.
+export const FIXTURES_DIR = fileURLToPath(new URL('fixtures/', import.meta.url));
+
 // Above serve's own forced-shutdown bound (SHUTDOWN_FORCE_MS, 5 s), so a child
 // that shuts down as designed always gets to finish.
 const STOP_GRACE_MS = 10_000;

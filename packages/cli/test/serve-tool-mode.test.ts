@@ -7,11 +7,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CLI_ENTRY, stopChild } from './cli-subprocess.ts';
 
 // `serve --tool-mode` end to end (issue #38): the real binary over stdio,
 // against a real local upstream that records what it receives.
 
-const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 
 type Recorded = { method: string | undefined; url: string | undefined; auth: string | undefined };
@@ -105,10 +105,9 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
   let tempHome: string | undefined;
 
   afterEach(async () => {
-    if (child !== undefined && child.exitCode === null && child.signalCode === null) {
-      const exited = exitOf(child);
-      child.kill('SIGKILL');
-      await exited;
+    if (child !== undefined) {
+      // Graceful, so the child writes its coverage (cli-subprocess.ts)
+      await stopChild(child);
     }
     child = undefined;
     if (tempHome !== undefined) {
@@ -119,7 +118,7 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
 
   const spawnServe = async (args: string[], env: Record<string, string> = {}) => {
     tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-tool-mode-'));
-    child = spawn(process.execPath, [bin, 'serve', '--trust-spec-updates', ...args], {
+    child = spawn(process.execPath, [CLI_ENTRY, 'serve', '--trust-spec-updates', ...args], {
       cwd: fixturesDir,
       env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, ...env },
     });

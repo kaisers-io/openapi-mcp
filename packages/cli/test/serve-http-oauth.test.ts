@@ -7,16 +7,15 @@ import { createServer, request } from 'node:http';
 import type { IncomingMessage, Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
+import { CLI_ENTRY, FIXTURES_DIR, stopChild } from './cli-subprocess.ts';
 
 // `serve --http --http-auth oauth` end to end: a real child process, a
 // loopback stand-in authorization server (RFC 8414 metadata + JWKS) and a
 // loopback upstream API that records the Authorization header it receives.
 // Ports 4381/4382 are disjoint from every other HTTP suite.
 
-const bin = fileURLToPath(new URL('../bin/openapi-mcp.mjs', import.meta.url));
-const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
+const fixturesDir = FIXTURES_DIR;
 const UPSTREAM_SECRET = 'example-token-not-a-secret';
 const MODERN_ENVELOPE = {
   'io.modelcontextprotocol/protocolVersion': '2026-07-28',
@@ -87,24 +86,27 @@ describe('serve --http --http-auth oauth', () => {
 
   const spawnServe = async (args: readonly string[]) => {
     const home = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-oauth-'));
-    const child = spawn(process.execPath, [bin, 'serve', '--spec', 'petstore.json', ...args], {
-      cwd: fixturesDir,
-      env: {
-        ...process.env,
-        HOME: home,
-        USERPROFILE: home,
-        UPSTREAM_TOKEN: `Bearer ${UPSTREAM_SECRET}`,
-        MCP_TOKEN: 'A'.repeat(43),
+    const child = spawn(
+      process.execPath,
+      [CLI_ENTRY, 'serve', '--spec', 'petstore.json', ...args],
+      {
+        cwd: fixturesDir,
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          UPSTREAM_TOKEN: `Bearer ${UPSTREAM_SECRET}`,
+          MCP_TOKEN: 'A'.repeat(43),
+        },
       },
-    });
+    );
     const stderr: Buffer[] = [];
     child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
     const exited = once(child, 'exit');
     cleanups.push(async () => {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill('SIGKILL');
-        await exited;
-      }
+      // Graceful, so the child writes its coverage (cli-subprocess.ts)
+      await stopChild(child);
+      await exited;
       await rm(home, { recursive: true, force: true });
     });
     return { child, exited, stderr: () => Buffer.concat(stderr).toString('utf8') };
