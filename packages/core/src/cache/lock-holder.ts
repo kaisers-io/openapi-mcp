@@ -91,21 +91,26 @@ export const readLockHolder = async (
 // on this host is a strong signal, not proof — another PID namespace (a
 // container sharing the cache directory under the same hostname) can hide a
 // live owner — so it only informs the operator; it never authorizes removal.
+//
+// `alive` is set only when the probe could answer (same host), so callers
+// decide on it rather than on the wording of `text`.
 export const describeLockHolder = (
   holder: { pid?: number | undefined; hostname?: string | undefined },
   runtime: CacheRuntime | undefined,
-): string | undefined => {
+): { text: string; alive?: boolean } | undefined => {
   if (holder.pid === undefined) {
     return undefined;
   }
   const pid = String(holder.pid);
   if (holder.hostname === undefined) {
-    return `held by pid ${pid}`;
+    return { text: `held by pid ${pid}` };
   }
   if (runtime === undefined || holder.hostname !== runtime.hostname) {
-    return `held by pid ${pid} on host ${holder.hostname}`;
+    return { text: `held by pid ${pid} on host ${holder.hostname}` };
   }
-  return runtime.isProcessAlive(holder.pid)
-    ? `held by pid ${pid} on this host, process running`
-    : `held by pid ${pid} on this host, process not running`;
+  const alive = runtime.isProcessAlive(holder.pid);
+  return {
+    text: `held by pid ${pid} on this host, ${alive ? 'process running' : 'process not running'}`,
+    alive,
+  };
 };
