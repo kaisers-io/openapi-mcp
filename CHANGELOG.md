@@ -92,3 +92,10 @@
   The JWKS is refreshed stale-while-revalidate, at most once per 30 s; a failed refresh keeps
   the last good set for up to an hour, an empty set revokes every key. Static `--http-token-env`
   stays the default.
+
+- **Security-scheme hints (#55).** `tools` prints one `auth:` line per `securitySchemes` entry
+  an exposed operation references, naming the flag that supplies it (`tools --json`:
+  `data.security`), and `serve` warns at startup when no configured header satisfies an exposed
+  operation's `security` requirement (alternatives joined with `OR`, schemes needed together
+  with `AND`). Query-string API keys, challenge/response `http` schemes and mutual TLS are
+  reported as unsupported. Requests are built as before.

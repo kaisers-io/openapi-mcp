@@ -23,6 +23,7 @@ import {
   SPEC_BUDGETS,
   serveStdioSession,
   SYSTEM_HEADERS,
+  unsatisfiedSecurityWarnings,
   TOOL_MODES,
   usageError,
   validationError,
@@ -611,6 +612,11 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         metaExecutor: createMetaExecutor({ stats: callStats }),
         redactor,
       };
+      const configuredHeaderNames = new Set(
+        [...apiConfig.staticHeaders, ...apiConfig.secretHeaders].map((header) =>
+          header.name.toLowerCase(),
+        ),
+      );
       // Startup diagnostics — cache staleness, a pending candidate, dead
       // patterns under non-strict mode (e.g. a mistyped --deny silently
       // failing open), and omitted operations — go to stderr, sanitized
@@ -620,6 +626,14 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...result.warnings,
         ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
+        // Exposed operations whose `security` requirement no configured
+        // header satisfies would only ever 401 — say so, with the flag that
+        // fixes it, before the first call instead of after it.
+        ...unsatisfiedSecurityWarnings(
+          result.spec,
+          built.tools.map((tool) => tool.operation),
+          { headerNames: configuredHeaderNames },
+        ),
         ...(httpConfig === undefined ? [] : noRequiredScopeWarning(httpConfig)),
         ...[discoverApprovalWarning(snapshot.toolMode, snapshot.operations)].filter(
           (line): line is string => line !== undefined,
