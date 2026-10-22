@@ -35,3 +35,10 @@
   `…[truncated]` marker; `structuredContent` still carries the complete data. A host that
   forwards only `content[]` to the model sees the first 8 KB, as it already did for
   unstructured results.
+
+- **Selected upstream response headers reach the tool result (#73).** `Location` (same-origin,
+  as a path), `ETag`, `Last-Modified`, `Retry-After`, `X-Total-Count` and rate-limit headers
+  appear under an optional `headers` property of the structured result, or as a trailing
+  `headers:` block of a text result. A header whose name or value contains a registered
+  secret is dropped. On a 429/503, `Retry-After` is reported as
+  `_meta["openapi-mcp/upstreamRetryAfterMs"]`.
