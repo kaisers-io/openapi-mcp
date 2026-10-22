@@ -178,6 +178,7 @@ export {
   createRateLimiter,
   DEFAULT_RATE_LIMIT,
   DESCRIBE_TOOL_NAME,
+  discoverApprovalWarning,
   evaluateRequest,
   extractBearerToken,
   isAuthorized,

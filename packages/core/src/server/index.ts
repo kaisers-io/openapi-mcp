@@ -8,6 +8,7 @@ export {
   AUTO_DISCOVER_THRESHOLD,
   CALL_TOOL_NAME,
   DESCRIBE_TOOL_NAME,
+  discoverApprovalWarning,
   resolveToolMode,
   SEARCH_TOOL_NAME,
   TOOL_MODES,

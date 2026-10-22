@@ -49,6 +49,33 @@ export const resolveToolMode = (requested: RequestedToolMode, exposedCount: numb
   return requested;
 };
 
+// Startup warning (decision D15): under discover, a host that approves per
+// tool sees ONE approval surface, call_operation, for every exposed
+// operation. "Always allow call_operation" then also allows every write the
+// filters expose. Undefined when every exposed operation is read-only (the
+// default filter) or the mode is per-operation, where each tool is approved
+// on its own. Names are spec-derived, so they are sanitized and capped.
+const APPROVAL_WARNING_NAMES = 3;
+
+export const discoverApprovalWarning = (
+  toolMode: ToolMode,
+  operations: readonly SnapshotTool[],
+): string | undefined => {
+  if (toolMode !== 'discover') {
+    return undefined;
+  }
+  const writes = operations.filter((tool) => tool.generated?.annotations.readOnlyHint !== true);
+  if (writes.length === 0) {
+    return undefined;
+  }
+  const named = writes
+    .slice(0, APPROVAL_WARNING_NAMES)
+    .map((tool) => sanitizeSpecText(tool.name, REFLECTED_NAME_MAX))
+    .join(', ');
+  const more = writes.length > APPROVAL_WARNING_NAMES ? ', ...' : '';
+  return `--tool-mode discover exposes ${String(writes.length)} non-read-only operation(s) (${named}${more}) through the single call_operation tool: a host approval of call_operation covers all of them, writes included. Narrow --allow to read-only operations, or use --tool-mode per-operation to approve each operation separately`;
+};
+
 // The call_operation tool stands for every exposed operation, so it cannot
 // carry one operation's hints. It reports the least safe combination among
 // them: read-only only when EVERY exposed operation is (the default

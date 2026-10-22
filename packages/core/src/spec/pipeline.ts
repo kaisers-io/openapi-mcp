@@ -445,17 +445,18 @@ const candidateBudgetWarning = (
   candidate: NormalizedSpec,
   opts: SpecPipelineOptions,
 ): string | undefined => {
+  const budget = opts.maxToolCount ?? SPEC_BUDGETS.maxToolCount;
   let exposedCount: number;
   try {
     exposedCount = applyFilters(assignToolNames(candidate.operations), opts.allow, opts.deny)
       .exposed.length;
   } catch (error) {
-    return `the candidate spec could not be checked against the ${SPEC_BUDGETS.maxToolCount}-tool budget (${describeCause(error)}); after "openapi-mcp cache promote" this server may refuse to start with the current filters`;
+    return `the candidate spec could not be checked against the ${budget}-tool budget (${describeCause(error)}); after "openapi-mcp cache promote" this server may refuse to start with the current filters`;
   }
-  if (exposedCount <= SPEC_BUDGETS.maxToolCount) {
+  if (exposedCount <= budget) {
     return undefined;
   }
-  return `the candidate spec would expose ${exposedCount} tools under the current filters — over the ${SPEC_BUDGETS.maxToolCount}-tool budget; after "openapi-mcp cache promote" this server will refuse to start unless --allow or --deny narrows the set`;
+  return `the candidate spec would expose ${exposedCount} tools under the current filters — over the ${budget}-tool budget; after "openapi-mcp cache promote" this server will refuse to start unless --allow or --deny narrows the set`;
 };
 
 // Decides what a successfully fetched-and-validated spec becomes: the accepted

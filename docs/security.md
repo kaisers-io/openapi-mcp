@@ -16,7 +16,7 @@ A spec is not a passive data file here; treat it the same way you'd treat a depe
 `npm install` — pin it, review changes to it, and don't point `openapi-mcp` at a spec source
 you don't control or trust.
 
-Everything below is a defense *in addition to* that requirement, not a replacement for it.
+Everything below is a defense _in addition to_ that requirement, not a replacement for it.
 
 ## Untrusted spec text
 
@@ -165,7 +165,15 @@ excluded is an unknown operation, and no upstream request is made. Search input 
 search result is sanitized and capped like any other tool text. The trade-off is approval
 granularity: `call_operation` carries the least safe annotations among the exposed
 operations (see [Tool modes](configuration.md#tool-modes)), so a host gating approval per
-tool sees one tool for all of them. A code-execution mode (model-written code calling the
+tool sees one tool for all of them. **One approval covers every exposed operation**: in a
+host that offers "always allow this tool", allowing `call_operation` once allows every
+operation the filters expose, writes included when `--allow` widens the set beyond the
+read-only default. Use `discover` with the read-only default (or an `--allow` set you would
+approve as a whole), or `--tool-mode per-operation` where each write needs its own approval.
+`serve` prints a startup warning naming the non-read-only operations whenever `discover` (or
+`auto` resolving to it) exposes any. `call_operation` also rejects `arguments: null` (the
+advertised schema says object; omit `arguments` for an operation without inputs), so the
+wire contract and the runtime agree. A code-execution mode (model-written code calling the
 API) is deliberately not offered: it would bypass per-call validation, filtering, rate
 limiting and redaction.
 

@@ -31,10 +31,20 @@ export const DESCRIBE_INPUT_SCHEMA = z.strictObject({
 // schema, with the same error rendering, a direct tool call uses. An object
 // schema here would rebuild the value first, so the target would no longer
 // validate the caller's arguments as sent. The wire schema below still
-// advertises it as an object.
+// advertises it as an object. The one value refused here is `null`: the wire
+// schema says object, so `null` is not "no arguments" (only omitting it is):
+// it fails as `arguments: invalid_type` before any lookup or upstream call,
+// so the advertised contract and the runtime agree.
 export const CALL_INPUT_SCHEMA = z.strictObject({
   name: z.string().min(1).max(OPERATION_NAME_MAX_LENGTH),
-  arguments: z.unknown().optional(),
+  arguments: z
+    .unknown()
+    .superRefine((value, context) => {
+      if (value === null) {
+        context.addIssue({ code: 'invalid_type', expected: 'object', input: value });
+      }
+    })
+    .optional(),
 });
 
 export type CallInput = z.infer<typeof CALL_INPUT_SCHEMA>;
@@ -51,7 +61,7 @@ export const CALL_WIRE_INPUT_SCHEMA: Record<string, unknown> = {
     arguments: {
       type: 'object',
       description:
-        "The operation's arguments, matching the inputSchema describe_operation returns for it. Omit for an operation without inputs.",
+        "The operation's arguments, matching the inputSchema describe_operation returns for it. Omit (not null) for an operation without inputs.",
     },
   },
   required: ['name'],

@@ -10,6 +10,7 @@ import {
   createExecutor,
   createMetaExecutor,
   createRedactor,
+  discoverApprovalWarning,
   parseFilterPattern,
   resolveToolMode,
   SYSTEM_HEADERS,
@@ -169,6 +170,22 @@ describe('resolveToolMode', () => {
     expect(resolveToolMode('discover', 1)).toBe('discover');
     expect(resolveToolMode('auto', 64)).toBe('per-operation');
     expect(resolveToolMode('auto', 65)).toBe('discover');
+  });
+});
+
+describe('discoverApprovalWarning (decision D15)', () => {
+  it('says nothing when every exposed operation is read-only, or outside discover', () => {
+    const readOnly = snapshotFor('discover');
+    expect(discoverApprovalWarning(readOnly.toolMode, readOnly.operations)).toBeUndefined();
+    const perOperation = snapshotFor('per-operation', { allow: ['**'] });
+    expect(discoverApprovalWarning(perOperation.toolMode, perOperation.operations)).toBeUndefined();
+  });
+
+  it('names the non-read-only operations one call_operation approval would cover', () => {
+    const widened = snapshotFor('discover', { allow: ['**'] });
+    expect(discoverApprovalWarning(widened.toolMode, widened.operations)).toBe(
+      '--tool-mode discover exposes 2 non-read-only operation(s) (createThingItem, deleteThing) through the single call_operation tool: a host approval of call_operation covers all of them, writes included. Narrow --allow to read-only operations, or use --tool-mode per-operation to approve each operation separately',
+    );
   });
 });
 
@@ -368,6 +385,24 @@ describe('dispatcher — discover mode', () => {
     expect(viaCall?.[0].name).toBe(directCall?.[0].name);
     expect(viaCall?.[0].generated?.operation).toEqual(directCall?.[0].generated?.operation);
     expect(viaCall?.[1]).toEqual(directCall?.[1]);
+  });
+
+  it('rejects `arguments: null` at the wire schema and at runtime, before the executor', async () => {
+    // The advertised contract: arguments is an object, and only omitting it
+    // means "no arguments"
+    const wire = snapshotFor('discover').toolsByName['call_operation']?.wireTool.inputSchema as {
+      properties: Record<string, { type?: unknown }>;
+    };
+    expect(wire.properties['arguments']?.type).toBe('object');
+    const executor = vi.fn<ToolExecutor>(() => Promise.resolve(textOutcome('reached', false)));
+    const outcome = outcomeOf(
+      await dispatcherFor(snapshotFor('discover'), { executor }).call(
+        call('call_operation', { name: 'listThings', arguments: null }),
+      ),
+    );
+    expect(outcome.isError).toBe(true);
+    expect(textOf(outcome)).toBe('invalid tool arguments:\narguments: invalid_type');
+    expect(executor).not.toHaveBeenCalled();
   });
 
   it('charges the rate limiter once per call_operation call, and a refused call never reaches the executor', async () => {

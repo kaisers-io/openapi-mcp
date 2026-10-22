@@ -5,6 +5,7 @@ import {
   buildSnapshot,
   buildTools,
   compileEnvelopeValidator,
+  discoverApprovalWarning,
   createExecutor,
   createMetaExecutor,
   createRateLimiter,
@@ -409,6 +410,9 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
         ...result.warnings,
         ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
         ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
+        ...[discoverApprovalWarning(snapshot.toolMode, snapshot.operations)].filter(
+          (line): line is string => line !== undefined,
+        ),
       ]);
       if (httpConfig === undefined) {
         const session = serveStdioSession(

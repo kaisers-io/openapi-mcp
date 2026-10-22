@@ -23,12 +23,12 @@ Two flag value shapes are used across commands:
 
 Apply to every command (`openapi-mcp <command> [flags]`):
 
-| Flag | Meaning | Default |
-|---|---|---|
-| `-V, --version` | print the CLI version | — |
-| `--json` | machine-readable JSON output envelope | off (human-readable) |
-| `--verbose` | include stack traces and debug detail on stderr | off |
-| `-h, --help` | display help for the command | — |
+| Flag            | Meaning                                         | Default              |
+| --------------- | ----------------------------------------------- | -------------------- |
+| `-V, --version` | print the CLI version                           | —                    |
+| `--json`        | machine-readable JSON output envelope           | off (human-readable) |
+| `--verbose`     | include stack traces and debug detail on stderr | off                  |
+| `-h, --help`    | display help for the command                    | —                    |
 
 Example:
 
@@ -40,32 +40,32 @@ openapi-mcp --json doctor
 
 Start an MCP server (stdio by default) exposing tools generated from an OpenAPI spec.
 
-| Flag | Repeatable | Meaning | Default |
-|---|---|---|---|
-| `--spec <url\|file>` | no | OpenAPI spec source, JSON or YAML | required |
-| `--allow <pattern>` | yes | whitelist pattern | `[]` (read-only default applies) |
-| `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
-| `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
-| `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
-| `--timeout <duration>` | no | spec fetch timeout | `30s` |
-| `--ttl <duration>` | no | spec refresh interval | `1h` |
-| `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
-| `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
-| `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
-| `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
-| `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
-| `--header <Header:value>` | yes | static, non-secret API header | `[]` |
-| `--max-response-bytes <size>` | no | cap the decompressed upstream response body | `10MB` |
-| `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
-| `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
-| `--port <n>` | no | HTTP port | `3044` |
-| `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
-| `--tool-mode <mode>` | no | `per-operation`, `discover` or `auto` — see [Tool modes](#tool-modes) | `per-operation` |
+| Flag                             | Repeatable | Meaning                                                                                     | Default                          |
+| -------------------------------- | ---------- | ------------------------------------------------------------------------------------------- | -------------------------------- |
+| `--spec <url\|file>`             | no         | OpenAPI spec source, JSON or YAML                                                           | required                         |
+| `--allow <pattern>`              | yes        | whitelist pattern                                                                           | `[]` (read-only default applies) |
+| `--deny <pattern>`               | yes        | blacklist pattern, always wins                                                              | `[]`                             |
+| `--strict-filters`               | no         | exit with an error instead of a warning on dead patterns                                    | off                              |
+| `--spec-header-env <Header=ENV>` | yes        | auth header for the spec fetch, value read from env                                         | `[]`                             |
+| `--timeout <duration>`           | no         | spec fetch timeout                                                                          | `30s`                            |
+| `--ttl <duration>`               | no         | spec refresh interval                                                                       | `1h`                             |
+| `--cache-key <name>`             | no         | durable cache namespace label; required for authenticated specs (see below)                 | none                             |
+| `--trust-spec-updates`           | no         | auto-accept refreshed specs instead of gating them                                          | off                              |
+| `--allow-private-network`        | no         | permit private/loopback redirect targets during the spec fetch (never cloud-metadata)       | off                              |
+| `--base-url <url>`               | no         | override the spec-derived base URL for API requests                                         | `servers[0]` from spec           |
+| `--header-env <Header=ENV>`      | yes        | API auth header, value read from env (secret)                                               | `[]`                             |
+| `--header <Header:value>`        | yes        | static, non-secret API header                                                               | `[]`                             |
+| `--max-response-bytes <size>`    | no         | cap the decompressed upstream response body                                                 | `10MB`                           |
+| `--allow-insecure-http`          | no         | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off                              |
+| `--http`                         | no         | serve over Streamable HTTP (127.0.0.1 only) instead of stdio                                | off (stdio)                      |
+| `--port <n>`                     | no         | HTTP port                                                                                   | `3044`                           |
+| `--http-token-env <ENV>`         | no         | env var holding the bearer token required for HTTP requests; mandatory with `--http`        | none                             |
+| `--tool-mode <mode>`             | no         | `per-operation`, `discover` or `auto` — see [Tool modes](#tool-modes)                       | `per-operation`                  |
 
 Notes:
 
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
-  `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
+  `Header=ENV` (**equals**) — the right-hand side is an environment variable _name_, not a
   literal value.
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
@@ -117,8 +117,9 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
     `per-operation` would list it.
   - `call_operation` `{ name, arguments }` calls it. `arguments` is validated by that
     operation's own schema, with the same error messages, rate limit, redaction and upstream
-    request as a direct call.
-  Up to 4096 operations may be exposed.
+    request as a direct call. Omit `arguments` for an operation without inputs; `null` is
+    rejected (`arguments: invalid_type`).
+    Up to 4096 operations may be exposed.
 - `auto`: `discover` when more than 64 operations are exposed after filtering, otherwise
   `per-operation`.
 
@@ -130,16 +131,23 @@ operation, so a task takes more tool calls. And because one `call_operation` too
 every exposed operation, it carries the least safe annotations among them — `readOnlyHint:
 true` only when every exposed operation is a `GET`/`HEAD` (the read-only default),
 otherwise `destructiveHint: true` when any is. A host that asks for approval per tool, or
-decides it from annotations, sees one approval surface for all operations; narrow the set
-with `--allow`/`--deny` if that matters.
+decides it from annotations, sees one approval surface for all operations: approving
+`call_operation` once approves every exposed operation, writes included. `serve` warns at
+startup when `discover` exposes any non-read-only operation; narrow the set with
+`--allow`/`--deny` if that matters (see [security](security.md#discovery-tool-mode)).
+
+Startup cost: `serve` compiles one output validator per exposed operation before it answers,
+about 12 ms each with the current per-tool compilation, so a few thousand operations under
+`discover` take tens of seconds to start. Shared validator compilation (#137) removes most of
+that cost.
 
 Measured `tools/list` sizes (2026-07-28 stdio response, tokens ≈ bytes / 4):
 
-| Spec | Exposed | `per-operation` | `discover` |
-|---|---|---|---|
-| 400 generated `GET` operations | 400 | 273,824 bytes (~68k tokens) | 4,349 bytes (~1.1k tokens) |
-| DigitalOcean (read-only default) | 146 | 120,745 bytes (~30k tokens) | 4,349 bytes |
-| DigitalOcean (`--allow '**'`) | 265 | 355,878 bytes (~89k tokens) | 4,396 bytes |
+| Spec                             | Exposed | `per-operation`             | `discover`                 |
+| -------------------------------- | ------- | --------------------------- | -------------------------- |
+| 400 generated `GET` operations   | 400     | 273,824 bytes (~68k tokens) | 4,349 bytes (~1.1k tokens) |
+| DigitalOcean (read-only default) | 146     | 120,745 bytes (~30k tokens) | 4,349 bytes                |
+| DigitalOcean (`--allow '**'`)    | 265     | 355,878 bytes (~89k tokens) | 4,396 bytes                |
 
 ## `tools`
 
@@ -148,18 +156,18 @@ is started. Shares the spec-loading and filtering flags with `serve`; it has non
 API-request or transport flags (no `--base-url`, `--header*`, `--max-response-bytes`,
 `--allow-insecure-http`, `--http*`), since no API requests are ever made.
 
-| Flag | Repeatable | Meaning | Default |
-|---|---|---|---|
-| `--spec <url\|file>` | no | OpenAPI spec source, JSON or YAML | required |
-| `--allow <pattern>` | yes | whitelist pattern | `[]` (read-only default applies) |
-| `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
-| `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
-| `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
-| `--timeout <duration>` | no | spec fetch timeout | `30s` |
-| `--ttl <duration>` | no | spec refresh interval | `1h` |
-| `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs | none |
-| `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
-| `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
+| Flag                             | Repeatable | Meaning                                                                               | Default                          |
+| -------------------------------- | ---------- | ------------------------------------------------------------------------------------- | -------------------------------- |
+| `--spec <url\|file>`             | no         | OpenAPI spec source, JSON or YAML                                                     | required                         |
+| `--allow <pattern>`              | yes        | whitelist pattern                                                                     | `[]` (read-only default applies) |
+| `--deny <pattern>`               | yes        | blacklist pattern, always wins                                                        | `[]`                             |
+| `--strict-filters`               | no         | exit with an error instead of a warning on dead patterns                              | off                              |
+| `--spec-header-env <Header=ENV>` | yes        | auth header for the spec fetch, value read from env                                   | `[]`                             |
+| `--timeout <duration>`           | no         | spec fetch timeout                                                                    | `30s`                            |
+| `--ttl <duration>`               | no         | spec refresh interval                                                                 | `1h`                             |
+| `--cache-key <name>`             | no         | durable cache namespace label; required for authenticated specs                       | none                             |
+| `--trust-spec-updates`           | no         | auto-accept refreshed specs instead of gating them                                    | off                              |
+| `--allow-private-network`        | no         | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off                              |
 
 Example:
 
@@ -184,12 +192,12 @@ openapi-mcp cache list
 
 Remove cache entries; requires an explicit target or `--all`.
 
-| Flag | Meaning | Default |
-|---|---|---|
-| `--spec <url\|file>` | clear the namespace for this spec source | none |
-| `--id <entry-id>` | clear the namespace with this opaque entry id | none |
-| `--cache-key <name>` | cache namespace label used with `--spec` | none |
-| `--all` | remove every cache entry for this user | off |
+| Flag                 | Meaning                                       | Default |
+| -------------------- | --------------------------------------------- | ------- |
+| `--spec <url\|file>` | clear the namespace for this spec source      | none    |
+| `--id <entry-id>`    | clear the namespace with this opaque entry id | none    |
+| `--cache-key <name>` | cache namespace label used with `--spec`      | none    |
+| `--all`              | remove every cache entry for this user        | off     |
 
 Examples:
 
@@ -204,14 +212,14 @@ openapi-mcp cache clear --all
 Force a refetch of a spec source, writing a candidate on change (does not activate it — see
 [`docs/security.md`](security.md) and the README's [Caching & refresh](../README.md#caching--refresh)).
 
-| Flag | Meaning | Default |
-|---|---|---|
-| `--spec <url\|file>` | OpenAPI spec source, JSON or YAML | required |
-| `--cache-key <name>` | cache namespace label | none |
-| `--spec-header-env <Header=ENV>` | auth header for the spec fetch, value read from env (repeatable) | `[]` |
-| `--timeout <duration>` | spec fetch timeout | `30s` |
-| `--trust-spec-updates` | accept the refreshed spec directly instead of gating it | off |
-| `--allow-private-network` | permit private/loopback redirect targets during the fetch | off |
+| Flag                             | Meaning                                                          | Default  |
+| -------------------------------- | ---------------------------------------------------------------- | -------- |
+| `--spec <url\|file>`             | OpenAPI spec source, JSON or YAML                                | required |
+| `--cache-key <name>`             | cache namespace label                                            | none     |
+| `--spec-header-env <Header=ENV>` | auth header for the spec fetch, value read from env (repeatable) | `[]`     |
+| `--timeout <duration>`           | spec fetch timeout                                               | `30s`    |
+| `--trust-spec-updates`           | accept the refreshed spec directly instead of gating it          | off      |
+| `--allow-private-network`        | permit private/loopback redirect targets during the fetch        | off      |
 
 ```bash
 openapi-mcp cache refresh --spec https://api.example.com/openapi.json --cache-key petstore-prod
@@ -221,11 +229,11 @@ openapi-mcp cache refresh --spec https://api.example.com/openapi.json --cache-ke
 
 Accept the pending candidate spec as the new baseline.
 
-| Flag | Meaning | Default |
-|---|---|---|
-| `--spec <url\|file>` | OpenAPI spec source, JSON or YAML | required |
-| `--cache-key <name>` | cache namespace label | none |
-| `--hash <digest>` | pin the promotion to this candidate content hash | none |
+| Flag                 | Meaning                                          | Default  |
+| -------------------- | ------------------------------------------------ | -------- |
+| `--spec <url\|file>` | OpenAPI spec source, JSON or YAML                | required |
+| `--cache-key <name>` | cache namespace label                            | none     |
+| `--hash <digest>`    | pin the promotion to this candidate content hash | none     |
 
 ```bash
 openapi-mcp cache promote --spec https://api.example.com/openapi.json --cache-key petstore-prod
@@ -237,12 +245,12 @@ Remove a stale writer lock left behind by a process that died. Stop other `opena
 processes on this entry first — removing a lock a live writer still holds re-admits a second
 writer.
 
-| Flag | Meaning | Default |
-|---|---|---|
-| `--spec <url\|file>` | unlock the namespace for this spec source | none |
-| `--id <entry-id>` | unlock the namespace with this opaque entry id | none |
-| `--cache-key <name>` | cache namespace label used with `--spec` | none |
-| `--force` | remove the lock even when it is not known to be stale | off |
+| Flag                 | Meaning                                               | Default |
+| -------------------- | ----------------------------------------------------- | ------- |
+| `--spec <url\|file>` | unlock the namespace for this spec source             | none    |
+| `--id <entry-id>`    | unlock the namespace with this opaque entry id        | none    |
+| `--cache-key <name>` | cache namespace label used with `--spec`              | none    |
+| `--force`            | remove the lock even when it is not known to be stale | off     |
 
 ```bash
 openapi-mcp cache unlock --spec https://api.example.com/openapi.json --cache-key petstore-prod
