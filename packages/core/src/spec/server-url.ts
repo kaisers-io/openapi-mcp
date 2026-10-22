@@ -101,3 +101,40 @@ export const expandServerUrlTemplate = (
     ? { kind: 'unresolvable' }
     : { kind: 'expanded', url: expanded };
 };
+
+// The NormalizedSpec fields extractServerUrl fills (see normalize.ts).
+export type ServerUrlFields = {
+  serverUrl?: string;
+  serverUrlRejected?: { expandedBytes: number };
+  serverUrlIsRelative?: boolean;
+};
+
+// Absolute iff the candidate URL has a leading URI scheme (RFC 3986 §3.1).
+const ABSOLUTE_SCHEME_PATTERN = /^[a-z][a-z0-9+.-]*:/iu;
+
+// Extracts the base-URL candidate from ROOT `document.servers[0]` only
+// (path/operation-level `servers` overrides stay omitted in normalize.ts). Fail-closed: any malformed shape yields `{}` rather than
+// throwing, and never affects the generated operation set. An expansion over
+// the byte budget is marked `serverUrlRejected` instead.
+export const extractServerUrl = (document: Record<string, unknown>): ServerUrlFields => {
+  const { servers } = document;
+  if (!Array.isArray(servers) || servers.length === 0) {
+    return {};
+  }
+  const [first] = servers;
+  if (!isRecord(first) || typeof first['url'] !== 'string') {
+    return {};
+  }
+  const variables = isRecord(first['variables']) ? first['variables'] : {};
+  const expansion = expandServerUrlTemplate(first['url'], variables);
+  if (expansion.kind === 'over-budget') {
+    return { serverUrlRejected: { expandedBytes: expansion.bytes } };
+  }
+  if (expansion.kind === 'unresolvable') {
+    return {};
+  }
+  const serverUrl = expansion.url;
+  return ABSOLUTE_SCHEME_PATTERN.test(serverUrl)
+    ? { serverUrl }
+    : { serverUrl, serverUrlIsRelative: true };
+};

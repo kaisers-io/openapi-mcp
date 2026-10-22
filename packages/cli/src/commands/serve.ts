@@ -6,6 +6,12 @@ import { registerSpecOptions } from '../spec-options.ts';
 import type { runServe as RunServe, ServeCmdOpts } from './serve-action.ts';
 import type { CommandRegistrar } from './registry.ts';
 
+// Accumulates a repeatable option (--oauth-required-scope).
+const collect = (value: string, previous: string[] | undefined): string[] => [
+  ...(previous ?? []),
+  value,
+];
+
 // Registration only: the options and help text are defined here, statically,
 // so `serve --help` and option parsing are unchanged. Everything the action
 // needs (MCP SDK, Streamable HTTP + hono, executor, Ajv) lives in
@@ -17,9 +23,31 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     .description(
       'start an MCP server (stdio by default) exposing tools generated from an OpenAPI spec',
     )
-    .option('--http', 'serve over Streamable HTTP (127.0.0.1 only) instead of stdio')
+    .option('--http', 'serve over Streamable HTTP (127.0.0.1 unless --http-host) instead of stdio')
     .option('--port <n>', 'HTTP port', '3044')
     .option('--http-token-env <ENV>', 'env var holding the bearer token required for HTTP requests')
+    .option(
+      '--http-auth <mode>',
+      'HTTP authentication: "static" (--http-token-env) or "oauth" (resource-server mode)',
+      'static',
+    )
+    .option(
+      '--http-host <addr>',
+      'IP address to bind (default 127.0.0.1; any other requires --http-auth oauth)',
+    )
+    .option(
+      '--oauth-issuer <url>',
+      'authorization server issuer whose JWT access tokens are accepted',
+    )
+    .option(
+      '--oauth-audience <uri>',
+      "this server's canonical resource URI; tokens must carry it in aud",
+    )
+    .option(
+      '--oauth-required-scope <scope>',
+      'scope every access token must grant (repeatable)',
+      collect,
+    )
     .option(
       '--log <format>',
       'write one structured line per tool call to stderr (only "json"; never arguments, header values or bodies)',

@@ -1,0 +1,50 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Secured", "version": "1.0.0" },
+  "components": {
+    "securitySchemes": {
+      "apiKeyHeader": { "type": "apiKey", "in": "header", "name": "X-API-Key" },
+      "apiKeyQuery": { "type": "apiKey", "in": "query", "name": "api_key" },
+      "bearer": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" },
+      "cc": {
+        "type": "oauth2",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "https://auth.example.com/oauth/token",
+            "scopes": { "read": "read access" }
+          }
+        }
+      }
+    }
+  },
+  "security": [{ "apiKeyHeader": [] }],
+  "paths": {
+    "/things": {
+      "get": {
+        "operationId": "listThings",
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/search": {
+      "get": {
+        "operationId": "search",
+        "security": [{ "apiKeyQuery": [] }],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/me": {
+      "get": {
+        "operationId": "me",
+        "security": [{ "bearer": [] }, { "cc": ["read"] }],
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "security": [],
+        "responses": { "200": { "description": "ok" } }
+      }
+    }
+  }
+}

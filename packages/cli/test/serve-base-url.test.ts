@@ -147,7 +147,7 @@ describe('resolveHttpConfig', () => {
       getOptionValueSource: (name: string) => (name === 'port' ? portSource : undefined),
     }) as unknown as Parameters<typeof resolveHttpConfig>[0];
   const opts = (extra: Partial<ServeCmdOpts>): ServeCmdOpts =>
-    ({ port: '3044', ...extra }) as ServeCmdOpts;
+    ({ port: '3044', httpAuth: 'static', ...extra }) as ServeCmdOpts;
 
   it('is undefined for stdio, and rejects orphaned HTTP-only flags', () => {
     expect(resolveHttpConfig(command(), opts({}), ctxWith({}))).toBeUndefined();
@@ -169,8 +169,47 @@ describe('resolveHttpConfig', () => {
       /32 bytes/u,
     );
     expect(resolveHttpConfig(command(), withEnv, ctxWith({ T: token }))).toEqual({
-      token,
       port: 3044,
+      hostname: '127.0.0.1',
+      auth: { kind: 'static', token },
+    });
+  });
+
+  it('resolves OAuth resource-server mode and keeps it apart from the static token', () => {
+    const oauth = (extra: Partial<ServeCmdOpts>) =>
+      opts({ http: true, httpAuth: 'oauth', ...extra });
+    const issuer = 'https://issuer.example';
+    const audience = 'https://mcp.example/';
+    expect(() => resolveHttpConfig(command(), oauth({}), ctxWith({}))).toThrow(
+      /requires --oauth-issuer/u,
+    );
+    expect(() =>
+      resolveHttpConfig(command(), oauth({ httpTokenEnv: 'T' }), ctxWith({ T: token })),
+    ).toThrow(/cannot be combined/u);
+    expect(() =>
+      resolveHttpConfig(
+        command(),
+        opts({ http: true, oauthIssuer: issuer, oauthAudience: audience }),
+        ctxWith({}),
+      ),
+    ).toThrow(/require --http-auth oauth/u);
+    expect(() =>
+      resolveHttpConfig(
+        command(),
+        oauth({ oauthIssuer: issuer, oauthAudience: 'http://mcp.example/', httpHost: '10.0.0.5' }),
+        ctxWith({}),
+      ),
+    ).toThrow(/requires an https --oauth-audience/u);
+    expect(
+      resolveHttpConfig(
+        command(),
+        oauth({ oauthIssuer: issuer, oauthAudience: audience, oauthRequiredScope: ['mcp'] }),
+        ctxWith({}),
+      ),
+    ).toEqual({
+      port: 3044,
+      hostname: '127.0.0.1',
+      auth: { kind: 'oauth', issuer, audience, requiredScopes: ['mcp'] },
     });
   });
 
