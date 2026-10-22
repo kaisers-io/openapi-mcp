@@ -20,6 +20,11 @@ import type { JwsAlg, KeySet } from './jwk.ts';
 // - `iss` must equal the configured issuer exactly, `aud` must name this
 //   server's canonical resource URI (RFC 8707 / MCP authorization), and
 //   `exp` is mandatory, with `nbf`/`iat` honoured within a small skew.
+// Deliberately more lenient than RFC 9068 §2.2: `sub`, `client_id`, `iat`
+// and `jti` are optional here. None of them is needed to decide whether the
+// token is valid for this resource (issuer, audience, signature and expiry
+// are), and several deployed authorization servers omit one or the other in
+// client-credentials tokens.
 
 // Clock skew tolerated on exp/nbf/iat, in seconds — enough for ordinary NTP
 // drift between the authorization server and this host, small enough not to
@@ -78,8 +83,18 @@ const BASE64URL_RE = /^[A-Za-z0-9_-]*$/u;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const decodeSegment = (segment: string): Buffer | undefined =>
-  BASE64URL_RE.test(segment) ? Buffer.from(segment, 'base64url') : undefined;
+// Only the canonical spelling is accepted: Buffer ignores the unused
+// trailing bits of the last character, so without the round-trip check one
+// signature has several token strings that all verify — harmless for the
+// signature itself, but anything keyed on the token string (a cache, rate
+// limiting, replay detection) would see them as different tokens.
+const decodeSegment = (segment: string): Buffer | undefined => {
+  if (!BASE64URL_RE.test(segment)) {
+    return undefined;
+  }
+  const bytes = Buffer.from(segment, 'base64url');
+  return bytes.toString('base64url') === segment ? bytes : undefined;
+};
 
 const parseJsonSegment = (segment: string): Record<string, unknown> | undefined => {
   const bytes = decodeSegment(segment);
@@ -94,11 +109,16 @@ const parseJsonSegment = (segment: string): Record<string, unknown> | undefined 
   }
 };
 
-// RFC 8707 resource identifiers are compared on their URL-normalized form
-// (lower-cased scheme/host, default port elided) without a fragment and
-// without ONE trailing slash — the MCP authorization spec asks servers to
-// accept `https://mcp.example.com` and `https://mcp.example.com/` alike, and
-// to accept upper-case scheme/host components.
+// RFC 8707 resource identifiers are compared on their WHATWG URL-normalized
+// form, without a fragment and without ONE trailing slash — the MCP
+// authorization spec asks servers to accept `https://mcp.example.com` and
+// `https://mcp.example.com/` alike, and upper-case scheme/host components.
+// The URL parser normalizes more than that: it elides the default port
+// (`:443`), resolves dot segments (`/x/../mcp` equals `/mcp`) and
+// percent-encodes as WHATWG does. Path case stays significant (`/MCP` does
+// not match), and so does an empty segment (`//mcp`). The broader
+// normalization is safe: the authorization server, not the caller, mints
+// `aud`, and every accepted spelling names the same resource.
 export const comparableResource = (value: string): string => {
   let normalized = value;
   try {
@@ -131,7 +151,7 @@ const optionalString = (value: unknown): string | undefined =>
 const scopesOf = (scope: unknown): readonly string[] =>
   typeof scope === 'string' ? scope.split(' ').filter((entry) => entry !== '') : [];
 
-type ParsedJws = {
+export type ParsedJws = {
   header: Record<string, unknown>;
   payload: Record<string, unknown>;
   signingInput: string;
@@ -175,17 +195,30 @@ const checkHeader = (header: Record<string, unknown>): HeaderCheck => {
   return { ok: true, alg, kid };
 };
 
-// Signature first, claims second: nothing from an unauthenticated payload is
-// interpreted (beyond parsing it as JSON) until its signature has verified.
-export const verifyJwt = (token: string, keys: KeySet, opts: JwtVerifyOptions): JwtVerifyResult => {
+// The key-independent checks of verifyJwt: compact JWS structure and the
+// JOSE header. Callers run this BEFORE touching a key cache, so a malformed
+// or forbidden token never triggers (or waits for) a JWKS fetch.
+export const checkJwtStructure = (
+  token: string,
+):
+  | { ok: true; parsed: ParsedJws; alg: JwsAlg; kid: string }
+  | { ok: false; reason: JwtFailure } => {
   const parsed = parseCompactJws(token);
   if (parsed === undefined) {
     return { ok: false, reason: 'malformed' };
   }
   const header = checkHeader(parsed.header);
+  return header.ok ? { ok: true, parsed, alg: header.alg, kid: header.kid } : header;
+};
+
+// Signature first, claims second: nothing from an unauthenticated payload is
+// interpreted (beyond parsing it as JSON) until its signature has verified.
+export const verifyJwt = (token: string, keys: KeySet, opts: JwtVerifyOptions): JwtVerifyResult => {
+  const header = checkJwtStructure(token);
   if (!header.ok) {
     return header;
   }
+  const { parsed } = header;
   const jwk = keys.get(header.kid);
   if (jwk === undefined) {
     return { ok: false, reason: 'unknown-kid' };
