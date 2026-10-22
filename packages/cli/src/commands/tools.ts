@@ -2,6 +2,7 @@ import {
   buildTools,
   runSpecPipeline,
   sanitizeSpecText,
+  summarizeSecurity,
   SYSTEM_HEADERS,
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
@@ -68,6 +69,12 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
         });
         const allOmitted = [...result.spec.omitted, ...built.omitted];
         const tools: ToolRow[] = built.tools.map(toToolRow);
+        // Which credential the exposed operations expect, per referenced
+        // security scheme — the operator otherwise has to guess the header.
+        const security = summarizeSecurity(
+          result.spec,
+          built.tools.map((tool) => tool.operation),
+        );
         const data = {
           source: result.displaySource,
           title: result.spec.title,
@@ -82,6 +89,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           tools,
           omitted: allOmitted,
           deadPatterns: result.deadPatterns,
+          security,
         };
         const nameWidth = tools.reduce((width, tool) => Math.max(width, tool.name.length), 4);
         const humanLines: readonly string[] = [
@@ -90,6 +98,8 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           }`,
           `source: ${sanitizeSpecText(data.source, PATH_DISPLAY_MAX)}`,
           `cache: ${data.cacheStatus}`,
+          // Hints are already sanitized by describeSecurityScheme.
+          ...security.map((entry) => `auth: ${entry.hint}`),
           // Paths are untrusted spec text: sanitize the display copy only (the
           // JSON envelope keeps raw paths — JSON encoding escapes controls)
           ...tools.map(

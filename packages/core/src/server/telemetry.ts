@@ -21,6 +21,9 @@ export type CallOutcomeKind =
   // Refused by local policy before any request was sent (cleartext
   // credential gate, outbound size budget) — configuration, not arguments.
   | 'refused'
+  // The upstream OAuth2 access token (--upstream-oauth-*) could not be
+  // obtained; no API request was sent.
+  | 'token_error'
   | 'rate_limited'
   | 'overloaded'
   | 'egress_denied'
@@ -46,7 +49,8 @@ export type CallTelemetry = {
   // (see `attempts`), so it measures the call as the client experienced it,
   // not the API's own latency.
   upstreamMs?: number;
-  // Upstream requests sent for this call (1 + retries).
+  // Upstream API requests sent for this call: 1 + retries, plus the
+  // requests of a 401 token replay (--upstream-oauth-*), if one was made.
   attempts?: number;
 };
 
