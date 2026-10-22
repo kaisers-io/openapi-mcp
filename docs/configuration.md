@@ -65,6 +65,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` | none |
+| `--tools-page-size <n>` | no | page `tools/list` with `n` tools per page (1–512); only for MCP hosts that follow `nextCursor` | off (all tools in one response) |
 
 Notes:
 
@@ -133,11 +134,18 @@ Notes:
   call's concurrency slot and its single rate-limit charge. The slot is held during backoff,
   so under an upstream `Retry-After` storm queued calls wait (and may time out waiting for a
   slot) rather than add load.
-- Trace context: when a `tools/call` carries a valid W3C `traceparent` (and optionally
-  `tracestate`) in `_meta`, it is sent to the upstream as the same-named headers, on
-  same-origin hops only. An invalid value is dropped. Tool arguments can never set these
-  headers. `--no-trace-propagation` turns this off, because it shares the client's trace IDs
-  with the upstream.
+- Trace context (**on by default**): when a `tools/call` carries a valid W3C `traceparent`
+  (and optionally `tracestate`) in `_meta`, it is sent to the upstream as the same-named
+  headers, on same-origin hops only. An invalid value is dropped; a higher `traceparent`
+  version is read by the version-00 layout and forwarded as `00`. Tool arguments can never
+  set these headers. This gives the upstream a correlation ID across calls and sessions,
+  which is what you want for an API you operate. For a third-party API you do not operate,
+  pass `--no-trace-propagation`.
+- `tools/list` paging is off by default: every tool comes in one response (the spec budget
+  caps a spec at 512 tools). Several MCP hosts call `tools/list` once and never follow
+  `nextCursor`, so paging would silently hide every tool after the first page there. Set
+  `--tools-page-size <n>` only when your host follows `nextCursor`. A cursor is bound to the
+  served spec; a cursor from another spec version is rejected with Invalid Params.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly

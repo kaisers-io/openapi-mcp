@@ -14,6 +14,7 @@ import {
   parseSpecSource,
   runSpecPipeline,
   serveStdioSession,
+  SPEC_BUDGETS,
   SYSTEM_HEADERS,
   usageError,
   validationError,
@@ -182,7 +183,24 @@ type ServeCmdOpts = SpecCmdOpts &
     http?: boolean;
     port: string;
     httpTokenEnv?: string;
+    toolsPageSize?: string;
   };
+
+// Upper bound for --tools-page-size: the spec budget's tool cap, so a larger
+// value could never page anyway.
+const MAX_TOOLS_PAGE_SIZE = SPEC_BUDGETS.maxToolCount;
+
+const parseToolsPageSize = (raw: string | undefined): number | undefined => {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!/^[1-9]\d*$/u.test(raw) || Number(raw) > MAX_TOOLS_PAGE_SIZE) {
+    throw usageError(
+      `invalid --tools-page-size "${raw}" — expected an integer from 1 to ${MAX_TOOLS_PAGE_SIZE}`,
+    );
+  }
+  return Number(raw);
+};
 
 export const registerServe: CommandRegistrar = (program, ctx, state) => {
   const command = registerApiOptions(registerSpecOptions(program.command('serve')))
@@ -191,9 +209,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     )
     .option('--http', 'serve over Streamable HTTP (127.0.0.1 only) instead of stdio')
     .option('--port <n>', 'HTTP port', '3044')
+    .option('--http-token-env <ENV>', 'env var holding the bearer token required for HTTP requests')
     .option(
-      '--http-token-env <ENV>',
-      'env var holding the bearer token required for HTTP requests',
+      '--tools-page-size <n>',
+      'page tools/list with n tools per page (only for MCP hosts that follow nextCursor); default: all tools in one response',
     );
   // Orphaned HTTP-only flags without --http are a usage error, not a
   // silent no-op: `--port` carries a default ('3044'), so a plain value
@@ -258,6 +277,8 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       // matches "validated once at CLI startup" rather than discovering
       // the mistake only after paying for a spec fetch.
       const httpConfig = resolveHttpConfig(cmdOpts);
+      const toolsPageSize = parseToolsPageSize(cmdOpts.toolsPageSize);
+      const paging = toolsPageSize === undefined ? {} : { toolsPageSize };
       // Resolved BEFORE buildTools (below): its reservedHeaderNames must be
       // unioned into buildTools' reservedHeaders so a spec header parameter
       // colliding with a configured auth header name is dropped from the
@@ -390,7 +411,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       ]);
       if (httpConfig === undefined) {
         const session = serveStdioSession(
-          { name: 'openapi-mcp', version: pkg.version, snapshot, dispatcherDeps },
+          { name: 'openapi-mcp', version: pkg.version, snapshot, dispatcherDeps, ...paging },
           {
             // Out-of-band transport errors carry no JSON-RPC reply — route
             // them through the SAME sanitizing stderr path the startup
@@ -432,6 +453,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           version: pkg.version,
           snapshot,
           dispatcherDeps,
+          ...paging,
           guard,
           port: httpConfig.port,
           // Same reasoning — and the same bounded route — as the stdio
