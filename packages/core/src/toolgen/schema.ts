@@ -243,7 +243,10 @@ const valueMatchesType = (value: unknown, type: string): boolean => {
   }
 };
 
-const conflictingCombination = (node: Record<string, unknown>): string | undefined => {
+const conflictingCombination = (
+  node: Record<string, unknown>,
+  version: OpenapiVersion,
+): string | undefined => {
   const determiners = SHAPE_DETERMINERS.filter((keyword) => node[keyword] !== undefined);
   if (determiners.length > 1) {
     return `multiple shape-determining keywords (${determiners.join(', ')})`;
@@ -278,9 +281,13 @@ const conflictingCombination = (node: Record<string, unknown>): string | undefin
     ) {
       return `"${determiner}" combined with a malformed "type"`;
     }
+    // A 3.0 `nullable: true` adds null to the sibling type, so the
+    // OAS 3.0.3-blessed nullable enum `{type:'string', nullable:true,
+    // enum:['a', null]}` is consistent, not a conflict.
+    const admitted = version === '3.0' && node['nullable'] === true ? [...types, 'null'] : types;
     const enumValues = Array.isArray(node['enum']) ? node['enum'] : [];
     const values: readonly unknown[] = determiner === 'enum' ? enumValues : [node['const']];
-    return values.every((value) => types.some((name) => valueMatchesType(value, name as string)))
+    return values.every((value) => admitted.some((name) => valueMatchesType(value, name as string)))
       ? undefined
       : `"${determiner}" values incompatible with the sibling type ${JSON.stringify(type)}`;
   }
@@ -883,25 +890,38 @@ const isAllOfWrapper = (
   node['allOf'].length === 1 &&
   Object.keys(node).every((key) => key.startsWith('x-') || ALLOF_WRAPPER_SIBLINGS.has(key));
 
+// Admits null next to a determiner's own values (see build).
+const withNull = (result: SchemaResult, admitNull: boolean): SchemaResult =>
+  admitNull && 'ok' in result ? { ok: result.ok.nullable() } : result;
+
 const build = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
   mode: SchemaMode,
 ): SchemaResult => {
-  // Determiners carry their own nullability through the enumerated values or
-  // members — a `.nullable()` wrapper would admit null they exclude (OAS 3.0:
-  // other constraints may disallow null). const/enum therefore IGNORE a sibling
-  // `nullable` (null is allowed only if it is itself an enumerated value).
-  // They are handled BEFORE type normalization: the value list alone fixes the
-  // value set, and conflictingCombination has already checked every value
-  // against a sibling `type` — including a 3.1 type array like
+  // const/enum are handled BEFORE type normalization: the value list alone
+  // fixes the value set, and conflictingCombination has already checked every
+  // value against a sibling `type` — including a 3.1 type array like
   // `['string','integer']` that normalizeType would reject as multi-type.
+  //
+  // Nullability (#41, decision D9): wherever the spec marks a value nullable,
+  // null is admitted in BOTH directions. A 3.0 `nullable: true` next to an
+  // enum/const that does not list null (`{type:'string', nullable:true,
+  // enum:['a']}`, as older Swashbuckle/NSwag emit) admits null too. OAS 3.0.3
+  // §4.7.24.2 says such an enum "may disallow" null, but the author's intent
+  // is plain, a PATCH needs it to clear a field, and a response carrying null
+  // must not fail the call. The 3.1 dialect has no `nullable`: there an enum
+  // admits null only if it lists it.
+  const nullable30 = version === '3.0' && node['nullable'] === true;
   if ('const' in node && node['const'] !== undefined) {
-    return constSchema(node['const']);
+    return withNull(constSchema(node['const']), nullable30 && node['const'] !== null);
   }
   if (Array.isArray(node['enum'])) {
-    return enumSchema(node['enum']);
+    return withNull(
+      enumSchema(node['enum']),
+      nullable30 && !node['enum'].some((value) => value === null),
+    );
   }
   const normalized = normalizeType(node['type'], version, node['nullable'] === true);
   if ('ok' in normalized || 'unrepresentable' in normalized) {
@@ -920,18 +940,14 @@ const build = (
       return composed;
     }
     // A 3.0 `nullable: true` beside a composition (the NSwag / Swashbuckle /
-    // drf-spectacular idiom for a nullable $ref, #41). OAS 3.0.3 §4.7.24.2:
-    // nullable "only if `type` is explicitly defined within the same Schema
-    // Object", and "Other Schema Object constraints retain their defined
-    // behavior, and therefore may disallow the use of null" — the members of
-    // the composition still exclude null. So, per direction:
-    //   - request: follow the spec — null stays rejected (the narrower,
-    //     fail-closed reading); the operation is no longer omitted.
-    //   - response: admit null — what every generator emitting this idiom
-    //     means, and rejecting a real `null` would fail the call for a field
-    //     the server documents as nullable (the #33 rationale: the output
-    //     schema describes, it must not reject benign data).
-    return mode === 'response' ? { ok: composed.ok.nullable() } : composed;
+    // drf-spectacular idiom for a nullable $ref, #41). OAS 3.0.3 §4.7.24.2
+    // reads nullable strictly ("only if `type` is explicitly defined", and the
+    // members "may disallow" null), but every generator emitting this idiom
+    // means "this reference may be null". Decision D9: admit null in BOTH
+    // directions — a request can clear the field (`"manager": null` in a
+    // PATCH), and a response carrying null does not fail the call. Every
+    // non-null value is still checked against the composition.
+    return { ok: composed.ok.nullable() };
   }
   const base = buildTyped(typeValue, node, depth, version, mode);
   if (!('ok' in base)) {
@@ -978,7 +994,7 @@ export const convertSchema = (
   ) {
     return { unrepresentable: UNSAFE_PATTERN_REASON };
   }
-  const conflict = conflictingCombination(node);
+  const conflict = conflictingCombination(node, version);
   if (conflict !== undefined) {
     return { unrepresentable: conflict };
   }

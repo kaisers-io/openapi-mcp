@@ -265,16 +265,34 @@ describe('convertSchema — enum, const, null', () => {
     expect('unrepresentable' in convertSchema({ type: ['string', 'number'] })).toBe(true);
   });
 
-  it('does NOT let a sibling nullable widen an enum that excludes null', () => {
-    // {type:string, nullable:true, enum:['a']} must reject null — the enum is
-    // authoritative; a .nullable() wrapper would silently admit null. Pass '3.0'
-    // so the boolean `nullable` is ACTIVE (under the default '3.1' it is ignored
-    // globally, so the test would pass vacuously and the 7(c) sabotage would not
-    // bind). Under 3.0 nullable is true, and the enum branch must STILL reject
-    // null — proving determiners ignore a sibling nullable rather than wrapping it.
-    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.0'));
+  it('3.0: a sibling nullable admits null next to an enum that does not list it (D9)', () => {
+    // {type:string, nullable:true, enum:['a']} (older Swashbuckle/NSwag): the
+    // author marked the value nullable, so null is admitted in both directions;
+    // every other non-enumerated value is still rejected.
+    for (const mode of ['request', 'response'] as const) {
+      const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.0', 0, mode));
+      expect(s.safeParse('a').success).toBe(true);
+      expect(s.safeParse(null).success).toBe(true);
+      expect(s.safeParse('b').success).toBe(false);
+    }
+  });
+
+  it('3.0: the OAS 3.0.3 nullable enum that lists null is representable', () => {
+    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a', null] }, '3.0'));
+    expect(s.safeParse(null).success).toBe(true);
     expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
+    // Without nullable, null contradicts the sibling type: still omitted.
+    expect('unrepresentable' in convertSchema({ type: 'string', enum: ['a', null] }, '3.0')).toBe(
+      true,
+    );
+  });
+
+  it('3.1: nullable is not a keyword, so an enum without null still rejects null', () => {
+    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.1'));
     expect(s.safeParse(null).success).toBe(false);
+    const arr = ok(convertSchema({ type: ['string', 'null'], enum: ['a'] }, '3.1'));
+    expect(arr.safeParse(null).success).toBe(false);
   });
 
   it('accepts null only when it is an enumerated value', () => {
@@ -284,12 +302,11 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('b').success).toBe(false);
   });
 
-  it('does NOT let a sibling nullable widen a const', () => {
-    // Pass '3.0' so `nullable` is active (see the enum sibling test above); under
-    // 3.0 nullable is true and the const branch must still reject null.
+  it('3.0: a sibling nullable admits null next to a const (D9)', () => {
     const s = ok(convertSchema({ const: 'a', nullable: true }, '3.0'));
     expect(s.safeParse('a').success).toBe(true);
-    expect(s.safeParse(null).success).toBe(false);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
   });
 
   it('maps const: null to z.null()', () => {
@@ -298,16 +315,14 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('a').success).toBe(false);
   });
 
-  it('represents a 3.0 nullable composition without admitting null in a request (#41)', () => {
+  it('represents a 3.0 nullable composition and admits null in a request (#41, D9)', () => {
     // The boolean `nullable` is honoured only under 3.0 (build gates it on
     // version === '3.0'); a 3.1 `[T,'null']`-union combined with oneOf is caught
-    // earlier by the conflict gate. OAS 3.0.3: nullable takes effect only with an
-    // explicit `type`, and the members' constraints still exclude null — so in
-    // request mode null stays rejected; response mode admits it (see the #41
-    // block below).
+    // earlier by the conflict gate.
     const s = ok(convertSchema({ nullable: true, oneOf: [{ type: 'string' }] }, '3.0'));
     expect(s.safeParse('x').success).toBe(true);
-    expect(s.safeParse(null).success).toBe(false);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse(1).success).toBe(false);
   });
 });
 
@@ -988,11 +1003,11 @@ describe('convertSchema — request/response mode (#33, #47)', () => {
 describe('convertSchema — nullable and single-member allOf idioms (#41)', () => {
   const obj = { type: 'object', properties: { a: { type: 'string' } } };
 
-  it('3.0 nullable allOf: request mode follows OAS 3.0.3 (nullable without type has no effect), response mode admits null', () => {
+  it('3.0 nullable allOf: null admitted in both directions (D9: a PATCH can clear the field)', () => {
     const node = { nullable: true, allOf: [obj] };
     const request = ok(convertSchema(node, '3.0'));
     expect(request.safeParse({ a: 'x' }).success).toBe(true);
-    expect(request.safeParse(null).success).toBe(false);
+    expect(request.safeParse(null).success).toBe(true);
     expect(request.safeParse('x').success).toBe(false);
     const response = ok(convertSchema(node, '3.0', 0, 'response'));
     expect(response.safeParse({ a: 'x' }).success).toBe(true);
@@ -1000,12 +1015,13 @@ describe('convertSchema — nullable and single-member allOf idioms (#41)', () =
     expect(response.safeParse('x').success).toBe(false);
   });
 
-  it('3.0 nullable oneOf: representable; null admitted in response mode only', () => {
+  it('3.0 nullable oneOf: representable; null admitted in both directions', () => {
     const node = { nullable: true, oneOf: [{ type: 'string' }, { type: 'integer' }] };
     const request = ok(convertSchema(node, '3.0'));
     expect(request.safeParse('x').success).toBe(true);
     expect(request.safeParse(1).success).toBe(true);
-    expect(request.safeParse(null).success).toBe(false);
+    expect(request.safeParse(null).success).toBe(true);
+    expect(request.safeParse(true).success).toBe(false);
     const response = ok(convertSchema(node, '3.0', 0, 'response'));
     expect(response.safeParse(null).success).toBe(true);
     expect(response.safeParse(true).success).toBe(false);
