@@ -76,6 +76,7 @@ export type {
 } from './spec/normalize.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
 export type {
+  CacheLockState,
   CacheStatus,
   SpecPipelineDeps,
   SpecPipelineOptions,
@@ -100,6 +101,7 @@ export type { CacheLayout, CachePolicy } from './cache/paths.ts';
 export {
   LOCK_RETRY_DELAYS_MS,
   LOCK_STALE_MS,
+  lockRetrySchedule,
   tryWithNamespaceLock,
   unlockNamespace,
   withNamespaceLock,

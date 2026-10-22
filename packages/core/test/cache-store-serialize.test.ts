@@ -82,6 +82,28 @@ describe('serializeWithinBudget properties', () => {
     expect(serializeWithinBudget(value, bytes)).toBe(JSON.stringify(value));
   });
 
+  it('refuses a control-character-heavy document without serializing it', () => {
+    // A control character is one UTF-16 unit but six output bytes: charged at
+    // its UTF-16 length, these 4 MB of them would pass a 10 MB walk and make
+    // JSON.stringify build ~24 MB before the exact check refused it
+    const big = '\u0001'.repeat(1_000_000);
+    const doc = { paths: Array.from({ length: 4 }, () => ({ description: big })) };
+    const original = JSON.stringify;
+    let stringified = 0;
+    JSON.stringify = ((...args: Parameters<typeof JSON.stringify>) => {
+      if (args[0] === doc) {
+        stringified += 1;
+      }
+      return original(...args);
+    }) as typeof JSON.stringify;
+    try {
+      expect(serializeWithinBudget(doc, 10_000_000)).toBeUndefined();
+    } finally {
+      JSON.stringify = original;
+    }
+    expect(stringified).toBe(0);
+  });
+
   it('detects a cycle deeper than the shallow-path window', () => {
     const root: Record<string, unknown> = {};
     let cursor = root;
@@ -118,6 +140,7 @@ describe('commitEntry reuses an object already verified under the lock', () => {
     title: 'v1',
     specVersion: '1',
     fetchedAt: 1,
+    expected: 'unchecked' as const,
   };
 
   const countingReads = (): { fs: CacheFs; reads: (path: string) => number } => {
@@ -153,6 +176,7 @@ describe('commitEntry reuses an object already verified under the lock', () => {
       title: 'v1',
       specVersion: '2',
       fetchedAt: 2,
+      expected: 'unchecked',
     });
     const path = objectPath(LAYOUT, candidateContentHash);
     const before = reads(path);

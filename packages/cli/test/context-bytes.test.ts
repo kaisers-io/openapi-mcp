@@ -53,6 +53,7 @@ describe('readFileBytesCapped and raw-byte verification', () => {
       title: 't',
       specVersion: '1',
       fetchedAt: 1,
+      expected: 'unchecked',
     });
     return { object: objectPath(layout, acceptedContentHash) };
   };

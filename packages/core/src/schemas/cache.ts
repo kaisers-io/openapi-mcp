@@ -3,7 +3,14 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 
 // A literal, not a range: an entry written by any other version is unreadable
 // by construction, which surfaces as a corrupt entry rather than a partially
-// understood one
+// understood one.
+//
+// RULE: every change to how a spec is PROCESSED before it is cached (parsing,
+// dereferencing, normalisation — anything that changes the stored document
+// for the same source bytes) must bump this constant. An unchanged source is
+// never rewritten (a 304 keeps the entry, and since #75 a 200 with identical
+// bytes only refreshes fetchedAt/validators), so a version bump is the ONLY
+// thing that makes existing entries pick up new processing.
 export const CACHE_META_SCHEMA_VERSION = 1;
 
 // Content hashes are sha256 hex digests produced by the store from the exact

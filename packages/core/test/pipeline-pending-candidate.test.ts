@@ -145,6 +145,25 @@ describe('operations removed in a pending candidate are withheld (#60)', () => {
     expect(promoted.withheldOperations).toStrictEqual([]);
   });
 
+  it('treats a renamed path parameter as the same operation, not a removal', async () => {
+    const byParam = (name: string): Record<string, unknown> => ({
+      get: {
+        operationId: 'getPet',
+        parameters: [{ name, in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'ok' } },
+      },
+    });
+    const fs = memoryCacheFs();
+    await runAt(fs, 10_000, specOf({ '/pets/{petId}': byParam('petId'), '/b': op('getB') }));
+    const result = await runAt(fs, 20_000, specOf({ '/pets/{id}': byParam('id') }));
+    expect(result.cacheStatus).toBe('candidate');
+    // Only the genuinely removed /b is withheld; the accepted definition
+    // (with its accepted parameter name) keeps serving
+    expect(toolNames(result)).toStrictEqual(['getPet']);
+    expect(result.namedOperations[0]?.operation.path).toBe('/pets/{petId}');
+    expect(result.withheldOperations.map((omitted) => omitted.path)).toStrictEqual(['/b']);
+  });
+
   it('withholds nothing when the candidate only adds or changes operations', async () => {
     const { result } = await withCandidate(
       specOf({ '/a': op('getA', 'changed'), '/b': op('getB'), '/c': op('getC') }),

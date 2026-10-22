@@ -49,6 +49,7 @@ describe('orphaned temp files in the entry directory are collected (#88 item 2)'
     title: 't',
     specVersion: '1',
     fetchedAt,
+    expected: 'unchecked',
   });
 
   // A crash between a temp write and its rename leaves these behind
@@ -104,6 +105,7 @@ describe('orphaned temp files in the entry directory are collected (#88 item 2)'
       title: 't',
       specVersion: '2',
       fetchedAt: NOW + 1,
+      expected: 'unchecked',
     });
     expect(entryNames(fs)).not.toContain(`.meta.json.${UUID_A}.tmp`);
     await plant(fs, { [`.meta.json.${UUID_B}.tmp`]: NOW });

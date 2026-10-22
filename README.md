@@ -215,7 +215,10 @@ pending candidate. A changed spec fetched at runtime is validated and written as
 only — it never activates automatically. The only automatic change is a **removal**: while
 the candidate waits, an accepted operation that the candidate no longer has (same method and
 path) is withheld, on every start, and listed in a warning and in `openapi_mcp_status`. That
-is the fail-safe direction. Operations present in both keep their accepted definition.
+is the fail-safe direction. Operations present in both keep their accepted definition. Paths
+are compared with parameter names ignored (`/pets/{petId}` and `/pets/{id}` are the same
+operation), and `servers` is not compared: a candidate that only moves the base path (say
+`/v1` to `/v2`) withholds nothing, and the move waits for promotion like any other change.
 Everything else (new tools, changed descriptions or input schemas, method/path/base-URL
 changes, auth-scheme changes) waits for an explicit decision:
 

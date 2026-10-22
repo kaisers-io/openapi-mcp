@@ -195,8 +195,12 @@ younger than 60 seconds still needs `--force`, even when its owner looks dead: a
 another PID namespace (a container sharing the cache directory) can look dead from here.
 
 A held lock only fails commands that change what is accepted (first use, a new candidate,
-`--trust-spec-updates`, `cache promote`, `cache clear`), and only after retrying for about two
-seconds. A start whose spec is unchanged serves the verified baseline with a warning instead.
+`--trust-spec-updates`, `cache promote`, `cache clear`), and only after retrying: for as long as
+`--timeout` allows when a spec is loaded (at least about two seconds), about two seconds for
+`cache promote` and `cache clear`. A start whose spec is unchanged serves the verified baseline
+with a warning instead, and `serve` reports it in the `openapi_mcp_status` tool as
+`cacheLock: "held"` (another process is writing) or `cacheLock: "stale"` (the owner looks gone:
+run `cache unlock`).
 
 | Flag | Meaning | Default |
 |---|---|---|

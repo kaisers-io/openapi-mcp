@@ -46,4 +46,8 @@ export type CacheRuntime = {
   isProcessAlive: (pid: number) => boolean;
   // Backoff between lock acquisition attempts
   sleep: (ms: number) => Promise<void>;
+  // How long a strict write may wait for the writer lock before reporting a
+  // conflict; never less than the built-in ~2 s schedule (lockRetrySchedule).
+  // The spec pipeline sets it from --timeout.
+  lockWaitMs?: number;
 };
