@@ -35,7 +35,7 @@ export {
   type ToolExecutor,
 } from './dispatch.ts';
 export { createExecutor } from './execute/executor.ts';
-export type { ExecutorConfig, ExecutorDeps } from './execute/executor.ts';
+export type { ExecutorConfig, ExecutorDeps, UpstreamExecutor } from './execute/executor.ts';
 export {
   structuredOutcome,
   textOutcome,

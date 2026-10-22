@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { getEventListeners } from 'node:events';
 import {
   chmod,
   mkdir,
@@ -112,6 +113,15 @@ describe('realContext', () => {
     const addresses = await ctx.lookup('localhost', new AbortController().signal);
     expect(addresses.length).toBeGreaterThan(0);
     await expect(ctx.lookup('localhost', AbortSignal.abort())).rejects.toThrow('aborted');
+  });
+
+  it('removes its abort listener once the lookup settles (no leak on a long-lived signal)', async () => {
+    const ctx = realContext();
+    const controller = new AbortController();
+    for (let index = 0; index < 5; index += 1) {
+      await ctx.transport.resolve('localhost', controller.signal);
+    }
+    expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
   });
 });
 

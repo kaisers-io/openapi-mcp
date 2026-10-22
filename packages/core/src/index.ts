@@ -50,6 +50,8 @@ export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
 export { assertAllowedRedirectTarget, classifyAddress } from './http/egress.ts';
 export type { AddressClass, DnsLookup, EgressPolicyOptions } from './http/egress.ts';
 export { pinnedRequest } from './http/pinned-dispatcher.ts';
+export { createPinnedAgentPool } from './http/agent-pool.ts';
+export type { PinnedAgentPool, PinnedAgentPoolOptions } from './http/agent-pool.ts';
 export type {
   HopHeaders,
   PinnedDeps,
@@ -254,6 +256,7 @@ export type {
   ToolCallOutcome,
   ToolExecutor,
   ToolMode,
+  UpstreamExecutor,
   WireTool,
 } from './server/index.ts';
 export { serveStdioSession } from './server/sdk/stdio.ts';

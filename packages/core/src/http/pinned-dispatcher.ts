@@ -2,6 +2,7 @@ import { isIP } from 'node:net';
 import type { LookupFunction } from 'node:net';
 import { Agent } from 'undici';
 import type { fetch as undiciFetchType } from 'undici';
+import type { PinnedAgentPool } from './agent-pool.ts';
 import { classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
 
 // The SSRF connection-pinning core. undici's custom connect.lookup resolves
@@ -26,7 +27,9 @@ export type PinnedPolicy = {
   trusted: boolean;
 };
 
-// Bound to the call's abort signal by the caller (pinnedRequest).
+// Bound to an abort signal by the caller: pinnedRequest binds the call's
+// signal for a per-hop Agent; the agent pool binds a per-lookup timeout,
+// since a long-lived Agent outlives any one call.
 export type Resolve = (hostname: string) => Promise<readonly string[]>;
 
 // Bounds the cost of validating a hostile/misconfigured resolver's answer
@@ -143,8 +146,9 @@ export const createPinnedAgent = (policy: PinnedPolicy, resolve: Resolve): Agent
   new Agent({ connect: { lookup: pinnedLookup(policy, resolve) } });
 
 // The shared, SSRF-safe redirect transport built on top of createPinnedAgent
-// above. Manual redirects capped at MAX_REDIRECTS, a fresh per-hop pinned
-// Agent (never trusted past hop 0), monotonic cross-origin header stripping,
+// above. Manual redirects capped at MAX_REDIRECTS, a per-hop pinned Agent
+// (pooled per origin+policy when the caller supplies a pool; never trusted
+// past hop 0), monotonic cross-origin header stripping,
 // a write-method redirect abort, a merged client+timeout deadline, and a
 // decompressed-byte cap. Never produces a ToolCallOutcome (SDK-neutral) —
 // bytes+status+contentType or a typed error the caller maps.
@@ -205,6 +209,12 @@ export type PinnedDeps = {
   resolve: (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
   // Default () => AbortSignal.timeout(ms); injectable for tests.
   timeoutSignal: (ms: number) => AbortSignal;
+  // Long-lived pinned Agents keyed by (origin, trust policy), owned by the
+  // caller (the executor). When present, every hop borrows its Agent from
+  // the pool and never closes it, so connections are reused across calls;
+  // when absent, a fresh Agent is built and closed per hop (spec fetch, and
+  // any caller without a lifecycle to own a pool).
+  agents?: PinnedAgentPool;
 };
 
 export const MAX_REDIRECTS = 5;
@@ -462,7 +472,13 @@ export const pinnedRequest = async (
     if (sync !== undefined) {
       return { kind: 'error', reason: 'egress', detail: sync };
     }
-    const agent = createPinnedAgent(policy, (hostname) => deps.resolve(hostname, signal));
+    // A pooled Agent is shared with other calls: it is never closed or
+    // destroyed here — an exceptional path aborts only this request (via
+    // `signal`), and undici discards that request's socket on its own.
+    const pooled = deps.agents !== undefined;
+    const agent =
+      deps.agents?.acquire(url.origin, policy) ??
+      createPinnedAgent(policy, (hostname) => deps.resolve(hostname, signal));
     // MONOTONIC: once the chain has left the original origin, it never
     // regains credentials, even bouncing back to the original origin later.
     const onOriginalOrigin = url.origin === originalOrigin && !crossed;
@@ -491,7 +507,9 @@ export const pinnedRequest = async (
     } catch (error) {
       // Exceptional path: destroy(), never the graceful close() that may
       // await a live response.
-      await agent.destroy().catch(() => {});
+      if (!pooled) {
+        await agent.destroy().catch(() => {});
+      }
       if (signal.aborted) {
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
@@ -544,7 +562,9 @@ export const pinnedRequest = async (
       // Every non-exceptional path (a plain 200, or a redirect hop whose
       // body was already cancelled above) closes gracefully; every
       // exceptional path above already destroyed. Runs even on `continue`.
-      await (exceptional ? agent.destroy() : agent.close()).catch(() => {});
+      if (!pooled) {
+        await (exceptional ? agent.destroy() : agent.close()).catch(() => {});
+      }
     }
   }
   return { kind: 'error', reason: 'redirect-loop' };

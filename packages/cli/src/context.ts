@@ -438,22 +438,24 @@ const realLookup = async (hostname: string, signal: AbortSignal): Promise<readon
   pending.catch(() => {
     // Consume a late rejection if the race below is lost to the deadline
   });
-  // oxlint-disable-next-line promise/avoid-new -- wraps the non-abortable dns.promises.lookup race: the signal's 'abort' event has no promise form, so this bridges it into one
-  const aborted = new Promise<never>((_resolve, reject) => {
-    signal.addEventListener(
-      'abort',
-      () => {
-        reject(new Error('DNS lookup aborted by the fetch deadline'));
-      },
-      { once: true },
-    );
-  });
+  // The listener is removed once the race settles: the signal can outlive
+  // this lookup (a pooled Agent's resolver, a long call), and a listener left
+  // behind would keep this closure reachable from it.
+  const { promise: aborted, reject } = Promise.withResolvers<never>();
+  const onAbort = (): void => {
+    reject(new Error('DNS lookup aborted by the fetch deadline'));
+  };
+  signal.addEventListener('abort', onAbort, { once: true });
   // oxlint-disable-next-line promise/prefer-await-to-then -- detached late-rejection handler: `aborted` never resolves and would surface as an unhandledRejection once `pending` wins the race below
   aborted.catch(() => {
     // Consume the deadline rejection if the lookup won the race
   });
-  const entries = await Promise.race([pending, aborted]);
-  return entries.map((entry) => entry.address);
+  try {
+    const entries = await Promise.race([pending, aborted]);
+    return entries.map((entry) => entry.address);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
 };
 
 export const realContext = (): CliContext => ({
