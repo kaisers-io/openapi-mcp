@@ -68,6 +68,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
 | `--tool-mode <mode>` | no | `per-operation`, `discover` or `auto` — see [Tool modes](#tool-modes) | `per-operation` |
+| `--response-projection` | no | offer an optional `_fields` argument (JSON Pointers) on tools with a JSON response | off |
 | `--tools-page-size <n>` | no | page `tools/list` with `n` tools per page (1–512); only for MCP hosts that follow `nextCursor` | off (all tools in one response) |
 
 Notes:
@@ -172,6 +173,19 @@ Notes:
   `calls`: the total, counts by outcome, and p50/p95 of `upstreamMs` over the last 512 calls.
   These counters are visible to every client of the server: over `--http` with several
   clients, each one sees the aggregate counts of all of them (counts only, no content).
+- Response projection (`--response-projection`, off by default): every tool with a JSON
+  response then accepts an optional `_fields` argument. It takes up to 32 RFC 6901 JSON
+  Pointers (at most 256 characters and 32 segments each), and `*` maps over an array, e.g.
+  `["/items/*/id", "/next_cursor"]`. Only the selected values come back, under `projection`,
+  keyed by pointer. A missing path yields `null`. The full response is still validated
+  against the tool's output schema first, and only the selected values are checked for
+  secrets. The grammar is explained once, in the server instructions; each tool's schema
+  carries only a one-line description, and its output schema gains one `projection`
+  branch. A truncated result of such a tool tells the model to use `_fields`; when the
+  result is structured, the hint says that only the text copy is cut and
+  `structuredContent` is complete. Cost: `tools/list` grows by about 30% (measured: the
+  petstore fixture 907 → 1,174 bytes; 100 JSON GET operations 83,681 → 110,481 bytes),
+  paid in every session, which is why it is opt-in.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly

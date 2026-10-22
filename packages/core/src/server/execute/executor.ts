@@ -22,8 +22,10 @@ import { deriveAccept } from './accept.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
 import { mapResponse } from './response.ts';
-import type { EnvelopeValidator, PageInput } from './response.ts';
+import type { EnvelopeValidator } from './response.ts';
+import type { PageInput } from './forwarded-headers.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
+import { PROJECTION_FIELD } from '../../toolgen/projection.ts';
 import type { PaginationPlan } from '../../toolgen/pagination.ts';
 import {
   isRetryableMethod,
@@ -425,6 +427,13 @@ const runUpstreamCall = async (
       : {}),
     maxTextBytes: DISPLAY_TEXT_MAX,
     baseUrl: config.baseUrl,
+    // `_fields` was validated by the tool's input schema (toolgen/projection.ts)
+    // and is never mapped onto the request (buildRequest only reads mapped
+    // fields).
+    ...(generated.projection === true ? { projectable: true } : {}),
+    ...(generated.projection === true && Array.isArray(data[PROJECTION_FIELD])
+      ? { fields: data[PROJECTION_FIELD] as string[] }
+      : {}),
     ...(generated.pagination === undefined
       ? {}
       : {

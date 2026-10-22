@@ -72,6 +72,20 @@ export type OutputSchemaOptions = {
   defaultResponseIsError?: boolean;
   // A paginated tool's envelope also declares the `pagination` hint.
   pagination?: boolean;
+  // A projectable tool (`_fields`) also gets ONE `projection` branch.
+  projection?: boolean;
+};
+
+// Minimal on purpose: the projected values come from `data` that already
+// passed the strict branch, so this branch only has to tell the two shapes
+// apart (`projection` required here, `data` required and extra keys refused
+// there) — exactly one branch matches either shape. ONE branch for every
+// success status/content type: it only has to validate, not discriminate,
+// and tools/list size is paid in every session.
+const PROJECTION_BRANCH: JsonSchemaRecord = {
+  type: 'object',
+  properties: { projection: { type: 'object' } },
+  required: ['status', 'contentType', 'projection'],
 };
 
 // Isolates the one throwing step (z.toJSONSchema) behind an Option-shaped
@@ -183,7 +197,12 @@ export const explainOutputSchema = (
       additionalProperties: false,
     });
   }
-  return { outputSchema: { type: 'object', oneOf: branches } };
+  return {
+    outputSchema: {
+      type: 'object',
+      oneOf: options.projection === true ? [...branches, PROJECTION_BRANCH] : branches,
+    },
+  };
 };
 
 export const deriveOutputSchema = (

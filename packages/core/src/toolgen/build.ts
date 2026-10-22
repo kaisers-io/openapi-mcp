@@ -35,6 +35,9 @@ export type GeneratedTool = {
   outputSchemaWithheld?: string;
   // Present only for a paginated GET (see toolgen/pagination.ts).
   pagination?: PaginationPlan;
+  // True when the tool takes the optional `_fields` projection argument
+  // (toolgen/projection.ts).
+  projection?: boolean;
 };
 
 export type BuildToolsResult = {
@@ -98,9 +101,10 @@ const buildToolEntry = (
   reservedHeaders: ReadonlySet<string>,
   openapiVersion: OpenapiVersion,
   defaultResponseIsError: boolean,
+  projection: boolean,
 ): GeneratedTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
-  const layout = buildLayout(named.operation, reservedHeaders, openapiVersion);
+  const layout = buildLayout(named.operation, reservedHeaders, openapiVersion, projection);
   if (!('ok' in layout)) {
     return { method, path: named.operation.path, reason: layout.unrepresentable };
   }
@@ -120,6 +124,7 @@ const buildToolEntry = (
   const { outputSchema, withheld } = explainOutputSchema(named.operation, openapiVersion, {
     defaultResponseIsError,
     pagination: pagination !== undefined,
+    projection: layout.ok.projection,
   });
   const description = composeDescription(named.operation, withheld);
   const annotations = deriveAnnotations(named.operation.method);
@@ -139,6 +144,7 @@ const buildToolEntry = (
     ...(assumesDefaultIsError ? { outputSchemaAssumesDefaultIsError: true as const } : {}),
     ...(withheld === undefined ? {} : { outputSchemaWithheld: withheld }),
     ...(pagination === undefined ? {} : { pagination }),
+    ...(layout.ok.projection ? { projection: true } : {}),
   };
 };
 
@@ -152,6 +158,10 @@ export const buildTools = (
     reservedHeaders: ReadonlySet<string>;
     openapiVersion: OpenapiVersion;
     defaultResponseIsError?: boolean;
+    // Offer the optional `_fields` argument on JSON tools (serve
+    // --response-projection). Off by default: it grows tools/list by about
+    // a third, paid in every session.
+    projection?: boolean;
   },
 ): BuildToolsResult => {
   // HTTP header names are case-insensitive, and the header drop in paramFields
@@ -172,6 +182,7 @@ export const buildTools = (
         reservedHeaders,
         opts.openapiVersion,
         opts.defaultResponseIsError === true,
+        opts.projection === true,
       ),
     ),
   );
