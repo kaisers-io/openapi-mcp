@@ -153,3 +153,13 @@
   flag takes effect immediately. A validation rule added by a newer release is not applied to
   an unchanged file until the file changes (or `openapi-mcp cache clear`); before, such a file
   was served as the last known good baseline with a warning.
+
+### Development
+
+- **The benchmark gate checks retained memory, not peak RSS.** Peak RSS of a `serve` start
+  depends on when V8 grows its young generation and collects old space. For the same build,
+  flat-500's warm peak alternated between modes about 70 MB apart, which failed the gate on
+  a docs-only pull request. The harness now preloads a small probe into every measured
+  process, which reports the heap still in use after a full garbage collection. That value
+  is gated (`liveHeapMB`, `warmLiveHeapMB`); peak RSS is still reported, but no longer fails
+  the gate.
