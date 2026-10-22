@@ -86,41 +86,114 @@ const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
 // while staying inside the 500,000-node budget, so the allocation being
 // refused could already have happened, at whatever size the document implied.
 //
-// This walks the document and accumulates the serialized size incrementally,
-// abandoning the walk the moment it exceeds the budget. It computes the same
-// number JSON.stringify would produce for the shapes the cache persists (the
-// validated, dereferenced document: objects, arrays, strings, finite numbers,
-// booleans, null), so a document that passes here serializes to exactly what
-// was measured.
+// Two passes, neither of which can be skipped:
 //
-// Every fragment is measured in UTF-8 BYTES, not UTF-16 code units:
+// 1. A WALK that enforces the domain (below) and accumulates a LOWER BOUND on
+//    the serialized size, abandoning the walk the moment that bound exceeds
+//    the budget. Every token is charged at least its UTF-16 length: a string
+//    costs its length plus the two quotes, a key its length plus quotes and
+//    colon, punctuation and numbers exactly. UTF-8 never encodes a UTF-16
+//    code unit in fewer bytes than one, and JSON escaping only lengthens, so
+//    the true byte count is never below this bound. The one case where a
+//    unit costs SIX bytes — a C0 control or a lone surrogate, which becomes
+//    the escape \uXXXX — is charged exactly instead: a string or key
+//    containing a control character or lone surrogate is measured with
+//    Buffer.byteLength(JSON.stringify(s)), a per-string allocation bounded
+//    by that one string. Every other unit costs at most THREE bytes (a BMP
+//    character from U+0800 up), and `"`/`\` two, so the string stringify
+//    builds in step 2 is at most 3x the budget before it is refused
+//    (64 MiB cap → at most ~192 MiB transient). A document whose $ref
+//    expansion repeats one large string is refused WITHOUT ever being built
+//    whenever its lower bound passes the budget, i.e. up to that factor.
+// 2. A single native JSON.stringify, then the EXACT check: the byte length of
+//    the string actually produced is compared with the budget. These are the
+//    bytes that get hashed and written, so the cap holds for them by
+//    construction, whatever the walk estimated.
+//
+// Every measurement is in UTF-8 BYTES, not UTF-16 code units:
 // `readFileTextCapped` and the stated policy are byte-based, while measuring
 // via `JSON.stringify(...).length` counts UTF-16 code units and undercounts
 // any multibyte character. Probed over a generated corpus: the code-unit
 // version was wrong for 5,053 of 20,000 values and ALWAYS in the understating
 // direction — a multibyte document would pass the writer, be persisted above
-// the cap, and be corrupt on its very first read. That is precisely the
-// invariant this preflight exists to establish: JSON.stringify({x:'é' +
-// EMOJI}) is 11 UTF-16 units but 14 UTF-8 bytes.
+// the cap, and be corrupt on its very first read. JSON.stringify({x:'é' +
+// EMOJI}) is 11 UTF-16 units but 14 UTF-8 bytes. Step 2 is what keeps that
+// invariant now; the lower bound in step 1 only decides when to stop early.
+//
+// An earlier version emitted one fragment per token, called Buffer.byteLength
+// on each and joined them, which was 4-8x slower than JSON.stringify on a
+// multi-megabyte document (#75). Producing the output with the native
+// stringify is equivalent because the domain enforced in step 1 is exactly the
+// set of values whose JSON.stringify output is determined by the own data
+// properties the walk read: accessors, toJSON hooks, non-plain prototypes,
+// holes and undefined array members are refused before stringify ever runs.
+const UNSUPPORTED_DOCUMENT_MESSAGE =
+  'refusing to cache a document containing values JSON cannot round-trip exactly (undefined or sparse array members, a toJSON hook, a bigint, a function, or a cycle)';
+
+// Cycle detection tracks the CURRENT PATH from the root, not every node seen
+// (a DAG may legitimately share a subtree; only an ancestor revisited is a
+// cycle). Up to this depth a linear scan of the path is much cheaper than a
+// Set — hashing every object of a multi-megabyte document dominated the walk
+// — and real specs stay well inside it. Deeper paths switch to a Set mirror
+// of the path, so a pathologically deep document stays O(nodes), not
+// O(nodes x depth).
+const SHALLOW_PATH_DEPTH = 64;
+
+// C0 controls and LONE surrogates (with the u flag a well-formed pair is one
+// code point and does not match): the only units whose escaped cost is six
+// bytes rather than at most three, so strings containing them are measured
+// exactly
+// oxlint-disable-next-line no-control-regex -- detecting control characters is this regex's purpose
+const ESCAPE_HEAVY_RE = /[\u0000-\u001F\uD800-\uDFFF]/u;
+const stringCost = (text: string): number =>
+  ESCAPE_HEAVY_RE.test(text) ? Buffer.byteLength(JSON.stringify(text), 'utf8') : text.length + 2;
+
 export const serializeWithinBudget = (value: unknown, budget: number): string | undefined => {
-  // Imperative on purpose, for `used`, `parts`, and `seen` alike: this is the
-  // accumulate-then-abort shape the design note above requires — a
+  // Imperative on purpose, for `used`, `path` and `deepPath` alike: this is
+  // the accumulate-then-abort shape the design note above requires — a
   // map/filter/reduce pipeline would build the whole string (or the whole
   // membership set) before any abort could happen, which is exactly the
   // unbounded-allocation-before-refusal this preflight exists to prevent.
   let used = 0;
-  const parts: string[] = [];
   const overflow = Symbol('overflow');
   const unsupported = Symbol('unsupported');
-  const seen = new Set<object>();
-  // Emit a fragment and charge its bytes; abort as soon as the running total
+  // Charge a token's lower-bound size; abort as soon as the running total
   // passes the budget so a hostile document never materializes in full.
-  const emit = (fragment: string): void => {
-    used += Buffer.byteLength(fragment, 'utf8');
+  const charge = (bytes: number): void => {
+    used += bytes;
     if (used > budget) {
       throw overflow;
     }
-    parts.push(fragment);
+  };
+  // The current root-to-node path, and (only while it is deeper than
+  // SHALLOW_PATH_DEPTH) a Set holding exactly the same members
+  const path: object[] = [];
+  const deepPath = new Set<object>();
+  const enter = (node: object): void => {
+    if (path.length < SHALLOW_PATH_DEPTH) {
+      if (path.includes(node)) {
+        throw unsupported; // A cycle
+      }
+    } else {
+      if (deepPath.size === 0) {
+        for (const ancestor of path) {
+          deepPath.add(ancestor);
+        }
+      }
+      if (deepPath.has(node)) {
+        throw unsupported; // A cycle
+      }
+      deepPath.add(node);
+    }
+    path.push(node);
+  };
+  const leave = (): void => {
+    const node = path.pop();
+    if (path.length >= SHALLOW_PATH_DEPTH) {
+      deepPath.delete(node as object);
+    } else if (deepPath.size > 0) {
+      deepPath.clear();
+    }
   };
   // The sizer is EXACT only for a JSON-safe, dense, plain-object tree, and the
   // exported writers accept Record<string, unknown>, which admits more than
@@ -143,22 +216,21 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
     throw validationError('refusing to cache a document that is not a JSON object');
   }
   const walk = (node: unknown): void => {
+    // Strings first: they are by far the most frequent node in a spec
+    if (typeof node === 'string') {
+      charge(stringCost(node));
+      return;
+    }
     if (typeof node === 'bigint' || typeof node === 'function' || typeof node === 'symbol') {
       throw unsupported;
     }
     if (node === null || typeof node === 'boolean' || typeof node === 'number') {
-      // Non-finite numbers serialize as null — JSON.stringify(node) ?? 'null'
-      emit(JSON.stringify(node) ?? 'null');
-      return;
-    }
-    if (typeof node === 'string') {
-      emit(JSON.stringify(node));
+      // Non-finite numbers serialize as null — JSON.stringify(node) ?? 'null'.
+      // Always ASCII, so this one is exact
+      charge((JSON.stringify(node) ?? 'null').length);
       return;
     }
     if (Array.isArray(node)) {
-      if (seen.has(node)) {
-        throw unsupported; // A cycle
-      }
       // Arrays get the SAME enforcement as objects. Applying the
       // prototype/descriptor rules to the object branch only would leave an
       // own accessor at an index able to recreate the exact size-vs-bytes
@@ -183,12 +255,12 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       ) {
         throw unsupported;
       }
-      // Imperative on purpose: `seen.add`/`seen.delete` (here and in the
-      // object branch below) track cycle-detection membership shared across
-      // the whole recursive walk — a value read afterward by every nested
-      // `walk` call, not a local accumulation a map/filter could replace.
-      seen.add(node);
-      emit('[');
+      // Imperative on purpose: `enter`/`leave` (here and in the object branch
+      // below) track the cycle-detection path shared across the whole
+      // recursive walk — state read afterward by every nested `walk` call,
+      // not a local accumulation a map/filter could replace.
+      enter(node);
+      charge(1); // [
       // Imperative on purpose: the index is used to fetch
       // `Object.getOwnPropertyDescriptor(node, index)` rather than
       // `node[index]` specifically so an own accessor is never invoked (see
@@ -208,18 +280,15 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
           throw unsupported;
         }
         if (index > 0) {
-          emit(',');
+          charge(1); // ,
         }
         walk(descriptor.value);
       }
-      emit(']');
-      seen.delete(node);
+      charge(1); // ]
+      leave();
       return;
     }
     if (typeof node === 'object') {
-      if (seen.has(node)) {
-        throw unsupported; // A cycle
-      }
       // Reject a toJSON via its own descriptor so a getter is never invoked (a
       // getter could mutate the document mid-serialization and desync the
       // bytes from metadata derived before this pass). A non-function toJSON
@@ -238,8 +307,8 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       if (prototype !== Object.prototype && prototype !== null) {
         throw unsupported;
       }
-      seen.add(node);
-      emit('{');
+      enter(node);
+      charge(1); // {
       // Imperative on purpose: `first` tracks the first member actually
       // EMITTED, not the first key iterated — a skipped member (the
       // `continue` below, for an undefined/function/symbol value) must not
@@ -263,15 +332,14 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
           continue; // JSON.stringify omits the whole member, key included
         }
         if (!first) {
-          emit(',');
+          charge(1); // ,
         }
         first = false;
-        emit(JSON.stringify(key));
-        emit(':');
+        charge(stringCost(key) + 1); // "key":
         walk(item);
       }
-      emit('}');
-      seen.delete(node);
+      charge(1); // }
+      leave();
       // The if-chain above is now exhausted, so control falls out of `walk`
       // normally: an explicit return here would be redundant (no-useless-return)
     }
@@ -283,13 +351,14 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
       return undefined;
     }
     if (error === unsupported) {
-      throw validationError(
-        'refusing to cache a document containing values JSON cannot round-trip exactly (undefined or sparse array members, a toJSON hook, a bigint, a function, or a cycle)',
-      );
+      throw validationError(UNSUPPORTED_DOCUMENT_MESSAGE);
     }
     throw error;
   }
-  return parts.join('');
+  // Step 2 of the design note: the exact check, on the bytes that will
+  // actually be hashed and written
+  const text = JSON.stringify(value);
+  return Buffer.byteLength(text, 'utf8') > budget ? undefined : text;
 };
 
 // Kept for existing callers/tests that only need the size.
@@ -337,15 +406,25 @@ const persistableTextOrThrow = (
 // the new meta.json may already be live (see CacheFs.writeFileAtomic). Both
 // outcomes are consistent, because every object either meta.json can name was
 // written and fsynced first, and garbage collection is skipped on rejection.
+//
+// `verifiedHashes` names objects the caller has ALREADY read and hash-checked
+// under the same lock hold (writeAccepted's intact-baseline check,
+// promoteCandidate's candidate check). Re-reading and re-hashing them here
+// would only repeat that work (#75): no other writer can have touched them in
+// between, since every writer holds the lock.
 const commitEntry = async (
   layout: CacheLayout,
   fs: CacheFs,
   objects: readonly { hash: string; text: string }[],
   meta: CacheMeta,
+  verifiedHashes: ReadonlySet<string> = new Set(),
 ): Promise<void> => {
   const metaJson = serializeMeta(meta);
   await prepareDirs(layout, fs);
   for (const object of objects) {
+    if (verifiedHashes.has(object.hash)) {
+      continue;
+    }
     const path = objectPath(layout, object.hash);
     // An existing file at this name is NOT trusted merely because of its
     // name. Skipping the write whenever the path already exists would let a
@@ -657,25 +736,34 @@ const writeAcceptedImpl = async (
     if (existing.kind === 'ok') {
       await assertAcceptedObjectIntact(layout, fs, existing.meta);
     }
+    const verifiedHashes = new Set(
+      existing.kind === 'ok' ? [existing.meta.acceptedContentHash] : [],
+    );
     // This deliberately drops any waiting candidate: a new accepted baseline
     // written here supersedes it. That is correct HERE — but it is why the
     // 304 path must NOT route through this function: doing so would silently
     // destroy a candidate awaiting promotion on every revalidation.
-    await commitEntry(layout, fs, [{ hash: acceptedContentHash, text: acceptedText }], {
-      schemaVersion: CACHE_META_SCHEMA_VERSION,
-      displaySource: input.displaySource,
-      ...(input.cacheKey === undefined ? {} : { cacheKey: input.cacheKey }),
-      ...(input.etag === undefined ? {} : { etag: input.etag }),
-      ...(input.lastModified === undefined ? {} : { lastModified: input.lastModified }),
-      fetchedAt: input.fetchedAt,
-      acceptedContentHash,
-      sourceContentHash: input.sourceContentHash,
-      title: input.title,
-      specVersion: input.specVersion,
-      // Persisted so a hit needs no revalidation, and DERIVED above so the
-      // value can never contradict the bytes it describes
-      openapiVersion,
-    });
+    await commitEntry(
+      layout,
+      fs,
+      [{ hash: acceptedContentHash, text: acceptedText }],
+      {
+        schemaVersion: CACHE_META_SCHEMA_VERSION,
+        displaySource: input.displaySource,
+        ...(input.cacheKey === undefined ? {} : { cacheKey: input.cacheKey }),
+        ...(input.etag === undefined ? {} : { etag: input.etag }),
+        ...(input.lastModified === undefined ? {} : { lastModified: input.lastModified }),
+        fetchedAt: input.fetchedAt,
+        acceptedContentHash,
+        sourceContentHash: input.sourceContentHash,
+        title: input.title,
+        specVersion: input.specVersion,
+        // Persisted so a hit needs no revalidation, and DERIVED above so the
+        // value can never contradict the bytes it describes
+        openapiVersion,
+      },
+      verifiedHashes,
+    );
     return { acceptedContentHash };
   });
 };
@@ -766,6 +854,12 @@ const touchRevalidatedImpl = (
   fs: CacheFs,
   nowMs: number,
   validators: { etag?: string | undefined; lastModified?: string | undefined },
+  // A 304 (the default) keeps a recorded validator the response omitted. A
+  // 200 whose bytes match the accepted source (#75) REPLACES them instead:
+  // the validators belong to the representation just received, exactly as
+  // writeCandidate treats them, so a 200 without an ETag must not leave the
+  // previous one behind.
+  opts: { replaceValidators?: boolean } = {},
 ): Promise<void> =>
   withNamespaceLock(layout, fs, nowMs, async () => {
     const existing = await readMetaFile(layout, fs);
@@ -781,8 +875,19 @@ const touchRevalidatedImpl = (
     await assertAcceptedObjectIntact(layout, fs, existing.meta);
     // A 304 answered to a request carrying no validator returns none either, in
     // which case the recorded ones stay as they are rather than being erased
+    const {
+      etag: recordedEtag,
+      lastModified: recordedLastModified,
+      ...withoutValidators
+    } = existing.meta;
     const meta: CacheMeta = {
-      ...existing.meta,
+      ...withoutValidators,
+      ...(opts.replaceValidators === true || recordedEtag === undefined
+        ? {}
+        : { etag: recordedEtag }),
+      ...(opts.replaceValidators === true || recordedLastModified === undefined
+        ? {}
+        : { lastModified: recordedLastModified }),
       fetchedAt: nowMs,
       ...(validators.etag === undefined ? {} : { etag: validators.etag }),
       ...(validators.lastModified === undefined ? {} : { lastModified: validators.lastModified }),
@@ -1067,21 +1172,29 @@ const promoteCandidateImpl = async (
     // The provenance and display fields come from meta.candidate, which
     // recorded them at write time. There is no fallback to the accepted
     // entry's own source hash: the nested member is all-or-none.
-    await commitEntry(layout, fs, [{ hash: promotedHash, text: candidateText }], {
-      schemaVersion: CACHE_META_SCHEMA_VERSION,
-      displaySource: meta.displaySource,
-      ...(meta.cacheKey === undefined ? {} : { cacheKey: meta.cacheKey }),
-      ...(meta.etag === undefined ? {} : { etag: meta.etag }),
-      ...(meta.lastModified === undefined ? {} : { lastModified: meta.lastModified }),
-      fetchedAt: meta.fetchedAt,
-      acceptedContentHash: promotedHash,
-      sourceContentHash: candidate.sourceContentHash,
-      title: candidate.title,
-      specVersion: candidate.specVersion,
-      // Re-derived from the promoted bytes, not inherited from meta: the
-      // candidate may legitimately have moved between 3.0 and 3.1
-      openapiVersion: promotedOpenapiVersion(document, layout.namespace),
-    });
+    // The candidate object was read and hash-checked just above, under this
+    // same lock hold, so commitEntry need not read it again
+    await commitEntry(
+      layout,
+      fs,
+      [{ hash: promotedHash, text: candidateText }],
+      {
+        schemaVersion: CACHE_META_SCHEMA_VERSION,
+        displaySource: meta.displaySource,
+        ...(meta.cacheKey === undefined ? {} : { cacheKey: meta.cacheKey }),
+        ...(meta.etag === undefined ? {} : { etag: meta.etag }),
+        ...(meta.lastModified === undefined ? {} : { lastModified: meta.lastModified }),
+        fetchedAt: meta.fetchedAt,
+        acceptedContentHash: promotedHash,
+        sourceContentHash: candidate.sourceContentHash,
+        title: candidate.title,
+        specVersion: candidate.specVersion,
+        // Re-derived from the promoted bytes, not inherited from meta: the
+        // candidate may legitimately have moved between 3.0 and 3.1
+        openapiVersion: promotedOpenapiVersion(document, layout.namespace),
+      },
+      new Set([promotedHash]),
+    );
     return { promotedHash };
   });
 
