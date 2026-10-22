@@ -54,3 +54,12 @@
   DELETE (DELETE not after a connection error), and for POST/PATCH only when the operation
   declares an `Idempotency-Key` header. The key used is returned as
   `_meta["openapi-mcp/idempotencyKey"]`. Retries stay within `--request-timeout`.
+
+- **MCP protocol polish (#77).** Tools carry a `title` from the operation summary, and
+  `tools/list` is sorted by name after the status tool (the order changes once for specs
+  not already alphabetical). A call with `_meta.progressToken` gets progress notifications.
+  `tools/list` is not paged unless `--tools-page-size <n>` is set; set it only for hosts that
+  follow `nextCursor`.
+- **Trace propagation is on by default (#77).** A valid W3C `traceparent`/`tracestate` from a
+  `tools/call`'s `_meta` (also through `call_operation`) is sent to the upstream on
+  same-origin hops. For third-party APIs you do not operate, pass `--no-trace-propagation`.
