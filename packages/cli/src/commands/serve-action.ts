@@ -321,12 +321,15 @@ export const runServe = async (
     // contract — every upstream tool gets an entry, `undefined` only for a
     // genuine no-outputSchema tool. One compiler context serves the whole
     // snapshot (issue #42): the meta-schema is compiled once, not per tool.
-    const compileEnvelopeValidator = createEnvelopeCompiler();
+    // Created per snapshot, never module-global: Ajv caches every compiled
+    // schema by identity, so a future snapshot reload must build a new
+    // compiler rather than reuse this one, or old schemas pile up.
+    const compileToolValidator = createEnvelopeCompiler();
     const validatorEntries = snapshot.tools
       .filter((tool) => tool.kind === 'upstream')
       .map((tool) => {
         try {
-          return [tool.name, compileEnvelopeValidator(tool.wireTool.outputSchema)] as const;
+          return [tool.name, compileToolValidator(tool.wireTool.outputSchema)] as const;
         } catch (error) {
           throw usageError(
             `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
