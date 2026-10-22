@@ -17,6 +17,12 @@ import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 // a run is parked INSIDE its fetch (after it has read the cache, before it
 // commits), the competing operation runs to completion, and only then is the
 // parked fetch released. No timing sleeps are involved.
+//
+// A run whose commit meets a changed revision re-reads the entry ONCE and
+// re-makes its decision against what is current, with the bytes it already
+// fetched (no refetch); only a second conflict exits 5. So most interleavings
+// below end the way running the command again would, never with a decision
+// committed against a revision the run did not see.
 type SpecFetcher = SpecPipelineDeps['fetcher'];
 
 const spec = (title: string, extraPath?: string): string =>
@@ -41,6 +47,7 @@ const A = spec('A');
 const B = spec('B', '/b');
 const C = spec('C', '/c');
 const D = spec('D', '/d');
+const E = spec('E', '/e');
 
 type Reply = { status?: 304; body?: string; etag?: string };
 
@@ -136,8 +143,12 @@ describe('stale writers cannot overwrite an accepted revision (#34)', () => {
     const first = await run(fs, answering({ body: A }));
     expect(first.cacheStatus).toBe('accepted-first');
     second.release();
-    await expect(pending).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
+    // Re-decided against accepted A: B is a change, so it waits as a candidate
+    const late = await pending;
+    expect(late.cacheStatus).toBe('candidate');
+    expect(late.spec.title).toBe('A');
     expect(metaOf(fs)?.title).toBe('A');
+    expect(metaOf(fs)?.candidate?.title).toBe('B');
   });
 
   it('two first-use loads of the SAME spec both succeed (no needless conflict)', async () => {
@@ -167,7 +178,9 @@ describe('stale writers cannot overwrite an accepted revision (#34)', () => {
     // The stale refresh records nothing: accepted C keeps its own metadata,
     // validators included, and the run says why
     expect(metaOf(fs)).toStrictEqual(promoted);
-    expect(result.warnings.join('\n')).toContain('changed while this run was refreshing it');
+    expect(result.warnings.join('\n')).toContain(
+      'another openapi-mcp process changed it while this run was refreshing it',
+    );
   });
 
   it('a stale 304 does not stamp its validators onto a newer accepted revision', async () => {
@@ -182,7 +195,9 @@ describe('stale writers cannot overwrite an accepted revision (#34)', () => {
     const result = await pending;
     expect(result.cacheStatus).toBe('revalidated');
     expect(metaOf(fs)).toStrictEqual(promoted);
-    expect(result.warnings.join('\n')).toContain('changed while this run was refreshing it');
+    expect(result.warnings.join('\n')).toContain(
+      'another openapi-mcp process changed it while this run was refreshing it',
+    );
   });
 
   it('a stale run that would clear a candidate (source reverted) cannot replace a promoted C', async () => {
@@ -194,8 +209,10 @@ describe('stale writers cannot overwrite an accepted revision (#34)', () => {
     await refresh.entered;
     await promoteTo(fs, C); // Replaces candidate D with C, then promotes C
     refresh.release();
-    await expect(pending).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
+    // Re-decided against accepted C: B is now a change, gated as a candidate
+    await expect(pending).resolves.toMatchObject({ cacheStatus: 'candidate' });
     expect(metaOf(fs)?.title).toBe('C');
+    expect(metaOf(fs)?.candidate?.title).toBe('B');
   });
 
   it('a stale run cannot record a new candidate against a baseline that was replaced', async () => {
@@ -206,9 +223,38 @@ describe('stale writers cannot overwrite an accepted revision (#34)', () => {
     await refresh.entered;
     await promoteTo(fs, C);
     refresh.release();
-    await expect(pending).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
+    // The candidate is diffed against C, the baseline actually current now
+    await expect(pending).resolves.toMatchObject({ cacheStatus: 'candidate' });
     expect(metaOf(fs)?.title).toBe('C');
-    expect(metaOf(fs)?.candidate).toBeUndefined();
+    expect(metaOf(fs)?.candidate?.title).toBe('D');
+  });
+
+  it('a second conflict on the retry exits 5 and commits nothing', async () => {
+    const plain = memoryCacheFs();
+    await run(plain, answering({ body: B }));
+    // Before each of the parked run's lock attempts, another process promotes
+    // a new revision, so both its first commit and its retry are stale
+    const competitors = [C, E];
+    const fs: MemoryCacheFs = {
+      ...plain,
+      createExclusive: async (path, data) => {
+        const next = armed ? competitors.shift() : undefined;
+        if (next !== undefined) {
+          await promoteTo(plain, next);
+        }
+        return plain.createExclusive(path, data);
+      },
+    };
+    let armed = false;
+    const refresh = parked({ body: D });
+    const pending = run(fs, refresh.fetcher);
+    await refresh.entered;
+    armed = true;
+    refresh.release();
+    await expect(pending).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
+    expect(competitors).toStrictEqual([]);
+    expect(metaOf(plain)?.title).toBe('E');
+    expect(metaOf(plain)?.candidate).toBeUndefined();
   });
 
   it('two runs that record the SAME candidate both succeed', async () => {
@@ -225,7 +271,7 @@ describe('stale writers cannot overwrite an accepted revision (#34)', () => {
     expect(late.candidateContentHash).toBe(first.candidateContentHash);
   });
 
-  it('a --trust-spec-updates refresh paused across a promotion does not overwrite it', async () => {
+  it('a --trust-spec-updates refresh paused across a promotion re-decides against it', async () => {
     const fs = memoryCacheFs();
     await run(fs, answering({ body: B }));
     const refresh = parked({ body: D });
@@ -233,8 +279,10 @@ describe('stale writers cannot overwrite an accepted revision (#34)', () => {
     await refresh.entered;
     await promoteTo(fs, C);
     refresh.release();
-    await expect(pending).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
-    expect(metaOf(fs)?.title).toBe('C');
+    // Accept-over-B was stale; accept-over-C is what running it again does
+    // under --trust-spec-updates, and it is decided against C, not B
+    await expect(pending).resolves.toMatchObject({ cacheStatus: 'accepted-update' });
+    expect(metaOf(fs)?.title).toBe('D');
   });
 
   it('clear/recreate: a refresh paused across clear + a new first use does not overwrite it', async () => {
@@ -247,11 +295,14 @@ describe('stale writers cannot overwrite an accepted revision (#34)', () => {
     await clearNamespace(layoutOf(fs), fs, time.now);
     await run(fs, answering({ body: A }));
     refresh.release();
-    await expect(pending).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
-    expect(metaOf(fs)?.title).toBe('A');
+    // Re-decided against the recreated entry A (trusting updates): D over A
+    await expect(pending).resolves.toMatchObject({ cacheStatus: 'accepted-update' });
+    expect(metaOf(fs)?.title).toBe('D');
   });
 
   it('clear alone: a paused refresh does not resurrect the entry the operator cleared', async () => {
+    // It is re-decided as a first use of what it fetched (what running it
+    // again does), never as an update of the cleared B
     const fs = memoryCacheFs();
     await run(fs, answering({ body: B }));
     const layout = layoutOf(fs);
@@ -261,8 +312,8 @@ describe('stale writers cannot overwrite an accepted revision (#34)', () => {
     time.now += 1;
     await clearNamespace(layout, fs, time.now);
     refresh.release();
-    await expect(pending).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
-    expect(metaOf(fs)).toBeUndefined();
+    await expect(pending).resolves.toMatchObject({ cacheStatus: 'accepted-first' });
+    expect(metaOf(fs)?.title).toBe('D');
   });
 
   it('with nothing concurrent, refresh, candidate and promote behave exactly as before', async () => {

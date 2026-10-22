@@ -204,7 +204,9 @@ describe('cross-process cache races and the authenticated bypass (real filesyste
       // No half-written temp files and no orphaned lock survive the storm
       expect(names.filter((name) => name.includes('.tmp'))).toEqual([]);
       expect(names).not.toContain('.lock');
-    });
+      // Strict writers now wait for each other for up to --timeout instead of
+      // ~2 s, so the five refreshes may run one after another
+    }, 30_000);
 
     it('never lets a reader observe a mismatched generation during promotion', async () => {
       const readerArgs = [

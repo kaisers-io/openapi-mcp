@@ -14,8 +14,13 @@ import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import type { CacheFs } from './fs.ts';
 import { tryWithNamespaceLock, withNamespaceLock } from './lock.ts';
-import { STALE_REVISION_REASON, sameRevision, staleRevisionError } from './revision.ts';
-import type { ExpectedRevision } from './revision.ts';
+import {
+  STALE_REVISION_REASON,
+  expectedRevisionOf,
+  sameRevision,
+  staleRevisionError,
+} from './revision.ts';
+import type { RevisionCheck } from './revision.ts';
 import {
   CACHE_MAX_PERSISTED_BYTES,
   CACHE_META_MAX_BYTES,
@@ -96,10 +101,17 @@ const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
 //    costs its length plus the two quotes, a key its length plus quotes and
 //    colon, punctuation and numbers exactly. UTF-8 never encodes a UTF-16
 //    code unit in fewer bytes than one, and JSON escaping only lengthens, so
-//    the true byte count is never below this bound — and never above six
-//    times it (a C0 control or a lone surrogate, one unit, becomes the
-//    six-byte escape \uXXXX). A document whose $ref expansion repeats one
-//    large string is therefore still refused WITHOUT ever being built.
+//    the true byte count is never below this bound. The one case where a
+//    unit costs SIX bytes — a C0 control or a lone surrogate, which becomes
+//    the escape \uXXXX — is charged exactly instead: a string or key
+//    containing a control character or lone surrogate is measured with
+//    Buffer.byteLength(JSON.stringify(s)), a per-string allocation bounded
+//    by that one string. Every other unit costs at most THREE bytes (a BMP
+//    character from U+0800 up), and `"`/`\` two, so the string stringify
+//    builds in step 2 is at most 3x the budget before it is refused
+//    (64 MiB cap → at most ~192 MiB transient). A document whose $ref
+//    expansion repeats one large string is refused WITHOUT ever being built
+//    whenever its lower bound passes the budget, i.e. up to that factor.
 // 2. A single native JSON.stringify, then the EXACT check: the byte length of
 //    the string actually produced is compared with the budget. These are the
 //    bytes that get hashed and written, so the cap holds for them by
@@ -133,6 +145,15 @@ const UNSUPPORTED_DOCUMENT_MESSAGE =
 // of the path, so a pathologically deep document stays O(nodes), not
 // O(nodes x depth).
 const SHALLOW_PATH_DEPTH = 64;
+
+// C0 controls and LONE surrogates (with the u flag a well-formed pair is one
+// code point and does not match): the only units whose escaped cost is six
+// bytes rather than at most three, so strings containing them are measured
+// exactly
+// oxlint-disable-next-line no-control-regex -- detecting control characters is this regex's purpose
+const ESCAPE_HEAVY_RE = /[\u0000-\u001F\uD800-\uDFFF]/u;
+const stringCost = (text: string): number =>
+  ESCAPE_HEAVY_RE.test(text) ? Buffer.byteLength(JSON.stringify(text), 'utf8') : text.length + 2;
 
 export const serializeWithinBudget = (value: unknown, budget: number): string | undefined => {
   // Imperative on purpose, for `used`, `path` and `deepPath` alike: this is
@@ -204,7 +225,7 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
   const walk = (node: unknown): void => {
     // Strings first: they are by far the most frequent node in a spec
     if (typeof node === 'string') {
-      charge(node.length + 2);
+      charge(stringCost(node));
       return;
     }
     if (typeof node === 'bigint' || typeof node === 'function' || typeof node === 'symbol') {
@@ -321,7 +342,7 @@ export const serializeWithinBudget = (value: unknown, budget: number): string | 
           charge(1); // ,
         }
         first = false;
-        charge(key.length + 3); // "key":
+        charge(stringCost(key) + 1); // "key":
         walk(item);
       }
       charge(1); // }
@@ -685,7 +706,7 @@ const writeAcceptedImpl = async (
     etag?: string | undefined;
     lastModified?: string | undefined;
     // The revision this decision was made against (#34): see revision.ts
-    expected?: ExpectedRevision | undefined;
+    expected: RevisionCheck;
   },
 ): Promise<{ acceptedContentHash: string }> => {
   // The openapiVersion is DERIVED here, not supplied by the caller: accepting
@@ -721,7 +742,8 @@ const writeAcceptedImpl = async (
       await assertAcceptedObjectIntact(layout, fs, existing.meta);
     }
     const current = existing.kind === 'ok' ? existing.meta : undefined;
-    if (input.expected !== undefined && !sameRevision(input.expected.meta, current)) {
+    const expected = expectedRevisionOf(input.expected);
+    if (expected !== undefined && !sameRevision(expected.meta, current)) {
       // A concurrent writer already committed exactly this outcome (two
       // first-use loads of the same spec): nothing left to do, and nothing a
       // second commit could add
@@ -782,7 +804,7 @@ const writeCandidateImpl = async (
     etag?: string | undefined;
     lastModified?: string | undefined;
     // The revision this decision was made against (#34): see revision.ts
-    expected?: ExpectedRevision | undefined;
+    expected: RevisionCheck;
   },
 ): Promise<{ candidateContentHash: string }> => {
   if (input.title.length > CACHE_TEXT_MAX || input.specVersion.length > CACHE_TEXT_MAX) {
@@ -809,12 +831,13 @@ const writeCandidateImpl = async (
     // Meta.json alone is not enough: verify the accepted OBJECT it names is
     // still intact before recording a candidate beside it
     await assertAcceptedObjectIntact(layout, fs, existing.meta);
-    if (input.expected !== undefined && !sameRevision(input.expected.meta, existing.meta)) {
+    const expected = expectedRevisionOf(input.expected);
+    if (expected !== undefined && !sameRevision(expected.meta, existing.meta)) {
       // A concurrent run already recorded this very candidate against the
       // same accepted baseline: the outcome stands, and its newer-or-equal
       // bookkeeping is kept rather than rewound
       if (
-        input.expected.meta?.acceptedContentHash === existing.meta.acceptedContentHash &&
+        expected.meta?.acceptedContentHash === existing.meta.acceptedContentHash &&
         existing.meta.candidate?.contentHash === candidateContentHash
       ) {
         return { candidateContentHash };
@@ -867,6 +890,12 @@ const writeCandidateImpl = async (
 // discard a candidate awaiting promotion without ever approving it. This
 // updates the timestamp and the validators and touches nothing else: no
 // object is written, and both slots survive verbatim.
+// `lockStale` is set only when the writer lock was in the way (best effort);
+// a revision that moved on carries no lock state
+type TouchResult =
+  | { recorded: true }
+  | { recorded: false; reason: string; lockStale?: boolean | undefined };
+
 const touchRevalidatedImpl = async (
   layout: CacheLayout,
   fs: CacheFs,
@@ -894,15 +923,15 @@ const touchRevalidatedImpl = async (
   opts: {
     replaceValidators?: boolean;
     bestEffort?: boolean;
-    expected?: ExpectedRevision | undefined;
-  } = {},
-): Promise<{ recorded: true } | { recorded: false; reason: string }> => {
-  const touch = async (): Promise<{ recorded: true } | { recorded: false; reason: string }> => {
+    expected: RevisionCheck;
+  },
+): Promise<TouchResult> => {
+  const touch = async (): Promise<TouchResult> => {
     const existing = await readMetaFile(layout, fs);
     if (existing.kind === 'corrupt') {
       throw corruptEntryError(existing.reason);
     }
-    const { expected } = opts;
+    const expected = expectedRevisionOf(opts.expected);
     if (
       expected !== undefined &&
       !sameRevision(expected.meta, existing.kind === 'ok' ? existing.meta : undefined)
@@ -947,7 +976,9 @@ const touchRevalidatedImpl = async (
   };
   if (opts.bestEffort === true) {
     const attempt = await tryWithNamespaceLock(layout, fs, nowMs, touch);
-    return attempt.acquired ? attempt.value : { recorded: false, reason: attempt.message };
+    return attempt.acquired
+      ? attempt.value
+      : { recorded: false, reason: attempt.message, lockStale: attempt.stale };
   }
   const result = await withNamespaceLock(layout, fs, nowMs, touch);
   if (!result.recorded) {

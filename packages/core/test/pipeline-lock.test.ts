@@ -101,6 +101,26 @@ describe('a held writer lock and a verified entry (#65)', () => {
     // Nothing was written, and the other process's lock is untouched
     expect([...fs.files.values()]).toContain(metaBefore);
     expect(JSON.parse(fs.files.get(lockPath)!)).toMatchObject({ owner: 'crashed' });
+    // An aged lock will not clear by itself: surfaced for openapi_mcp_status
+    expect(result.cacheLock).toBe('stale');
+  });
+
+  it('a lock a live writer took moments ago is reported as held, not stale', async () => {
+    const fetcher = fetcherOf([{ body: remoteSpec('Remote'), etag: '"v1"' }, { status: 304 }]);
+    const { fs, lockPath } = await seededAndLocked(fetcher);
+    await fs.removeFile(lockPath);
+    await fs.createExclusive(lockPath, JSON.stringify({ owner: 'busy', acquiredAt: later - 10 }));
+    const result = await runSpecPipeline(specUrl, { ...opts, nowMs: later }, deps(fs, fetcher));
+    expect(result.cacheLock).toBe('held');
+  });
+
+  it('reports no cacheLock when the revalidation was recorded', async () => {
+    const fetcher = fetcherOf([{ body: remoteSpec('Remote'), etag: '"v1"' }, { status: 304 }]);
+    const fs = memoryCacheFs();
+    await runSpecPipeline(specUrl, opts, deps(fs, fetcher));
+    const result = await runSpecPipeline(specUrl, { ...opts, nowMs: later }, deps(fs, fetcher));
+    expect(result.cacheStatus).toBe('revalidated');
+    expect(result).not.toHaveProperty('cacheLock');
   });
 
   it('an unchanged 200 does the same', async () => {
@@ -109,6 +129,7 @@ describe('a held writer lock and a verified entry (#65)', () => {
     const result = await runSpecPipeline(specUrl, { ...opts, nowMs: later }, deps(fs, fetcher));
     expect(result.cacheStatus).toBe('revalidated');
     expect(result.warnings.join('\n')).toContain('cache metadata not updated');
+    expect(result.cacheLock).toBe('stale');
   });
 
   it('a changed source (a candidate write) still fails closed with exit 5', async () => {
@@ -135,6 +156,36 @@ describe('a held writer lock and a verified entry (#65)', () => {
         deps(fs, fetcher),
       ),
     ).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
+  });
+
+  it('a strict write waits for a busy lock as long as --timeout allows', async () => {
+    // A first use while another process spends ~5 s writing the same large
+    // spec: the built-in ~2 s schedule would give up, --timeout 30s does not
+    const run = async (timeoutMs: number): Promise<unknown> => {
+      const fetcher = fetcherOf([{ body: remoteSpec('Remote') }]);
+      const probe = memoryCacheFs();
+      await runSpecPipeline(specUrl, opts, deps(probe, fetcher));
+      const metaPath = [...probe.files.keys()].find((key) => key.endsWith('/meta.json'))!;
+      const lockPath = metaPath.replace(/meta\.json$/u, '.lock');
+      const fs = memoryCacheFs();
+      let slept = 0;
+      fs.runtime = {
+        pid: 1,
+        hostname: 'build-host',
+        isProcessAlive: () => true,
+        sleep: async (ms) => {
+          slept += ms;
+          if (slept >= 5000) {
+            await fs.removeFile(lockPath);
+          }
+        },
+      };
+      await fs.mkdirSecure(lockPath.replace(/\/\.lock$/u, ''));
+      await fs.createExclusive(lockPath, JSON.stringify({ owner: 'busy', acquiredAt: 1000 }));
+      return runSpecPipeline(specUrl, { ...opts, timeoutMs }, deps(fs, fetcher));
+    };
+    await expect(run(30_000)).resolves.toMatchObject({ cacheStatus: 'accepted-first' });
+    await expect(run(1000)).rejects.toMatchObject({ code: 'conflict', exitCode: 5 });
   });
 
   it('a first use (no verified entry) still fails closed with exit 5', async () => {

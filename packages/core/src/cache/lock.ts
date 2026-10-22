@@ -23,10 +23,30 @@ export const LOCK_STALE_MS = 60_000;
 // the conflict is reported exactly as before.
 export const LOCK_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200, 400, 600, 600];
 
+// A caller that knows how long the operator is prepared to wait (the spec
+// pipeline passes --timeout through CacheRuntime.lockWaitMs) extends the
+// schedule with further LOCK_RETRY_TAIL_MS steps until the nominal total
+// reaches that budget. A first-use write of a large spec (serialize up to
+// 64 MiB, fsync, rename) can hold the lock for longer than ~2 s, and a
+// concurrent first use should wait for it rather than exit 5.
+const LOCK_RETRY_TAIL_MS = 600;
+
+export const lockRetrySchedule = (waitMs: number | undefined): readonly number[] => {
+  const base = LOCK_RETRY_DELAYS_MS.reduce((sum, delay) => sum + delay, 0);
+  const extra =
+    waitMs === undefined || waitMs <= base ? 0 : Math.ceil((waitMs - base) / LOCK_RETRY_TAIL_MS);
+  return [...LOCK_RETRY_DELAYS_MS, ...Array.from({ length: extra }, () => LOCK_RETRY_TAIL_MS)];
+};
+
 const jittered = (delayMs: number): number =>
   Math.round(delayMs / 2 + Math.random() * (delayMs / 2));
 
-type Acquisition = { acquired: true; owner: string } | { acquired: false; message: string };
+// `stale` on a refusal: the holder looks gone (aged past LOCK_STALE_MS, or
+// its pid is not running on this host), so the lock will not clear by
+// itself and needs "openapi-mcp cache unlock"
+type Acquisition =
+  | { acquired: true; owner: string }
+  | { acquired: false; message: string; stale: boolean };
 
 // One acquisition, with or without the bounded retry. Never throws for a held
 // lock: it returns the operator message instead, so the strict and the
@@ -40,26 +60,33 @@ const acquire = async (
   await fs.mkdirSecure(layout.dir);
   const owner = randomUUID();
   const { runtime } = fs;
-  const record = `${JSON.stringify({
-    owner,
-    acquiredAt: nowMs,
-    ...(runtime === undefined ? {} : { pid: runtime.pid, hostname: runtime.hostname }),
-  })}\n`;
+  // The recorded acquiredAt is the caller's clock plus the time slept so far, so a lock
+  // obtained after backing off does not record itself as older than it is
+  const recordAt = (atMs: number): string =>
+    `${JSON.stringify({
+      owner,
+      acquiredAt: atMs,
+      ...(runtime === undefined ? {} : { pid: runtime.pid, hostname: runtime.hostname }),
+    })}\n`;
   // Without a runtime there is no sleep to back off with, so a fake
   // filesystem keeps the old single-attempt behaviour
-  const delays = retry && runtime !== undefined ? LOCK_RETRY_DELAYS_MS : [];
+  const delays = retry && runtime !== undefined ? lockRetrySchedule(runtime.lockWaitMs) : [];
   // Imperative on purpose: each attempt depends on the previous one failing,
   // and the backoff sleeps in between — a sequential loop by nature
+  let sleptMs = 0;
   for (let attempt = 0; ; attempt += 1) {
-    if (await fs.createExclusive(layout.lockPath, record)) {
+    if (await fs.createExclusive(layout.lockPath, recordAt(nowMs + sleptMs))) {
       return { acquired: true, owner };
     }
     const delay = delays[attempt];
     if (delay === undefined || runtime === undefined) {
       break;
     }
-    await runtime.sleep(jittered(delay));
+    const wait = jittered(delay);
+    await runtime.sleep(wait);
+    sleptMs += wait;
   }
+  const atMs = nowMs + sleptMs;
   // A held lock is ALWAYS a conflict. There is no automatic stale takeover,
   // because it cannot be made safe at a distance: B reads a stale record
   // belonging to A, C removes it and acquires a fresh lock, and B then
@@ -70,10 +97,10 @@ const acquire = async (
   // tell a dead owner from a live one, but a decision taken on them at a
   // distance would have exactly the same B/C race.
   const holder = await readLockHolder(layout, fs);
-  const heldForMs = holder === undefined ? undefined : nowMs - holder.acquiredAt;
+  const heldForMs = holder === undefined ? undefined : atMs - holder.acquiredAt;
   const who = holder === undefined ? undefined : describeLockHolder(holder, runtime);
   const details = [
-    ...(who === undefined ? [] : [who]),
+    ...(who === undefined ? [] : [who.text]),
     ...(heldForMs === undefined || heldForMs < LOCK_STALE_MS
       ? []
       : [`held for ${String(Math.floor(heldForMs / 1000))}s`]),
@@ -82,7 +109,7 @@ const acquire = async (
   // needs no flag; a young one whose owner looks dead on this host still
   // needs --force (see describeLockHolder)
   const aged = heldForMs !== undefined && heldForMs >= LOCK_STALE_MS;
-  const ownerGone = who?.endsWith('process not running') === true;
+  const ownerGone = who?.alive === false;
   let hint = ' — retry once it finishes';
   if (aged) {
     hint += ', or run "openapi-mcp cache unlock" if the owning process is gone';
@@ -91,6 +118,7 @@ const acquire = async (
   }
   return {
     acquired: false,
+    stale: aged || ownerGone,
     message: `cache entry ${layout.namespace} is locked by another openapi-mcp process${
       details.length === 0 ? '' : ` (${details.join(', ')})`
     }${hint}`,
@@ -163,7 +191,7 @@ const tryWithNamespaceLockImpl = async <T>(
   fs: CacheFs,
   nowMs: number,
   run: () => Promise<T>,
-): Promise<{ acquired: true; value: T } | { acquired: false; message: string }> => {
+): Promise<{ acquired: true; value: T } | { acquired: false; message: string; stale: boolean }> => {
   const acquisition = await acquire(layout, fs, nowMs, false);
   if (!acquisition.acquired) {
     return acquisition;
@@ -195,12 +223,12 @@ const unlockNamespaceImpl = async (
   if (!opts.force && (holder === undefined || heldForMs < LOCK_STALE_MS)) {
     throw conflictError(
       `the lock on cache entry ${layout.namespace}${
-        who === undefined ? '' : ` (${who})`
+        who === undefined ? '' : ` (${who.text})`
       } is not known to be stale — wait for the owning process, or pass --force to remove it anyway`,
     );
   }
   await fs.removeFile(layout.lockPath);
-  return { heldForMs, ...(who === undefined ? {} : { holder: who }) };
+  return { heldForMs, ...(who === undefined ? {} : { holder: who.text }) };
 };
 
 // The one error boundary, applied at the DEFINITION so coverage is structural
