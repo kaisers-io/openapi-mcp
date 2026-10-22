@@ -119,6 +119,21 @@ Example:
 openapi-mcp tools --spec https://api.example.com/openapi.json --allow "read*"
 ```
 
+### Query parameter styles
+
+Query parameters support the OAS 3.1.1 §4.8.12.4 styles that the spec defines for their
+shape. An operation that uses an undefined combination is listed as omitted, with the reason:
+
+- `form` (the default), with or without `explode`.
+- `deepObject` needs `explode: true` **set explicitly**. `explode` defaults to `true` only
+  for `form`, so a spec that leaves it out on a `deepObject` parameter has that operation
+  omitted (Stripe-style specs often do). The value must be an object of scalars. At call
+  time a key containing `[` or `]` is rejected, because it would read as nesting
+  (`filter[a][b]`) on the server.
+- `spaceDelimited` and `pipeDelimited` need `explode: false` (the only defined form). The
+  value is an array or an object of scalars. An item containing its own delimiter is
+  rejected as ambiguous, and an empty array or object sends nothing, like `form`.
+
 ## `cache`
 
 Inspect and manage the on-disk spec cache (`~/.kaisers-io/openapi-mcp/cache/`). Has no flags
