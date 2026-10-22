@@ -47,7 +47,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
 | `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
-| `--timeout <duration>` | no | spec fetch timeout | `30s` |
+| `--timeout <duration>` | no | spec fetch timeout; in `serve` also the per-call budget for an upstream tool call (queue wait + request) | `30s` |
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
@@ -58,6 +58,8 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
 | `--max-response-bytes <size>` | no | cap the decompressed upstream response body **and** the outgoing request body (see below) | `10MB` |
 | `--allow-insecure-http` | no | permit an operator credential (`--header-env`) over cleartext http to a non-loopback origin | off |
+| `--max-concurrency <n>` | no | upstream calls in flight at once (1–256); further calls wait in a bounded FIFO queue | `16` |
+| `--rate-limit <calls/duration>` | no | tool calls allowed per sliding window, e.g. `10/1s`, `600/1h` (calls 1–100000) | `120/1m` |
 | `--http` | no | serve over Streamable HTTP (127.0.0.1 only) instead of stdio | off (stdio) |
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http`. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
@@ -79,6 +81,20 @@ Notes:
 - `--cache-key` is required for any spec fetched with `--spec-header-env` (an authenticated
   spec), unless `--trust-spec-updates` is also passed. Providing neither is a startup usage
   error.
+- Concurrency and rate limits apply to the whole process (stdio and HTTP alike). A call that
+  finds `--max-concurrency` calls already in flight waits for a slot, first come first served.
+  At most 4 × `--max-concurrency` calls can wait. The wait and the upstream request share one
+  budget of `--timeout`: a call waits at most half of it for a slot, and its request gets what is
+  left, so a tool call never takes longer than `--timeout` end-to-end (plus response
+  processing). Keep `--timeout` below your MCP host's own `tools/call` timeout.
+  A refused call returns a tool error whose text ends in `retry after <n>s`, and whose result
+  `_meta` holds `"openapi-mcp/error"` and `"openapi-mcp/retryAfterMs"`. The error is
+  `"overloaded"` with a fixed 1000 ms when the queue is full or the wait timed out. It is
+  `"rate_limited"` when a call is over `--rate-limit`, and then `retryAfterMs` is exact: it is
+  the time until the oldest call in the window expires. These details go in `_meta`, not
+  `structuredContent`, because a tool's structured content must match its output schema.
+  Both limits are always finite. There is no "unlimited" setting, because MCP servers must
+  rate-limit tool calls.
 - `--default-response-is-error` is opt-in. Without it, an operation that documents a
   `default` response gets no output schema, because `default` may cover an undocumented
   success status. With it, only the explicitly documented `2xx` responses form the output

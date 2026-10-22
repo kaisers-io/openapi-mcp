@@ -94,7 +94,7 @@ const discoverSnapshot = (operations: readonly NamedOperation[], exposeAll = tru
 const search = async (snapshot: ServerSnapshot, args: unknown): Promise<ToolCallOutcome> => {
   const dispatcher = createDispatcher({
     snapshot,
-    limiter: { consume: () => true },
+    limiter: { consume: () => true, retryAfterMs: () => 0 },
     now: () => 0,
     executor: () => Promise.resolve(textOutcome('unused', true)),
     metaExecutor: createMetaExecutor(),

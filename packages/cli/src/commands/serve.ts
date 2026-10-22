@@ -51,9 +51,6 @@ import type { CommandRegistrar } from './registry.ts';
 // request against a real API.
 const MAX_URL_LENGTH = 8192;
 const MAX_HEADER_BYTES = 16_384;
-// Global outbound-concurrency semaphore, shared by stdio + HTTP because
-// `createExecutor` is constructed exactly ONCE below.
-const MAX_CONCURRENT_UPSTREAM_CALLS = 16;
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -394,7 +391,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
           maxHeaderBytes: MAX_HEADER_BYTES,
           maxBodyBytes: apiConfig.maxResponseBytes,
         },
-        maxConcurrent: MAX_CONCURRENT_UPSTREAM_CALLS,
+        // Global outbound-concurrency cap (--max-concurrency), shared by
+        // stdio + HTTP because `createExecutor` is constructed exactly ONCE
+        // below; up to 4x as many calls may queue for a slot.
+        maxConcurrent: apiConfig.maxConcurrency,
         validators,
       };
       // ONE executor instance, shared by the stdio AND HTTP branches below,
@@ -402,7 +402,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       const executor = createExecutor(executorConfig, { transport: ctx.transport });
       closeExecutor = () => executor.close();
       const dispatcherDeps = {
-        limiter: createRateLimiter(),
+        limiter: createRateLimiter(apiConfig.rateLimit),
         now: ctx.now,
         executor,
         metaExecutor: createMetaExecutor(),

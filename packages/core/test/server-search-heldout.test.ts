@@ -380,7 +380,7 @@ const snapshot = ((): ServerSnapshot => {
 const rankOf = async (query: string, expected: string): Promise<number | undefined> => {
   const dispatcher = createDispatcher({
     snapshot,
-    limiter: { consume: () => true },
+    limiter: { consume: () => true, retryAfterMs: () => 0 },
     now: () => 0,
     executor: () => Promise.resolve(textOutcome('unused', true)),
     metaExecutor: createMetaExecutor(),

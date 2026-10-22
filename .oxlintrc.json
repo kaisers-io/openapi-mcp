@@ -598,7 +598,12 @@
         // header-precedence write order both depend on seeing the full call
         // sequence in one place; splitting either out would separate that
         // ordering invariant from the code that must respect it.
-        "max-lines": "off"
+        "max-lines": "off",
+        // Off for the same reason: as the integration point it imports one
+        // module per stage it wires (request, transport + connection pool,
+        // admission queue, response mapping, redaction, sanitizing, result
+        // types) -- 11 against a cap of 10.
+        "import/max-dependencies": "off"
       }
     },
     {

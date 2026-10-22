@@ -131,14 +131,15 @@ const snapshotFor = (
   return buildSnapshot(built, PIPELINE, toolMode === undefined ? {} : { toolMode });
 };
 
-const permit = (): { consume: (nowMs: number) => boolean } => ({ consume: () => true });
+type TestLimiter = { consume: (nowMs: number) => boolean; retryAfterMs: (nowMs: number) => number };
+const permit = (): TestLimiter => ({ consume: () => true, retryAfterMs: () => 0 });
 const noSignal = new AbortController().signal;
 
 const dispatcherFor = (
   snapshot: ServerSnapshot,
   overrides: {
     executor?: ToolExecutor;
-    limiter?: { consume: (nowMs: number) => boolean };
+    limiter?: TestLimiter;
     redactor?: Redactor;
   } = {},
 ) =>
@@ -271,9 +272,9 @@ describe('buildSnapshot — tool modes', () => {
 describe('dispatcher — discover mode', () => {
   it('treats an operation name as an unknown TOOL (it is not listed), without spending rate budget', async () => {
     const consume = vi.fn<(nowMs: number) => boolean>(() => true);
-    const result = await dispatcherFor(snapshotFor('discover'), { limiter: { consume } }).call(
-      call('listThings'),
-    );
+    const result = await dispatcherFor(snapshotFor('discover'), {
+      limiter: { consume, retryAfterMs: () => 0 },
+    }).call(call('listThings'));
     expect(result).toEqual({ kind: 'unknown-tool', name: 'listThings' });
     expect(consume).not.toHaveBeenCalled();
   });
@@ -408,7 +409,10 @@ describe('dispatcher — discover mode', () => {
   it('charges the rate limiter once per call_operation call, and a refused call never reaches the executor', async () => {
     const consume = vi.fn<(nowMs: number) => boolean>(() => true);
     const executor = vi.fn<ToolExecutor>(() => Promise.resolve(textOutcome('reached', false)));
-    const dispatcher = dispatcherFor(snapshotFor('discover'), { limiter: { consume }, executor });
+    const dispatcher = dispatcherFor(snapshotFor('discover'), {
+      limiter: { consume, retryAfterMs: () => 0 },
+      executor,
+    });
     await dispatcher.call(call('call_operation', { name: 'listThings', arguments: {} }));
     expect(consume).toHaveBeenCalledTimes(1);
     expect(executor).toHaveBeenCalledTimes(1);

@@ -109,7 +109,7 @@ const makeServer = (port: number, overrides: ServerOverrides = {}) =>
     version: '1.0.0',
     snapshot: buildHttpTestSnapshot(),
     dispatcherDeps: {
-      limiter: { consume: () => true },
+      limiter: { consume: () => true, retryAfterMs: () => 0 },
       now: () => Date.now(),
       executor: overrides.executor ?? noopExecutor,
       metaExecutor: overrides.metaExecutor ?? createMetaExecutor(),

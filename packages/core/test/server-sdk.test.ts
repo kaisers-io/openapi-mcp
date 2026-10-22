@@ -140,7 +140,7 @@ const connectPair = async (overrides: SessionOverrides = {}) => {
     version: '1.0.0',
     snapshot,
     dispatcherDeps: {
-      limiter: { consume: () => true }, // Always-permitting: rate exhaustion cannot fake a pass
+      limiter: { consume: () => true, retryAfterMs: () => 0 }, // Always-permitting: rate exhaustion cannot fake a pass
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
@@ -280,7 +280,7 @@ describe('createProtocolSession — InMemory integration', () => {
       version: '1.0.0',
       snapshot,
       dispatcherDeps: {
-        limiter: { consume: () => true },
+        limiter: { consume: () => true, retryAfterMs: () => 0 },
         now: () => 0,
         executor: () => Promise.resolve({ isError: false, content: [] }),
         metaExecutor: createMetaExecutor(),
