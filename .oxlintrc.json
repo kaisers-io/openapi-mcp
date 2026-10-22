@@ -647,10 +647,11 @@
       }
     },
     {
-      "files": ["packages/cli/src/commands/serve.ts"],
+      "files": ["packages/cli/src/commands/serve-action.ts"],
       "rules": {
-        // Off: serve.ts's startup action resolves the API base URL, builds
-        // the process-wide redactor, eager-compiles the per-tool output
+        // Off: serve-action.ts (the serve command's body, loaded on demand)
+        // resolves the API base URL, builds the process-wide redactor,
+        // eager-compiles the per-tool output
         // validators, and constructs the one shared createExecutor instance
         // in a fixed order (base-url resolution before the executor,
         // apiConfig before buildTools); moving these into a separate module

@@ -8,7 +8,10 @@ export default defineConfig({
   target: 'node24',
   minify: true,
   dts: false,
-  clean: false,
+  // The dist/ folder is now several content-hashed chunks (the dynamic imports of the
+  // serve action and the fetch path, issue #91): clean it on every build so a
+  // chunk left over from an earlier build can never be published
+  clean: true,
   outDir: 'dist',
   // Inline every dependency: the published tarball is bin + dist only
   deps: { alwaysBundle: [/.*/u] },

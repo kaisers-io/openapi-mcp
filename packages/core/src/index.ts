@@ -50,12 +50,10 @@ export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
 export { assertAllowedRedirectTarget, classifyAddress } from './http/egress.ts';
 export type { AddressClass, DnsLookup, EgressPolicyOptions } from './http/egress.ts';
 export { pinnedRequest } from './http/pinned-dispatcher.ts';
-export {
-  clientSecretBasic,
-  createClientCredentialsSource,
-} from './http/oauth-client-credentials.ts';
+export { clientSecretBasic } from './http/oauth-client-auth.ts';
+export type { ClientAuthMethod } from './http/oauth-client-auth.ts';
+export { createClientCredentialsSource } from './http/oauth-client-credentials.ts';
 export type {
-  ClientAuthMethod,
   ClientCredentialsConfig,
   TokenResult,
   TokenSource,
