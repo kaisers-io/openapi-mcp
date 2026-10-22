@@ -50,6 +50,9 @@ export type ExecutorConfig = {
 export type ExecutorDeps = {
   // { fetch, resolve, timeoutSignal } — the narrow project-owned interface.
   transport: PinnedDeps;
+  // Monotonic clock (ms) used to charge the queue wait against the call's
+  // time budget; defaults to performance.now().
+  now?: () => number;
 };
 
 const textEncoder = new TextEncoder();
@@ -204,6 +207,8 @@ const runUpstreamCall = async (
   tool: SnapshotTool,
   args: unknown,
   signal: AbortSignal,
+  // What is left of the call's time budget after any queue wait.
+  timeoutMs: number,
 ): Promise<ToolCallOutcome> => {
   const { generated } = tool;
   if (generated === undefined) {
@@ -293,7 +298,7 @@ const runUpstreamCall = async (
     ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
     baseTrusted: config.baseTrusted,
     allowPrivateNetwork: config.allowPrivateNetwork,
-    timeoutMs: config.timeoutMs,
+    timeoutMs,
     maxResponseBytes: config.maxResponseBytes,
     signal,
   };
@@ -314,7 +319,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
   // caller constructs exactly one createExecutor and shares it between the
   // stdio and HTTP transports, so this one queue bounds concurrency across
   // BOTH. Calls past maxConcurrent wait in FIFO order (bounded by maxQueued
-  // and by the call timeout) instead of failing straight away.
+  // and by half the call timeout) instead of failing straight away.
   const slots = createSlotQueue(config.maxConcurrent, config.maxQueued ?? 4 * config.maxConcurrent);
   // Long-lived pinned Agents, pooled per (origin, trust policy) for the
   // executor's lifetime, so consecutive calls reuse upstream connections.
@@ -328,8 +333,16 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     connections: config.maxConcurrent,
   });
   const transport: PinnedDeps = { ...deps.transport, agents };
+  const now = deps.now ?? (() => performance.now());
+  // ONE time budget per call, shared by the queue wait and the upstream
+  // request, so a queued call cannot take queue wait + a full timeout
+  // (~2x the timeout end-to-end, past many hosts' own tools/call limit).
+  // The wait is capped at half the budget, so a call that does get a slot
+  // still has at least the other half for the upstream request.
+  const maxQueueWaitMs = Math.ceil(config.timeoutMs / 2);
   const execute: ToolExecutor = async (tool, args, signal) => {
-    const slot = await slots.acquire(signal, () => deps.transport.timeoutSignal(config.timeoutMs));
+    const queuedAt = now();
+    const slot = await slots.acquire(signal, () => deps.transport.timeoutSignal(maxQueueWaitMs));
     if (slot === 'cancelled') {
       return isError('the request was cancelled');
     }
@@ -340,7 +353,9 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
       return overloaded('timed out waiting for a free upstream request slot');
     }
     try {
-      return await runUpstreamCall(config, transport, tool, args, signal);
+      const waitedMs = Math.min(Math.max(now() - queuedAt, 0), maxQueueWaitMs);
+      const remainingMs = Math.max(Math.floor(config.timeoutMs - waitedMs), 1);
+      return await runUpstreamCall(config, transport, tool, args, signal, remainingMs);
     } catch {
       // Belt-and-suspenders: the dispatcher also catches, but this module
       // never lets a raw throw (a library-internal message, a stack, a

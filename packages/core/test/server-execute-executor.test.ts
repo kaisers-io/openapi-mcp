@@ -662,6 +662,44 @@ describe('createExecutor — global concurrency queue', () => {
     await expect(first).resolves.toMatchObject({ isError: false });
     expect(gated.started()).toBe(1);
   });
+
+  it('charges the queue wait against one call budget: wait <= half, upstream gets the rest', async () => {
+    const { snapshot, tool } = pingSetup();
+    const gated = gatedTransport();
+    const requested: number[] = [];
+    let clock = 0;
+    const executor = createExecutor(
+      baseConfig({ maxConcurrent: 1, timeoutMs: 5000, validators: validatorsFor(snapshot) }),
+      {
+        transport: {
+          fetch: gated.fetch,
+          resolve: rejectingResolve,
+          timeoutSignal: (ms) => {
+            requested.push(ms);
+            return new AbortController().signal;
+          },
+        },
+        now: () => clock,
+      },
+    );
+    const first = executor(tool, {}, freshSignal());
+    await flush();
+    // Uncontended: the upstream request gets the whole budget.
+    expect(requested).toEqual([5000]);
+    const queued = executor(tool, {}, freshSignal());
+    await flush();
+    // The wait itself is bounded by half the budget.
+    expect(requested).toEqual([5000, 2500]);
+    clock = 1200;
+    gated.releaseOne();
+    await expect(first).resolves.toMatchObject({ isError: false });
+    await flush();
+    // The queued call's upstream request gets only what is left (5000 - 1200),
+    // so queue wait + upstream never exceed the configured timeout.
+    expect(requested).toEqual([5000, 2500, 3800]);
+    gated.releaseOne();
+    await expect(queued).resolves.toMatchObject({ isError: false });
+  });
 });
 
 describe('createExecutor — upstream connection reuse', () => {

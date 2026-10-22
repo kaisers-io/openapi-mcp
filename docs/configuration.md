@@ -47,7 +47,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
 | `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
-| `--timeout <duration>` | no | spec fetch timeout | `30s` |
+| `--timeout <duration>` | no | spec fetch timeout; in `serve` also the per-call budget for an upstream tool call (queue wait + request) | `30s` |
 | `--ttl <duration>` | no | spec refresh interval | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
@@ -73,7 +73,10 @@ Notes:
   error.
 - Concurrency and rate limits apply to the whole process (stdio and HTTP alike). A call that
   finds `--max-concurrency` calls already in flight waits for a slot, first come first served.
-  At most 4 × `--max-concurrency` calls can wait, and each waits no longer than `--timeout`.
+  At most 4 × `--max-concurrency` calls can wait. The wait and the upstream request share one
+  budget of `--timeout`: a call waits at most half of it for a slot, and its request gets what is
+  left, so a tool call never takes longer than `--timeout` end-to-end (plus response
+  processing). Keep `--timeout` below your MCP host's own `tools/call` timeout.
   A refused call returns a tool error whose text ends in `retry after <n>s`, and whose result
   `_meta` holds `"openapi-mcp/error"` and `"openapi-mcp/retryAfterMs"`. The error is
   `"overloaded"` with a fixed 1000 ms when the queue is full or the wait timed out. It is
