@@ -31,8 +31,17 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 // A partial envelope that silently drops one of these cases would let
 // `structuredContent` violate the tool's own advertised outputSchema at
 // runtime — omitting entirely is the only sound fallback.
-const isJsonContentType = (contentType: string): boolean =>
-  /^application\/(?:[\w.+-]+\+)?json$/u.test(contentType);
+// The ONE JSON media-type test of the response side: output-schema
+// derivation, response mapping (server/execute/response.ts) and tool
+// selection for `_fields` (build.ts) all use it, so they cannot disagree.
+// `application/json` or any `+json` structured-syntax suffix (RFC 6839).
+const JSON_ESSENCE_RE = /^application\/(?:[\w.+-]+\+)?json$/u;
+export const isJsonContentType = (contentType: string): boolean =>
+  JSON_ESSENCE_RE.test(contentType);
+
+// The lowercased `type/subtype` of a media type, parameters dropped.
+export const mediaEssence = (contentType: string): string =>
+  (contentType.split(';')[0] ?? '').trim().toLowerCase();
 
 const SUCCESS_STATUS_RE = /^2\d\d$/u;
 
@@ -62,11 +71,21 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
   }
 };
 
+// Minimal on purpose: the projected values come from `data` that already
+// passed the strict branch, so this branch only has to tell the two shapes
+// apart (`projection` required here, `data` required and extra keys refused
+// there) — exactly one branch matches either shape.
+const PROJECTION_BRANCH: JsonSchemaRecord = {
+  type: 'object',
+  properties: { projection: { type: 'object' } },
+  required: ['status', 'contentType', 'projection'],
+};
+
 export const deriveOutputSchema = (
   operation: OperationRecord,
   version: OpenapiVersion,
   // A paginated tool's envelope also declares the `pagination` hint; a
-  // projectable tool also gets one `projection` branch per success branch.
+  // projectable tool also gets ONE `projection` branch.
   options: { pagination?: boolean; projection?: boolean } = {},
 ): JsonSchemaRecord | undefined => {
   if (hasUnboundedSuccess(operation.responses)) {
@@ -146,17 +165,10 @@ export const deriveOutputSchema = (
   // subtrees of data already validated against the strict branch above, so
   // their values are unconstrained here. `data` is required on the strict
   // branches and absent here, so exactly one branch matches either shape.
-  const projected =
-    options.projection === true ? branches.map((branch) => projectionBranchOf(branch)) : [];
-  return { type: 'object', oneOf: [...branches, ...projected] };
-};
-
-const projectionBranchOf = (branch: JsonSchemaRecord): JsonSchemaRecord => {
-  const { data: _data, ...properties } = branch['properties'] as Record<string, unknown>;
+  // ONE branch for every success status/content type: it only has to
+  // validate, not discriminate, and tools/list size is paid in every session.
   return {
     type: 'object',
-    properties: { ...properties, projection: { type: 'object', additionalProperties: {} } },
-    required: ['status', 'contentType', 'projection'],
-    additionalProperties: false,
+    oneOf: options.projection === true ? [...branches, PROJECTION_BRANCH] : branches,
   };
 };

@@ -23,19 +23,31 @@ const segmentsOf = (pointer: string): string[] =>
     .split('/')
     .map((token) => token.replaceAll('~1', '/').replaceAll('~0', '~'));
 
+const isValidPointer = (pointer: string): boolean =>
+  pointer.length <= MAX_POINTER_LENGTH &&
+  POINTER_RE.test(pointer) &&
+  segmentsOf(pointer).length <= MAX_SEGMENTS;
+
+// Repeated on every projectable tool, and tools/list size is paid in every
+// session: the wire schema is kept minimal (one-line description; the
+// pointer grammar is checked by a refinement, which is not serialized) and
+// the grammar is explained ONCE, in the server instructions (PROJECTION_GUIDE).
 export const PROJECTION_FIELDS_SCHEMA = z
   .array(
     z
       .string()
-      .max(MAX_POINTER_LENGTH)
-      .regex(POINTER_RE)
-      .refine((pointer) => segmentsOf(pointer).length <= MAX_SEGMENTS),
+      .refine(isValidPointer, { message: 'not a valid JSON Pointer (see server instructions)' }),
   )
   .min(1)
   .max(MAX_POINTERS)
-  .describe(
-    'Optional. JSON Pointers (RFC 6901) selecting only these parts of the JSON response, e.g. ["/items/*/id", "/next_cursor"]; "*" maps over an array. Missing paths yield null.',
-  );
+  .describe('Return only these JSON Pointers (see server instructions).');
+
+// Package-authored, static: added to the server instructions when any tool
+// takes `_fields`.
+export const PROJECTION_GUIDE =
+  'Tools with a JSON response accept an optional `_fields` argument: up to 32 RFC 6901 JSON ' +
+  'Pointers (e.g. ["/items/*/id", "/next_cursor"]; `*` maps over an array). The result then ' +
+  'carries only `projection`, an object keyed by pointer; a missing path is null.';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -71,5 +83,10 @@ const evaluate = (value: unknown, segments: readonly string[]): unknown => {
 export const project = (data: unknown, pointers: readonly string[]): Record<string, unknown> =>
   Object.fromEntries(pointers.map((pointer) => [pointer, evaluate(data, segmentsOf(pointer))]));
 
-export const PROJECTION_HINT =
-  '(truncated; pass _fields with JSON Pointers to select specific fields)';
+// Appended to a truncated result of a projectable tool. A structured result
+// is complete in structuredContent (only its text copy is cut), so the two
+// cases are worded differently: never suggest data was lost when it was not.
+export const PROJECTION_HINT_TEXT =
+  '(the response text above was truncated; call again with _fields (JSON Pointers) to get only the fields you need)';
+export const PROJECTION_HINT_STRUCTURED =
+  '(only this text copy is truncated; structuredContent has the complete result. To receive less, call again with _fields)';

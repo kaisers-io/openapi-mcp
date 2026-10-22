@@ -2,7 +2,12 @@ import Ajv2020Module from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
 import type { Options, ValidateFunction } from 'ajv';
 import type { PinnedErrorReason, PinnedOutcome } from '../../http/pinned-dispatcher.ts';
-import { project, PROJECTION_HINT } from '../../toolgen/projection.ts';
+import { isJsonContentType } from '../../toolgen/output-schema.ts';
+import {
+  project,
+  PROJECTION_HINT_STRUCTURED,
+  PROJECTION_HINT_TEXT,
+} from '../../toolgen/projection.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText, TRUNCATION_MARKER } from '../../spec/sanitize.ts';
 import {
@@ -134,9 +139,6 @@ const mediaEssence = (contentType: string | undefined): string | undefined => {
   return trimmed === '' ? undefined : trimmed;
 };
 
-// Mirrors toolgen/output-schema.ts's isJsonContentType (not exported there —
-// this module needs its own copy of the same essence test).
-const JSON_ESSENCE_RE = /^application\/(?:[\w.+-]+\+)?json$/u;
 const isTextEssence = (essence: string): boolean => essence.startsWith('text/');
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -264,7 +266,7 @@ const mapHttpError = (
   // through to the string-redacted excerpt below, which could still echo
   // the escaped form verbatim).
   const essence = mediaEssence(contentType);
-  if (essence !== undefined && JSON_ESSENCE_RE.test(essence)) {
+  if (essence !== undefined && isJsonContentType(essence)) {
     const attempt = tryParseJson(decoded.ok);
     if (attempt.ok && scanSafely(redactor, attempt.value)) {
       return textOutcome(`upstream request failed with status ${status}`, true);
@@ -292,7 +294,7 @@ const mapNoSchemaSuccess = (
     return textOutcome('', false);
   }
   const essence = mediaEssence(contentType);
-  if (essence !== undefined && !JSON_ESSENCE_RE.test(essence) && !isTextEssence(essence)) {
+  if (essence !== undefined && !isJsonContentType(essence) && !isTextEssence(essence)) {
     // `essence` is upstream-controlled (the raw Content-Type header) — a
     // hostile upstream can echo a registered secret through it, so it must
     // be redacted, not merely sanitize-truncated, before it reaches this
@@ -321,7 +323,7 @@ const mapNoSchemaSuccess = (
   // so this catches what string-only redaction structurally cannot. A body
   // whose Content-Type claims JSON but does not parse falls through to the
   // existing text handling below, unchanged.
-  if (essence !== undefined && JSON_ESSENCE_RE.test(essence)) {
+  if (essence !== undefined && isJsonContentType(essence)) {
     const attempt = tryParseJson(decoded.ok);
     if (attempt.ok && scanSafely(redactor, attempt.value)) {
       // Never emit a body that contains the secret in escaped form: no
@@ -575,5 +577,17 @@ const withProjectionHint = (outcome: ToolCallOutcome, opts: MapResponseOptions):
   opts.projectable === true &&
   opts.fields === undefined &&
   outcome.content[0]?.text.endsWith(TRUNCATION_MARKER) === true
-    ? { ...outcome, content: [...outcome.content, { type: 'text', text: PROJECTION_HINT }] }
+    ? {
+        ...outcome,
+        content: [
+          ...outcome.content,
+          {
+            type: 'text',
+            text:
+              outcome.structuredContent === undefined
+                ? PROJECTION_HINT_TEXT
+                : PROJECTION_HINT_STRUCTURED,
+          },
+        ],
+      }
     : outcome;

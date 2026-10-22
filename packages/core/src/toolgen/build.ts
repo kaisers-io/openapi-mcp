@@ -7,7 +7,7 @@ import { composeDescription } from './description.ts';
 import { buildLayout } from './layout.ts';
 import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
-import { deriveOutputSchema } from './output-schema.ts';
+import { deriveOutputSchema, isJsonContentType, mediaEssence } from './output-schema.ts';
 import type { JsonSchemaRecord } from './output-schema.ts';
 import { detectPagination } from './pagination.ts';
 import type { PaginationPlan } from './pagination.ts';
@@ -72,16 +72,15 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
 // Projection applies to JSON bodies only: a tool gets `_fields` when any of
-// its success responses declares a JSON media type.
+// its success responses declares a JSON media type — by the same classifier
+// the response side uses (output-schema.ts), parameters ignored.
 const declaresJsonSuccess = (operation: OperationRecord): boolean =>
   Object.entries(operation.responses).some(
     ([status, response]) =>
       /^2(?:\d\d|xx)$/iu.test(status) &&
       isRecord(response) &&
       isRecord(response['content']) &&
-      Object.keys(response['content']).some((type) =>
-        /^application\/(?:[\w.+-]+\+)?json(?:\s*;.*)?$/iu.test(type.trim()),
-      ),
+      Object.keys(response['content']).some((type) => isJsonContentType(mediaEssence(type))),
   );
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -106,13 +105,14 @@ const buildToolEntry = (
   named: NamedOperation,
   reservedHeaders: ReadonlySet<string>,
   openapiVersion: OpenapiVersion,
+  projection: boolean,
 ): GeneratedTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
   const layout = buildLayout(
     named.operation,
     reservedHeaders,
     openapiVersion,
-    declaresJsonSuccess(named.operation),
+    projection && declaresJsonSuccess(named.operation),
   );
   if (!('ok' in layout)) {
     return { method, path: named.operation.path, reason: layout.unrepresentable };
@@ -155,7 +155,14 @@ export const buildTools = (
   // `openapiVersion` is required (no default): the caller threads the spec's
   // version so a 3.0 `nullable: true` is honoured only under 3.0. buildLayout and
   // its convertSchema descendants receive it explicitly.
-  opts: { reservedHeaders: ReadonlySet<string>; openapiVersion: OpenapiVersion },
+  // `projection`: offer the optional `_fields` argument on JSON tools (serve
+  // --response-projection). Off by default: it grows tools/list by about a
+  // third, paid in every session.
+  opts: {
+    reservedHeaders: ReadonlySet<string>;
+    openapiVersion: OpenapiVersion;
+    projection?: boolean;
+  },
 ): BuildToolsResult => {
   // HTTP header names are case-insensitive, and the header drop in paramFields
   // looks up `reservedHeaders.has(name.toLowerCase())`. The caller's set contents
@@ -168,7 +175,7 @@ export const buildTools = (
   // One buildToolEntry call per operation, in namedOperations order — matches
   // the original for-of's iteration (and thus toolName/omission) order exactly.
   const entries = namedOperations.map((named) =>
-    buildToolEntry(named, reservedHeaders, opts.openapiVersion),
+    buildToolEntry(named, reservedHeaders, opts.openapiVersion, opts.projection === true),
   );
   return {
     tools: entries.filter((entry): entry is GeneratedTool => !('reason' in entry)),

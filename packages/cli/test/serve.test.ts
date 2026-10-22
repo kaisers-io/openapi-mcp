@@ -446,6 +446,24 @@ describe('serve — stdio subprocess E2E', () => {
     expect(typeof paged['nextCursor']).toBe('string');
   }, 15_000);
 
+  it('offers _fields only with --response-projection (off by default)', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    const fieldsOffered = async (extraArgs: readonly string[]) => {
+      child = spawn(
+        process.execPath,
+        [bin, 'serve', '--spec', 'petstore.json', '--base-url', 'http://127.0.0.1:1', ...extraArgs],
+        { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+      );
+      const { stdoutLines } = collectLines(child);
+      sendModern(child, 1, 'tools/list');
+      await waitFor(() => stdoutLines.length > 0);
+      child.kill();
+      return (stdoutLines[0] ?? '').includes('"_fields"');
+    };
+    expect(await fieldsOffered([])).toBe(false);
+    expect(await fieldsOffered(['--response-projection'])).toBe(true);
+  }, 15_000);
+
   it.each(['0', '-1', '1.5', '513'])(
     'rejects --tools-page-size %s as a usage error naming the flag',
     async (value) => {

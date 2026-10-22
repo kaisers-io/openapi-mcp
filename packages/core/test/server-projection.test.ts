@@ -11,7 +11,12 @@ import {
   SYSTEM_HEADERS,
 } from '../src/index.ts';
 import type { ExecutorConfig, NamedOperation, PinnedDeps, ServerSnapshot } from '../src/index.ts';
-import { project, PROJECTION_FIELDS_SCHEMA, PROJECTION_HINT } from '../src/toolgen/projection.ts';
+import {
+  project,
+  PROJECTION_FIELDS_SCHEMA,
+  PROJECTION_HINT_STRUCTURED,
+  PROJECTION_HINT_TEXT,
+} from '../src/toolgen/projection.ts';
 
 // Per-call response projection (`_fields`) end to end: input schema,
 // validate-full -> project -> scan order, outputSchema conformance, the
@@ -60,12 +65,15 @@ const listItems = (withSchema: boolean): NamedOperation => ({
 });
 
 const snapshotOf = (ops: readonly NamedOperation[]): ServerSnapshot =>
-  buildSnapshot(buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' }), {
-    spec: { title: 't', specVersion: '1', omitted: [] },
-    contentHash: 'h',
-    displaySource: 's',
-    deadPatterns: [],
-  });
+  buildSnapshot(
+    buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1', projection: true }),
+    {
+      spec: { title: 't', specVersion: '1', omitted: [] },
+      contentHash: 'h',
+      displaySource: 's',
+      deadPatterns: [],
+    },
+  );
 
 const wide = (count: number, blob = 'x'.repeat(1024)) => ({
   next_cursor: 'c-2',
@@ -246,9 +254,17 @@ describe('_fields on a tool without an outputSchema', () => {
 
   it('adds a hint to a truncated result, pointing the model at _fields', async () => {
     const { outcome } = await callWith(listItems(false), wide(100), {});
-    expect(outcome.content.at(-1)?.text).toBe(PROJECTION_HINT);
+    expect(outcome.content.at(-1)?.text).toBe(PROJECTION_HINT_TEXT);
     const small = await callWith(listItems(false), wide(1, 'b'), {});
-    expect(small.outcome.content.map((block) => block.text)).not.toContain(PROJECTION_HINT);
+    expect(small.outcome.content.map((block) => block.text)).not.toContain(PROJECTION_HINT_TEXT);
+  });
+
+  it('never suggests data loss for a structured result: only its text copy is cut', async () => {
+    const { outcome } = await callWith(listItems(true), wide(100), {});
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent?.['data']).toBeDefined();
+    expect(outcome.content.at(-1)?.text).toBe(PROJECTION_HINT_STRUCTURED);
+    expect(PROJECTION_HINT_STRUCTURED).toContain('structuredContent has the complete result');
   });
 });
 
@@ -290,9 +306,39 @@ describe('_fields availability', () => {
     const built = buildTools([colliding], {
       reservedHeaders: SYSTEM_HEADERS,
       openapiVersion: '3.1',
+      projection: true,
     });
     expect(built.tools).toHaveLength(1);
     expect(built.tools[0]?.projection).toBeUndefined();
     expect(JSON.stringify(built.tools[0]?.outputSchema)).not.toContain('projection');
+  });
+});
+
+describe('_fields cost (D14)', () => {
+  it('is off unless the operator enables it: no _fields, no projection branch', () => {
+    const built = buildTools([listItems(true)], {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    expect(built.tools[0]?.projection).toBeUndefined();
+    expect(JSON.stringify(built.tools[0]?.wireSchema)).not.toContain('_fields');
+    expect(JSON.stringify(built.tools[0]?.outputSchema)).not.toContain('projection');
+  });
+
+  it('adds ONE projection branch per tool, whatever the number of success branches', () => {
+    const op = listItems(true);
+    const ok = op.operation.responses['200'];
+    const twoStatuses: NamedOperation = {
+      ...op,
+      operation: { ...op.operation, responses: { '200': ok, '206': ok } },
+    };
+    const built = buildTools([twoStatuses], {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+      projection: true,
+    });
+    const oneOf = built.tools[0]?.outputSchema?.['oneOf'] as Record<string, unknown>[];
+    expect(oneOf).toHaveLength(3);
+    expect(oneOf.filter((branch) => JSON.stringify(branch).includes('projection'))).toHaveLength(1);
   });
 });

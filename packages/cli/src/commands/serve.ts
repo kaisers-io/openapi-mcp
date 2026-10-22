@@ -188,6 +188,7 @@ type ServeCmdOpts = SpecCmdOpts &
     httpTokenEnv?: string;
     log?: string;
     toolsPageSize?: string;
+    responseProjection?: boolean;
   };
 
 // Upper bound for --tools-page-size: the spec budget's tool cap, so a larger
@@ -217,6 +218,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     .option(
       '--log <format>',
       'write one structured line per tool call to stderr (only "json"; never arguments, header values or bodies)',
+    )
+    .option(
+      '--response-projection',
+      'offer an optional _fields argument (JSON Pointers) on JSON tools, so a call returns only the selected fields; adds about a third to tools/list',
     )
     .option(
       '--tools-page-size <n>',
@@ -317,6 +322,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       const built = buildTools(result.namedOperations, {
         reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
         openapiVersion: result.spec.openapiVersion,
+        projection: cmdOpts.responseProjection === true,
       });
       const snapshot = buildSnapshot(built, result);
 

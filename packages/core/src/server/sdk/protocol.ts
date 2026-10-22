@@ -9,6 +9,7 @@ import { sanitizeSpecText } from '../../spec/sanitize.ts';
 import { createDispatcher } from '../dispatch.ts';
 import type { CallRequest, DispatcherDeps } from '../dispatch.ts';
 import type { ToolCallOutcome } from '../result.ts';
+import { PROJECTION_GUIDE } from '../../toolgen/projection.ts';
 import { pageTools } from '../tool-list.ts';
 import { traceContextFromMeta } from '../trace.ts';
 import type { ServerSnapshot } from '../types.ts';
@@ -161,7 +162,11 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
       // assertion in Protocol.setRequestHandler throws "Server does not
       // support tools" otherwise.
       capabilities: { tools: { listChanged: false } },
-      instructions: STATIC_INSTRUCTIONS,
+      // The `_fields` grammar is explained once here (also static text),
+      // not in every tool's schema.
+      instructions: opts.snapshot.tools.some((tool) => tool.generated?.projection === true)
+        ? `${STATIC_INSTRUCTIONS} ${PROJECTION_GUIDE}`
+        : STATIC_INSTRUCTIONS,
       // Only consulted by the 2026-07-28 encode seam, and only for results
       // that do not carry their own cache fields — which the hand-registered
       // tools/list result below deliberately does not.
