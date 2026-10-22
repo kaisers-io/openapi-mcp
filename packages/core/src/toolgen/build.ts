@@ -22,6 +22,11 @@ export type GeneratedTool = {
   description: string;
   annotations: ToolAnnotations;
   outputSchema?: JsonSchemaRecord;
+  // Set when the outputSchema exists ONLY because the operator opted into
+  // `defaultResponseIsError` (the operation documents a `default` response).
+  // Surfaced by `tools`, and used at runtime to name the flag when an
+  // undocumented 2xx arrives.
+  outputSchemaAssumesDefaultIsError?: true;
   // Why the tool has no outputSchema, when the agent should know (#39: a
   // response `pattern` with nested quantifiers). Also folded into the
   // description.
@@ -80,6 +85,7 @@ const buildToolEntry = (
   named: NamedOperation,
   reservedHeaders: ReadonlySet<string>,
   openapiVersion: OpenapiVersion,
+  defaultResponseIsError: boolean,
 ): GeneratedTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
   const layout = buildLayout(named.operation, reservedHeaders, openapiVersion);
@@ -94,9 +100,15 @@ const buildToolEntry = (
       reason: `input schema cannot be represented as JSON Schema: ${wireResult.error}`,
     };
   }
-  const { outputSchema, withheld } = explainOutputSchema(named.operation, openapiVersion);
+  const { outputSchema, withheld } = explainOutputSchema(named.operation, openapiVersion, {
+    defaultResponseIsError,
+  });
   const description = composeDescription(named.operation, withheld);
   const annotations = deriveAnnotations(named.operation.method);
+  const assumesDefaultIsError =
+    defaultResponseIsError &&
+    outputSchema !== undefined &&
+    Object.hasOwn(named.operation.responses, 'default');
   return {
     toolName: named.toolName,
     operation: named.operation,
@@ -106,6 +118,7 @@ const buildToolEntry = (
     description,
     annotations,
     ...(outputSchema === undefined ? {} : { outputSchema }),
+    ...(assumesDefaultIsError ? { outputSchemaAssumesDefaultIsError: true as const } : {}),
     ...(withheld === undefined ? {} : { outputSchemaWithheld: withheld }),
   };
 };
@@ -115,7 +128,12 @@ export const buildTools = (
   // `openapiVersion` is required (no default): the caller threads the spec's
   // version so a 3.0 `nullable: true` is honoured only under 3.0. buildLayout and
   // its convertSchema descendants receive it explicitly.
-  opts: { reservedHeaders: ReadonlySet<string>; openapiVersion: OpenapiVersion },
+  // `defaultResponseIsError`: see OutputSchemaOptions (opt-in, default off).
+  opts: {
+    reservedHeaders: ReadonlySet<string>;
+    openapiVersion: OpenapiVersion;
+    defaultResponseIsError?: boolean;
+  },
 ): BuildToolsResult => {
   // HTTP header names are case-insensitive, and the header drop in paramFields
   // looks up `reservedHeaders.has(name.toLowerCase())`. The caller's set contents
@@ -129,7 +147,14 @@ export const buildTools = (
   // the original for-of's iteration (and thus toolName/omission) order exactly.
   // One memo scope per build: shared schema nodes convert once (issue #90)
   const entries = withConvertMemo(() =>
-    namedOperations.map((named) => buildToolEntry(named, reservedHeaders, opts.openapiVersion)),
+    namedOperations.map((named) =>
+      buildToolEntry(
+        named,
+        reservedHeaders,
+        opts.openapiVersion,
+        opts.defaultResponseIsError === true,
+      ),
+    ),
   );
   return {
     tools: entries.filter((entry): entry is GeneratedTool => !('reason' in entry)),

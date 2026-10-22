@@ -91,6 +91,7 @@ export type SpecCmdOpts = {
   cacheKey?: string;
   trustSpecUpdates?: boolean;
   allowPrivateNetwork?: boolean;
+  defaultResponseIsError?: boolean;
 };
 
 // The --spec/--allow/--deny/... flags shared by every command that runs the
@@ -134,6 +135,10 @@ export const registerSpecOptions = (command: Command): Command<[], SpecCmdOpts> 
     .option(
       '--allow-private-network',
       'permit private/loopback redirect targets during the spec fetch (never cloud-metadata)',
+    )
+    .option(
+      '--default-response-is-error',
+      'derive output schemas for operations with a "default" response, assuming it covers errors only (an undocumented 2xx then fails)',
     );
 
 export type SpecPipelineArgs = {

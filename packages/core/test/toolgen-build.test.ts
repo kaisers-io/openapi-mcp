@@ -241,6 +241,38 @@ describe('buildTools — common nullable / allOf idioms are no longer omitted (#
   });
 });
 
+describe('buildTools — defaultResponseIsError (#72)', () => {
+  const success = { content: { 'application/json': { schema: { type: 'string' } } } };
+  const opWith = (responses: Record<string, unknown>): NamedOperation => ({
+    toolName: 'getCharge',
+    operation: {
+      method: 'get' as HttpMethod,
+      path: '/charges',
+      tags: [],
+      deprecated: false,
+      parameters: [],
+      responses,
+    },
+  });
+  const base = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' as const };
+
+  it('threads the option into the outputSchema and marks the tool', () => {
+    const withDefault = opWith({ '200': success, default: { description: 'error' } });
+    const off = buildTools([withDefault], base);
+    expect(off.tools[0]?.outputSchema).toBeUndefined();
+    expect(off.tools[0]?.outputSchemaAssumesDefaultIsError).toBeUndefined();
+    const on = buildTools([withDefault], { ...base, defaultResponseIsError: true });
+    expect(on.tools[0]?.outputSchema).toBeDefined();
+    expect(on.tools[0]?.outputSchemaAssumesDefaultIsError).toBe(true);
+  });
+
+  it('does not mark a tool whose outputSchema never depended on the option', () => {
+    const on = buildTools([opWith({ '200': success })], { ...base, defaultResponseIsError: true });
+    expect(on.tools[0]?.outputSchema).toBeDefined();
+    expect(on.tools[0]?.outputSchemaAssumesDefaultIsError).toBeUndefined();
+  });
+});
+
 describe('buildTools — per-build memoization (issue #90)', () => {
   // One shared schema node, as the dereferencer hands out for a $ref target
   // used by several operations (issue #89)

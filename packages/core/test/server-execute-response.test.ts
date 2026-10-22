@@ -668,3 +668,42 @@ describe('mapResponse — generated outputSchema with an undocumented field (#33
     });
   });
 });
+
+// #72: with --default-response-is-error, an undocumented 2xx names the flag.
+describe('mapResponse — undocumented 2xx under the default-is-error assumption (#72)', () => {
+  const outputSchema = sampleOutputSchema();
+  const validator = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+  const hint = '--default-response-is-error';
+
+  it('names the flag when the hint is set', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toContain('201');
+    expect(text).toContain(hint);
+  });
+
+  it('says the upstream reported success and warns against a blind retry (D13)', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toMatch(/^the upstream reported success \(status 201\)/u);
+    expect(text).toContain('likely applied');
+    expect(text).toContain('do not retry it blindly');
+  });
+
+  it('keeps the existing message without the hint', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const text = isError(mapResponse(defaultOpts({ outcome, outputSchema, validator })));
+    expect(text).toContain('did not match a declared output branch');
+    expect(text).not.toContain(hint);
+  });
+
+  it('still maps a 4xx through the HTTP error path', () => {
+    const outcome = response(404, 'application/json', '{"error":{}}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toContain('404');
+    expect(text).not.toContain(hint);
+  });
+});
