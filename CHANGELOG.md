@@ -143,3 +143,11 @@
   run per user writes the cache and is slower (`--version` about 191 → 237 ms). MCP hosts
   that start the server in a fresh container or CI job, with no persistent home directory,
   pay that first-run cost on every start. `NODE_DISABLE_COMPILE_CACHE=1` turns the cache off.
+
+- **An unchanged spec is not parsed again (#76).** A local spec file is still read and hashed
+  on every start. While its bytes match the accepted baseline, the server now uses the
+  cached, already validated document instead of parsing and validating the file again. The
+  same applies to a URL that answers `200` with identical bytes. The DigitalOcean spec (1.6 MB
+  YAML) as a local file starts in 508 ms instead of 1,204 ms from the second start on, with
+  131 MB peak RSS instead of 247 MB. The tools are still generated on every start, so every
+  flag takes effect immediately.

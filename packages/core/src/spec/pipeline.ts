@@ -157,6 +157,33 @@ const processCachedDocument = (
   return { spec, document };
 };
 
+// Refreshed bytes identical to the ones the accepted document was validated
+// from (#76) need no second parse and validation: the entry read at the start
+// of this run already holds that document, hash-verified against its object
+// name by readCacheEntry. A file source used to discard it and re-parse the
+// file on every start, which for a large YAML spec was most of the start-up
+// (DigitalOcean: ~0.6 s of YAML parsing per start).
+//
+// Exact on purpose. The source hash covers every byte of the input, and the
+// stored document is the output of parse + validate + checkRefs, which take
+// no options; filtering, dereferencing and tool generation still run on every
+// start, so no flag can be served stale. A different CACHE_META_SCHEMA_VERSION
+// means that processing changed since the entry was written (a legacy entry
+// even holds the dereferenced form), so it is processed again and rewritten.
+// Not keyed on the package version: a validation rule a newer build adds
+// would not apply here, but it does not apply today either, because a
+// refreshed spec that fails validation falls back to this same accepted
+// document (last known good).
+const reusableAcceptedDocument = (
+  cached: CacheEntry | undefined,
+  sourceContentHash: string,
+): ProcessedSpec | undefined =>
+  cached !== undefined &&
+  cached.meta.schemaVersion === CACHE_META_SCHEMA_VERSION &&
+  cached.meta.sourceContentHash === sourceContentHash
+    ? processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion)
+    : undefined;
+
 // FAIL CLOSED on a corrupt entry. A silent refetch would re-enter
 // trust-on-first-use and accept whatever the remote says now, which is exactly
 // the rug pull that fail-closed handling of a corrupt entry exists to prevent,
@@ -365,7 +392,9 @@ const runSpecPipelineOnce = async (
       // failed cache write is not a failed refresh: the last-known-good rule
       // covers the network and the spec, not our own inability to persist.
       // Only the fetch and the validation may fall back.
-      processedRefresh = processSpecText(refreshed.loaded.text);
+      processedRefresh =
+        reusableAcceptedDocument(cached, refreshed.loaded.contentHash) ??
+        processSpecText(refreshed.loaded.text);
     }
   } catch (error) {
     if (cached === undefined) {
