@@ -202,9 +202,14 @@ export const createDereferencer = (
       // may not carry
       return target;
     }
-    const siblingSchema = context === 'other' ? 'other' : 'schema';
+    // The siblings are keywords of the schema (or of the Reference Object)
+    // itself, so each value is read the way that keyword reads it
     const siblings = siblingEntries.map(
-      ([key, value]) => [key, walk(value, refStack, siblingSchema)] as const,
+      ([key, value]) =>
+        [
+          key,
+          walk(value, refStack, context === 'other' ? 'other' : childContext('schema', key)),
+        ] as const,
     );
     const siblingValues = Object.assign(
       nullObject(),
@@ -235,7 +240,9 @@ export const createDereferencer = (
       return { value: node, size: 1, open: undefined, height: 0 };
     }
     const ref = node['$ref'];
-    if (typeof ref === 'string') {
+    // Inside instance data (an `example`, a `const`, ...) a "$ref" key is
+    // part of the value, not a reference
+    if (typeof ref === 'string' && context !== 'data') {
       return walkRefWithSiblings(node, ref, refStack, context);
     }
     const entries = Object.entries(node);
