@@ -267,6 +267,36 @@ describe('buildTools — per-build memoization (issue #90)', () => {
     );
   });
 
+  it('keys the memo by request/response mode: a node shared by a request body and a response converts per mode', () => {
+    // A readOnly property is dropped from requests, writeOnly from open responses, and a
+    // nested-quantifier pattern withholds only the output schema (#39).
+    const user: Record<string, unknown> = {
+      type: 'object',
+      required: ['id', 'password'],
+      properties: {
+        id: { type: 'string', readOnly: true },
+        password: { type: 'string', writeOnly: true },
+        code: { type: 'string', pattern: '^(a+)+$' },
+      },
+    };
+    const reader = returning('getUser', user);
+    const writer = named('createUser', [], {
+      required: true,
+      content: { 'application/json': { schema: user } },
+    });
+    for (const order of [
+      [reader, writer],
+      [writer, reader],
+    ]) {
+      const { tools } = buildTools(order, opts);
+      const byName = new Map(tools.map((tool) => [tool.toolName, tool]));
+      const input = byName.get('createUser')?.wireSchema as { properties: Record<string, unknown> };
+      expect(Object.keys(input.properties).toSorted()).toEqual(['code', 'password']);
+      expect(byName.get('getUser')?.outputSchema).toBeUndefined();
+      expect(byName.get('getUser')?.outputSchemaWithheld).toMatch(/nested quantifiers/u);
+    }
+  });
+
   it('applies the depth budget to a shared node by the depth it is reached at, in either order', () => {
     // A chain that fits when it is the response schema itself, and crosses
     // MAX_CONVERT_DEPTH when the same node sits 20 levels further down

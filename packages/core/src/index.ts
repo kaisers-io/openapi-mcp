@@ -181,10 +181,13 @@ export {
   convertSchema,
   deriveAnnotations,
   deriveOutputSchema,
+  explainOutputSchema,
   MAX_CONVERT_DEPTH,
   paramFields,
   SYSTEM_HEADERS,
   TOOL_NAME_MAX_LENGTH,
+  UNSAFE_PATTERN_REASON,
+  hasNestedQuantifier,
 } from './toolgen/index.ts';
 export type {
   BuildToolsResult,
@@ -194,7 +197,9 @@ export type {
   JsonSchemaRecord,
   LayoutResult,
   NamedOperation,
+  OutputSchemaDerivation,
   RequestMapper,
+  SchemaMode,
   SchemaResult,
   ToolAnnotations,
   WireSchema,

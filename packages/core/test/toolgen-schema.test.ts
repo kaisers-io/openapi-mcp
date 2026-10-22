@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
+import { UNSAFE_PATTERN_REASON, convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
 import type { SchemaResult } from '../src/index.ts';
 
 const ok = (r: SchemaResult): z.ZodType => {
@@ -682,10 +682,16 @@ describe('convertSchema — composites', () => {
     expect('unrepresentable' in convertSchema({ properties: {} })).toBe(true);
   });
 
-  it('maps an explicit empty object (type:object, properties:{}) as accepting only {}', () => {
+  it('maps type:object with an empty properties map as a free-form object (#35); only additionalProperties:false closes it', () => {
+    // Absent additionalProperties allows any extra property (JSON Schema Core
+    // 2020-12 §10.3.2.3); an empty `properties` declares nothing to close over.
     const s = ok(convertSchema({ type: 'object', properties: {} }));
     expect(s.safeParse({}).success).toBe(true);
-    expect(s.safeParse({ a: 1 }).success).toBe(false);
+    expect(s.safeParse({ a: 1 }).success).toBe(true);
+    const closed = ok(
+      convertSchema({ type: 'object', properties: {}, additionalProperties: false }),
+    );
+    expect(closed.safeParse({ a: 1 }).success).toBe(false);
   });
 
   it('maps a 3.1 nullable array (type [array, null]) as a nullable array, not an object', () => {
@@ -775,5 +781,230 @@ describe('convertSchema — composites', () => {
       node = { type: 'array', items: node };
     }
     expect('unrepresentable' in convertSchema(node)).toBe(true);
+  });
+});
+
+// #35: `{type:'object'}` with no declared properties and no
+// additionalProperties is a FREE-FORM object in JSON Schema (absent
+// additionalProperties = any extra property allowed, JSON Schema 2020-12
+// Core §10.3.2.3), not "exactly {}".
+describe('convertSchema — free-form objects (#35)', () => {
+  it('accepts any object for a bare {type:object}, still rejecting non-objects', () => {
+    const s = ok(convertSchema({ type: 'object' }));
+    expect(s.safeParse({}).success).toBe(true);
+    expect(s.safeParse({ env: 'prod', n: 1 }).success).toBe(true);
+    expect(s.safeParse('x').success).toBe(false);
+    expect(s.safeParse([]).success).toBe(false);
+    expect(s.safeParse(null).success).toBe(false);
+  });
+
+  it('treats an EMPTY properties map like no properties (free-form, not strictObject({}))', () => {
+    const s = ok(convertSchema({ type: 'object', properties: {} }));
+    expect(s.safeParse({ env: 'prod' }).success).toBe(true);
+  });
+
+  it('keeps an explicit additionalProperties:false empty object closed (only {})', () => {
+    const s = ok(convertSchema({ type: 'object', additionalProperties: false }));
+    expect(s.safeParse({}).success).toBe(true);
+    expect(s.safeParse({ a: 1 }).success).toBe(false);
+  });
+
+  it('honours a 3.0 nullable free-form object', () => {
+    const s = ok(convertSchema({ type: 'object', nullable: true }, '3.0'));
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse({ a: 1 }).success).toBe(true);
+    expect(s.safeParse('x').success).toBe(false);
+  });
+
+  it('advertises an open object on the wire (no additionalProperties:false)', () => {
+    const wire = z.toJSONSchema(ok(convertSchema({ type: 'object' }))) as Record<string, unknown>;
+    expect(wire['type']).toBe('object');
+    expect(wire['additionalProperties']).not.toBe(false);
+  });
+
+  it('rejects a top-level "__proto__" key instead of silently dropping it, and passes nested ones through as plain data', () => {
+    const s = ok(convertSchema({ type: 'object' }));
+    // JSON.parse creates an OWN "__proto__" key; Zod's record/loose parsers skip
+    // it silently, so without a guard the key would vanish from the request.
+    expect(s.safeParse(JSON.parse('{"__proto__":{"polluted":true},"a":1}')).success).toBe(false);
+    const nested = s.safeParse(JSON.parse('{"a":{"__proto__":{"polluted":true}}}'));
+    expect(nested.success).toBe(true);
+    expect(JSON.stringify(nested.data)).toBe('{"a":{"__proto__":{"polluted":true}}}');
+    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined();
+  });
+});
+
+// #33 / #47: one direction-aware `mode` drives both open response objects and
+// readOnly/writeOnly handling.
+describe('convertSchema — request/response mode (#33, #47)', () => {
+  const user = {
+    type: 'object',
+    required: ['id', 'name', 'password'],
+    properties: {
+      id: { type: 'string', readOnly: true },
+      name: { type: 'string' },
+      password: { type: 'string', writeOnly: true },
+    },
+  };
+
+  it('defaults to request mode: an object with declared properties stays strict', () => {
+    const s = ok(convertSchema({ type: 'object', properties: { a: { type: 'string' } } }));
+    expect(s.safeParse({ a: 'x', extra: 1 }).success).toBe(false);
+    const wire = z.toJSONSchema(s) as Record<string, unknown>;
+    expect(wire['additionalProperties']).toBe(false);
+  });
+
+  it('response mode: absent additionalProperties opens the object', () => {
+    const s = ok(
+      convertSchema(
+        { type: 'object', properties: { id: { type: 'string' } } },
+        '3.1',
+        0,
+        'response',
+      ),
+    );
+    expect(s.safeParse({ id: 'a', created: 1 }).success).toBe(true);
+    expect(s.safeParse({ id: 1 }).success).toBe(false);
+    const wire = z.toJSONSchema(s) as Record<string, unknown>;
+    expect(wire['additionalProperties']).not.toBe(false);
+  });
+
+  it('response mode: an explicit additionalProperties:false stays closed', () => {
+    const s = ok(
+      convertSchema(
+        { type: 'object', additionalProperties: false, properties: { id: { type: 'string' } } },
+        '3.1',
+        0,
+        'response',
+      ),
+    );
+    expect(s.safeParse({ id: 'a', created: 1 }).success).toBe(false);
+  });
+
+  it('response mode propagates to nested objects, array items and union members', () => {
+    const s = ok(
+      convertSchema(
+        {
+          type: 'object',
+          properties: {
+            owner: { type: 'object', properties: { id: { type: 'string' } } },
+            items: {
+              type: 'array',
+              items: { type: 'object', properties: { n: { type: 'integer' } } },
+            },
+            pet: {
+              oneOf: [
+                { type: 'object', properties: { bark: { type: 'boolean' } }, required: ['bark'] },
+                { type: 'object', properties: { meow: { type: 'boolean' } }, required: ['meow'] },
+              ],
+            },
+            merged: { allOf: [{ type: 'object', properties: { a: { type: 'string' } } }] },
+          },
+        },
+        '3.1',
+        0,
+        'response',
+      ),
+    );
+    expect(
+      s.safeParse({
+        owner: { id: 'o', extra: 1 },
+        items: [{ n: 1, extra: 2 }],
+        pet: { bark: true, extra: 3 },
+        merged: { a: 'x', extra: 4 },
+      }).success,
+    ).toBe(true);
+  });
+
+  it('request mode: drops a readOnly property from the shape AND from required', () => {
+    const s = ok(convertSchema(user));
+    expect(s.safeParse({ name: 'x', password: 'p' }).success).toBe(true);
+    // Sending the server-assigned id is rejected by the strict object.
+    expect(s.safeParse({ id: '1', name: 'x', password: 'p' }).success).toBe(false);
+    // writeOnly is a REQUEST property — still required in a request.
+    expect(s.safeParse({ name: 'x' }).success).toBe(false);
+    const wire = z.toJSONSchema(s) as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(wire.properties)).toEqual(['name', 'password']);
+    expect(wire.required).toEqual(['name', 'password']);
+  });
+
+  it('request mode: drops nested readOnly properties too', () => {
+    const s = ok(
+      convertSchema({ type: 'object', required: ['owner'], properties: { owner: user } }),
+    );
+    expect(s.safeParse({ owner: { name: 'x', password: 'p' } }).success).toBe(true);
+    expect(s.safeParse({ owner: { id: '1', name: 'x', password: 'p' } }).success).toBe(false);
+  });
+
+  it('response mode: an open object drops a writeOnly property; readOnly stays required', () => {
+    const s = ok(convertSchema(user, '3.1', 0, 'response'));
+    expect(s.safeParse({ id: 'a', name: 'x' }).success).toBe(true);
+    expect(s.safeParse({ name: 'x' }).success).toBe(false);
+    // A server that does echo the writeOnly value is still schema-valid.
+    expect(s.safeParse({ id: 'a', name: 'x', password: 'p' }).success).toBe(true);
+    const wire = z.toJSONSchema(s) as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(wire.properties)).toEqual(['id', 'name']);
+    expect(wire.required).toEqual(['id', 'name']);
+  });
+
+  it('response mode: a closed object keeps a writeOnly property, optional, so an echo stays valid', () => {
+    const s = ok(convertSchema({ ...user, additionalProperties: false }, '3.1', 0, 'response'));
+    expect(s.safeParse({ id: 'a', name: 'x' }).success).toBe(true);
+    expect(s.safeParse({ id: 'a', name: 'x', password: 'p' }).success).toBe(true);
+    expect(s.safeParse({ id: 'a', name: 'x', password: 1 }).success).toBe(false);
+    const wire = z.toJSONSchema(s) as { properties: Record<string, unknown>; required: string[] };
+    expect(Object.keys(wire.properties)).toEqual(['id', 'name', 'password']);
+    expect(wire.required).toEqual(['id', 'name']);
+  });
+
+  it('request mode: a readOnly property inside an allOf member is dropped as well', () => {
+    const s = ok(
+      convertSchema({
+        allOf: [
+          {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string', readOnly: true } },
+          },
+          { type: 'object', required: ['name'], properties: { name: { type: 'string' } } },
+        ],
+      }),
+    );
+    expect(s.safeParse({ name: 'x' }).success).toBe(true);
+    expect(s.safeParse({ id: '1', name: 'x' }).success).toBe(false);
+  });
+});
+
+// #39 / D11: a response `pattern` with nested quantifiers is unrepresentable.
+describe('convertSchema — response pattern safety (#39)', () => {
+  it('response mode: a nested-quantifier pattern is unrepresentable', () => {
+    const result = convertSchema(
+      { type: 'object', properties: { v: { type: 'string', pattern: '^(a+)+$' } } },
+      '3.1',
+      0,
+      'response',
+    );
+    expect(result).toEqual({
+      unrepresentable: `property "v": ${UNSAFE_PATTERN_REASON}`,
+    });
+  });
+
+  it('request mode keeps advertising the same pattern (never executed there)', () => {
+    const s = ok(convertSchema({ type: 'string', pattern: '^(a+)+$' }));
+    expect((z.toJSONSchema(s) as Record<string, unknown>)['pattern']).toBe('^(a+)+$');
+  });
+
+  it('response mode: an ordinary pattern is still advertised', () => {
+    const s = ok(
+      convertSchema(
+        { type: 'string', pattern: '^(\\d{1,3}\\.){3}\\d{1,3}$' },
+        '3.1',
+        0,
+        'response',
+      ),
+    );
+    expect((z.toJSONSchema(s) as Record<string, unknown>)['pattern']).toBe(
+      '^(\\d{1,3}\\.){3}\\d{1,3}$',
+    );
   });
 });

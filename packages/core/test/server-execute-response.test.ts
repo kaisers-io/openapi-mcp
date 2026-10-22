@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   compileEnvelopeValidator,
   createRedactor,
+  deriveOutputSchema,
   mapResponse,
   TRUNCATION_MARKER,
 } from '../src/index.ts';
@@ -630,5 +631,40 @@ describe('mapResponse — outputSchema present (validator defined)', () => {
     const validator = compileEnvelopeValidator(sampleOutputSchema()) as EnvelopeValidator;
     const text = isError(mapResponse(defaultOpts({ outcome, validator, outputSchema: undefined })));
     expect(text.length).toBeGreaterThan(0);
+  });
+});
+
+// #33: end-to-end through the real generated outputSchema — an upstream that
+// adds an undocumented response field must still yield structured output.
+describe('mapResponse — generated outputSchema with an undocumented field (#33)', () => {
+  it('returns structuredContent, not an output-schema error', () => {
+    const outputSchema = deriveOutputSchema(
+      {
+        method: 'get',
+        path: '/x',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        responses: {
+          '200': {
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { id: { type: 'string' } } },
+              },
+            },
+          },
+        },
+      },
+      '3.1',
+    );
+    const validator = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+    const outcome = response(200, 'application/json', '{"id":"a","created":1}');
+    const result = mapResponse(defaultOpts({ outcome, outputSchema, validator }));
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 'a', created: 1 },
+    });
   });
 });

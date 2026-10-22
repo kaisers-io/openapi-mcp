@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { SPEC_BUDGETS } from '../spec/budgets.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import { hasNestedQuantifier } from './pattern-safety.ts';
 
 // Structural nesting guard, tied to the existing parse-depth budget — not a new
 // budget. The document is already dereferenced (cycle-safe) upstream, so this
@@ -9,6 +10,33 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 export const MAX_CONVERT_DEPTH = SPEC_BUDGETS.maxParseDepth;
 
 export type SchemaResult = { ok: z.ZodType } | { unrepresentable: string };
+
+// The unrepresentable reason for a response `pattern` with nested quantifiers
+// (#39). Output-schema derivation looks for it to tell the agent why a tool
+// has no output schema.
+export const UNSAFE_PATTERN_REASON =
+  'a "pattern" with nested quantifiers (unbounded regex matching cost)';
+
+// Which side of the HTTP exchange a schema describes. The same Schema Object
+// is routinely shared between a request body and a response (`User` with a
+// server-assigned `id`), but the two directions need different contracts:
+//   - 'request' — what the MODEL may send. Strict and fail-closed: an object
+//     that declares properties but no `additionalProperties` is CLOSED (the
+//     project's deliberate strict-input choice), and a `readOnly: true`
+//     property is dropped from both the shape and `required` (OAS 3.0.3
+//     §4.7.24.2 "readOnly … SHOULD NOT be sent as part of the request … the
+//     required will take effect on the response only"; JSON Schema
+//     Validation 2020-12 §9.4, which OAS 3.1.1 §4.8.24 adopts).
+//   - 'response' — what the UPSTREAM returns, described by the outputSchema.
+//     An absent `additionalProperties` keeps its JSON Schema meaning (any
+//     extra property allowed; JSON Schema Core 2020-12 §10.3.2.3, OAS 3.0.3
+//     §4.7.24.1 "additionalProperties defaults to true"), so a
+//     provider adding a field does not break the tool; only an EXPLICIT
+//     `additionalProperties: false` closes the object. A `writeOnly: true`
+//     property is never required (it "MAY be sent as part of a request but
+//     SHOULD NOT be sent as part of the response", OAS 3.0.3 §4.7.24.2), and
+//     an open object leaves it out of the shape entirely.
+export type SchemaMode = 'request' | 'response';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -508,10 +536,38 @@ const mergeAllOf = (
   return { type: 'object', properties, required: [...required] };
 };
 
+// `readOnly`/`writeOnly` are only meaningful on a property's own schema (OAS
+// 3.0.3 §4.7.24.2 "Relevant only for Schema properties definitions"); only an
+// explicit boolean `true` counts.
+const isAccessOnly = (child: unknown, keyword: 'readOnly' | 'writeOnly'): boolean =>
+  isRecord(child) && child[keyword] === true;
+
+// An object that admits undeclared keys (loose/catchall). Zod's object and
+// record parsers SKIP an own `__proto__` key silently (assigning it to the
+// parsed plain object would replace its prototype), so a request value like
+// `{"__proto__": …}` from the model would vanish from the outgoing body
+// without an error. In request mode reject it explicitly instead — the same
+// fail-closed stance DANGEROUS_KEYS takes for spec-declared names. Nested
+// values are `unknown` and pass through untouched as plain JSON data. The
+// guard is a refinement on the raw input, piped into the object schema, so
+// the wire schema (z.toJSONSchema, output side of the pipe) is unchanged.
+// Response schemas are validated by ajv against that wire schema, never by
+// Zod, so the guard is request-only.
+const openObject = (schema: z.ZodType, mode: SchemaMode): z.ZodType =>
+  mode === 'request'
+    ? z
+        .unknown()
+        .refine((value) => !(isRecord(value) && Object.hasOwn(value, '__proto__')), {
+          message: 'the key "__proto__" is not allowed',
+        })
+        .pipe(schema)
+    : schema;
+
 const objectSchema = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   const properties = isRecord(node['properties']) ? node['properties'] : {};
   const required = new Set(
@@ -527,44 +583,88 @@ const objectSchema = (
   // converting every property first and checking afterward would turn this
   // short-circuit into forced recursive conversion work for every property
   // on hostile input, even past the first failure.
+  const droppedReadOnly = new Set<string>();
+  // A writeOnly property SHOULD NOT appear in a response (OAS 3.0.3 §4.7.24.2),
+  // so in response mode it is left out of the advertised shape — the model is
+  // never shown a field the upstream does not return (FastMCP's
+  // `remove_write_only`). Only an OPEN object drops it: an undeclared key is
+  // still allowed there, so a server that does echo it stays valid. A closed
+  // object (`additionalProperties: false` or a schema) keeps it as optional,
+  // or an echo would fail output validation.
+  const ap = node['additionalProperties'];
+  const dropsWriteOnly = mode === 'response' && (ap === undefined || ap === true);
+  const droppedWriteOnly = new Set<string>();
   for (const [key, child] of Object.entries(properties)) {
     if (isDangerousKey(key)) {
       return { unrepresentable: `a property named "${key}"` };
     }
-    const conv = convertSchema(child, version, depth + 1);
+    // A readOnly property is not part of the request contract at all: drop it
+    // (and, below, its `required` entry) so the model is never asked to invent
+    // a server-assigned value, and a strict object rejects it if sent. It is
+    // not converted either — its schema only matters for the response side,
+    // which converts it in response mode.
+    if (mode === 'request' && isAccessOnly(child, 'readOnly')) {
+      droppedReadOnly.add(key);
+      continue;
+    }
+    if (dropsWriteOnly && isAccessOnly(child, 'writeOnly')) {
+      droppedWriteOnly.add(key);
+      continue;
+    }
+    const conv = convertSchema(child, version, depth + 1, mode);
     if (!('ok' in conv)) {
       return { unrepresentable: `property "${key}": ${conv.unrepresentable}` };
     }
-    shape[key] = required.has(key) ? conv.ok : conv.ok.optional();
+    // In a closed response object a writeOnly property is kept but never
+    // required: `required` on it applies to requests only.
+    const requiredHere =
+      required.has(key) && !(mode === 'response' && isAccessOnly(child, 'writeOnly'));
+    shape[key] = requiredHere ? conv.ok : conv.ok.optional();
   }
   // A required name with no declared property cannot be enforced (there is no
   // schema for it) — omit rather than silently accept its absence. Object.hasOwn,
   // not `in`, so an inherited name like `toString` is not treated as declared.
   for (const name of required) {
-    if (!Object.hasOwn(shape, name)) {
+    if (!Object.hasOwn(shape, name) && !droppedReadOnly.has(name) && !droppedWriteOnly.has(name)) {
       return { unrepresentable: `the required property "${name}" is not declared in properties` };
     }
   }
-  const ap = node['additionalProperties'];
-  if (ap === undefined || ap === false) {
+  if (ap === false) {
     return { ok: z.strictObject(shape) };
   }
-  if (ap === true) {
-    return { ok: z.object(shape).loose() };
+  if (ap === undefined) {
+    // Absent additionalProperties means "any extra property allowed" (JSON
+    // Schema Core 2020-12 §10.3.2.3). Responses keep that meaning (#33). A
+    // request object that DECLARES properties stays closed — the strict-input
+    // design — but one that declares none is a free-form object (`metadata`,
+    // `labels`, …; #35): closing it would accept only `{}`, a narrower contract
+    // than the spec states. An empty `properties: {}` declares nothing, the
+    // same rule mergeAllOf/buildTyped apply ("empty properties is not object
+    // evidence"). `droppedReadOnly` counts as declared: an object whose
+    // properties are all readOnly accepts only `{}` in a request. (A response
+    // object is open here regardless, so a dropped writeOnly changes nothing.)
+    const declaresProperties = Object.keys(properties).length > 0;
+    return mode === 'request' && declaresProperties
+      ? { ok: z.strictObject(shape) }
+      : { ok: openObject(z.object(shape).loose(), mode) };
   }
-  const apConv = convertSchema(ap, version, depth + 1);
+  if (ap === true) {
+    return { ok: openObject(z.object(shape).loose(), mode) };
+  }
+  const apConv = convertSchema(ap, version, depth + 1, mode);
   if (!('ok' in apConv)) {
     return { unrepresentable: `additionalProperties: ${apConv.unrepresentable}` };
   }
-  return { ok: z.object(shape).catchall(apConv.ok) };
+  return { ok: openObject(z.object(shape).catchall(apConv.ok), mode) };
 };
 
 const arraySchema = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
-  const item = convertSchema(node['items'] ?? {}, version, depth + 1);
+  const item = convertSchema(node['items'] ?? {}, version, depth + 1, mode);
   if (!('ok' in item)) {
     return { unrepresentable: `array items: ${item.unrepresentable}` };
   }
@@ -578,6 +678,7 @@ const unionSchema = (
   variants: readonly unknown[],
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   const members: z.ZodType[] = [];
   // Imperative on purpose: any single unrepresentable variant aborts the
@@ -587,7 +688,7 @@ const unionSchema = (
   // checking afterward would turn this short-circuit into forced recursive
   // conversion work for every variant on hostile input.
   for (const variant of variants) {
-    const conv = convertSchema(variant, version, depth + 1);
+    const conv = convertSchema(variant, version, depth + 1, mode);
     if (!('ok' in conv)) {
       return { unrepresentable: `union member: ${conv.unrepresentable}` };
     }
@@ -606,6 +707,7 @@ const convertComposite = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   if (Array.isArray(node['allOf'])) {
     if (node['allOf'].length === 0) {
@@ -627,18 +729,18 @@ const convertComposite = (
     // strictest. The cast is behavior-preserving — the runtime check is unchanged.
     return 'unrepresentable' in merged
       ? (merged as { unrepresentable: string })
-      : objectSchema(merged, depth, version);
+      : objectSchema(merged, depth, version, mode);
   }
   if (Array.isArray(node['oneOf'])) {
-    return unionSchema(node['oneOf'], depth, version);
+    return unionSchema(node['oneOf'], depth, version, mode);
   }
   if (Array.isArray(node['anyOf'])) {
-    return unionSchema(node['anyOf'], depth, version);
+    return unionSchema(node['anyOf'], depth, version, mode);
   }
   if (node['type'] === 'array') {
-    return arraySchema(node, depth, version);
+    return arraySchema(node, depth, version, mode);
   }
-  return objectSchema(node, depth, version);
+  return objectSchema(node, depth, version, mode);
 };
 
 // The scalar/object/array dispatch. A sibling `nullable` wraps THIS result (a
@@ -650,6 +752,7 @@ const buildTyped = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   if (typeValue === 'null') {
     return { ok: z.null() };
@@ -668,14 +771,14 @@ const buildTyped = (
     // even when the source used a `[type,'null']` union (typeValue is the non-null
     // member). Without this, `type:['array','null']` would be misdispatched as an
     // object — accepting `{}`/null and rejecting valid arrays.
-    return convertComposite({ ...node, type: typeValue }, depth, version);
+    return convertComposite({ ...node, type: typeValue }, depth, version, mode);
   }
   if (isRecord(node['properties']) && Object.keys(node['properties']).length > 0) {
     // A typeless node with NON-EMPTY properties is treated as an object (the common
     // authoring intent). An EMPTY `properties: {}` carries no constraint and must
     // not narrow to strictObject({}) — it falls through to the typeless-orphan
     // check below, which omits (properties is an assertion keyword).
-    return convertComposite(node, depth, version);
+    return convertComposite(node, depth, version, mode);
   }
   if (typeValue === undefined) {
     // A typeless node carrying an assertion we cannot attach to a type must not
@@ -736,6 +839,7 @@ const build = (
   node: Record<string, unknown>,
   depth: number,
   version: OpenapiVersion,
+  mode: SchemaMode,
 ): SchemaResult => {
   const normalized = normalizeType(node['type'], version, node['nullable'] === true);
   if ('ok' in normalized || 'unrepresentable' in normalized) {
@@ -761,9 +865,9 @@ const build = (
     if (nullable) {
       return { unrepresentable: 'a nullable composition (allOf/oneOf/anyOf combined with null)' };
     }
-    return convertComposite(node, depth, version);
+    return convertComposite(node, depth, version, mode);
   }
-  const base = buildTyped(typeValue, node, depth, version);
+  const base = buildTyped(typeValue, node, depth, version, mode);
   if (!('ok' in base)) {
     return base;
   }
@@ -773,7 +877,7 @@ const build = (
 // Per-build memoization (issue #90). Dereferencing shares one output object
 // per $ref target (#89), so the schema a GET, PUT and POST all return is the
 // SAME node, and converting it once per build is enough. The memo is keyed by
-// node identity and version, lives only for one withConvertMemo call (one
+// node identity, version and mode, lives only for one withConvertMemo call (one
 // buildTools run, so nothing leaks across specs), and caches unrepresentable
 // results too, so a hostile spec cannot force the same failing work twice.
 //
@@ -786,15 +890,20 @@ const build = (
 type ConvertMemoEntry = { result: SchemaResult; height: number };
 
 type BuildScope = {
-  converted: WeakMap<object, Partial<Record<OpenapiVersion, ConvertMemoEntry>>>;
+  // Per node: one entry per `${version}/${mode}` (see memoKey).
+  converted: WeakMap<object, Partial<Record<string, ConvertMemoEntry>>>;
   // Keyed by Zod schema identity; undefined records a failed emission
   jsonSchemas: WeakMap<z.ZodType, Record<string, unknown> | undefined>;
 };
 
-// The key must cover EVERY input that changes a conversion's result: today
-// node, version and (via height) depth. A new conversion parameter (for
-// example a request/response schema mode) has to join the key, or the first
-// conversion of a shared node would decide the result for every later use.
+// The key must cover EVERY input that changes a conversion's result: node,
+// version, the request/response mode (#33/#47: readOnly/writeOnly handling,
+// open response objects, inclusive response oneOf, and the #39 response-only
+// pattern gate all depend on it) and, via height, depth. A new conversion
+// parameter has to join the key, or the first conversion of a shared node
+// would decide the result for every later use — e.g. a `User` schema shared
+// by a request body and a response would get the request's strict shape.
+const memoKey = (version: OpenapiVersion, mode: SchemaMode): string => `${version}/${mode}`;
 //
 // Imperative on purpose: the scope and the deepest depth reached are ambient
 // state of the current synchronous conversion, threaded implicitly so the
@@ -838,29 +947,42 @@ export const convertSchema = (
   node: unknown,
   version: OpenapiVersion = '3.1',
   depth = 0,
+  // The direction the converted schema validates. `'request'` (the default:
+  // tool inputs, parameters, request bodies) stays strict and drops readOnly
+  // properties; `'response'` (output schemas) leaves undeclared properties
+  // open and drops (open object) or relaxes (closed object) writeOnly
+  // properties. Propagated unchanged to
+  // every nested schema. See SchemaMode.
+  mode: SchemaMode = 'request',
 ): SchemaResult => {
   const scope = activeScope;
   if (scope === undefined || !isRecord(node)) {
-    return convertUncached(node, version, depth);
+    return convertUncached(node, version, depth, mode);
   }
-  const byVersion = scope.converted.get(node);
-  const cached = byVersion?.[version];
+  const key = memoKey(version, mode);
+  const byKey = scope.converted.get(node);
+  const cached = byKey?.[key];
   if (cached !== undefined && depth + cached.height <= MAX_CONVERT_DEPTH) {
     deepestDepth = Math.max(deepestDepth, depth + cached.height);
     return cached.result;
   }
   const outer = deepestDepth;
   deepestDepth = depth;
-  const result = convertUncached(node, version, depth);
+  const result = convertUncached(node, version, depth, mode);
   const reached = deepestDepth;
   deepestDepth = Math.max(outer, reached);
   if (reached <= MAX_CONVERT_DEPTH) {
-    scope.converted.set(node, { ...byVersion, [version]: { result, height: reached - depth } });
+    scope.converted.set(node, { ...byKey, [key]: { result, height: reached - depth } });
   }
   return result;
 };
 
-const convertUncached = (node: unknown, version: OpenapiVersion, depth: number): SchemaResult => {
+const convertUncached = (
+  node: unknown,
+  version: OpenapiVersion,
+  depth: number,
+  mode: SchemaMode,
+): SchemaResult => {
   deepestDepth = Math.max(deepestDepth, depth);
   if (depth > MAX_CONVERT_DEPTH) {
     return { unrepresentable: 'schema nesting exceeds the depth budget' };
@@ -876,19 +998,33 @@ const convertUncached = (node: unknown, version: OpenapiVersion, depth: number):
   if (malformed !== undefined) {
     return { unrepresentable: `a malformed "${malformed}" value` };
   }
+  // #39: a response schema is compiled by Ajv, which RUNS `pattern` on
+  // upstream data synchronously. A pattern with nested quantifiers can
+  // backtrack catastrophically, so it makes the output schema unrepresentable
+  // (fail-closed; the tool falls back to text). Request mode only advertises
+  // `pattern` and never executes it, so it is unaffected. See pattern-safety.ts.
+  if (
+    mode === 'response' &&
+    typeof node['pattern'] === 'string' &&
+    hasNestedQuantifier(node['pattern'])
+  ) {
+    return { unrepresentable: UNSAFE_PATTERN_REASON };
+  }
   const conflict = conflictingCombination(node);
   if (conflict !== undefined) {
     return { unrepresentable: conflict };
   }
-  const built = build(node, depth, version);
+  const built = build(node, depth, version, mode);
   if (!('ok' in built)) {
     return built;
   }
   // Advertise `pattern` and `format` uniformly: attach them as wire metadata on
   // whatever the branch produced — string, enum, const, composite, or a
-  // typeless z.unknown() — so z.toJSONSchema emits the keywords WITHOUT
-  // enforcing them (no live RegExp; no divergent format validator). The model
-  // sees them; validation never runs them.
+  // typeless z.unknown() — so z.toJSONSchema emits the keywords WITHOUT Zod
+  // enforcing them (no live RegExp; no divergent format validator). For a
+  // request the model sees them and nothing runs them. For a response the
+  // output schema IS compiled by Ajv, which runs `pattern` on upstream data —
+  // hence the nested-quantifier gate above (#39).
   const meta: Record<string, unknown> = {};
   if (typeof node['pattern'] === 'string') {
     meta['pattern'] = node['pattern'];
