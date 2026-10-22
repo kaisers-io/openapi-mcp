@@ -265,16 +265,34 @@ describe('convertSchema — enum, const, null', () => {
     expect('unrepresentable' in convertSchema({ type: ['string', 'number'] })).toBe(true);
   });
 
-  it('does NOT let a sibling nullable widen an enum that excludes null', () => {
-    // {type:string, nullable:true, enum:['a']} must reject null — the enum is
-    // authoritative; a .nullable() wrapper would silently admit null. Pass '3.0'
-    // so the boolean `nullable` is ACTIVE (under the default '3.1' it is ignored
-    // globally, so the test would pass vacuously and the 7(c) sabotage would not
-    // bind). Under 3.0 nullable is true, and the enum branch must STILL reject
-    // null — proving determiners ignore a sibling nullable rather than wrapping it.
-    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.0'));
+  it('3.0: a sibling nullable admits null next to an enum that does not list it (D9)', () => {
+    // {type:string, nullable:true, enum:['a']} (older Swashbuckle/NSwag): the
+    // author marked the value nullable, so null is admitted in both directions;
+    // every other non-enumerated value is still rejected.
+    for (const mode of ['request', 'response'] as const) {
+      const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.0', 0, mode));
+      expect(s.safeParse('a').success).toBe(true);
+      expect(s.safeParse(null).success).toBe(true);
+      expect(s.safeParse('b').success).toBe(false);
+    }
+  });
+
+  it('3.0: the OAS 3.0.3 nullable enum that lists null is representable', () => {
+    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a', null] }, '3.0'));
+    expect(s.safeParse(null).success).toBe(true);
     expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
+    // Without nullable, null contradicts the sibling type: still omitted.
+    expect('unrepresentable' in convertSchema({ type: 'string', enum: ['a', null] }, '3.0')).toBe(
+      true,
+    );
+  });
+
+  it('3.1: nullable is not a keyword, so an enum without null still rejects null', () => {
+    const s = ok(convertSchema({ type: 'string', nullable: true, enum: ['a'] }, '3.1'));
     expect(s.safeParse(null).success).toBe(false);
+    const arr = ok(convertSchema({ type: ['string', 'null'], enum: ['a'] }, '3.1'));
+    expect(arr.safeParse(null).success).toBe(false);
   });
 
   it('accepts null only when it is an enumerated value', () => {
@@ -284,12 +302,11 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('b').success).toBe(false);
   });
 
-  it('does NOT let a sibling nullable widen a const', () => {
-    // Pass '3.0' so `nullable` is active (see the enum sibling test above); under
-    // 3.0 nullable is true and the const branch must still reject null.
+  it('3.0: a sibling nullable admits null next to a const (D9)', () => {
     const s = ok(convertSchema({ const: 'a', nullable: true }, '3.0'));
     expect(s.safeParse('a').success).toBe(true);
-    expect(s.safeParse(null).success).toBe(false);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
   });
 
   it('maps const: null to z.null()', () => {
@@ -298,18 +315,14 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('a').success).toBe(false);
   });
 
-  it('omits a nullable composition', () => {
-    // The nullable-composition guard is reachable ONLY under 3.0: the boolean
-    // `nullable` is honoured only there (build gates it on version === '3.0'), and
-    // a 3.1 `[T,'null']`-union combined with oneOf is caught earlier by the
-    // conflict gate. Pass '3.0' explicitly so nullable is true and the guard fires;
-    // with the default '3.1', nullable is ignored and the node is a plain
-    // (representable) oneOf, so this test would wrongly expect unrepresentable. The
-    // 3.1-representable case is asserted separately, in the companion test below
-    // ('represents a 3.1 nullable-composition node...').
-    expect(
-      'unrepresentable' in convertSchema({ nullable: true, oneOf: [{ type: 'string' }] }, '3.0'),
-    ).toBe(true);
+  it('represents a 3.0 nullable composition and admits null in a request (#41, D9)', () => {
+    // The boolean `nullable` is honoured only under 3.0 (build gates it on
+    // version === '3.0'); a 3.1 `[T,'null']`-union combined with oneOf is caught
+    // earlier by the conflict gate.
+    const s = ok(convertSchema({ nullable: true, oneOf: [{ type: 'string' }] }, '3.0'));
+    expect(s.safeParse('x').success).toBe(true);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse(1).success).toBe(false);
   });
 });
 
@@ -458,12 +471,16 @@ describe('convertSchema — composites', () => {
     ).toBe(true);
   });
 
-  it('omits an allOf with a non-object member (single or multi)', () => {
-    // Every allOf member must be an object; the merge produces one object.
+  it('omits a multi-member allOf with a non-object member; a single member converts as-is (#41)', () => {
+    // Every member of a MULTI-member allOf must be an object; the merge produces
+    // one object.
     expect(
       'unrepresentable' in convertSchema({ allOf: [{ type: 'object' }, { type: 'string' }] }),
     ).toBe(true);
-    expect('unrepresentable' in convertSchema({ allOf: [{ type: 'string' }] })).toBe(true);
+    // allOf:[S] validates exactly what S validates (JSON Schema Core §10.2.1.1).
+    const single = ok(convertSchema({ allOf: [{ type: 'string' }] }));
+    expect(single.safeParse('x').success).toBe(true);
+    expect(single.safeParse(1).success).toBe(false);
   });
 
   it('omits an allOf whose outer type contradicts an object merge', () => {
@@ -585,15 +602,17 @@ describe('convertSchema — composites', () => {
   });
 
   it('omits any allOf member declaring additionalProperties (fail-closed, cannot merge)', () => {
-    // Single-member with AP:true → omit (not silently strict, not silently open).
-    expect(
-      'unrepresentable' in
-        convertSchema({
-          allOf: [
-            { type: 'object', additionalProperties: true, properties: { a: { type: 'string' } } },
-          ],
-        }),
-    ).toBe(true);
+    // A single member converts as-is (#41), so its additionalProperties:true is
+    // honoured exactly — open, not silently strict.
+    const single = ok(
+      convertSchema({
+        allOf: [
+          { type: 'object', additionalProperties: true, properties: { a: { type: 'string' } } },
+        ],
+      }),
+    );
+    expect(single.safeParse({ a: 'x', extra: 1 }).success).toBe(true);
+    expect(single.safeParse({ a: 1 }).success).toBe(false);
     // Multi-member with any declared AP → omit.
     expect(
       'unrepresentable' in
@@ -665,10 +684,15 @@ describe('convertSchema — composites', () => {
 
   it('omits an allOf member with no object evidence', () => {
     // Each of these accepts any value; merging as z.strictObject({}) would narrow.
-    expect('unrepresentable' in convertSchema({ allOf: [{}] })).toBe(true);
-    expect('unrepresentable' in convertSchema({ allOf: [{ description: 'x' }] })).toBe(true);
+    // A SINGLE such member converts as-is (#41): `{}` and a description-only
+    // node accept any value exactly (z.unknown), never a narrowed object; the
+    // typeless orphan assertions still omit.
+    expect(ok(convertSchema({ allOf: [{}] })).safeParse('anything').success).toBe(true);
+    expect(ok(convertSchema({ allOf: [{ description: 'x' }] })).safeParse(1).success).toBe(true);
     expect('unrepresentable' in convertSchema({ allOf: [{ properties: {} }] })).toBe(true);
     expect('unrepresentable' in convertSchema({ allOf: [{ required: [] }] })).toBe(true);
+    // In a MULTI-member allOf (the object merge) they still omit.
+    expect('unrepresentable' in convertSchema({ allOf: [{}, { type: 'object' }] })).toBe(true);
   });
 
   it('maps a typeless NON-EMPTY properties-only object as a strict object', () => {
@@ -972,6 +996,93 @@ describe('convertSchema — request/response mode (#33, #47)', () => {
     );
     expect(s.safeParse({ name: 'x' }).success).toBe(true);
     expect(s.safeParse({ id: '1', name: 'x' }).success).toBe(false);
+  });
+});
+
+// #41: three common idioms that used to omit their operation.
+describe('convertSchema — nullable and single-member allOf idioms (#41)', () => {
+  const obj = { type: 'object', properties: { a: { type: 'string' } } };
+
+  it('3.0 nullable allOf: null admitted in both directions (D9: a PATCH can clear the field)', () => {
+    const node = { nullable: true, allOf: [obj] };
+    const request = ok(convertSchema(node, '3.0'));
+    expect(request.safeParse({ a: 'x' }).success).toBe(true);
+    expect(request.safeParse(null).success).toBe(true);
+    expect(request.safeParse('x').success).toBe(false);
+    const response = ok(convertSchema(node, '3.0', 0, 'response'));
+    expect(response.safeParse({ a: 'x' }).success).toBe(true);
+    expect(response.safeParse(null).success).toBe(true);
+    expect(response.safeParse('x').success).toBe(false);
+  });
+
+  it('3.0 nullable oneOf: representable; null admitted in both directions', () => {
+    const node = { nullable: true, oneOf: [{ type: 'string' }, { type: 'integer' }] };
+    const request = ok(convertSchema(node, '3.0'));
+    expect(request.safeParse('x').success).toBe(true);
+    expect(request.safeParse(1).success).toBe(true);
+    expect(request.safeParse(null).success).toBe(true);
+    expect(request.safeParse(true).success).toBe(false);
+    const response = ok(convertSchema(node, '3.0', 0, 'response'));
+    expect(response.safeParse(null).success).toBe(true);
+    expect(response.safeParse(true).success).toBe(false);
+  });
+
+  it('single-member allOf wrapping a non-object ($ref + description idiom) converts the member and keeps the outer description', () => {
+    const r = convertSchema(
+      { description: 'status', allOf: [{ type: 'string', enum: ['a', 'b'] }] },
+      '3.1',
+    );
+    const s = ok(r);
+    expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse('b').success).toBe(true);
+    expect(s.safeParse('c').success).toBe(false);
+    expect((z.toJSONSchema(s) as { description?: string }).description).toBe('status');
+  });
+
+  it('single-member allOf with an integer member and metadata siblings (default, title, x-*)', () => {
+    const s = ok(
+      convertSchema({
+        title: 'Count',
+        default: 1,
+        'x-order': 2,
+        allOf: [{ type: 'integer', minimum: 1 }],
+      }),
+    );
+    expect(s.safeParse(2).success).toBe(true);
+    expect(s.safeParse(0).success).toBe(false);
+    expect(s.safeParse(1.5).success).toBe(false);
+  });
+
+  it('still omits a single-member allOf whose outer type contradicts the member', () => {
+    expect(
+      'unrepresentable' in convertSchema({ type: 'object', allOf: [{ type: 'string' }] }),
+    ).toBe(true);
+  });
+
+  it('3.1 nullable enum: a [T, "null"] type with an enum that lists null', () => {
+    const s = ok(convertSchema({ type: ['string', 'null'], enum: ['a', null] }, '3.1'));
+    expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse(null).success).toBe(true);
+    expect(s.safeParse('b').success).toBe(false);
+  });
+
+  it('3.1 multi-type enum/const: every value must match one of the listed types', () => {
+    const s = ok(convertSchema({ type: ['string', 'integer'], enum: ['a', 1] }, '3.1'));
+    expect(s.safeParse('a').success).toBe(true);
+    expect(s.safeParse(1).success).toBe(true);
+    expect(s.safeParse(2).success).toBe(false);
+    expect(
+      ok(convertSchema({ type: ['string', 'null'], const: null })).safeParse(null).success,
+    ).toBe(true);
+    // A value outside every listed type is a contradiction → omit (fail-closed).
+    expect(
+      'unrepresentable' in convertSchema({ type: ['string', 'null'], enum: ['a', 1] }, '3.1'),
+    ).toBe(true);
+    // A malformed type array still omits.
+    expect(
+      'unrepresentable' in convertSchema({ type: ['string', 'string'], enum: ['a'] }, '3.1'),
+    ).toBe(true);
+    expect('unrepresentable' in convertSchema({ type: [], enum: ['a'] }, '3.1')).toBe(true);
   });
 });
 
