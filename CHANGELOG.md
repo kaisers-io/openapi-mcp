@@ -73,3 +73,8 @@
   "tool execution result could not be returned safely".
 - **`openapi_mcp_status` returns `cacheLock`** when start-up could not record the spec
   revalidation (#65); it was declared in the output schema but missing from the result.
+
+- **Opt-in response projection (#44).** With `serve --response-projection`, tools with a JSON
+  response accept an optional `_fields` argument (up to 32 JSON Pointers, `*` maps over an
+  array; also through `call_operation`) and return only the selected values under
+  `projection`. Off by default because it grows `tools/list` by about 30%.
