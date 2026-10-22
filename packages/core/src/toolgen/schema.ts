@@ -956,6 +956,75 @@ const build = (
   return nullable ? { ok: base.ok.nullable() } : base;
 };
 
+// Per-build memoization (issue #90). Dereferencing shares one output object
+// per $ref target (#89), so the schema a GET, PUT and POST all return is the
+// SAME node, and converting it once per build is enough. The memo is keyed by
+// node identity, version and mode, lives only for one withConvertMemo call (one
+// buildTools run, so nothing leaks across specs), and caches unrepresentable
+// results too, so a hostile spec cannot force the same failing work twice.
+//
+// Depth is the one input besides the node: a nested conversion past
+// MAX_CONVERT_DEPTH is unrepresentable. Each entry therefore records its
+// height (how far below its own depth the conversion reached); it is reused
+// at another depth only if it stays within the budget there, and an entry
+// whose conversion hit the budget is not cached at all — so every result is
+// exactly what an uncached conversion at that depth returns.
+type ConvertMemoEntry = { result: SchemaResult; height: number };
+
+type BuildScope = {
+  // Per node: one entry per `${version}/${mode}` (see memoKey).
+  converted: WeakMap<object, Partial<Record<string, ConvertMemoEntry>>>;
+  // Keyed by Zod schema identity; undefined records a failed emission
+  jsonSchemas: WeakMap<z.ZodType, Record<string, unknown> | undefined>;
+};
+
+// The key must cover EVERY input that changes a conversion's result: node,
+// version, the request/response mode (#33/#47: readOnly/writeOnly handling,
+// open response objects, inclusive response oneOf, and the #39 response-only
+// pattern gate all depend on it) and, via height, depth. A new conversion
+// parameter has to join the key, or the first conversion of a shared node
+// would decide the result for every later use — e.g. a `User` schema shared
+// by a request body and a response would get the request's strict shape.
+const memoKey = (version: OpenapiVersion, mode: SchemaMode): string => `${version}/${mode}`;
+//
+// Imperative on purpose: the scope and the deepest depth reached are ambient
+// state of the current synchronous conversion, threaded implicitly so the
+// recursive converters keep their signatures. Both are only ever set inside
+// withConvertMemo / convertSchema and restored before they return. That is
+// sound only because conversion never awaits: convertSchema and everything
+// it calls must stay synchronous, or another build could observe the scope.
+let activeScope: BuildScope | undefined;
+let deepestDepth = 0;
+
+export const withConvertMemo = <Value>(run: () => Value): Value => {
+  const previous = activeScope;
+  activeScope = { converted: new WeakMap(), jsonSchemas: new WeakMap() };
+  try {
+    return run();
+  } finally {
+    activeScope = previous;
+  }
+};
+
+// z.toJSONSchema of one Zod schema instance, once per build. Callers must not
+// mutate the result: it is shared by every tool whose schema converted to the
+// same instance (the server snapshot freezes it).
+export const memoizedJsonSchema = (
+  schema: z.ZodType,
+  emit: (schema: z.ZodType) => Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined => {
+  const scope = activeScope;
+  if (scope === undefined) {
+    return emit(schema);
+  }
+  if (scope.jsonSchemas.has(schema)) {
+    return scope.jsonSchemas.get(schema);
+  }
+  const emitted = emit(schema);
+  scope.jsonSchemas.set(schema, emitted);
+  return emitted;
+};
+
 export const convertSchema = (
   node: unknown,
   version: OpenapiVersion = '3.1',
@@ -968,6 +1037,35 @@ export const convertSchema = (
   // every nested schema. See SchemaMode.
   mode: SchemaMode = 'request',
 ): SchemaResult => {
+  const scope = activeScope;
+  if (scope === undefined || !isRecord(node)) {
+    return convertUncached(node, version, depth, mode);
+  }
+  const key = memoKey(version, mode);
+  const byKey = scope.converted.get(node);
+  const cached = byKey?.[key];
+  if (cached !== undefined && depth + cached.height <= MAX_CONVERT_DEPTH) {
+    deepestDepth = Math.max(deepestDepth, depth + cached.height);
+    return cached.result;
+  }
+  const outer = deepestDepth;
+  deepestDepth = depth;
+  const result = convertUncached(node, version, depth, mode);
+  const reached = deepestDepth;
+  deepestDepth = Math.max(outer, reached);
+  if (reached <= MAX_CONVERT_DEPTH) {
+    scope.converted.set(node, { ...byKey, [key]: { result, height: reached - depth } });
+  }
+  return result;
+};
+
+const convertUncached = (
+  node: unknown,
+  version: OpenapiVersion,
+  depth: number,
+  mode: SchemaMode,
+): SchemaResult => {
+  deepestDepth = Math.max(deepestDepth, depth);
   if (depth > MAX_CONVERT_DEPTH) {
     return { unrepresentable: 'schema nesting exceeds the depth budget' };
   }
