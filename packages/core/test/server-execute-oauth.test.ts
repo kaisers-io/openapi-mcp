@@ -165,7 +165,9 @@ const run = async (
     args,
     new AbortController().signal,
     undefined,
-    (telemetry) => reports.push(telemetry),
+    (telemetry) => {
+      reports.push(telemetry);
+    },
   );
   return { outcome, seen, reports };
 };

@@ -42,9 +42,9 @@ const wireToolOf = (generated: GeneratedTool): WireTool => {
     name: generated.toolName,
     ...(title === undefined ? {} : { title }),
     description: generated.description,
-    inputSchema: generated.wireSchema as Record<string, unknown>,
+    inputSchema: generated.wireSchema,
     ...(generated.outputSchema === undefined ? {} : { outputSchema: generated.outputSchema }),
-    annotations: generated.annotations as unknown as Record<string, unknown>,
+    annotations: generated.annotations,
   };
 };
 

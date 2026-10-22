@@ -92,7 +92,7 @@ const PROJECTION_BRANCH: JsonSchemaRecord = {
 // result so the caller never needs a `let` to survive the try/catch.
 const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
   try {
-    return z.toJSONSchema(schema) as JsonSchemaRecord;
+    return z.toJSONSchema(schema);
   } catch {
     // Defensive: our schemas are representable (proven upstream); fail
     // closed rather than emit a nonconforming outputSchema.

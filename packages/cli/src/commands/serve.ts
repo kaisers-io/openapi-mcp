@@ -82,6 +82,6 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       state.exitCode = emitError(ctx, { json: false, verbose: false }, error);
       return;
     }
-    await runServe(command as unknown as Command<[], ServeCmdOpts>, cmdOpts, ctx, state);
+    await runServe(command, cmdOpts, ctx, state);
   });
 };

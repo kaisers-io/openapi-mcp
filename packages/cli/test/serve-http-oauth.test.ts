@@ -101,7 +101,9 @@ describe('serve --http --http-auth oauth', () => {
       },
     );
     const stderr: Buffer[] = [];
-    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr.push(chunk);
+    });
     const exited = once(child, 'exit');
     cleanups.push(async () => {
       // Graceful, so the child writes its coverage (cli-subprocess.ts)

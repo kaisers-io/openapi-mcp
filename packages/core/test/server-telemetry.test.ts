@@ -118,7 +118,9 @@ const pipeline = (
     executor,
     metaExecutor: createMetaExecutor(),
     redactor: createRedactor([SECRET]),
-    onCall: (record) => records.push(record),
+    onCall: (record) => {
+      records.push(record);
+    },
   });
   const call = (args: Record<string, unknown>, signal = new AbortController().signal) =>
     dispatcher.call({ name: 'getPetById', arguments: args, signal });
@@ -224,7 +226,9 @@ describe('call records — one per call, classified', () => {
       executor,
       metaExecutor: createMetaExecutor(),
       redactor: createRedactor([SECRET]),
-      onCall: (record) => records.push(record),
+      onCall: (record) => {
+        records.push(record);
+      },
     });
     const result = await dispatcher.call({
       name: 'getPetById',
@@ -386,7 +390,9 @@ describe('call records through call_operation (discover mode)', () => {
       executor,
       metaExecutor: createMetaExecutor(),
       redactor: createRedactor([SECRET]),
-      onCall: (record) => records.push(record),
+      onCall: (record) => {
+        records.push(record);
+      },
     });
     const call = (args: unknown) =>
       dispatcher.call({

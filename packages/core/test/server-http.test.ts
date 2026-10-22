@@ -537,7 +537,11 @@ describe('createStreamableHttpServer — out-of-band error sink', () => {
   it("reports what has no JSON-RPC reply to ride on: the handler's own rejection reason, and a body read that dies with its client", async () => {
     const port = 4649;
     const errors: Error[] = [];
-    const server = makeServer(port, { onError: (error) => errors.push(error) });
+    const server = makeServer(port, {
+      onError: (error) => {
+        errors.push(error);
+      },
+    });
     await server.listen();
     try {
       // Source 1 — the handler leg. The wire answer carries only the code and

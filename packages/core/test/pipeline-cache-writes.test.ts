@@ -55,9 +55,7 @@ const deps = (cacheFs: CacheFs, fetcher?: SpecFetcher): SpecPipelineDeps => ({
     const stats = await stat(path);
     return stats.size;
   },
-  fetcher:
-    fetcher ??
-    ((() => Promise.reject(new Error('no network in this test'))) as unknown as SpecFetcher),
+  fetcher: fetcher ?? (() => Promise.reject(new Error('no network in this test'))),
   lookup: () => Promise.resolve(['93.184.216.34']),
   cacheFs,
 });

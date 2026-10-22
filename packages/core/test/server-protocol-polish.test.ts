@@ -178,7 +178,11 @@ describe('tools/call — progress notifications', () => {
     const progress: number[] = [];
     const pending = client.callTool(
       { name: 'slow', arguments: {} },
-      { onprogress: (update) => progress.push(update.progress) },
+      {
+        onprogress: (update) => {
+          progress.push(update.progress);
+        },
+      },
     );
     await vi.waitFor(() => {
       expect(progress.length).toBeGreaterThanOrEqual(3);
@@ -296,7 +300,11 @@ describe('discover mode (call_operation)', () => {
     const progress: number[] = [];
     const pending = client.callTool(
       { name: 'call_operation', arguments: { name: 'slow', arguments: {} } },
-      { onprogress: (update) => progress.push(update.progress) },
+      {
+        onprogress: (update) => {
+          progress.push(update.progress);
+        },
+      },
     );
     await vi.waitFor(() => {
       expect(progress.length).toBeGreaterThanOrEqual(2);

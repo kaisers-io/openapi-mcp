@@ -265,11 +265,7 @@ describe('pinnedLookup', () => {
       calls += 1;
       throw new Error('boom: success-path callback throws');
     };
-    lookupFn(
-      'throwing.example.test',
-      { all: true },
-      throwingCallback as unknown as Parameters<typeof lookupFn>[2],
-    );
+    lookupFn('throwing.example.test', { all: true }, throwingCallback);
     // The lookup contract is fire-and-forget from the caller's perspective
     // (a real connect.lookup consumer never awaits it); a macrotask tick
     // drains the whole `.then`/`.then`/`.catch` microtask chain, including

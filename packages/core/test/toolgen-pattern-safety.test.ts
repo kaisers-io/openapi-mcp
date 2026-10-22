@@ -95,7 +95,7 @@ describe('output schema with an unsafe response pattern (#39)', () => {
     expect(tool.outputSchemaWithheld).toBeUndefined();
     expect(tool.description).toBe('');
     // The accepted pattern is enforced by the response validator.
-    const validate = compileEnvelopeValidator(tool.outputSchema!) as EnvelopeValidator;
+    const validate = compileEnvelopeValidator(tool.outputSchema) as EnvelopeValidator;
     const envelope = (data: unknown) => ({ status: 200, contentType: 'application/json', data });
     expect(validate(envelope('10.0.0.1'))).toBe(true);
     expect(validate(envelope('nope'))).toBe(false);

@@ -87,7 +87,7 @@ export const metaWireTool = (): WireTool => ({
   title: 'Server status',
   description:
     "Report this server's accepted spec, tool inventory, and omissions. Read-only, package-authored — never spec-derived.",
-  inputSchema: z.toJSONSchema(META_INPUT_SCHEMA) as Record<string, unknown>,
+  inputSchema: z.toJSONSchema(META_INPUT_SCHEMA),
   outputSchema: META_OUTPUT_SCHEMA,
   // Not the OpenAPI-method heuristic (this is our own tool, not a wrapped
   // operation): explicitly read-only and NOT open-world — it only reads local
