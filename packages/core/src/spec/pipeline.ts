@@ -475,6 +475,28 @@ const acceptedCacheStatus = (
   return unchanged ? 'revalidated' : 'accepted-update';
 };
 
+// The exposed-set budget depends on this run's filters, which `cache promote`
+// does not know, so a candidate that is over it under the current filters
+// would only surface as a failed start after promotion. Checked when the
+// candidate is recorded (the only run that holds its document) and reported
+// as a warning: the accepted baseline keeps serving either way.
+const candidateBudgetWarning = (
+  candidate: NormalizedSpec,
+  opts: SpecPipelineOptions,
+): string | undefined => {
+  let exposedCount: number;
+  try {
+    exposedCount = applyFilters(assignToolNames(candidate.operations), opts.allow, opts.deny)
+      .exposed.length;
+  } catch (error) {
+    return `the candidate spec could not be checked against the ${SPEC_BUDGETS.maxToolCount}-tool budget (${describeCause(error)}); after "openapi-mcp cache promote" this server may refuse to start with the current filters`;
+  }
+  if (exposedCount <= SPEC_BUDGETS.maxToolCount) {
+    return undefined;
+  }
+  return `the candidate spec would expose ${exposedCount} tools under the current filters — over the ${SPEC_BUDGETS.maxToolCount}-tool budget; after "openapi-mcp cache promote" this server will refuse to start unless --allow or --deny narrows the set`;
+};
+
 // Decides what a successfully fetched-and-validated spec becomes: the accepted
 // baseline (first use, unchanged content, or --trust-spec-updates), or a gated
 // candidate while the accepted baseline keeps serving.
@@ -506,6 +528,10 @@ const commitRefresh = async (
     warnings.push(
       'the spec source changed; the refreshed spec is stored as a candidate awaiting "openapi-mcp cache promote"',
     );
+    const overBudget = candidateBudgetWarning(processed.spec, opts);
+    if (overBudget !== undefined) {
+      warnings.push(overBudget);
+    }
     const baseline = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
     return finish(baseline, opts, warnings, {
       contentHash: cached.meta.sourceContentHash,
