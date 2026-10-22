@@ -73,7 +73,7 @@ const typeSet = (value: unknown): readonly string[] | undefined => {
     return [value];
   }
   if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
-    return value as string[];
+    return value;
   }
   return undefined;
 };

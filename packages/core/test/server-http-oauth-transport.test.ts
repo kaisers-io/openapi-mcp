@@ -112,7 +112,9 @@ const start = async (port: number, served = snapshot): Promise<Running> => {
     },
     guard: { allowedOrigins: new Set(), allowedHost: oauth.publicHost, oauth },
     port,
-    onError: (error) => errors.push(error.message),
+    onError: (error) => {
+      errors.push(error.message);
+    },
   });
   await entry.server.listen();
   running.push(entry);

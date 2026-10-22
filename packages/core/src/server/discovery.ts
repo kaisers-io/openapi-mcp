@@ -119,7 +119,7 @@ export const buildDiscoveryTools = (operations: readonly SnapshotTool[]): Snapsh
   discoveryTool(SEARCH_TOOL_NAME, 'search', SEARCH_INPUT_SCHEMA, {
     description:
       "Search this API's operations by keyword. Returns operation names (best match first) to pass to describe_operation and call_operation. Only operations this server exposes are searchable.",
-    inputSchema: z.toJSONSchema(SEARCH_INPUT_SCHEMA) as Record<string, unknown>,
+    inputSchema: z.toJSONSchema(SEARCH_INPUT_SCHEMA),
     outputSchema: SEARCH_OUTPUT_SCHEMA,
     // Reads the in-memory index only; it never reaches the API.
     annotations: { readOnlyHint: true, openWorldHint: false },
@@ -127,7 +127,7 @@ export const buildDiscoveryTools = (operations: readonly SnapshotTool[]): Snapsh
   discoveryTool(DESCRIBE_TOOL_NAME, 'describe', DESCRIBE_INPUT_SCHEMA, {
     description:
       "Return one operation's full definition: its description, inputSchema (the shape of call_operation's `arguments`), outputSchema and annotations.",
-    inputSchema: z.toJSONSchema(DESCRIBE_INPUT_SCHEMA) as Record<string, unknown>,
+    inputSchema: z.toJSONSchema(DESCRIBE_INPUT_SCHEMA),
     outputSchema: DESCRIBE_OUTPUT_SCHEMA,
     annotations: { readOnlyHint: true, openWorldHint: false },
   }),

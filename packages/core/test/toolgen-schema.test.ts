@@ -1091,8 +1091,7 @@ describe('convertSchema — nullable and single-member allOf idioms (#41)', () =
 // used only in request mode and only when the branches are disjoint by
 // enforced keywords; otherwise the inclusive union keeps every tool callable.
 describe('convertSchema — oneOf exclusivity (#43, D12)', () => {
-  const wireOf = (schema: z.ZodType): Record<string, unknown> =>
-    z.toJSONSchema(schema) as Record<string, unknown>;
+  const wireOf = (schema: z.ZodType): Record<string, unknown> => z.toJSONSchema(schema);
 
   const card = {
     type: 'object',

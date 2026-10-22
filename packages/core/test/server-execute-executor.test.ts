@@ -859,7 +859,9 @@ describe('createExecutor — upstream connection reuse', () => {
     server.on('connection', (socket: Socket) => {
       connections += 1;
       sockets.add(socket);
-      socket.on('close', () => sockets.delete(socket));
+      socket.on('close', () => {
+        sockets.delete(socket);
+      });
     });
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', resolve);

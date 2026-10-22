@@ -4,7 +4,6 @@ import type { JsonWebKey, KeyObject } from 'node:crypto';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { promisify } from 'node:util';
 import { fetch as undiciFetch } from 'undici';
 import type { PinnedDeps } from '../../src/index.ts';
 
@@ -174,7 +173,6 @@ export const startIssuer = async (
   await once(server, 'listening');
   const { port } = server.address() as AddressInfo;
   issuer = `http://127.0.0.1:${String(port)}${path}`;
-  const closeServer = promisify(server.close.bind(server));
   return {
     issuer,
     port,
@@ -189,7 +187,9 @@ export const startIssuer = async (
     metadataPaths: () => seenMetadata,
     close: async () => {
       server.closeAllConnections();
-      await closeServer();
+      // 'close' fires once every connection is gone; once() rejects on 'error'
+      server.close();
+      await once(server, 'close');
     },
   };
 };

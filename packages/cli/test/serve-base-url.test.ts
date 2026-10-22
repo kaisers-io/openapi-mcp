@@ -142,10 +142,9 @@ describe('resolveHttpConfig', () => {
   const ctxWith = (env: Record<string, string>): CliContext => ({ env }) as unknown as CliContext;
   const command = (
     portSource: 'cli' | 'default' = 'default',
-  ): Parameters<typeof resolveHttpConfig>[0] =>
-    ({
-      getOptionValueSource: (name: string) => (name === 'port' ? portSource : undefined),
-    }) as unknown as Parameters<typeof resolveHttpConfig>[0];
+  ): Parameters<typeof resolveHttpConfig>[0] => ({
+    getOptionValueSource: (name: string) => (name === 'port' ? portSource : undefined),
+  });
   const opts = (extra: Partial<ServeCmdOpts>): ServeCmdOpts =>
     ({ port: '3044', httpAuth: 'static', ...extra }) as ServeCmdOpts;
 

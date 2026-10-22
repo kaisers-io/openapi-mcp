@@ -337,7 +337,7 @@ describe('dereference — memoization (issue #89)', () => {
       B: { left: { $ref: '#/C' }, right: { $ref: '#/C' } },
       C: { back: { $ref: '#/B' }, self: { $ref: '#/C' } },
     };
-    const out = dereference(doc) as Record<string, unknown>;
+    const out = dereference(doc);
     // The top-level B is a plain key, not a $ref in progress, so the walk
     // from it expands B once more inside C before both close
     const expandedC = {
@@ -355,7 +355,7 @@ describe('dereference — memoization (issue #89)', () => {
       c: { inner: { $ref: '#/b' } },
       node: { next: { $ref: '#/node' } },
     };
-    const out = dereference(doc) as Record<string, unknown>;
+    const out = dereference(doc);
     expect(out['a']).toEqual({ inner: { $ref: '#/b' } });
     expect(out['node']).toEqual({ next: { next: { $ref: '#/node' } } });
   });

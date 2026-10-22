@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildTools, MAX_CONVERT_DEPTH, SYSTEM_HEADERS } from '../src/index.ts';
-import type { HttpMethod, NamedOperation } from '../src/index.ts';
+import type { NamedOperation } from '../src/index.ts';
 
 const named = (
   toolName: string,
@@ -9,7 +9,7 @@ const named = (
 ): NamedOperation => ({
   toolName,
   operation: {
-    method: 'post' as HttpMethod,
+    method: 'post',
     path: '/x',
     tags: [],
     deprecated: false,
@@ -246,7 +246,7 @@ describe('buildTools — defaultResponseIsError (#72)', () => {
   const opWith = (responses: Record<string, unknown>): NamedOperation => ({
     toolName: 'getCharge',
     operation: {
-      method: 'get' as HttpMethod,
+      method: 'get',
       path: '/charges',
       tags: [],
       deprecated: false,
@@ -284,7 +284,7 @@ describe('buildTools — per-build memoization (issue #90)', () => {
   const returning = (toolName: string, schema: Record<string, unknown>): NamedOperation => ({
     toolName,
     operation: {
-      method: 'get' as HttpMethod,
+      method: 'get',
       path: `/${toolName}`,
       tags: [],
       deprecated: false,
@@ -315,7 +315,7 @@ describe('buildTools — per-build memoization (issue #90)', () => {
   it('produces exactly what converting each operation on its own produces', () => {
     const operations = [
       returning('a', shared),
-      named('b', [{ name: 'q', in: 'query', schema: shared['properties'] as never }], {
+      named('b', [{ name: 'q', in: 'query', schema: shared['properties'] }], {
         required: true,
         content: { 'application/json': { schema: shared } },
       }),

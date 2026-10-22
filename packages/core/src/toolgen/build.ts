@@ -116,11 +116,7 @@ const buildToolEntry = (
       reason: `input schema cannot be represented as JSON Schema: ${wireResult.error}`,
     };
   }
-  const pagination = detectPagination(
-    named.operation,
-    layout.ok.mapper,
-    wireResult.ok as Record<string, unknown>,
-  );
+  const pagination = detectPagination(named.operation, layout.ok.mapper, wireResult.ok);
   const { outputSchema, withheld } = explainOutputSchema(named.operation, openapiVersion, {
     defaultResponseIsError,
     pagination: pagination !== undefined,

@@ -48,7 +48,8 @@ const opts = {
   allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
 };
 
-const serving = (body: string | 'fail' | 304): SpecFetcher =>
+// A spec body, 304 (not modified), or 'fail' (the fetch rejects).
+const serving = (body: string | 304): SpecFetcher =>
   (() => {
     if (body === 'fail') {
       return Promise.reject(new Error('network down'));
@@ -60,11 +61,7 @@ const serving = (body: string | 'fail' | 304): SpecFetcher =>
     );
   }) as unknown as SpecFetcher;
 
-const runAt = (
-  fs: MemoryCacheFs,
-  nowMs: number,
-  body: string | 'fail' | 304,
-): Promise<SpecPipelineResult> =>
+const runAt = (fs: MemoryCacheFs, nowMs: number, body: string | 304): Promise<SpecPipelineResult> =>
   runSpecPipeline(
     'https://api.example.com/openapi.json',
     { ...opts, nowMs },

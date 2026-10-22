@@ -303,7 +303,7 @@ const conflictingCombination = (
     const admitted = version === '3.0' && node['nullable'] === true ? [...types, 'null'] : types;
     const enumValues = Array.isArray(node['enum']) ? node['enum'] : [];
     const values: readonly unknown[] = determiner === 'enum' ? enumValues : [node['const']];
-    return values.every((value) => admitted.some((name) => valueMatchesType(value, name as string)))
+    return values.every((value) => admitted.some((name) => valueMatchesType(value, name)))
       ? undefined
       : `"${determiner}" values incompatible with the sibling type ${JSON.stringify(type)}`;
   }
@@ -813,7 +813,7 @@ const declaredTypes = (node: Record<string, unknown>): readonly string[] | undef
     return [type];
   }
   if (Array.isArray(type) && type.every((name) => typeof name === 'string')) {
-    return type as string[];
+    return type;
   }
   // A typeless node with non-empty properties converts as an object.
   if (type === undefined && Object.keys(propertiesOf(node)).length > 0) {
