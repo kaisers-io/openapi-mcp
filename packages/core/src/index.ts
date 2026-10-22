@@ -10,7 +10,7 @@ export {
 } from './errors.ts';
 export type { ExitCode, RenderedError } from './errors.ts';
 export { createRedactor } from './redact.ts';
-export type { Redactor } from './redact.ts';
+export type { Redactor, RuntimeRedactor } from './redact.ts';
 export {
   MAX_AGE_DURATION_MS,
   MAX_DURATION_MS,
@@ -50,6 +50,16 @@ export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
 export { assertAllowedRedirectTarget, classifyAddress } from './http/egress.ts';
 export type { AddressClass, DnsLookup, EgressPolicyOptions } from './http/egress.ts';
 export { pinnedRequest } from './http/pinned-dispatcher.ts';
+export {
+  clientSecretBasic,
+  createClientCredentialsSource,
+} from './http/oauth-client-credentials.ts';
+export type {
+  ClientAuthMethod,
+  ClientCredentialsConfig,
+  TokenResult,
+  TokenSource,
+} from './http/oauth-client-credentials.ts';
 export { createPinnedAgentPool } from './http/agent-pool.ts';
 export type { PinnedAgentPool, PinnedAgentPoolOptions } from './http/agent-pool.ts';
 export type {
@@ -97,6 +107,18 @@ export type {
   OmittedOperation,
   OperationRecord,
 } from './spec/normalize.ts';
+export {
+  describeSecurityScheme,
+  summarizeSecurity,
+  unsatisfiedSecurityWarnings,
+  unsupportedReason,
+} from './spec/security-hints.ts';
+export type { ConfiguredCredentials, SchemeUsage } from './spec/security-hints.ts';
+export type {
+  ClientCredentialsFlow,
+  SecurityRequirement,
+  SecurityScheme,
+} from './spec/security.ts';
 export { runSpecPipeline } from './spec/pipeline.ts';
 export type {
   CacheLockState,
@@ -227,22 +249,26 @@ export {
   createExecutor,
   createCallStats,
   createMetaExecutor,
+  createOAuthResourceServer,
   createRateLimiter,
   formatCallLog,
   DEFAULT_RATE_LIMIT,
   DESCRIBE_TOOL_NAME,
   discoverApprovalWarning,
+  evaluateHostOrigin,
   evaluateRequest,
   extractBearerToken,
   isAuthorized,
   isValidBearerToken,
   markSecretScanned,
   META_TOOL_NAME,
+  parseJwks,
   resolveToolMode,
   SEARCH_TOOL_NAME,
   structuredOutcome,
   textOutcome,
   TOOL_MODES,
+  verifyJwt,
 } from './server/index.ts';
 export type {
   BearerCheck,
@@ -255,9 +281,17 @@ export type {
   ExecutorConfig,
   ExecutorDeps,
   GuardDecision,
+  HostOriginOptions,
   IncomingHeaders,
+  JwtFailure,
+  JwtVerifyResult,
+  KeySet,
   MetaExecutor,
   MetaSummary,
+  OAuthDecision,
+  OAuthDeps,
+  OAuthResourceServer,
+  OAuthResourceServerConfig,
   RateLimiter,
   RateLimiterOptions,
   RequestedToolMode,
@@ -272,6 +306,7 @@ export type {
   ToolExecutor,
   ToolMode,
   UpstreamExecutor,
+  VerifiedAccessToken,
   WireTool,
 } from './server/index.ts';
 export { serveStdioSession } from './server/sdk/stdio.ts';
@@ -280,6 +315,7 @@ export { createProtocolSession } from './server/sdk/protocol.ts';
 export type { ProtocolSessionOptions } from './server/sdk/protocol.ts';
 export { createStreamableHttpServer } from './server/sdk/streamable-http.ts';
 export type {
+  OAuthGuardOptions,
   StreamableHttpOptions,
   StreamableHttpServerHandle,
 } from './server/sdk/streamable-http.ts';

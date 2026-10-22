@@ -658,6 +658,16 @@
         // keeping it visible in the one place it's enforced.
         "max-lines": "off"
       }
+    },
+    {
+      "files": ["packages/core/src/index.ts"],
+      "rules": {
+        // Off: index.ts is the package's public barrel -- only re-exports,
+        // one name per line as the formatter lays them out. Its length
+        // tracks the size of the public API, not the complexity of any code,
+        // and splitting it would only add a second barrel to keep in sync.
+        "max-lines": "off"
+      }
     }
   ]
 }
