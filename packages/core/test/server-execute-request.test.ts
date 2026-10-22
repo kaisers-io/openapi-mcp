@@ -90,6 +90,27 @@ describe('buildRequest — path/simple', () => {
     },
   );
 
+  it.each([['.%2e'], ['%2e.'], ['.%2E'], ['%2E.'], ['%2e'], ['%2E'], ['a.%2eb'], ['x%2e.y']])(
+    'rejects a mixed-encoded dot segment (double-decodes to . or ..): %s',
+    (petId) => {
+      const message = err(buildRequest(pathMapper(), 'get', '/pets/{petId}', { petId }, budgets));
+      // Names the encoded dot, so a caller with a legitimate value (the
+      // deliberate a.%2eb false positive) can tell why it was refused, and
+      // says that nothing reached the upstream
+      expect(message).toBe(
+        'path parameter "petId" was refused: it contains a path separator or dot-segment (/, \\, . or .., or an encoded slash or dot such as %2F, %5C or %2E). No request was sent; pass the value without them',
+      );
+    },
+  );
+
+  it.each([['v1..v2'], ['file.tar.gz'], ['a%2eb'], ['...']])(
+    'still accepts a leaf whose dots cannot form an encoded dot segment: %s',
+    (petId) => {
+      const built = buildRequest(pathMapper(), 'get', '/pets/{petId}', { petId }, budgets);
+      expect(ok(built).pathname).toMatch(/^\/pets\//u);
+    },
+  );
+
   it('rejects a traversal element inside an array path leaf', () => {
     const message = err(
       buildRequest(pathMapper(), 'get', '/pets/{petId}', { petId: ['ok', '../admin'] }, budgets),
@@ -267,6 +288,25 @@ describe('buildRequest — header/simple', () => {
   it('lowercases the header name', () => {
     const built = ok(buildRequest(headerMapper(false), 'get', '/x', { 'x-trace': 'v' }, budgets));
     expect(Object.keys(built.headers)).toEqual(['x-trace']);
+  });
+
+  it.each([['price 5€'], ['naïve ✓'], ['日本'], ['emoji 😀']])(
+    'rejects a header value with a character above U+00FF with a specific argument error: %s',
+    (value) => {
+      const message = err(
+        buildRequest(headerMapper(false), 'get', '/x', { 'x-trace': value }, budgets),
+      );
+      expect(message).toBe(
+        'header parameter "X-Trace" was refused: it contains a character above U+00FF, which an HTTP header cannot carry. No request was sent; use Latin-1 text only (ASCII is safest)',
+      );
+    },
+  );
+
+  it('still accepts Latin-1 header characters (U+0080..U+00FF are valid header bytes)', () => {
+    const built = ok(
+      buildRequest(headerMapper(false), 'get', '/x', { 'x-trace': 'café ÿ' }, budgets),
+    );
+    expect(built.headers['x-trace']).toBe('café ÿ');
   });
 
   it('rejects a CR/LF-bearing header value', () => {

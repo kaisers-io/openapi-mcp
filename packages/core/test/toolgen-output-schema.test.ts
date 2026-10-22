@@ -257,3 +257,83 @@ describe('deriveOutputSchema — response-mode conversion (#33, #47)', () => {
     expect(validate(envelope({}))).toBe(false);
   });
 });
+
+describe('deriveOutputSchema — oneOf in responses (#43, D12)', () => {
+  it('validates a response oneOf inclusively, so a discriminator-mapping payload passes', () => {
+    const branch = (extra: string) => ({
+      type: 'object',
+      required: ['petType'],
+      properties: {
+        petType: { type: 'string' },
+        name: { type: 'string' },
+        [extra]: { type: 'boolean' },
+      },
+    });
+    const outputSchema = deriveOutputSchema(
+      op({
+        '200': {
+          content: {
+            'application/json': {
+              schema: {
+                oneOf: [branch('hunts'), branch('bark')],
+                discriminator: { propertyName: 'petType' },
+              },
+            },
+          },
+        },
+      }),
+      '3.1',
+    ) as Record<string, unknown>;
+    const validate = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+    const envelope = (value: unknown) => ({
+      status: 200,
+      contentType: 'application/json',
+      data: value,
+    });
+    expect(validate(envelope({ petType: 'dog', name: 'Rex', bark: true }))).toBe(true);
+    expect(validate(envelope({ name: 'Rex' }))).toBe(false);
+  });
+});
+
+// #72: opt-in — treat `default` as covering error statuses only.
+describe('deriveOutputSchema — defaultResponseIsError opt-in (#72)', () => {
+  const responses = {
+    '200': {
+      content: {
+        'application/json': { schema: { type: 'object', properties: { id: { type: 'string' } } } },
+      },
+    },
+    default: {
+      content: {
+        'application/json': {
+          schema: { type: 'object', properties: { error: { type: 'object' } } },
+        },
+      },
+    },
+  };
+
+  it('is unchanged without the option (no outputSchema)', () => {
+    expect(deriveOutputSchema(op(responses), '3.1')).toBeUndefined();
+    const off = deriveOutputSchema(op(responses), '3.1', { defaultResponseIsError: false });
+    expect(off).toBeUndefined();
+  });
+
+  it('derives one 200 branch with the option', () => {
+    const schema = deriveOutputSchema(op(responses), '3.1', { defaultResponseIsError: true }) as {
+      oneOf: { properties: { status: { const: number } } }[];
+    };
+    expect(schema.oneOf).toHaveLength(1);
+    expect(schema.oneOf[0]?.properties.status.const).toBe(200);
+  });
+
+  it('still disables the outputSchema for a 2XX range key, with or without the option', () => {
+    const ranged = op({ ...responses, '2XX': { description: 'any success' } });
+    expect(deriveOutputSchema(ranged, '3.1', { defaultResponseIsError: true })).toBeUndefined();
+  });
+
+  it('still returns nothing when only `default` is documented', () => {
+    const onlyDefault = op({ default: responses.default });
+    const schema = deriveOutputSchema(onlyDefault, '3.1', { defaultResponseIsError: true });
+    expect(schema).toBeUndefined();
+  });
+});

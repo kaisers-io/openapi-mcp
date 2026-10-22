@@ -64,8 +64,15 @@ const budgets: OutboundBudgets = {
   maxBodyBytes: 65_536,
 };
 
-const buildToolSnapshot = (ops: readonly NamedOperation[]): ServerSnapshot => {
-  const built = buildTools(ops, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
+const buildToolSnapshot = (
+  ops: readonly NamedOperation[],
+  defaultResponseIsError = false,
+): ServerSnapshot => {
+  const built = buildTools(ops, {
+    reservedHeaders: SYSTEM_HEADERS,
+    openapiVersion: '3.1',
+    defaultResponseIsError,
+  });
   return buildSnapshot(built, {
     spec: { title: 't', specVersion: '1', omitted: [] },
     contentHash: 'h',
@@ -597,6 +604,33 @@ describe('createExecutor — cancellation and redaction', () => {
     expect(outcome.isError).toBe(true);
     expect(outcome.content[0]?.text).not.toContain(secret);
   });
+
+  // Issue #58, end to end: the redactor is built from the header VALUE
+  // exactly as serve.ts registers it (`Bearer <token>`), the header really
+  // goes out, and the upstream echoes only the bare token.
+  it('redacts the bare token of a `Bearer <token>` header echoed in an upstream error body', async () => {
+    const token = 'example-token-not-a-secret';
+    const headerValue = `Bearer ${token}`;
+    const snapshot = buildToolSnapshot([pingOp]);
+    const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() =>
+      textResponse(500, `{"error":"invalid api key ${token}"}`),
+    );
+    const executor = createExecutor(
+      baseConfig({
+        secretHeaders: [{ name: 'Authorization', value: headerValue, envVar: 'API_TOKEN' }],
+        redactor: createRedactor([headerValue]),
+        validators: validatorsFor(snapshot),
+      }),
+      deps,
+    );
+    const outcome = await executor(tool, {}, freshSignal());
+    expect(calls[0]?.init.headers?.['authorization']).toBe(headerValue);
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toBe(
+      'upstream request failed with status 500: {"error":"invalid api key [redacted]"}',
+    );
+  });
 });
 
 describe('createExecutor — fail-closed wiring', () => {
@@ -764,5 +798,59 @@ describe('createExecutor — trust propagation into pinnedRequest', () => {
     const opts = vi.mocked(pinnedRequest).mock.calls.at(-1)?.[1];
     expect(opts?.baseTrusted).toBe(false);
     expect(opts?.allowPrivateNetwork).toBe(true);
+  });
+});
+
+// #72: end to end with --default-response-is-error semantics.
+describe('createExecutor — default response treated as error (#72)', () => {
+  const chargeOp: NamedOperation = {
+    toolName: 'getCharge',
+    operation: {
+      method: 'get',
+      path: '/charges',
+      tags: [],
+      deprecated: false,
+      parameters: [],
+      responses: {
+        '200': {
+          content: {
+            'application/json': {
+              schema: { type: 'object', properties: { id: { type: 'string' } } },
+            },
+          },
+        },
+        default: { description: 'error' },
+      },
+    },
+  };
+
+  const call = (response: Response) => {
+    const snapshot = buildToolSnapshot([chargeOp], true);
+    const tool = snapshot.toolsByName['getCharge'] as SnapshotTool;
+    const { deps } = recordingTransport(() => response);
+    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
+    return executor(tool, {}, freshSignal());
+  };
+
+  it('returns structuredContent for the documented 200', async () => {
+    const outcome = await call(jsonResponse(200, { id: 'ch_1' }));
+    expect(outcome.isError).toBe(false);
+    expect(outcome.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: 'ch_1' },
+    });
+  });
+
+  it('fails closed on an undocumented 201, naming the flag', async () => {
+    const outcome = await call(jsonResponse(201, { id: 'ch_1' }));
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toContain('--default-response-is-error');
+  });
+
+  it('keeps the HTTP error path for a 4xx', async () => {
+    const outcome = await call(jsonResponse(404, { error: {} }));
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toContain('404');
   });
 });
