@@ -322,15 +322,20 @@ const mapNoSchemaSuccess = (
   return textOutcome(truncated, false);
 };
 
-const mapSchemaSuccess = (
-  status: number,
-  contentType: string | undefined,
-  bodyBytes: Uint8Array,
-  outputSchema: Record<string, unknown>,
-  validator: EnvelopeValidator,
-  redactor: Redactor,
-  undeclaredSuccessHint: string | undefined,
-): ToolCallOutcome => {
+// The mapSchemaSuccess helper takes one options object (the caller's MapResponseOptions
+// plus the narrowed response fields) rather than positional parameters, so
+// options added later cannot be passed in the wrong slot.
+type SchemaSuccessOptions = Omit<MapResponseOptions, 'outcome' | 'outputSchema' | 'validator'> & {
+  status: number;
+  contentType: string | undefined;
+  bodyBytes: Uint8Array;
+  outputSchema: Record<string, unknown>;
+  validator: EnvelopeValidator;
+};
+
+const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
+  const { status, contentType, bodyBytes, outputSchema, validator, redactor } = opts;
+  const { undeclaredSuccessHint } = opts;
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
   if (
@@ -340,11 +345,15 @@ const mapSchemaSuccess = (
   ) {
     // An undocumented success STATUS under the operator's "default = errors
     // only" assumption: still fail closed (the declared outputSchema must
-    // never be violated), but say why, naming the flag. The hint is
-    // operator-supplied CLI text, never upstream data.
+    // never be violated), but say why, naming the flag. Decision D13: the
+    // upstream REPORTED SUCCESS, so the message must not read like a plain
+    // failure — an agent that retries a POST here could apply it twice. The
+    // hint is operator-supplied CLI text, never upstream data.
     return textOutcome(
-      `upstream response status ${status} is not a documented success status of this operation; ` +
-        `its output schema assumes the spec's "default" response covers errors only (${undeclaredSuccessHint})`,
+      `the upstream reported success (status ${status}), so the request was likely applied; ` +
+        'do not retry it blindly. No structured result is returned: this status is not documented ' +
+        `for the operation, and its output schema assumes the spec's "default" response covers ` +
+        `errors only (${undeclaredSuccessHint})`,
       true,
     );
   }
@@ -414,13 +423,12 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
       true,
     );
   }
-  return mapSchemaSuccess(
+  return mapSchemaSuccess({
+    ...opts,
     status,
     contentType,
     bodyBytes,
-    opts.outputSchema,
-    opts.validator,
-    opts.redactor,
-    opts.undeclaredSuccessHint,
-  );
+    outputSchema: opts.outputSchema,
+    validator: opts.validator,
+  });
 };

@@ -75,8 +75,14 @@ Notes:
   success status. With it, only the explicitly documented `2xx` responses form the output
   schema; a `2XX` range key still disables it. An undocumented `2xx` at runtime then
   returns a tool error naming the flag — never non-conforming structured output. `tools`
-  marks the affected tools with `[output schema assumes default = error]` (JSON:
-  `outputSchemaAssumesDefaultIsError: true`).
+  marks the affected tools (see [`tools`](#tools)).
+
+  **Trade-off.** The flag buys structured output at the cost of a possible false error: when
+  the upstream answers with an undocumented success status (say `201` or `202` where only
+  `200` is documented), the call is reported as a tool error even though the upstream
+  action happened. The error text says so: the upstream reported success (status N), the
+  request was likely applied, and the caller should not retry it blindly. For write-heavy
+  APIs whose specs under-document success statuses, leave the flag off.
 
 Example:
 
@@ -123,6 +129,15 @@ API-request or transport flags (no `--base-url`, `--header*`, `--max-response-by
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 
 Example:
+
+Output: one line per tool. A tool whose output schema exists only because of
+`--default-response-is-error` ends with `[output schema assumes default = error]`. With the
+global `--json` flag each tool is an object; besides `name`, `method`, `path`, `summary` and
+`deprecated` it carries `outputSchema` (`true`/`false`, JSON only) and, for the tools the text
+marker flags, `outputSchemaAssumesDefaultIsError: true`. A tool whose output schema was
+withheld because a response `pattern` has nested quantifiers (see
+[security.md](security.md#response-envelope-and-redacted-errors)) carries
+`outputSchemaWithheld` with the sentence its description starts with.
 
 ```bash
 openapi-mcp tools --spec https://api.example.com/openapi.json --allow "read*"

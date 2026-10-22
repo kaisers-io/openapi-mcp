@@ -26,6 +26,9 @@ type ToolRow = {
   outputSchema: boolean;
   // The outputSchema exists only because of --default-response-is-error.
   outputSchemaAssumesDefaultIsError?: true;
+  // Why there is no outputSchema, when the tool description tells the agent
+  // (#39: a response pattern with nested quantifiers).
+  outputSchemaWithheld?: string;
 };
 
 const toToolRow = (generated: GeneratedTool): ToolRow => ({
@@ -38,6 +41,9 @@ const toToolRow = (generated: GeneratedTool): ToolRow => ({
   ...(generated.outputSchemaAssumesDefaultIsError === true
     ? { outputSchemaAssumesDefaultIsError: true as const }
     : {}),
+  ...(generated.outputSchemaWithheld === undefined
+    ? {}
+    : { outputSchemaWithheld: generated.outputSchemaWithheld }),
 });
 
 export const registerTools: CommandRegistrar = (program, ctx, state) => {

@@ -624,6 +624,15 @@ describe('mapResponse — undocumented 2xx under the default-is-error assumption
     expect(text).toContain(hint);
   });
 
+  it('says the upstream reported success and warns against a blind retry (D13)', () => {
+    const outcome = response(201, 'application/json', '{"id":1}');
+    const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
+    const text = isError(mapResponse(opts));
+    expect(text).toMatch(/^the upstream reported success \(status 201\)/u);
+    expect(text).toContain('likely applied');
+    expect(text).toContain('do not retry it blindly');
+  });
+
   it('keeps the existing message without the hint', () => {
     const outcome = response(201, 'application/json', '{"id":1}');
     const text = isError(mapResponse(defaultOpts({ outcome, outputSchema, validator })));

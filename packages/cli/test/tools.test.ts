@@ -733,3 +733,20 @@ describe('tools command — --default-response-is-error (#72)', () => {
     expect(text).toContain('[output schema assumes default = error]');
   });
 });
+
+// #39: a withheld output schema is reported in --json output.
+describe('tools command — withheld output schema (#39)', () => {
+  it('reports why a response pattern with nested quantifiers left the tool without one', async () => {
+    const { lines, ctx } = fileCtx();
+    const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'unsafe-pattern.json'];
+    const code = await run(ctx, argv);
+    expect(code).toBe(EXIT.OK);
+    const [row] = (
+      JSON.parse(lines[0]!) as {
+        data: { tools: { name: string; outputSchema: boolean; outputSchemaWithheld?: string }[] };
+      }
+    ).data.tools;
+    expect(row).toMatchObject({ name: 'listCodes', outputSchema: false });
+    expect(row?.outputSchemaWithheld).toMatch(/nested quantifiers/u);
+  });
+});
