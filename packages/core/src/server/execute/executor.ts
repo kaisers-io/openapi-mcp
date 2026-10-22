@@ -16,7 +16,13 @@ import { mapResponse } from './response.ts';
 import type { EnvelopeValidator, PageInput } from './response.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
 import type { PaginationPlan } from '../../toolgen/pagination.ts';
-import { isRetryableMethod, MAX_RETRIES, realSleep, withRetries } from './retry.ts';
+import {
+  isRetryableMethod,
+  MAX_RETRIES,
+  realSleep,
+  retriesConnectionErrors,
+  withRetries,
+} from './retry.ts';
 import type { RetryDeps } from './retry.ts';
 import { createSlotQueue } from './slots.ts';
 
@@ -317,12 +323,14 @@ const runUpstreamCall = async (
     (mapping) =>
       mapping.destination === 'header' && mapping.wireName.toLowerCase() === 'idempotency-key',
   );
-  if (retries > 0 && idempotencyKeyField && (method === 'POST' || method === 'PATCH')) {
+  const keyed = retries > 0 && idempotencyKeyField && (method === 'POST' || method === 'PATCH');
+  if (keyed) {
     // ONE key per tool call, identical on every attempt — the caller's own
     // value when it passed one, else a fresh UUID — so the upstream can
     // deduplicate a retried write. Added before the final budget check.
     headers.sameOriginHeaders['idempotency-key'] ??= randomUUID();
   }
+  const idempotencyKey = keyed ? headers.sameOriginHeaders['idempotency-key'] : undefined;
   if (overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)) {
     return isError('the final request exceeds the outbound resource budget');
   }
@@ -342,12 +350,13 @@ const runUpstreamCall = async (
     {
       retries: isRetryableMethod(method, idempotencyKeyField) ? retries : 0,
       timeoutMs,
+      connectionErrors: retriesConnectionErrors(method),
       signal,
     },
     retryDeps,
   );
   const [firstSecretHeader] = config.secretHeaders;
-  return mapResponse({
+  const result = mapResponse({
     outcome,
     validator,
     outputSchema: tool.wireTool.outputSchema,
@@ -373,6 +382,12 @@ const runUpstreamCall = async (
           },
         }),
   });
+  // The key the write was sent with, so a caller whose call still failed
+  // (e.g. a timeout after a retry) can repeat it with the SAME key and let
+  // the upstream deduplicate, instead of a fresh call getting a new key.
+  return idempotencyKey === undefined
+    ? result
+    : { ...result, meta: { ...result.meta, 'openapi-mcp/idempotencyKey': idempotencyKey } };
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {

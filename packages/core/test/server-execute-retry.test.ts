@@ -33,7 +33,7 @@ describe('withRetries', () => {
         attempts.push(remainingMs);
         return Promise.resolve(busy);
       },
-      { retries: 2, timeoutMs: 1000, signal: new AbortController().signal },
+      { retries: 2, timeoutMs: 1000, connectionErrors: true, signal: new AbortController().signal },
       {
         now: () => clock,
         random: () => 0.5,
@@ -57,7 +57,7 @@ describe('withRetries', () => {
         clock += 100;
         return Promise.resolve(busy);
       },
-      { retries: 2, timeoutMs: 1000, signal: new AbortController().signal },
+      { retries: 2, timeoutMs: 1000, connectionErrors: true, signal: new AbortController().signal },
       {
         now: () => clock,
         random: () => 0,

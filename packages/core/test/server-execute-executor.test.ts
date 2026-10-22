@@ -1641,6 +1641,30 @@ describe('createExecutor — optional retries for retry-safe requests', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('never retries DELETE after an ambiguous connection error, but does after a 503', async () => {
+    const deleteOp: NamedOperation = {
+      ...pingOp,
+      toolName: 'deleteThing',
+      operation: { ...pingOp.operation, method: 'delete' },
+    };
+    // The upstream may have deleted the resource and lost the connection
+    // while answering: a retry would then report 404 for a successful delete.
+    const reset = scripted(['reset', 200]);
+    const failed = await run(deleteOp, reset.deps, 2);
+    expect(failed.isError).toBe(true);
+    expect(reset.calls).toHaveLength(1);
+    const busy = scripted([503, 200]);
+    const outcome = await run(deleteOp, busy.deps, 2);
+    expect(outcome.isError).toBe(false);
+    expect(busy.calls).toHaveLength(2);
+  });
+
+  it('ignores Retry-After on a 502/504 (honoured only on 429/503)', async () => {
+    const { deps, sleeps } = scripted([502, 200], { 'retry-after': '3' });
+    await run(pingOp, deps, 1);
+    expect(sleeps).toEqual([125]);
+  });
+
   it.each([400, 401, 403, 404, 409, 500, 501])('never retries a %i', async (status) => {
     const { deps, calls } = scripted([status, 200]);
     await run(pingOp, deps, 3);
@@ -1662,6 +1686,17 @@ describe('createExecutor — optional retries for retry-safe requests', () => {
     const keys = calls.map((call) => call.init.headers?.['idempotency-key']);
     expect(keys[0]).toMatch(/^[\da-f-]{36}$/u);
     expect(new Set(keys).size).toBe(1);
+    // Echoed, so the caller can repeat a failed call with the same key.
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toBe(keys[0]);
+  });
+
+  it('echoes the key in _meta when the call finally fails too', async () => {
+    const { deps, calls } = scripted([503, 503]);
+    const outcome = await run(idemOp, deps, 1, { sku: 'a' });
+    expect(outcome.isError).toBe(true);
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toBe(
+      calls[0]?.init.headers?.['idempotency-key'],
+    );
   });
 
   it("keeps the caller's own Idempotency-Key on every attempt", async () => {
@@ -1679,8 +1714,9 @@ describe('createExecutor — optional retries for retry-safe requests', () => {
 
   it('does not add an Idempotency-Key when retries are off', async () => {
     const { deps, calls } = scripted([201]);
-    await run(idemOp, deps, 0, { sku: 'a' });
+    const outcome = await run(idemOp, deps, 0, { sku: 'a' });
     expect(calls[0]?.init.headers?.['idempotency-key']).toBeUndefined();
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toBeUndefined();
   });
 
   it('waits for a 429 Retry-After instead of the jittered delay', async () => {
