@@ -129,7 +129,7 @@ describe('validateOpenApiDocument', () => {
 describe('precompiled meta-schema validators (issue #76)', () => {
   it('are exactly what the generator produces from the installed dependencies', () => {
     // Fails after a bump of ajv, ajv-formats, ajv-draft-04 or the schema
-    // package until `node packages/core/src/spec/generate-validators.ts` is run
+    // package until `node scripts/generate-validators.ts` is run
     for (const version of ['3.0', '3.1'] as const) {
       const committed = readFileSync(
         new URL(`../src/spec/generated/${GENERATED_FILES[version]}`, import.meta.url),

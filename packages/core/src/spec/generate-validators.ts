@@ -7,13 +7,16 @@
 // Regenerate after bumping ajv, ajv-formats, ajv-draft-04 or
 // @seriousme/openapi-schema-validator:
 //
-//   node packages/core/src/spec/generate-validators.ts
+//   node scripts/generate-validators.ts
+//
+// The write step lives in scripts/, outside src: it never runs in tests (so
+// it would only drag this file under the coverage floor), and it can never be
+// reached from the bundled CLI, where `import.meta.url` would point at dist.
 //
 // validate.test.ts fails while the committed files differ from what this
 // produces, so a dependency bump cannot silently leave them stale.
 
 import { createRequire } from 'node:module';
-import { writeFile } from 'node:fs/promises';
 import type { Options, ValidateFunction } from 'ajv';
 import type { OpenapiVersion } from './validate.ts';
 
@@ -63,12 +66,3 @@ export const generateValidator = (version: OpenapiVersion): string => {
   ajv.addFormat('media-range', true);
   return `${HEADER}${standaloneCode(ajv, ajv.compile(schema))}\n`;
 };
-
-if (import.meta.main) {
-  for (const version of ['3.0', '3.1'] as const) {
-    await writeFile(
-      new URL(`generated/${GENERATED_FILES[version]}`, import.meta.url),
-      generateValidator(version),
-    );
-  }
-}
