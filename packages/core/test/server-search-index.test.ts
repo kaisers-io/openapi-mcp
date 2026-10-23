@@ -11,8 +11,9 @@ import {
 } from '../src/index.ts';
 import type { NamedOperation, ServerSnapshot, ToolCallOutcome } from '../src/index.ts';
 
-// The search_operations tool (issue #38): deterministic BM25 ranking over the exposed
-// operations, bounded input, bounded and sanitized output.
+// The search_operations tool (issue kaisers-io/openapi-mcp-archive#38): deterministic
+// BM25 ranking over the exposed operations, bounded input, bounded and
+// sanitized output.
 
 const PIPELINE = {
   spec: { title: 't', specVersion: '1', omitted: [] },

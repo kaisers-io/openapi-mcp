@@ -8,10 +8,11 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CLI_ENTRY, stopChild } from './cli-subprocess.ts';
 
-// End-to-end proof for OAuth2 client-credentials (#55): a REAL `serve`
-// subprocess against ONE local server that is both the authorization server
-// (POST /oauth/token) and the API (GET /pets, GET /whoami). The spec's
-// tokenUrl is relative, so it resolves against the API base — same origin.
+// End-to-end proof for OAuth2 client-credentials
+// (kaisers-io/openapi-mcp-archive#55): a REAL `serve` subprocess against ONE
+// local server that is both the authorization server (POST /oauth/token) and
+// the API (GET /pets, GET /whoami). The spec's tokenUrl is relative, so it
+// resolves against the API base — same origin.
 
 const CLIENT_ID = 'demo-client';
 const CLIENT_SECRET = 'example-token-not-a-secret';

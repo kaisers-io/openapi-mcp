@@ -104,8 +104,9 @@ export const fieldOf = (
     return objectFieldOf(field, schema);
   }
   const scalar = scalarKind(schema);
-  // A delimited style is only defined for an array or an object (#108), so
-  // a scalar here is form-only; a delimited OBJECT (k|v|k|v) is not decoded.
+  // A delimited style is only defined for an array or an object
+  // (kaisers-io/openapi-mcp-archive#108), so a scalar here is form-only; a
+  // delimited OBJECT (k|v|k|v) is not decoded.
   if (scalar !== undefined && style === 'form') {
     return { field, kind: scalar };
   }

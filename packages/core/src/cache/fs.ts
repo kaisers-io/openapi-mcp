@@ -23,11 +23,11 @@ export type CacheFs = {
   // rejects with a validationError once maxBytes is exceeded, before the
   // contents are ever turned into a string
   readFileTextCapped: (path: string, maxBytes: number) => Promise<string>;
-  // The same read, returning the raw bytes (#88). Optional: when present the
-  // store hashes these bytes directly instead of decoding them and hashing
-  // the re-encoded text. Fail-closed behaviour is identical either way:
-  // invalid UTF-8 changes the raw-byte hash just as decoding to U+FFFD
-  // changed the re-encoded one.
+  // The same read, returning the raw bytes (kaisers-io/openapi-mcp-archive#88).
+  // Optional: when present the store hashes these bytes directly instead of
+  // decoding them and hashing the re-encoded text. Fail-closed behaviour is
+  // identical either way: invalid UTF-8 changes the raw-byte hash just as
+  // decoding to U+FFFD changed the re-encoded one.
   readFileBytesCapped?: (path: string, maxBytes: number) => Promise<Uint8Array>;
   readDirNames: (path: string) => Promise<readonly string[]>;
   removeDir: (path: string) => Promise<void>;
@@ -39,11 +39,13 @@ export type CacheFs = {
   removeFile: (path: string) => Promise<void>;
   // The file's last-modification time in epoch ms (lstat, never following a
   // symlink). Optional: only the collection of stale lock temps needs it, and
-  // without it those are simply left in place (#88).
+  // without it those are simply left in place
+  // (kaisers-io/openapi-mcp-archive#88).
   modifiedAtMs?: (path: string) => Promise<number>;
-  // The running process, for the writer lock (#65). Optional so a fake
-  // filesystem needs none of it: without it the lock record carries no
-  // pid/hostname and a held lock is reported after a single attempt.
+  // The running process, for the writer lock
+  // (kaisers-io/openapi-mcp-archive#65). Optional so a fake filesystem needs
+  // none of it: without it the lock record carries no pid/hostname and a held
+  // lock is reported after a single attempt.
   runtime?: CacheRuntime;
 };
 

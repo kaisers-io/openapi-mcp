@@ -17,7 +17,8 @@ type Run = { status: number | null; stdout: string; stderr: string };
 // Every case below spawns a Node child (and "accepts exactly the floor" loads the whole CLI),
 // which takes far longer under CPU contention than vitest's 5 s default allows for. The test
 // budget therefore matches the child's own 30 s timeout, so a slow child fails on its own
-// result rather than on a test timeout that hides it (issue #96).
+// result rather than on a test timeout that hides it (issue
+// kaisers-io/openapi-mcp-archive#96).
 const SPAWN_BUDGET = { timeout: 30_000 } as const;
 
 const runStub = (stub: string, nodeArgs: readonly string[], args: readonly string[]): Run => {

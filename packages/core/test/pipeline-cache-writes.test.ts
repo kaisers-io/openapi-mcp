@@ -7,8 +7,9 @@ import type { CacheFs, CacheMeta, SpecPipelineDeps } from '../src/index.ts';
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
-// #75: a run whose source is byte-identical to the accepted one must not
-// rewrite the cache. These tests watch the CacheFs calls a run makes.
+// Issue kaisers-io/openapi-mcp-archive#75: a run whose source is byte-identical
+// to the accepted one must not rewrite the cache. These tests watch the CacheFs
+// calls a run makes.
 type SpecFetcher = SpecPipelineDeps['fetcher'];
 
 type Recorded = { fs: MemoryCacheFs; calls: string[] };
@@ -112,7 +113,7 @@ const sequenceFetcher = (responses: readonly { body: string; etag?: string }[]):
 
 const specUrl = 'https://api.example.com/openapi.json';
 
-describe('unchanged sources do not rewrite the cache (#75)', () => {
+describe('unchanged sources do not rewrite the cache (kaisers-io/openapi-mcp-archive#75)', () => {
   it('an unchanged file source performs no cache write and takes no lock', async () => {
     const { fs, calls } = recordingFs();
     const first = await runSpecPipeline('petstore-3.0.json', opts, deps(fs));

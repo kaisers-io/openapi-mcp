@@ -635,8 +635,8 @@ const serializeBody = (
     // always carries a contentType. Defensive, fail-closed if ever violated.
     return { error: 'the request mapper is missing a body content type' };
   }
-  // The content type is the spec's declared media type, sent verbatim
-  // (decision D5); its essence picks the encoding. buildLayout only ever
+  // The content type is the spec's declared media type, sent verbatim;
+  // its essence picks the encoding. buildLayout only ever
   // selects a well-formed JSON-family or form-urlencoded type — anything else
   // here is a broken invariant and fails closed.
   const encoding = bodyEncoding(contentType);
@@ -666,7 +666,8 @@ const serializeBody = (
     // REQUIRED body is sent even when every (optional) field is absent: it
     // falls through with the empty object, so the upstream receives `{}` (or
     // an empty form body) with its Content-Type rather than no body at all
-    // (#40). Presence comes from the mapper, never from populated fields.
+    // (kaisers-io/openapi-mcp-archive#40). Presence comes from the mapper,
+    // never from populated fields.
     if (!assembled.anyPresent && mapper.bodyRequired !== true) {
       return { ok: {} };
     }

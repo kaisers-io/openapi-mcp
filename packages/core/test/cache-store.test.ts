@@ -131,8 +131,9 @@ const validMeta = (): CacheMeta => ({
 
 describe('zCacheMeta', () => {
   it('pins the schema version at 2, with 1 still readable as the legacy format', () => {
-    // Version 2 (issue #89) persists the validated source document instead of
-    // its dereferenced form; version 1 entries are migrated by the pipeline
+    // Version 2 (issue kaisers-io/openapi-mcp-archive#89) persists the
+    // validated source document instead of its dereferenced form; version 1
+    // entries are migrated by the pipeline
     expect(CACHE_META_SCHEMA_VERSION).toBe(2);
     expect(LEGACY_CACHE_META_SCHEMA_VERSION).toBe(1);
     expect(zCacheMeta.safeParse({ ...validMeta(), schemaVersion: 1 }).success).toBe(true);
@@ -535,11 +536,11 @@ describe('a crash during the FIRST-EVER commit', () => {
 });
 
 describe('the persisted-size preflight is exact', () => {
-  // Round 3 reasoned this through instead of proving it and chose the wrong
-  // unit — UTF-16 code units where the reader caps UTF-8 bytes — so a multibyte
-  // document passed the writer and was corrupt on its first read. The property
-  // is now asserted against the exact quantity that lands on disk, over a
-  // corpus that actually contains the cases that broke it.
+  // An earlier version reasoned this through instead of proving it and chose
+  // the wrong unit — UTF-16 code units where the reader caps UTF-8 bytes — so a
+  // multibyte document passed the writer and was corrupt on its first read. The
+  // property is now asserted against the exact quantity that lands on disk,
+  // over a corpus that actually contains the cases that broke it.
   const mulberry32 = (seed: number): (() => number) => {
     // oxlint-disable-next-line unicorn/prefer-math-trunc -- '>>> 0' provides the unsigned 32-bit wraparound the PRNG needs; Math.trunc keeps sign and does not wrap, which would silently change the generated sequence
     let a = seed >>> 0;

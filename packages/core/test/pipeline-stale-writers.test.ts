@@ -13,11 +13,12 @@ import type { CacheLayout, CacheMeta, SpecPipelineDeps, SpecPipelineResult } fro
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
-// #34: a writer must not commit a decision made against a revision that is no
-// longer current. Every interleaving below is forced with explicit barriers:
-// a run is parked INSIDE its fetch (after it has read the cache, before it
-// commits), the competing operation runs to completion, and only then is the
-// parked fetch released. No timing sleeps are involved.
+// Issue kaisers-io/openapi-mcp-archive#34: a writer must not commit a decision
+// made against a revision that is no longer current. Every interleaving below
+// is forced with explicit barriers: a run is parked INSIDE its fetch (after it
+// has read the cache, before it commits), the competing operation runs to
+// completion, and only then is the parked fetch released. No timing sleeps are
+// involved.
 //
 // A run whose commit meets a changed revision re-reads the entry ONCE and
 // re-makes its decision against what is current, with the bytes it already
@@ -134,7 +135,7 @@ const promoteTo = async (fs: MemoryCacheFs, body: string): Promise<void> => {
   await promoteCandidate(layoutOf(fs), fs, time.now, {});
 };
 
-describe('stale writers cannot overwrite an accepted revision (#34)', () => {
+describe('stale writers cannot overwrite an accepted revision (kaisers-io/openapi-mcp-archive#34)', () => {
   it('interleaving 1: two first-use loads — the second, different spec does not become accepted', async () => {
     const fs = memoryCacheFs();
     const second = parked({ body: B });

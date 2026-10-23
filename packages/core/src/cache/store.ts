@@ -129,11 +129,12 @@ const prepareDirs = async (layout: CacheLayout, fs: CacheFs): Promise<void> => {
 //
 // An earlier version emitted one fragment per token, called Buffer.byteLength
 // on each and joined them, which was 4-8x slower than JSON.stringify on a
-// multi-megabyte document (#75). Producing the output with the native
-// stringify is equivalent because the domain enforced in step 1 is exactly the
-// set of values whose JSON.stringify output is determined by the own data
-// properties the walk read: accessors, toJSON hooks, non-plain prototypes,
-// holes and undefined array members are refused before stringify ever runs.
+// multi-megabyte document (kaisers-io/openapi-mcp-archive#75). Producing the
+// output with the native stringify is equivalent because the domain enforced in
+// step 1 is exactly the set of values whose JSON.stringify output is determined
+// by the own data properties the walk read: accessors, toJSON hooks, non-plain
+// prototypes, holes and undefined array members are refused before stringify
+// ever runs.
 const UNSUPPORTED_DOCUMENT_MESSAGE =
   'refusing to cache a document containing values JSON cannot round-trip exactly (undefined or sparse array members, a toJSON hook, a bigint, a function, or a cycle)';
 
@@ -404,10 +405,11 @@ const persistableTextOrThrow = (
 
 // Every verified object read: the decoded text plus the SHA-256 of the bytes
 // as they are on disk. With a bytes-capable CacheFs the hash is taken over
-// the raw bytes (#88) — one decode and no re-encode, instead of decoding and
-// then re-encoding the whole document just to hash it. Errors (absence,
-// over-budget validationError, I/O) propagate exactly as from
-// readFileTextCapped, so every caller's catch keeps its meaning.
+// the raw bytes (kaisers-io/openapi-mcp-archive#88) — one decode and no
+// re-encode, instead of decoding and then re-encoding the whole document just
+// to hash it. Errors (absence, over-budget validationError, I/O) propagate
+// exactly as from readFileTextCapped, so every caller's catch keeps its
+// meaning.
 const readObject = async (fs: CacheFs, path: string): Promise<{ text: string; hash: string }> => {
   if (fs.readFileBytesCapped === undefined) {
     const text = await fs.readFileTextCapped(path, CACHE_MAX_PERSISTED_BYTES);
@@ -435,8 +437,8 @@ const readObject = async (fs: CacheFs, path: string): Promise<{ text: string; ha
 // `verifiedHashes` names objects the caller has ALREADY read and hash-checked
 // under the same lock hold (writeAccepted's intact-baseline check,
 // promoteCandidate's candidate check). Re-reading and re-hashing them here
-// would only repeat that work (#75): no other writer can have touched them in
-// between, since every writer holds the lock.
+// would only repeat that work (kaisers-io/openapi-mcp-archive#75): no other
+// writer can have touched them in between, since every writer holds the lock.
 const commitEntry = async (
   layout: CacheLayout,
   fs: CacheFs,
@@ -483,9 +485,9 @@ const commitEntry = async (
 // problem — turning it into an error would fail a write that actually worked.
 //
 // The entry directory gets the same treatment for the temp files the atomic
-// writers leave behind when killed between write and rename/link (#88) —
-// matched by the exact names the CacheFs adapter generates, so nothing else
-// in the directory is ever touched:
+// writers leave behind when killed between write and rename/link
+// (kaisers-io/openapi-mcp-archive#88) — matched by the exact names the CacheFs
+// adapter generates, so nothing else in the directory is ever touched:
 //  - `.meta.json.<uuid>.tmp`: meta.json is only ever written under the
 //    writer lock, which this commit holds, so no live writer can own one.
 //  - `.lock.<uuid>.tmp`: a lock temp is written BEFORE its writer holds the
@@ -498,8 +500,9 @@ const commitEntry = async (
 // collectGarbage removes them, which is intended.
 //
 // Besides every commit, this also runs after touchRevalidated's write (also
-// under the lock): since #75 an unchanged spec never commits, so a temp left
-// by a writer killed mid-revalidation would otherwise linger indefinitely.
+// under the lock): since kaisers-io/openapi-mcp-archive#75 an unchanged spec
+// never commits, so a temp left by a writer killed mid-revalidation would
+// otherwise linger indefinitely.
 const META_TEMP_RE = /^\.meta\.json\.[0-9a-f-]{36}\.tmp$/u;
 const LOCK_TEMP_RE = /^\.lock\.[0-9a-f-]{36}\.tmp$/u;
 
@@ -784,7 +787,8 @@ const writeAcceptedImpl = async (
     cacheKey?: string | undefined;
     etag?: string | undefined;
     lastModified?: string | undefined;
-    // The revision this decision was made against (#34): see revision.ts
+    // The revision this decision was made against
+    // (kaisers-io/openapi-mcp-archive#34): see revision.ts
     expected: RevisionCheck;
   },
 ): Promise<{ acceptedContentHash: string }> => {
@@ -883,7 +887,8 @@ const writeCandidateImpl = async (
     fetchedAt: number;
     etag?: string | undefined;
     lastModified?: string | undefined;
-    // The revision this decision was made against (#34): see revision.ts
+    // The revision this decision was made against
+    // (kaisers-io/openapi-mcp-archive#34): see revision.ts
     expected: RevisionCheck;
   },
 ): Promise<{ candidateContentHash: string }> => {
@@ -988,24 +993,25 @@ const touchRevalidatedImpl = async (
   nowMs: number,
   validators: { etag?: string | undefined; lastModified?: string | undefined },
   // A 304 (the default) keeps a recorded validator the response omitted. A
-  // 200 whose bytes match the accepted source (#75) REPLACES them instead:
-  // the validators belong to the representation just received, exactly as
-  // writeCandidate treats them, so a 200 without an ETag must not leave the
-  // previous one behind.
+  // 200 whose bytes match the accepted source
+  // (kaisers-io/openapi-mcp-archive#75) REPLACES them instead: the validators
+  // belong to the representation just received, exactly as writeCandidate
+  // treats them, so a 200 without an ETag must not leave the previous one
+  // behind.
   //
-  // `bestEffort` (#65): this write is only bookkeeping on an entry the caller
-  // has already read and verified, so a lock held by another process is not
-  // worth failing the command over. One attempt; when the lock is held the
-  // result says so (with the operator message) and nothing is written. The
-  // checks below still run whenever the lock IS obtained, so a corrupt entry
-  // still fails closed.
+  // `bestEffort` (kaisers-io/openapi-mcp-archive#65): this write is only
+  // bookkeeping on an entry the caller has already read and verified, so a lock
+  // held by another process is not worth failing the command over. One attempt;
+  // when the lock is held the result says so (with the operator message) and
+  // nothing is written. The checks below still run whenever the lock IS
+  // obtained, so a corrupt entry still fails closed.
   //
-  // `expected` (#34): the revision the caller verified and revalidated. If
-  // the accepted object or the waiting candidate changed since, these
-  // validators describe a representation the entry no longer holds, so
-  // nothing is written and the result says why. If only the bookkeeping moved
-  // on (a concurrent run recorded a revalidation at least as recent), the
-  // newer record is kept as it is.
+  // `expected` (kaisers-io/openapi-mcp-archive#34): the revision the caller
+  // verified and revalidated. If the accepted object or the waiting candidate
+  // changed since, these validators describe a representation the entry no
+  // longer holds, so nothing is written and the result says why. If only the
+  // bookkeeping moved on (a concurrent run recorded a revalidation at least as
+  // recent), the newer record is kept as it is.
   opts: {
     replaceValidators?: boolean;
     bestEffort?: boolean;
@@ -1235,10 +1241,11 @@ const readCacheEntryImpl = async (layout: CacheLayout, fs: CacheFs): Promise<Cac
 };
 
 // The waiting candidate's document, read lock-free beside an entry the
-// caller is serving (#60: operations removed in the candidate are withheld
-// while it waits). The same verification as the accepted object — content
-// hash, JSON-object shape — because the result decides what is NOT exposed:
-// unverifiable bytes must not decide it either way.
+// caller is serving (kaisers-io/openapi-mcp-archive#60: operations removed in
+// the candidate are withheld while it waits). The same verification as the
+// accepted object — content hash, JSON-object shape — because the result
+// decides what is NOT exposed: unverifiable bytes must not decide it either
+// way.
 //
 // A missing candidate object is told apart from damage the same way the
 // accepted reader does it: re-read meta.json, and if it no longer names this

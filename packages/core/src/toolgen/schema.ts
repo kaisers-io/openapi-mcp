@@ -12,8 +12,8 @@ export const MAX_CONVERT_DEPTH = SPEC_BUDGETS.maxParseDepth;
 export type SchemaResult = { ok: z.ZodType } | { unrepresentable: string };
 
 // The unrepresentable reason for a response `pattern` with nested quantifiers
-// (#39). Output-schema derivation looks for it to tell the agent why a tool
-// has no output schema.
+// (kaisers-io/openapi-mcp-archive#39). Output-schema derivation looks for it to
+// tell the agent why a tool has no output schema.
 export const UNSAFE_PATTERN_REASON =
   'a "pattern" with nested quantifiers (unbounded regex matching cost)';
 
@@ -284,10 +284,11 @@ const conflictingCombination = (
   if (determiner === 'enum' || determiner === 'const') {
     // enum/const fully determine the value set, so a sibling `type` — a single
     // type OR a 3.1 type array such as the canonical nullable enum
-    // `{type:['string','null'], enum:['a', null]}` (#41) — only has to admit
-    // every listed value (JSON Schema Validation 2020-12 §6.1.1: an instance
-    // matches a type array if it matches ANY listed type). A malformed type
-    // array (empty, duplicate or non-string entries) still omits.
+    // `{type:['string','null'], enum:['a', null]}`
+    // (kaisers-io/openapi-mcp-archive#41) — only has to admit every listed
+    // value (JSON Schema Validation 2020-12 §6.1.1: an instance matches a type
+    // array if it matches ANY listed type). A malformed type array (empty,
+    // duplicate or non-string entries) still omits.
     const types = typeof type === 'string' ? [type] : type;
     if (
       !Array.isArray(types) ||
@@ -703,15 +704,17 @@ const objectShapeSchema = (
   }
   if (ap === undefined) {
     // Absent additionalProperties means "any extra property allowed" (JSON
-    // Schema Core 2020-12 §10.3.2.3). Responses keep that meaning (#33). A
-    // request object that DECLARES properties stays closed — the strict-input
-    // design — but one that declares none is a free-form object (`metadata`,
-    // `labels`, …; #35): closing it would accept only `{}`, a narrower contract
-    // than the spec states. An empty `properties: {}` declares nothing, the
-    // same rule mergeAllOf/buildTyped apply ("empty properties is not object
-    // evidence"). `droppedReadOnly` counts as declared: an object whose
-    // properties are all readOnly accepts only `{}` in a request. (A response
-    // object is open here regardless, so a dropped writeOnly changes nothing.)
+    // Schema Core 2020-12 §10.3.2.3). Responses keep that meaning
+    // (kaisers-io/openapi-mcp-archive#33). A request object that DECLARES
+    // properties stays closed — the strict-input design — but one that declares
+    // none is a free-form object (`metadata`, `labels`, …;
+    // kaisers-io/openapi-mcp-archive#35): closing it would accept only `{}`, a
+    // narrower contract than the spec states. An empty `properties: {}`
+    // declares nothing, the same rule mergeAllOf/buildTyped apply ("empty
+    // properties is not object evidence"). `droppedReadOnly` counts as
+    // declared: an object whose properties are all readOnly accepts only `{}`
+    // in a request. (A response object is open here regardless, so a dropped
+    // writeOnly changes nothing.)
     const declaresProperties = Object.keys(properties).length > 0;
     return mode === 'request' && declaresProperties
       ? { ok: z.strictObject(shape) }
@@ -785,11 +788,11 @@ const arraySchema = (
     : { ok: withMax };
 };
 
-// --- Static disjointness of oneOf branches (decision D12, #43) -------------
+// --- Static disjointness of oneOf branches (kaisers-io/openapi-mcp-archive#43) ---
 // Every helper is conservative: "unknown" never proves anything. A branch is
 // summarised by what it admits, as far as enforced keywords tell: a finite
 // list of values (const/enum), a set of JSON types, or unknown. `nullable`
-// records a 3.0 `nullable: true`, which admits null as well (D9).
+// records a 3.0 `nullable: true`, which admits null as well.
 type BranchShape =
   | { kind: 'values'; values: readonly unknown[]; nullable: boolean }
   | { kind: 'types'; types: readonly string[] }
@@ -980,13 +983,13 @@ const unionSchema = (
     return { ok: members[0] as z.ZodType };
   }
   // `oneOf` passes only if EXACTLY one subschema matches (JSON Schema Core
-  // 2020-12 §10.2.1.3); `anyOf` if at least one does (§10.2.1.2). Decision
-  // D12 (#43): z.xor (emitted as `oneOf` on the wire) is used only where it
-  // cannot reject a value the spec allows:
+  // 2020-12 §10.2.1.3); `anyOf` if at least one does (§10.2.1.2).
+  // z.xor (emitted as `oneOf` on the wire, kaisers-io/openapi-mcp-archive#43)
+  // is used only where it cannot reject a value the spec allows:
   //   - response mode: always the inclusive z.union. Response objects are
-  //     open (#33), so a discriminator-mapping `oneOf` (Cat/Dog without a
-  //     `const` on the discriminator) would match a valid payload twice and
-  //     fail output validation.
+  //     open (kaisers-io/openapi-mcp-archive#33), so a discriminator-mapping
+  //     `oneOf` (Cat/Dog without a `const` on the discriminator) would match a
+  //     valid payload twice and fail output validation.
   //   - request mode: z.xor only when the branches are pairwise disjoint by
   //     keywords this converter ENFORCES (see branchesDisjoint). `pattern` and
   //     `format` are advertised, not enforced, so branches that differ only
@@ -1184,14 +1187,14 @@ const build = (
   // value against a sibling `type` — including a 3.1 type array like
   // `['string','integer']` that normalizeType would reject as multi-type.
   //
-  // Nullability (#41, decision D9): wherever the spec marks a value nullable,
-  // null is admitted in BOTH directions. A 3.0 `nullable: true` next to an
-  // enum/const that does not list null (`{type:'string', nullable:true,
-  // enum:['a']}`, as older Swashbuckle/NSwag emit) admits null too. OAS 3.0.3
-  // §4.7.24.2 says such an enum "may disallow" null, but the author's intent
-  // is plain, a PATCH needs it to clear a field, and a response carrying null
-  // must not fail the call. The 3.1 dialect has no `nullable`: there an enum
-  // admits null only if it lists it.
+  // Nullability (kaisers-io/openapi-mcp-archive#41): wherever the spec marks a
+  // value nullable, null is admitted in BOTH directions. A 3.0 `nullable: true`
+  // next to an enum/const that does not list null (`{type:'string',
+  // nullable:true, enum:['a']}`, as older Swashbuckle/NSwag emit) admits null
+  // too. OAS 3.0.3 §4.7.24.2 says such an enum "may disallow" null, but the
+  // author's intent is plain, a PATCH needs it to clear a field, and a response
+  // carrying null must not fail the call. The 3.1 dialect has no `nullable`:
+  // there an enum admits null only if it lists it.
   const nullable30 = version === '3.0' && node['nullable'] === true;
   if ('const' in node && node['const'] !== undefined) {
     return withNull(constSchema(node['const']), nullable30 && node['const'] !== null);
@@ -1219,13 +1222,14 @@ const build = (
       return composed;
     }
     // A 3.0 `nullable: true` beside a composition (the NSwag / Swashbuckle /
-    // drf-spectacular idiom for a nullable $ref, #41). OAS 3.0.3 §4.7.24.2
-    // reads nullable strictly ("only if `type` is explicitly defined", and the
-    // members "may disallow" null), but every generator emitting this idiom
-    // means "this reference may be null". Decision D9: admit null in BOTH
-    // directions — a request can clear the field (`"manager": null` in a
-    // PATCH), and a response carrying null does not fail the call. Every
-    // non-null value is still checked against the composition.
+    // drf-spectacular idiom for a nullable $ref,
+    // kaisers-io/openapi-mcp-archive#41). OAS 3.0.3 §4.7.24.2 reads nullable
+    // strictly ("only if `type` is explicitly defined", and the members "may
+    // disallow" null), but every generator emitting this idiom means "this
+    // reference may be null". Null is admitted in BOTH directions — a request
+    // can clear the field (`"manager": null` in a PATCH), and a response
+    // carrying null does not fail the call. Every non-null value is still
+    // checked against the composition.
     return { ok: composed.ok.nullable() };
   }
   const base = buildTyped(typeValue, node, depth, version, mode);
@@ -1235,12 +1239,14 @@ const build = (
   return nullable ? { ok: base.ok.nullable() } : base;
 };
 
-// Per-build memoization (issue #90). Dereferencing shares one output object
-// per $ref target (#89), so the schema a GET, PUT and POST all return is the
-// SAME node, and converting it once per build is enough. The memo is keyed by
-// node identity, version and mode, lives only for one withConvertMemo call (one
-// buildTools run, so nothing leaks across specs), and caches unrepresentable
-// results too, so a hostile spec cannot force the same failing work twice.
+// Per-build memoization (issue kaisers-io/openapi-mcp-archive#90).
+// Dereferencing shares one output object per $ref target
+// (kaisers-io/openapi-mcp-archive#89), so the schema a GET, PUT and POST all
+// return is the SAME node, and converting it once per build is enough. The memo
+// is keyed by node identity, version and mode, lives only for one
+// withConvertMemo call (one buildTools run, so nothing leaks across specs), and
+// caches unrepresentable results too, so a hostile spec cannot force the same
+// failing work twice.
 //
 // Depth is the one input besides the node: a nested conversion past
 // MAX_CONVERT_DEPTH is unrepresentable. Each entry therefore records its
@@ -1258,12 +1264,13 @@ type BuildScope = {
 };
 
 // The key must cover EVERY input that changes a conversion's result: node,
-// version, the request/response mode (#33/#47: readOnly/writeOnly handling,
-// open response objects, inclusive response oneOf, and the #39 response-only
-// pattern gate all depend on it) and, via height, depth. A new conversion
-// parameter has to join the key, or the first conversion of a shared node
-// would decide the result for every later use — e.g. a `User` schema shared
-// by a request body and a response would get the request's strict shape.
+// version, the request/response mode (kaisers-io/openapi-mcp-archive#33 and
+// kaisers-io/openapi-mcp-archive#47: readOnly/writeOnly handling, open response
+// objects, inclusive response oneOf, and the kaisers-io/openapi-mcp-archive#39
+// response-only pattern gate all depend on it) and, via height, depth. A new
+// conversion parameter has to join the key, or the first conversion of a shared
+// node would decide the result for every later use — e.g. a `User` schema
+// shared by a request body and a response would get the request's strict shape.
 const memoKey = (version: OpenapiVersion, mode: SchemaMode): string => `${version}/${mode}`;
 //
 // Imperative on purpose: the scope and the deepest depth reached are ambient
@@ -1359,11 +1366,12 @@ const convertUncached = (
   if (malformed !== undefined) {
     return { unrepresentable: `a malformed "${malformed}" value` };
   }
-  // #39: a response schema is compiled by Ajv, which RUNS `pattern` on
-  // upstream data synchronously. A pattern with nested quantifiers can
-  // backtrack catastrophically, so it makes the output schema unrepresentable
-  // (fail-closed; the tool falls back to text). Request mode only advertises
-  // `pattern` and never executes it, so it is unaffected. See pattern-safety.ts.
+  // kaisers-io/openapi-mcp-archive#39: a response schema is compiled by Ajv,
+  // which RUNS `pattern` on upstream data synchronously. A pattern with nested
+  // quantifiers can backtrack catastrophically, so it makes the output schema
+  // unrepresentable (fail-closed; the tool falls back to text). Request mode
+  // only advertises `pattern` and never executes it, so it is unaffected. See
+  // pattern-safety.ts.
   if (
     mode === 'response' &&
     typeof node['pattern'] === 'string' &&
@@ -1385,7 +1393,7 @@ const convertUncached = (
   // enforcing them (no live RegExp; no divergent format validator). For a
   // request the model sees them and nothing runs them. For a response the
   // output schema IS compiled by Ajv, which runs `pattern` on upstream data —
-  // hence the nested-quantifier gate above (#39).
+  // hence the nested-quantifier gate above (kaisers-io/openapi-mcp-archive#39).
   const meta: Record<string, unknown> = {};
   if (typeof node['pattern'] === 'string') {
     meta['pattern'] = node['pattern'];

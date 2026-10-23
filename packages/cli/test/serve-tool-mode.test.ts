@@ -9,8 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CLI_ENTRY, stopChild } from './cli-subprocess.ts';
 
-// `serve --tool-mode` end to end (issue #38): the real binary over stdio,
-// against a real local upstream that records what it receives.
+// `serve --tool-mode` end to end (issue kaisers-io/openapi-mcp-archive#38): the
+// real binary over stdio, against a real local upstream that records what it
+// receives.
 
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 

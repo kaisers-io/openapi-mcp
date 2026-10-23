@@ -6,9 +6,10 @@ import { sanitizeSpecText } from './sanitize.ts';
 
 // The official OpenAPI meta-schemas (3.0: JSON Schema draft-04, 3.1: draft
 // 2020-12), precompiled at development time into Ajv standalone code (issue
-// #76, see generate-validators.ts). Compiling them at runtime cost about 120 ms
-// on every run that processed a spec; the generated code is what Ajv compiles,
-// with the same options, so the verdicts and error objects are identical.
+// kaisers-io/openapi-mcp-archive#76, see generate-validators.ts). Compiling
+// them at runtime cost about 120 ms on every run that processed a spec; the
+// generated code is what Ajv compiles, with the same options, so the verdicts
+// and error objects are identical.
 
 export type OpenapiVersion = '3.0' | '3.1';
 

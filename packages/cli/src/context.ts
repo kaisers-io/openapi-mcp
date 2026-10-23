@@ -115,9 +115,9 @@ const rejectUnlessRealDirectory = (path: string, info: Stats): void => {
 };
 
 // What the writer lock records about this process, and how it backs off
-// (#65). process.kill(pid, 0) sends no signal: it only asks whether the pid
-// exists. ESRCH means no such process; EPERM means it exists but belongs to
-// another user, which is still "running".
+// (kaisers-io/openapi-mcp-archive#65). process.kill(pid, 0) sends no signal: it
+// only asks whether the pid exists. ESRCH means no such process; EPERM means it
+// exists but belongs to another user, which is still "running".
 const realCacheRuntime = (): CacheRuntime => ({
   pid: process.pid,
   hostname: osHostname(),
@@ -531,9 +531,10 @@ const realLookup = async (hostname: string, signal: AbortSignal): Promise<readon
   }
 };
 
-// Undici's fetch, imported on first use (issue #91): --version, file specs,
-// doctor and the cache subcommands never fetch, so they never load undici.
-// Still undici's OWN fetch (see `fetcher` above), just resolved lazily.
+// Undici's fetch, imported on first use (issue
+// kaisers-io/openapi-mcp-archive#91): --version, file specs, doctor and the
+// cache subcommands never fetch, so they never load undici. Still undici's OWN
+// fetch (see `fetcher` above), just resolved lazily.
 const undiciFetch: typeof UndiciFetch = async (...args) => {
   const { fetch } = await import('undici');
   return fetch(...args);

@@ -88,7 +88,8 @@ const callWith = async (
   op: NamedOperation,
   body: unknown,
   args: Record<string, unknown>,
-  // Through #144's call_operation instead of a direct call.
+  // Through kaisers-io/openapi-mcp-archive#144's call_operation instead of a
+  // direct call.
   discover = false,
 ) => {
   const snapshot = snapshotOf([op], discover ? 'discover' : 'per-operation');
@@ -327,7 +328,7 @@ describe('_fields availability', () => {
   });
 });
 
-describe('_fields cost (D14)', () => {
+describe('_fields cost', () => {
   it('is off unless the operator enables it: no _fields, no projection branch', () => {
     const built = buildTools([listItems(true)], {
       reservedHeaders: SYSTEM_HEADERS,

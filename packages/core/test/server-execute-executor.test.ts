@@ -311,7 +311,7 @@ describe('createExecutor — header assembly', () => {
     expect(calls[0]?.init.body).toBeDefined();
   });
 
-  it('sends the declared JSON variant as Content-Type end to end (#54: merge-patch+json)', async () => {
+  it('sends the declared JSON variant as Content-Type end to end (kaisers-io/openapi-mcp-archive#54: merge-patch+json)', async () => {
     const patchOp: NamedOperation = {
       toolName: 'patchThing',
       operation: {
@@ -342,7 +342,7 @@ describe('createExecutor — header assembly', () => {
     expect(JSON.parse(new TextDecoder().decode(body))).toEqual({ name: 'widget' });
   });
 
-  it('sends the bytes {} for a required body whose properties are all optional (#40)', async () => {
+  it('sends the bytes {} for a required body whose properties are all optional (kaisers-io/openapi-mcp-archive#40)', async () => {
     const noteOp: NamedOperation = {
       toolName: 'touchThing',
       operation: {
@@ -377,7 +377,7 @@ describe('createExecutor — header assembly', () => {
     expect(new TextDecoder().decode(calls[0]?.init.body as Uint8Array)).toBe('{}');
   });
 
-  it('sends decoded raw bytes for an application/octet-stream body (#71)', async () => {
+  it('sends decoded raw bytes for an application/octet-stream body (kaisers-io/openapi-mcp-archive#71)', async () => {
     const uploadOp: NamedOperation = {
       toolName: 'uploadFile',
       operation: {
@@ -404,7 +404,7 @@ describe('createExecutor — header assembly', () => {
     expect([...sent]).toEqual([0, 1, 2, 255]);
   });
 
-  it('sends a parseable multipart/form-data body with a generated boundary (#71)', async () => {
+  it('sends a parseable multipart/form-data body with a generated boundary (kaisers-io/openapi-mcp-archive#71)', async () => {
     const formOp: NamedOperation = {
       toolName: 'uploadForm',
       operation: {
@@ -935,9 +935,9 @@ describe('createExecutor — cancellation and redaction', () => {
     expect(outcome.content[0]?.text).not.toContain(secret);
   });
 
-  // Issue #58, end to end: the redactor is built from the header VALUE
-  // exactly as serve.ts registers it (`Bearer <token>`), the header really
-  // goes out, and the upstream echoes only the bare token.
+  // Issue kaisers-io/openapi-mcp-archive#58, end to end: the redactor is built
+  // from the header VALUE exactly as serve.ts registers it (`Bearer <token>`),
+  // the header really goes out, and the upstream echoes only the bare token.
   it('redacts the bare token of a `Bearer <token>` header echoed in an upstream error body', async () => {
     const token = 'example-token-not-a-secret';
     const headerValue = `Bearer ${token}`;
@@ -1247,7 +1247,7 @@ describe('createExecutor — forwarded upstream response headers', () => {
     });
     const validate = compileEnvelopeValidator(tool.wireTool.outputSchema);
     expect(validate?.(outcome.structuredContent)).toBe(true);
-    // D4: the raw Link URL never reaches the model; Set-Cookie never at all.
+    // The raw Link URL never reaches the model; Set-Cookie never at all.
     expect(JSON.stringify(outcome)).not.toContain('page=2');
     expect(JSON.stringify(outcome)).not.toContain(SECRET);
     expect(JSON.stringify(outcome)).not.toContain('not-forwarded');
@@ -1499,7 +1499,7 @@ describe('createExecutor — pagination hints', () => {
     expect(outcome.isError).toBe(false);
     expect(nextOf(outcome)).toEqual({ org: 'acme', page: 2, per_page: 2 });
     expect(valid).toBe(true);
-    // No raw URL reaches the result (D4).
+    // No raw URL reaches the result.
     expect(JSON.stringify(outcome)).not.toContain('https://api.example.test/orgs');
   });
 
@@ -1625,9 +1625,11 @@ describe('createExecutor — pagination hints', () => {
     },
   );
 
-  // #108's styles (#145): a delimited array's value is split on its own
-  // delimiter; a deepObject field (JSON:API `page[number]`, `filter[x]`) is
-  // reassembled from its `name[key]` parameters, declared keys only.
+  // PR kaisers-io/openapi-mcp-archive#108's styles
+  // (kaisers-io/openapi-mcp-archive#145): a delimited array's value is split on
+  // its own delimiter; a deepObject field (JSON:API `page[number]`,
+  // `filter[x]`) is reassembled from its `name[key]` parameters, declared keys
+  // only.
   const withLabels = (style: string): NamedOperation => {
     const op = issuesOp(false);
     return {
@@ -1865,7 +1867,7 @@ describe('createExecutor — pagination hints', () => {
     const next = nextOf(outcome);
     expect(next).toEqual({ page: { number: 3, size: 2 }, filter: { status: 'published' } });
     expect(acceptedAsInput(tool, next)).toBe(true);
-    // Still arguments, never the URL (D4).
+    // Still arguments, never the URL.
     expect(JSON.stringify(outcome.structuredContent?.['pagination'])).not.toContain('https://');
   });
 
@@ -1969,7 +1971,7 @@ describe('createExecutor — pagination hints', () => {
 
   // JSON:API precedence belongs to the response actually returned, not to
   // the operation: an ordinary JSON 200 next to a JSON:API 206 keeps its
-  // body cursor (review of #149).
+  // body cursor (review of kaisers-io/openapi-mcp-archive#149).
   const mixedOp: NamedOperation = {
     toolName: 'listThings',
     operation: {
@@ -2387,8 +2389,9 @@ describe('createExecutor — W3C trace context propagation', () => {
   });
 });
 
-// #72: end to end with --default-response-is-error semantics.
-describe('createExecutor — default response treated as error (#72)', () => {
+// Issue kaisers-io/openapi-mcp-archive#72: end to end with
+// --default-response-is-error semantics.
+describe('createExecutor — default response treated as error (kaisers-io/openapi-mcp-archive#72)', () => {
   const chargeOp: NamedOperation = {
     toolName: 'getCharge',
     operation: {

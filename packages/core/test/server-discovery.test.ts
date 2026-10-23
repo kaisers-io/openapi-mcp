@@ -28,11 +28,11 @@ import type {
   ToolMode,
 } from '../src/index.ts';
 
-// Discovery tool mode (issue #38). The property these tests pin above all:
-// call_operation is not a second way in. It reaches exactly the operations a
-// direct per-operation call reaches (the same --allow/--deny/read-only
-// result), validates with the same schema and renders the same failure, and
-// sends the same upstream request.
+// Discovery tool mode (issue kaisers-io/openapi-mcp-archive#38). The property
+// these tests pin above all: call_operation is not a second way in. It reaches
+// exactly the operations a direct per-operation call reaches (the same
+// --allow/--deny/read-only result), validates with the same schema and renders
+// the same failure, and sends the same upstream request.
 
 const op = (
   toolName: string,
@@ -174,7 +174,7 @@ describe('resolveToolMode', () => {
   });
 });
 
-describe('discoverApprovalWarning (decision D15)', () => {
+describe('discoverApprovalWarning', () => {
   it('says nothing when every exposed operation is read-only, or outside discover', () => {
     const readOnly = snapshotFor('discover');
     expect(discoverApprovalWarning(readOnly.toolMode, readOnly.operations)).toBeUndefined();
@@ -197,7 +197,8 @@ describe('buildSnapshot — tool modes', () => {
     const wire = (snapshot: ServerSnapshot) =>
       JSON.stringify(snapshot.tools.map((tool) => tool.wireTool));
     expect(wire(explicit)).toBe(wire(implicit));
-    // Sorted by name after the meta tool (#77), not in spec order.
+    // Sorted by name after the meta tool (kaisers-io/openapi-mcp-archive#77),
+    // not in spec order.
     expect(implicit.tools.map((tool) => tool.name)).toEqual([
       'openapi_mcp_status',
       'createThingItem',

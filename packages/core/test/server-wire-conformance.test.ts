@@ -606,10 +606,10 @@ describe('2026-07-28 wire conformance — tool-name header safety', () => {
   }, 30_000);
 });
 
-describe('2026-07-28 wire conformance — discover tool mode (issue #38)', () => {
-  // The generator from issue #38: N trivial GET operations, each with one
-  // query parameter and a small JSON response (so each per-operation tool
-  // also carries an outputSchema).
+describe('2026-07-28 wire conformance — discover tool mode (issue kaisers-io/openapi-mcp-archive#38)', () => {
+  // The generator from issue kaisers-io/openapi-mcp-archive#38: N trivial GET
+  // operations, each with one query parameter and a small JSON response (so
+  // each per-operation tool also carries an outputSchema).
   const generatedSnapshot = (count: number, toolMode: 'per-operation' | 'discover') => {
     const named: NamedOperation[] = Array.from({ length: count }, (_unused, index) => ({
       toolName: `list_r${String(index)}`,

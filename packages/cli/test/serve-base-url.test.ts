@@ -82,7 +82,7 @@ describe('resolveBaseUrl', () => {
     );
   });
 
-  describe('a server URL rejected for size (issue #37)', () => {
+  describe('a server URL rejected for size (issue kaisers-io/openapi-mcp-archive#37)', () => {
     const rejected: NormalizedSpec = { ...baseSpec, serverUrlRejected: { expandedBytes: 10_000 } };
 
     it('--base-url still works', () => {

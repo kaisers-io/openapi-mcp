@@ -77,8 +77,9 @@ export type SnapshotPipelineInput = {
   displaySource: string;
   deadPatterns: readonly DeadPattern[];
   // Accepted operations withheld because the pending candidate removed them
-  // (#60). They are reported with the other omissions, each with its reason,
-  // so the meta tool shows exactly why a baseline operation is not a tool.
+  // (kaisers-io/openapi-mcp-archive#60). They are reported with the other
+  // omissions, each with its reason, so the meta tool shows exactly why a
+  // baseline operation is not a tool.
   withheldOperations?: readonly OmittedOperation[] | undefined;
   cacheLock?: 'held' | 'stale' | undefined;
 };

@@ -17,11 +17,12 @@ const defaultOf = (variables: Record<string, unknown>, name: string): string | u
 // when a placeholder has no string default (the expansion is unresolvable
 // anyway). One scan of the template; each distinct default is measured once.
 //
-// Why this exists (issue #37): one-pass replacement prevents recursive
-// expansion, but not placeholder count x default length. An 11 kB spec with
-// 2000 `{x}` and a 5000-character default is valid and expanded to a
-// 10,000,018-character URL; source-byte and node-count budgets do not bound
-// that product, so it has to be bounded here, before the allocation.
+// Why this exists (issue kaisers-io/openapi-mcp-archive#37): one-pass
+// replacement prevents recursive expansion, but not placeholder count x default
+// length. An 11 kB spec with 2000 `{x}` and a 5000-character default is valid
+// and expanded to a 10,000,018-character URL; source-byte and node-count
+// budgets do not bound that product, so it has to be bounded here, before the
+// allocation.
 const expandedByteLength = (
   template: string,
   variables: Record<string, unknown>,

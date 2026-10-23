@@ -1,7 +1,8 @@
 // Exact intersections for keywords next to a $ref in an OpenAPI 3.1 schema
-// (issue #63): when a sibling assertion can be flattened into the referenced
-// schema, and what two values of one monotone keyword become when both must
-// hold. Used by mergeSchemaSiblings in ref-siblings.ts.
+// (issue kaisers-io/openapi-mcp-archive#63): when a sibling assertion can be
+// flattened into the referenced schema, and what two values of one monotone
+// keyword become when both must hold. Used by mergeSchemaSiblings in
+// ref-siblings.ts.
 import { isRecord } from './refs.ts';
 
 // Key-order independent JSON, so two equal object values (an `enum` of

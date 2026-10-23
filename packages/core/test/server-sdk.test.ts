@@ -381,7 +381,7 @@ describe('createProtocolSession — InMemory integration', () => {
   });
 });
 
-describe('createProtocolSession — discover tool mode (issue #38)', () => {
+describe('createProtocolSession — discover tool mode (issue kaisers-io/openapi-mcp-archive#38)', () => {
   const buildDiscoverSnapshot = () => {
     const built = buildTools([namedOp, namedOpWithOutput], {
       reservedHeaders: SYSTEM_HEADERS,

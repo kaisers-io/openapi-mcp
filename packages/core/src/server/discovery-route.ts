@@ -8,7 +8,8 @@ import type { CallTelemetry } from './telemetry.ts';
 import type { SnapshotTool } from './types.ts';
 import { validateAndExecute } from './validation.ts';
 
-// Routing for the three discover-mode tools (#38), split out of dispatch.ts.
+// Routing for the three discover-mode tools
+// (kaisers-io/openapi-mcp-archive#38), split out of dispatch.ts.
 
 // The call_operation path: resolve the target among the snapshot's EXPOSED
 // operations only (an operation a filter excluded was never built, so it is

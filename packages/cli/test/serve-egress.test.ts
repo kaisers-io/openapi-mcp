@@ -15,8 +15,8 @@ import { run } from '../src/main.ts';
 // nothing exercised serve.ts's OWN wiring of the two together at startup —
 // every existing serve.test.ts/serve-http.test.ts case passes `--base-url`
 // explicitly (always TRUSTED, skipping the check outright). Their spawned
-// processes count toward coverage since issue #86 (vitest.coverage.ts), but
-// only for the paths they actually take.
+// processes count toward coverage since issue kaisers-io/openapi-mcp-archive#86
+// (vitest.coverage.ts), but only for the paths they actually take.
 //
 // `run()` from main.ts drives serve.ts's real action body in-process against
 // a `testContext()` — but serve's own success path blocks on a REAL

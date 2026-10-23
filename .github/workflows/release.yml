@@ -161,9 +161,10 @@ jobs:
           # Regression net for "no source code in the tarball": the tarball must contain EXACTLY this
           # file set — extras (leaked source) and missing files (dropped LICENSE/README) both fail.
           # Shipping a new file requires deliberately updating this set. dist/ holds the entry plus
-          # the chunks its dynamic imports split off (content-hashed names, issue #91), so its part
-          # of the set is exactly what the determinism-checked build above wrote there. The script's
-          # `${...}` are JavaScript template literals, not shell expansions.
+          # the chunks its dynamic imports split off (content-hashed names, issue
+          # kaisers-io/openapi-mcp-archive#91), so its part of the set is exactly what the
+          # determinism-checked build above wrote there. The script's `${...}` are JavaScript
+          # template literals, not shell expansions.
           # shellcheck disable=SC2016
           node -e '
             const { readdirSync } = require("node:fs");

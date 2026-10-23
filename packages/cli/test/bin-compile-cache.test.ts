@@ -24,7 +24,7 @@ const runVersion = (home: string): number | null => {
 const modeOf = (path: string): number => statSync(path).mode & 0o777;
 
 describe.skipIf(process.platform === 'win32')(
-  'bin stub — V8 compile cache directory (issue #76)',
+  'bin stub — V8 compile cache directory (issue kaisers-io/openapi-mcp-archive#76)',
   () => {
     const homes: string[] = [];
     const freshHome = (): string => {

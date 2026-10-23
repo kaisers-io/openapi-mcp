@@ -61,10 +61,10 @@ export type NormalizedSpec = {
   security?: readonly SecurityRequirement[];
 };
 
-// Normalization reads the document BEFORE it is dereferenced (issue #89): a
-// path item or parameter `{ $ref }` is followed only as far as needed to read
-// it (the Resolve callback); contents stay raw until the pipeline
-// dereferences exposed operations.
+// Normalization reads the document BEFORE it is dereferenced (issue
+// kaisers-io/openapi-mcp-archive#89): a path item or parameter `{ $ref }` is
+// followed only as far as needed to read it (the Resolve callback); contents
+// stay raw until the pipeline dereferences exposed operations.
 
 const buildOperation = (
   method: HttpMethod,

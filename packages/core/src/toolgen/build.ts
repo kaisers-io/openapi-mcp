@@ -29,9 +29,9 @@ export type GeneratedTool = {
   // Surfaced by `tools`, and used at runtime to name the flag when an
   // undocumented 2xx arrives.
   outputSchemaAssumesDefaultIsError?: true;
-  // Why the tool has no outputSchema, when the agent should know (#39: a
-  // response `pattern` with nested quantifiers). Also folded into the
-  // description.
+  // Why the tool has no outputSchema, when the agent should know
+  // (kaisers-io/openapi-mcp-archive#39: a response `pattern` with nested
+  // quantifiers). Also folded into the description.
   outputSchemaWithheld?: string;
   // Present only for a paginated GET (see toolgen/pagination.ts).
   pagination?: PaginationPlan;
@@ -170,7 +170,8 @@ export const buildTools = (
   const reservedHeaders = new Set([...opts.reservedHeaders].map((name) => name.toLowerCase()));
   // One buildToolEntry call per operation, in namedOperations order — matches
   // the original for-of's iteration (and thus toolName/omission) order exactly.
-  // One memo scope per build: shared schema nodes convert once (issue #90)
+  // One memo scope per build: shared schema nodes convert once (issue
+  // kaisers-io/openapi-mcp-archive#90)
   const entries = withConvertMemo(() =>
     namedOperations.map((named) =>
       buildToolEntry(

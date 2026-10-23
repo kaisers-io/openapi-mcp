@@ -10,13 +10,13 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-# Performance regression gate (issue #80). On a pull request the PR base is built in the SAME job and
-# both builds are benchmarked interleaved on this one runner, so the comparison is relative and the
-# runner's speed cancels out (absolute timings from another machine would be noise). Machine-independent
-# metrics (tools/list bytes) are also checked against the committed scripts/bench/baseline.json. On a
-# push to main the suite runs without a base, for the artefact and the baseline check.
-# Actions are SHA-pinned, credentials are not persisted, and no dependency lifecycle script runs — the
-# same conventions as ci.yml.
+# Performance regression gate (issue kaisers-io/openapi-mcp-archive#80). On a pull request the PR
+# base is built in the SAME job and both builds are benchmarked interleaved on this one runner, so
+# the comparison is relative and the runner's speed cancels out (absolute timings from another machine
+# would be noise). Machine-independent metrics (tools/list bytes) are also checked against the
+# committed scripts/bench/baseline.json. On a push to main the suite runs without a base, for the
+# artefact and the baseline check. Actions are SHA-pinned, credentials are not persisted, and no
+# dependency lifecycle script runs — the same conventions as ci.yml.
 jobs:
   bench:
     timeout-minutes: 45

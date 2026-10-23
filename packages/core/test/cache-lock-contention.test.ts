@@ -13,8 +13,8 @@ import type { CacheRuntime } from '../src/index.ts';
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
-// #65: bounded retry for strict writers, a single-attempt best-effort variant,
-// and a lock record that says who holds it.
+// Issue kaisers-io/openapi-mcp-archive#65: bounded retry for strict writers, a
+// single-attempt best-effort variant, and a lock record that says who holds it.
 const LAYOUT = cacheLayout('/cache', 'abcdef0123456789');
 
 const fakeRuntime = (over: Partial<CacheRuntime> = {}): CacheRuntime & { slept: number[] } => {

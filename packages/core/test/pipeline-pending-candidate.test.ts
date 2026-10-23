@@ -15,9 +15,10 @@ import { operationKeysOf } from '../src/spec/pending-candidate.ts';
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
-// #60: while a changed spec waits as a candidate, an operation it no longer
-// has is withheld at once (the fail-safe direction); everything else keeps
-// its accepted definition until `cache promote`.
+// Issue kaisers-io/openapi-mcp-archive#60: while a changed spec waits as a
+// candidate, an operation it no longer has is withheld at once (the fail-safe
+// direction); everything else keeps its accepted definition until
+// `cache promote`.
 type SpecFetcher = SpecPipelineDeps['fetcher'];
 
 const op = (operationId: string, description = 'ok'): Record<string, unknown> => ({
@@ -95,7 +96,7 @@ const withCandidate = async (
   return { fs, result };
 };
 
-describe('operations removed in a pending candidate are withheld (#60)', () => {
+describe('operations removed in a pending candidate are withheld (kaisers-io/openapi-mcp-archive#60)', () => {
   it('on the run that records the candidate', async () => {
     const { result } = await withCandidate();
     expect(result.cacheStatus).toBe('candidate');
@@ -173,8 +174,9 @@ describe('operations removed in a pending candidate are withheld (#60)', () => {
   });
 
   it('follows a Path Item $ref: operations under a referenced path item are not withheld', async () => {
-    // The cache holds the SOURCE document (#89), so the candidate's path item
-    // is still a `{ $ref }` when its operation keys are read
+    // The cache holds the SOURCE document (kaisers-io/openapi-mcp-archive#89),
+    // so the candidate's path item is still a `{ $ref }` when its operation
+    // keys are read
     const referenced = JSON.stringify({
       openapi: '3.1.0',
       info: { title: 't', version: '1' },

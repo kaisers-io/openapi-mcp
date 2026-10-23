@@ -995,9 +995,9 @@ describe('buildRequest — body reassembly defensive invariants', () => {
   });
 });
 
-// #54 / D5: the declared media type (with parameters) is what is sent, and
-// every JSON variant is JSON-encoded.
-describe('buildRequest — declared JSON media-type variants (#54)', () => {
+// Issue kaisers-io/openapi-mcp-archive#54: the declared media type (with
+// parameters) is what is sent, and every JSON variant is JSON-encoded.
+describe('buildRequest — declared JSON media-type variants (kaisers-io/openapi-mcp-archive#54)', () => {
   const mapperFor = (bodyContentType: string): RequestMapper => ({
     bodyMode: 'flattened',
     bodyContentType,
@@ -1020,9 +1020,10 @@ describe('buildRequest — declared JSON media-type variants (#54)', () => {
   });
 });
 
-// #59: OAS 3.1.1 §4.8.12.4 Style Examples — brackets and delimiters are
-// percent-encoded exactly as in the spec's examples.
-describe('buildRequest — query deepObject / spaceDelimited / pipeDelimited (#59)', () => {
+// Issue kaisers-io/openapi-mcp-archive#59: OAS 3.1.1 §4.8.12.4 Style Examples —
+// brackets and delimiters are percent-encoded exactly as in the spec's
+// examples.
+describe('buildRequest — query deepObject / spaceDelimited / pipeDelimited (kaisers-io/openapi-mcp-archive#59)', () => {
   const styled = (
     style: 'deepObject' | 'spaceDelimited' | 'pipeDelimited',
     explode: boolean,
@@ -1089,9 +1090,10 @@ describe('buildRequest — query deepObject / spaceDelimited / pipeDelimited (#5
   });
 });
 
-// #40: a REQUIRED body whose flattened properties are all optional and all
-// absent is still sent — as an empty object — instead of silently dropped.
-describe('buildRequest — required empty body (#40)', () => {
+// Issue kaisers-io/openapi-mcp-archive#40: a REQUIRED body whose flattened
+// properties are all optional and all absent is still sent — as an empty object
+// — instead of silently dropped.
+describe('buildRequest — required empty body (kaisers-io/openapi-mcp-archive#40)', () => {
   const mapper = (bodyContentType: string, bodyRequired: boolean): RequestMapper => ({
     bodyMode: 'flattened',
     bodyContentType,
@@ -1125,8 +1127,9 @@ describe('buildRequest — required empty body (#40)', () => {
   });
 });
 
-// #71: base64 tool input is decoded to the raw request bytes.
-describe('buildRequest — application/octet-stream body (#71)', () => {
+// Issue kaisers-io/openapi-mcp-archive#71: base64 tool input is decoded to the
+// raw request bytes.
+describe('buildRequest — application/octet-stream body (kaisers-io/openapi-mcp-archive#71)', () => {
   const mapper: RequestMapper = {
     bodyMode: 'single',
     bodyContentType: 'application/octet-stream',
@@ -1173,8 +1176,9 @@ describe('buildRequest — application/octet-stream body (#71)', () => {
   });
 });
 
-// #71: multipart/form-data encoding (RFC 7578).
-describe('buildRequest — multipart/form-data body (#71)', () => {
+// Issue kaisers-io/openapi-mcp-archive#71: multipart/form-data encoding
+// (RFC 7578).
+describe('buildRequest — multipart/form-data body (kaisers-io/openapi-mcp-archive#71)', () => {
   const mapper: RequestMapper = {
     bodyMode: 'flattened',
     bodyContentType: 'multipart/form-data',
@@ -1261,7 +1265,7 @@ describe('buildRequest — multipart/form-data body (#71)', () => {
     );
   });
 
-  it('sends a multi-MiB file part (inherits the #114 base64 check)', async () => {
+  it('sends a multi-MiB file part (inherits the kaisers-io/openapi-mcp-archive#114 base64 check)', async () => {
     const bytes = Buffer.alloc(5 * 1024 * 1024, 1);
     const large = { ...budgets, maxBodyBytes: 10 * 1024 * 1024 };
     const built = ok(

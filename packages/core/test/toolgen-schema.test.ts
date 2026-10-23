@@ -265,7 +265,7 @@ describe('convertSchema — enum, const, null', () => {
     expect('unrepresentable' in convertSchema({ type: ['string', 'number'] })).toBe(true);
   });
 
-  it('3.0: a sibling nullable admits null next to an enum that does not list it (D9)', () => {
+  it('3.0: a sibling nullable admits null next to an enum that does not list it', () => {
     // {type:string, nullable:true, enum:['a']} (older Swashbuckle/NSwag): the
     // author marked the value nullable, so null is admitted in both directions;
     // every other non-enumerated value is still rejected.
@@ -302,7 +302,7 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('b').success).toBe(false);
   });
 
-  it('3.0: a sibling nullable admits null next to a const (D9)', () => {
+  it('3.0: a sibling nullable admits null next to a const', () => {
     const s = ok(convertSchema({ const: 'a', nullable: true }, '3.0'));
     expect(s.safeParse('a').success).toBe(true);
     expect(s.safeParse(null).success).toBe(true);
@@ -315,7 +315,7 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('a').success).toBe(false);
   });
 
-  it('represents a 3.0 nullable composition and admits null in a request (#41, D9)', () => {
+  it('represents a 3.0 nullable composition and admits null in a request (kaisers-io/openapi-mcp-archive#41)', () => {
     // The boolean `nullable` is honoured only under 3.0 (build gates it on
     // version === '3.0'); a 3.1 `[T,'null']`-union combined with oneOf is caught
     // earlier by the conflict gate.
@@ -471,7 +471,7 @@ describe('convertSchema — composites', () => {
     ).toBe(true);
   });
 
-  it('omits a multi-member allOf with a non-object member; a single member converts as-is (#41)', () => {
+  it('omits a multi-member allOf with a non-object member; a single member converts as-is (kaisers-io/openapi-mcp-archive#41)', () => {
     // Every member of a MULTI-member allOf must be an object; the merge produces
     // one object.
     expect(
@@ -602,8 +602,9 @@ describe('convertSchema — composites', () => {
   });
 
   it('omits any allOf member declaring additionalProperties (fail-closed, cannot merge)', () => {
-    // A single member converts as-is (#41), so its additionalProperties:true is
-    // honoured exactly — open, not silently strict.
+    // A single member converts as-is (kaisers-io/openapi-mcp-archive#41), so
+    // its additionalProperties:true is honoured exactly — open, not silently
+    // strict.
     const single = ok(
       convertSchema({
         allOf: [
@@ -684,9 +685,9 @@ describe('convertSchema — composites', () => {
 
   it('omits an allOf member with no object evidence', () => {
     // Each of these accepts any value; merging as z.strictObject({}) would narrow.
-    // A SINGLE such member converts as-is (#41): `{}` and a description-only
-    // node accept any value exactly (z.unknown), never a narrowed object; the
-    // typeless orphan assertions still omit.
+    // A SINGLE such member converts as-is (kaisers-io/openapi-mcp-archive#41):
+    // `{}` and a description-only node accept any value exactly (z.unknown),
+    // never a narrowed object; the typeless orphan assertions still omit.
     expect(ok(convertSchema({ allOf: [{}] })).safeParse('anything').success).toBe(true);
     expect(ok(convertSchema({ allOf: [{ description: 'x' }] })).safeParse(1).success).toBe(true);
     expect('unrepresentable' in convertSchema({ allOf: [{ properties: {} }] })).toBe(true);
@@ -706,7 +707,7 @@ describe('convertSchema — composites', () => {
     expect('unrepresentable' in convertSchema({ properties: {} })).toBe(true);
   });
 
-  it('maps type:object with an empty properties map as a free-form object (#35); only additionalProperties:false closes it', () => {
+  it('maps type:object with an empty properties map as a free-form object (kaisers-io/openapi-mcp-archive#35); only additionalProperties:false closes it', () => {
     // Absent additionalProperties allows any extra property (JSON Schema Core
     // 2020-12 §10.3.2.3); an empty `properties` declares nothing to close over.
     const s = ok(convertSchema({ type: 'object', properties: {} }));
@@ -808,11 +809,11 @@ describe('convertSchema — composites', () => {
   });
 });
 
-// #35: `{type:'object'}` with no declared properties and no
-// additionalProperties is a FREE-FORM object in JSON Schema (absent
-// additionalProperties = any extra property allowed, JSON Schema 2020-12
-// Core §10.3.2.3), not "exactly {}".
-describe('convertSchema — free-form objects (#35)', () => {
+// kaisers-io/openapi-mcp-archive#35: `{type:'object'}` with no declared
+// properties and no additionalProperties is a FREE-FORM object in JSON Schema
+// (absent additionalProperties = any extra property allowed, JSON Schema
+// 2020-12 Core §10.3.2.3), not "exactly {}".
+describe('convertSchema — free-form objects (kaisers-io/openapi-mcp-archive#35)', () => {
   it('accepts any object for a bare {type:object}, still rejecting non-objects', () => {
     const s = ok(convertSchema({ type: 'object' }));
     expect(s.safeParse({}).success).toBe(true);
@@ -858,9 +859,10 @@ describe('convertSchema — free-form objects (#35)', () => {
   });
 });
 
-// #33 / #47: one direction-aware `mode` drives both open response objects and
+// kaisers-io/openapi-mcp-archive#33 / kaisers-io/openapi-mcp-archive#47: one
+// direction-aware `mode` drives both open response objects and
 // readOnly/writeOnly handling.
-describe('convertSchema — request/response mode (#33, #47)', () => {
+describe('convertSchema — request/response mode (kaisers-io/openapi-mcp-archive#33, kaisers-io/openapi-mcp-archive#47)', () => {
   const user = {
     type: 'object',
     required: ['id', 'name', 'password'],
@@ -999,11 +1001,12 @@ describe('convertSchema — request/response mode (#33, #47)', () => {
   });
 });
 
-// #41: three common idioms that used to omit their operation.
-describe('convertSchema — nullable and single-member allOf idioms (#41)', () => {
+// kaisers-io/openapi-mcp-archive#41: three common idioms that used to omit
+// their operation.
+describe('convertSchema — nullable and single-member allOf idioms (kaisers-io/openapi-mcp-archive#41)', () => {
   const obj = { type: 'object', properties: { a: { type: 'string' } } };
 
-  it('3.0 nullable allOf: null admitted in both directions (D9: a PATCH can clear the field)', () => {
+  it('3.0 nullable allOf: null admitted in both directions (a PATCH can clear the field)', () => {
     const node = { nullable: true, allOf: [obj] };
     const request = ok(convertSchema(node, '3.0'));
     expect(request.safeParse({ a: 'x' }).success).toBe(true);
@@ -1086,11 +1089,12 @@ describe('convertSchema — nullable and single-member allOf idioms (#41)', () =
   });
 });
 
-// #43 / decision D12: oneOf requires EXACTLY one matching subschema (JSON
-// Schema Core 2020-12 §10.2.1.3). Exclusivity (z.xor, `oneOf` on the wire) is
-// used only in request mode and only when the branches are disjoint by
-// enforced keywords; otherwise the inclusive union keeps every tool callable.
-describe('convertSchema — oneOf exclusivity (#43, D12)', () => {
+// kaisers-io/openapi-mcp-archive#43: oneOf requires EXACTLY one matching
+// subschema (JSON Schema Core 2020-12 §10.2.1.3). Exclusivity (z.xor, `oneOf`
+// on the wire) is used only in request mode and only when the branches are
+// disjoint by enforced keywords; otherwise the inclusive union keeps every tool
+// callable.
+describe('convertSchema — oneOf exclusivity (kaisers-io/openapi-mcp-archive#43)', () => {
   const wireOf = (schema: z.ZodType): Record<string, unknown> => z.toJSONSchema(schema);
 
   const card = {
@@ -1193,7 +1197,8 @@ describe('convertSchema — oneOf exclusivity (#43, D12)', () => {
 
   it('response: a discriminator-mapping oneOf (no const) accepts a valid payload', () => {
     // Cat/Dog share `petType` and `name`; only `discriminator.mapping` tells
-    // them apart. Response objects are open (#33), so a Dog matches both.
+    // them apart. Response objects are open
+    // (kaisers-io/openapi-mcp-archive#33), so a Dog matches both.
     const pet = {
       oneOf: [
         {
@@ -1241,8 +1246,9 @@ describe('convertSchema — oneOf exclusivity (#43, D12)', () => {
   });
 });
 
-// #39 / D11: a response `pattern` with nested quantifiers is unrepresentable.
-describe('convertSchema — response pattern safety (#39)', () => {
+// kaisers-io/openapi-mcp-archive#39: a response `pattern` with nested
+// quantifiers is unrepresentable.
+describe('convertSchema — response pattern safety (kaisers-io/openapi-mcp-archive#39)', () => {
   it('response mode: a nested-quantifier pattern is unrepresentable', () => {
     const result = convertSchema(
       { type: 'object', properties: { v: { type: 'string', pattern: '^(a+)+$' } } },
@@ -1275,10 +1281,10 @@ describe('convertSchema — response pattern safety (#39)', () => {
   });
 });
 
-// #71: keywords that can be enforced EXACTLY are supported instead of
-// omitting the operation (JSON Schema Validation 2020-12 §6.4.3 uniqueItems,
-// §6.5.1/§6.5.2 maxProperties/minProperties).
-describe('convertSchema — uniqueItems / minProperties / maxProperties (#71)', () => {
+// kaisers-io/openapi-mcp-archive#71: keywords that can be enforced EXACTLY are
+// supported instead of omitting the operation (JSON Schema Validation 2020-12
+// §6.4.3 uniqueItems, §6.5.1/§6.5.2 maxProperties/minProperties).
+describe('convertSchema — uniqueItems / minProperties / maxProperties (kaisers-io/openapi-mcp-archive#71)', () => {
   it('uniqueItems: rejects duplicates by JSON instance equality, accepts distinct items', () => {
     const s = ok(convertSchema({ type: 'array', items: { type: 'string' }, uniqueItems: true }));
     expect(s.safeParse(['a', 'b']).success).toBe(true);

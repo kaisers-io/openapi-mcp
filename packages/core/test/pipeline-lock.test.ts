@@ -6,10 +6,10 @@ import type { SpecPipelineDeps } from '../src/index.ts';
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
-// #65: a lock held by another process (servers starting together, or a
-// crashed writer) must not fail a run whose only write is bookkeeping on an
-// entry it has already verified; writes that change what is accepted stay
-// strict.
+// Issue kaisers-io/openapi-mcp-archive#65: a lock held by another process
+// (servers starting together, or a crashed writer) must not fail a run whose
+// only write is bookkeeping on an entry it has already verified; writes that
+// change what is accepted stay strict.
 type SpecFetcher = SpecPipelineDeps['fetcher'];
 
 const opts = {
@@ -89,7 +89,7 @@ const seededAndLocked = async (
   return { fs, lockPath, metaBefore: fs.files.get(metaPath)! };
 };
 
-describe('a held writer lock and a verified entry (#65)', () => {
+describe('a held writer lock and a verified entry (kaisers-io/openapi-mcp-archive#65)', () => {
   it('a 304 serves the verified baseline with a warning naming cache unlock', async () => {
     const fetcher = fetcherOf([{ body: remoteSpec('Remote'), etag: '"v1"' }, { status: 304 }]);
     const { fs, lockPath, metaBefore } = await seededAndLocked(fetcher);

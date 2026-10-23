@@ -15,7 +15,7 @@ export type Upstream = {
 
 // A local mock upstream: answers every request with the current fixture's
 // canned JSON body after UPSTREAM_LATENCY_MS, and counts accepted TCP
-// connections (connection reuse, issue #51).
+// connections (connection reuse, issue kaisers-io/openapi-mcp-archive#51).
 export const startUpstream = async (): Promise<Upstream> => {
   let body = '{}';
   let connections = 0;

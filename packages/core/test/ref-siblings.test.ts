@@ -10,8 +10,9 @@ import {
 import type { BuildToolsResult, OpenapiVersion, OperationRecord } from '../src/index.ts';
 import { mergeSchemaSiblings } from '../src/spec/ref-siblings.ts';
 
-// Issue #63: in OpenAPI 3.1 (JSON Schema 2020-12) keywords next to a $ref are
-// applied in addition to the referenced schema; in 3.0 they MUST be ignored.
+// Issue kaisers-io/openapi-mcp-archive#63: in OpenAPI 3.1 (JSON Schema 2020-12)
+// keywords next to a $ref are applied in addition to the referenced schema; in
+// 3.0 they MUST be ignored.
 
 const DEFAULT_COMPONENTS: Record<string, unknown> = { Name: { type: 'string' } };
 
@@ -186,7 +187,8 @@ describe('$ref siblings — OpenAPI 3.1 applies them', () => {
     );
     expect(merged['allOf']).toBeUndefined();
     expect({ ...merged }).toMatchObject({ uniqueItems: true, maxItems: 3, minItems: 1 });
-    // #112: the converter enforces the merged keywords (OR of uniqueItems)
+    // PR kaisers-io/openapi-mcp-archive#112: the converter enforces the merged
+    // keywords (OR of uniqueItems)
     const converted = convertSchema({ ...merged }, '3.1');
     if (!('ok' in converted)) {
       throw new Error(converted.unrepresentable);
@@ -298,7 +300,7 @@ describe('mergeSchemaSiblings — exact intersection (3.1)', () => {
     });
   });
 
-  it('feeds the converter the intersected property-count bounds (#112: max of mins, min of maxes)', () => {
+  it('feeds the converter the intersected property-count bounds (kaisers-io/openapi-mcp-archive#112: max of mins, min of maxes)', () => {
     const merged = mergeSchemaSiblings(
       { type: 'object', additionalProperties: true, minProperties: 1, maxProperties: 9 },
       { minProperties: 2, maxProperties: 3 },

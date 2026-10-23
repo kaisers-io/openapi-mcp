@@ -18,8 +18,9 @@ export const createMetaExecutor =
       omittedReasons: meta.omittedReasons,
       acceptedContentHash: meta.acceptedContentHash,
       deadPatternCount: meta.deadPatternCount,
-      // Declared in the status output schema (#65) and documented as
-      // surfaced here, so it is passed through when present.
+      // Declared in the status output schema
+      // (kaisers-io/openapi-mcp-archive#65) and documented as surfaced here, so
+      // it is passed through when present.
       ...(meta.cacheLock === undefined ? {} : { cacheLock: meta.cacheLock }),
       ...(options.stats === undefined ? {} : { calls: options.stats.summary() }),
     };

@@ -1,6 +1,7 @@
-// The body of `openapi-mcp serve`, loaded on demand by serve.ts (issue #91):
-// the MCP SDK, the HTTP transport, hono and the executor are only evaluated
-// when a server actually starts, not for --version, tools, cache or doctor.
+// The body of `openapi-mcp serve`, loaded on demand by serve.ts (issue
+// kaisers-io/openapi-mcp-archive#91): the MCP SDK, the HTTP transport, hono and
+// the executor are only evaluated when a server actually starts, not for
+// --version, tools, cache or doctor.
 import { isIP } from 'node:net';
 import type { Command } from '@commander-js/extra-typings';
 import {
@@ -541,10 +542,11 @@ export const runServe = async (
     // first matching call. `validators.has` is the executor's fail-closed
     // contract — every upstream tool gets an entry, `undefined` only for a
     // genuine no-outputSchema tool. One compiler context serves the whole
-    // snapshot (issue #42): the meta-schema is compiled once, not per tool.
-    // Created per snapshot, never module-global: Ajv caches every compiled
-    // schema by identity, so a future snapshot reload must build a new
-    // compiler rather than reuse this one, or old schemas pile up.
+    // snapshot (issue kaisers-io/openapi-mcp-archive#42): the meta-schema is
+    // compiled once, not per tool. Created per snapshot, never module-global:
+    // Ajv caches every compiled schema by identity, so a future snapshot reload
+    // must build a new compiler rather than reuse this one, or old schemas pile
+    // up.
     const compileToolValidator = createEnvelopeCompiler();
     const validatorEntries = snapshot.operations.map((tool) => {
       try {

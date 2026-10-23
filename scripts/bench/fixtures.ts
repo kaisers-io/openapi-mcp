@@ -39,13 +39,14 @@ type LayeredOptions = {
   layers: number;
 };
 
-// The layered schema graph from issues #89 and #90: `schemas` component
-// schemas split into `layers` layers, every schema referencing
-// `refsPerSchema` schemas of the next layer, and `pathCount` paths with a GET
-// and a PUT each that reference one schema. Acyclic, but each $ref target is
-// reachable through many paths — the shape of a real domain model
-// (customer -> address -> ...), and the shape that makes per-occurrence
-// dereferencing and per-occurrence schema conversion expensive.
+// The layered schema graph from issues kaisers-io/openapi-mcp-archive#89 and
+// kaisers-io/openapi-mcp-archive#90: `schemas` component schemas split into
+// `layers` layers, every schema referencing `refsPerSchema` schemas of the next
+// layer, and `pathCount` paths with a GET and a PUT each that reference one
+// schema. Acyclic, but each $ref target is reachable through many paths — the
+// shape of a real domain model (customer -> address -> ...), and the shape that
+// makes per-occurrence dereferencing and per-occurrence schema conversion
+// expensive.
 export const layeredSpec = (opts: LayeredOptions): Record<string, unknown> => {
   const perLayer = Math.ceil(opts.schemas / opts.layers);
   const schemas: Record<string, unknown> = {};
@@ -233,8 +234,9 @@ export const FIXTURES: readonly Fixture[] = [
   },
   {
     // The warm start reads an unchanged file: it reuses the cached, already
-    // validated document instead of parsing the YAML again (#76), so
-    // warmStartupMs vs startupMs shows that saving
+    // validated document instead of parsing the YAML again
+    // (kaisers-io/openapi-mcp-archive#76), so warmStartupMs vs startupMs
+    // shows that saving
     name: 'yaml-400',
     description: '400 GET operations without response schemas, as a YAML file',
     spec: () => Promise.resolve({ text: toYaml(describedSpec(400)), extension: 'yaml' }),
@@ -243,7 +245,8 @@ export const FIXTURES: readonly Fixture[] = [
   },
   {
     name: 'layered-400',
-    description: '200 schemas x 2 refs x 7 layers, 400 operations (issue #89 "wide.json")',
+    description:
+      '200 schemas x 2 refs x 7 layers, 400 operations (issue kaisers-io/openapi-mcp-archive#89 "wide.json")',
     spec: jsonSpec(() =>
       layeredSpec({ schemas: 200, refsPerSchema: 2, pathCount: 200, layers: 7 }),
     ),
@@ -253,7 +256,8 @@ export const FIXTURES: readonly Fixture[] = [
   },
   {
     name: 'toolgen-500',
-    description: '200 schemas x 2 refs x 5 layers, 500 operations (issue #90)',
+    description:
+      '200 schemas x 2 refs x 5 layers, 500 operations (issue kaisers-io/openapi-mcp-archive#90)',
     spec: jsonSpec(() =>
       layeredSpec({ schemas: 200, refsPerSchema: 2, pathCount: 250, layers: 5 }),
     ),

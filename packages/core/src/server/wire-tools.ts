@@ -58,8 +58,9 @@ export const META_OUTPUT_SCHEMA: Record<string, unknown> = {
       additionalProperties: false,
     },
     // Present only when start-up could not record the spec revalidation
-    // because another process holds the cache lock (#65). Host users rarely
-    // see stderr, so the stuck case is surfaced here too.
+    // because another process holds the cache lock
+    // (kaisers-io/openapi-mcp-archive#65). Host users rarely see stderr, so the
+    // stuck case is surfaced here too.
     cacheLock: {
       type: 'string',
       enum: ['held', 'stale'],

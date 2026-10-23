@@ -15,10 +15,11 @@ const testFilesUnder = async (dir: string): Promise<string[]> => {
     .map((entry) => join(entry.parentPath, entry.name));
 };
 
-// Guards the manual file list in subprocess-budget.ts (issue #96): a test file
-// that spawns processes but is missing from SUBPROCESS_E2E_FILES would run in
-// a unit project under the 5 s default timeout and alongside the unit workers,
-// which is exactly the setup that made the subprocess suites flaky.
+// Guards the manual file list in subprocess-budget.ts (issue
+// kaisers-io/openapi-mcp-archive#96): a test file that spawns processes but is
+// missing from SUBPROCESS_E2E_FILES would run in a unit project under the 5 s
+// default timeout and alongside the unit workers, which is exactly the setup
+// that made the subprocess suites flaky.
 describe('subprocess test budget', () => {
   it('assigns every test file that imports node:child_process to a list', async () => {
     const packageNames = await readdir(packagesDir);

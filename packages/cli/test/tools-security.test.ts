@@ -7,7 +7,9 @@ import { run } from '../src/main.ts';
 
 // `tools` names the credential each exposed operation's `security`
 // requirement expects (components.securitySchemes), so an operator no longer
-// has to guess which header to pass via --header-env (#55, merged from #83).
+// has to guess which header to pass via --header-env
+// (kaisers-io/openapi-mcp-archive#55, merged from
+// kaisers-io/openapi-mcp-archive#83).
 
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 

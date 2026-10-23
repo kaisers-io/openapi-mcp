@@ -1,5 +1,6 @@
-// The YAML bench fixture (#76): a file spec whose warm start reuses the cached,
-// already validated document instead of parsing the YAML again.
+// The YAML bench fixture (kaisers-io/openapi-mcp-archive#76): a file spec whose
+// warm start reuses the cached, already validated document instead of parsing
+// the YAML again.
 
 // An inline scalar or empty collection, or undefined for a value that needs
 // its own indented block

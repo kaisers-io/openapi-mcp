@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import { HTTP_METHODS } from '../spec/normalize.ts';
 
-// Input and output schemas of the three discovery tools (issue #38). Every
-// field a caller controls is bounded here, before any search or lookup runs.
+// Input and output schemas of the three discovery tools (issue
+// kaisers-io/openapi-mcp-archive#38). Every field a caller controls is bounded
+// here, before any search or lookup runs.
 
 // Caller-controlled search input is bounded before any work: the query's
 // length (the 500-character cap a hosted BM25 tool search applies too),

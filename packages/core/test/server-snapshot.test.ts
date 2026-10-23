@@ -72,7 +72,7 @@ describe('buildSnapshot', () => {
     expect(snapshot.toolsByName['getThing']?.kind).toBe('upstream');
   });
 
-  it('reports a cache lock that blocked start-up bookkeeping as cacheLock, and nothing otherwise (#65)', () => {
+  it('reports a cache lock that blocked start-up bookkeeping as cacheLock, and nothing otherwise (kaisers-io/openapi-mcp-archive#65)', () => {
     const built = buildTools([namedOp('getThing', '/things/{id}')], {
       reservedHeaders: SYSTEM_HEADERS,
       openapiVersion: '3.1',

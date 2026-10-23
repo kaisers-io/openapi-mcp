@@ -20,9 +20,9 @@ import type { SpecPipelineDeps } from '../src/index.ts';
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
-// #88: three small cache cleanups.
+// Issue kaisers-io/openapi-mcp-archive#88: three small cache cleanups.
 
-describe('--ttl is an age, not a timer (#88 item 1)', () => {
+describe('--ttl is an age, not a timer (kaisers-io/openapi-mcp-archive#88 item 1)', () => {
   it('accepts TTLs beyond the Node timer limit, up to a year', () => {
     expect(parseAgeDuration('30d')).toBe(30 * 86_400_000);
     expect(parseAgeDuration('90d')).toBe(90 * 86_400_000);
@@ -46,7 +46,7 @@ describe('--ttl is an age, not a timer (#88 item 1)', () => {
   });
 });
 
-describe('orphaned temp files in the entry directory are collected (#88 item 2)', () => {
+describe('orphaned temp files in the entry directory are collected (kaisers-io/openapi-mcp-archive#88 item 2)', () => {
   const LAYOUT = cacheLayout('/cache', 'abcdef0123456789');
   const UUID_A = '11111111-1111-1111-1111-111111111111';
   const UUID_B = '22222222-2222-2222-2222-222222222222';
@@ -126,7 +126,7 @@ describe('orphaned temp files in the entry directory are collected (#88 item 2)'
     expect(entryNames(fs)).not.toContain(`.meta.json.${UUID_B}.tmp`);
   });
 
-  it('collects after a 304 revalidation too, which never commits (#75)', async () => {
+  it('collects after a 304 revalidation too, which never commits (kaisers-io/openapi-mcp-archive#75)', async () => {
     const fs = memoryCacheFs();
     await writeAccepted(LAYOUT, fs, input(NOW));
     // A writer killed mid-touchRevalidated, between temp write and rename

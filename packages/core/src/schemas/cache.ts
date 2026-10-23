@@ -10,20 +10,22 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 // anything that changes the stored document, or whether it is accepted at
 // all, for the same source bytes) must bump this constant. Unchanged source
 // bytes are not parsed or validated again while their entry is current
-// (reusableAcceptedDocument in spec/pipeline.ts, #76), so a new validation
-// rule reaches existing entries only through a bump. An unchanged source is
-// never rewritten while its entry is current (a 304 keeps the entry, and since
-// #75 a 200 with identical bytes only refreshes fetchedAt/validators), so a
-// version bump is the ONLY thing that makes existing entries pick up new
-// processing: the pipeline revalidates an older entry without validators and
-// rewrites it in full (the bookkeeping-only path is skipped for it).
+// (reusableAcceptedDocument in spec/pipeline.ts,
+// kaisers-io/openapi-mcp-archive#76), so a new validation rule reaches existing
+// entries only through a bump. An unchanged source is never rewritten while its
+// entry is current (a 304 keeps the entry, and since
+// kaisers-io/openapi-mcp-archive#75 a 200 with identical bytes only refreshes
+// fetchedAt/validators), so a version bump is the ONLY thing that makes
+// existing entries pick up new processing: the pipeline revalidates an older
+// entry without validators and rewrites it in full (the bookkeeping-only path
+// is skipped for it).
 //
-// Version 2 (issue #89): the persisted spec object is the validated SOURCE
-// document, no longer its dereferenced form. Version 1 entries stay readable
-// (LEGACY_CACHE_META_SCHEMA_VERSION): their dereferenced document is still a
-// valid spec, and an unchanged source is rewritten in the version 2 form —
-// the approval it records is of the source bytes, which are compared by hash.
-// Anything else stays unreadable.
+// Version 2 (issue kaisers-io/openapi-mcp-archive#89): the persisted spec
+// object is the validated SOURCE document, no longer its dereferenced form.
+// Version 1 entries stay readable (LEGACY_CACHE_META_SCHEMA_VERSION): their
+// dereferenced document is still a valid spec, and an unchanged source is
+// rewritten in the version 2 form — the approval it records is of the source
+// bytes, which are compared by hash. Anything else stays unreadable.
 export const CACHE_META_SCHEMA_VERSION = 2;
 export const LEGACY_CACHE_META_SCHEMA_VERSION = 1;
 

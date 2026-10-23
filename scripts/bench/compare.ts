@@ -1,4 +1,5 @@
-// Regression gate over a report from run.ts (issue #80).
+// Regression gate over a report from run.ts (issue
+// kaisers-io/openapi-mcp-archive#80).
 //
 //   node scripts/bench/compare.ts <report.json> [--head head] [--base base]
 //     [--baseline scripts/bench/baseline.json]

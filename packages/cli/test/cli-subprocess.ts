@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url';
 // type stripping (src/index.ts runs the CLI when it is the main module). Not
 // bin/openapi-mcp.mjs: the stub prefers dist/ whenever a build exists, and the
 // suites would then test a possibly stale bundle instead of the sources under
-// review, and report no coverage for them (issue #86). The stub and the
-// packed bundle are exercised by scripts/smoke-cli.sh, which runs the
-// globally installed tarball in CI.
+// review, and report no coverage for them (issue
+// kaisers-io/openapi-mcp-archive#86). The stub and the packed bundle are
+// exercised by scripts/smoke-cli.sh, which runs the globally installed tarball
+// in CI.
 export const CLI_ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
 
 // The specs and other inputs the subprocess suites start the CLI with.

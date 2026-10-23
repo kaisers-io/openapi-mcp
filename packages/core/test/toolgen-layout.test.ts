@@ -396,11 +396,12 @@ describe('buildLayout — body classification', () => {
   });
 });
 
-// #47: request bodies drop readOnly properties (OAS 3.0.3 / 3.1.1 Schema
-// Object: readOnly properties SHOULD NOT be sent in a request, and a
-// `required` readOnly property applies to the response only). #35: a
-// free-form object field accepts arbitrary keys.
-describe('buildLayout — request direction (#35, #47)', () => {
+// kaisers-io/openapi-mcp-archive#47: request bodies drop readOnly properties
+// (OAS 3.0.3 / 3.1.1 Schema Object: readOnly properties SHOULD NOT be sent in a
+// request, and a `required` readOnly property applies to the response only).
+// kaisers-io/openapi-mcp-archive#35: a free-form object field accepts arbitrary
+// keys.
+describe('buildLayout — request direction (kaisers-io/openapi-mcp-archive#35, kaisers-io/openapi-mcp-archive#47)', () => {
   const userBody = (required: boolean) =>
     jsonBody(
       {
@@ -686,10 +687,10 @@ describe('buildLayout — path template consistency', () => {
   });
 });
 
-// #54 / decision D5: every JSON media-type variant is accepted (`+json`
-// suffix, parameters), the DECLARED media type is what gets sent, and the
-// choice among several variants is deterministic.
-describe('buildLayout — JSON media-type variants (#54, D5)', () => {
+// kaisers-io/openapi-mcp-archive#54: every JSON media-type variant is accepted
+// (`+json` suffix, parameters), the DECLARED media type is what gets sent, and
+// the choice among several variants is deterministic.
+describe('buildLayout — JSON media-type variants (kaisers-io/openapi-mcp-archive#54)', () => {
   const objectSchema = { type: 'object', properties: { name: { type: 'string' } } };
   const withContent = (content: Record<string, unknown>) =>
     buildLayout(bodyOp({ required: true, content }), new Set());
@@ -799,10 +800,11 @@ describe('buildLayout — JSON media-type variants (#54, D5)', () => {
   });
 });
 
-// #59: query styles beyond `form` (OAS 3.1.1 §4.8.12.3 Style Values,
-// §4.8.12.4 Style Examples). Only the combinations the spec defines are
-// accepted; every `n/a` cell of the examples table still omits.
-describe('paramFields — deepObject / spaceDelimited / pipeDelimited (#59)', () => {
+// kaisers-io/openapi-mcp-archive#59: query styles beyond `form` (OAS 3.1.1
+// §4.8.12.3 Style Values, §4.8.12.4 Style Examples). Only the combinations the
+// spec defines are accepted; every `n/a` cell of the examples table still
+// omits.
+describe('paramFields — deepObject / spaceDelimited / pipeDelimited (kaisers-io/openapi-mcp-archive#59)', () => {
   const query = (extra: Record<string, unknown>) =>
     paramFields(op([{ name: 'created', in: 'query', ...extra }]), new Set());
   const scalarObject = {
@@ -899,9 +901,9 @@ describe('paramFields — deepObject / spaceDelimited / pipeDelimited (#59)', ()
   });
 });
 
-// #40: body presence is recorded in the mapper, not inferred from which
-// flattened fields happen to be populated.
-describe('buildLayout — required body presence (#40)', () => {
+// kaisers-io/openapi-mcp-archive#40: body presence is recorded in the mapper,
+// not inferred from which flattened fields happen to be populated.
+describe('buildLayout — required body presence (kaisers-io/openapi-mcp-archive#40)', () => {
   const optionalOnly = { type: 'object', properties: { note: { type: 'string' } } };
   const mapperFor = (requestBody: Record<string, unknown>) => {
     const operation = bodyOp(requestBody);
@@ -922,9 +924,10 @@ describe('buildLayout — required body presence (#40)', () => {
   });
 });
 
-// #71: an application/octet-stream body is exposed as ONE base64 string field
-// (JSON-RPC tool arguments cannot carry raw bytes) and decoded before sending.
-describe('buildLayout — application/octet-stream bodies (#71)', () => {
+// kaisers-io/openapi-mcp-archive#71: an application/octet-stream body is
+// exposed as ONE base64 string field (JSON-RPC tool arguments cannot carry raw
+// bytes) and decoded before sending.
+describe('buildLayout — application/octet-stream bodies (kaisers-io/openapi-mcp-archive#71)', () => {
   const binaryOp = (content: Record<string, unknown>, required = true) =>
     buildLayout(bodyOp({ ...(required ? { required: true } : {}), content }), new Set());
 
@@ -995,9 +998,9 @@ describe('buildLayout — application/octet-stream bodies (#71)', () => {
   });
 });
 
-// #71: multipart/form-data bodies — flattened like form-urlencoded, with
-// binary parts exposed as base64 string fields.
-describe('buildLayout — multipart/form-data bodies (#71)', () => {
+// kaisers-io/openapi-mcp-archive#71: multipart/form-data bodies — flattened
+// like form-urlencoded, with binary parts exposed as base64 string fields.
+describe('buildLayout — multipart/form-data bodies (kaisers-io/openapi-mcp-archive#71)', () => {
   const multipart = (schema: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
     buildLayout(
       bodyOp({ required: true, content: { 'multipart/form-data': { schema, ...extra } } }),

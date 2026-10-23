@@ -14,12 +14,12 @@ import {
 import type { DescribeInput } from './discovery-schemas.ts';
 import type { SnapshotTool, ToolMode, WireTool } from './types.ts';
 
-// Discovery tool mode (issue #38): instead of one MCP tool per operation,
-// tools/list carries three package-authored tools that find, describe and call
-// the exposed operations. tools/list then stays a few KB whatever the
-// operation count, at the cost of one or two extra tool calls per task — the
-// progressive-disclosure pattern behind model-provider tool search, Speakeasy's
-// dynamic toolsets and Stainless' `--tools=dynamic`.
+// Discovery tool mode (issue kaisers-io/openapi-mcp-archive#38): instead of one
+// MCP tool per operation, tools/list carries three package-authored tools that
+// find, describe and call the exposed operations. tools/list then stays a few
+// KB whatever the operation count, at the cost of one or two extra tool calls
+// per task — the progressive-disclosure pattern behind model-provider tool
+// search, Speakeasy's dynamic toolsets and Stainless' `--tools=dynamic`.
 //
 // Nothing in this module is a second policy path. The operations it sees are
 // exactly the snapshot's exposed (post-filter) set, and call_operation runs
@@ -49,7 +49,7 @@ export const resolveToolMode = (requested: RequestedToolMode, exposedCount: numb
   return requested;
 };
 
-// Startup warning (decision D15): under discover, a host that approves per
+// Startup warning: under discover, a host that approves per
 // tool sees ONE approval surface, call_operation, for every exposed
 // operation. "Always allow call_operation" then also allows every write the
 // filters expose. Undefined when every exposed operation is read-only (the

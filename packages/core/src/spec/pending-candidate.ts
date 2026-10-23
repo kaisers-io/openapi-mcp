@@ -11,12 +11,13 @@ import { sanitizeSpecText } from './sanitize.ts';
 
 // While a changed spec waits as a candidate, the accepted baseline keeps
 // serving — but an operation the candidate no longer has is withheld at once
-// (#60). That is the one automatic change the cache allows, because it only
-// ever narrows what a model can do: the API provider removed the endpoint
-// (deprecated, unsafe, gone), and keeping it callable until someone runs
-// `cache promote` would be the unsafe direction. Everything else in the
-// candidate — new operations, changed schemas or descriptions — still waits:
-// an operation present in both keeps its ACCEPTED definition.
+// (kaisers-io/openapi-mcp-archive#60). That is the one automatic change the
+// cache allows, because it only ever narrows what a model can do: the API
+// provider removed the endpoint (deprecated, unsafe, gone), and keeping it
+// callable until someone runs `cache promote` would be the unsafe direction.
+// Everything else in the candidate — new operations, changed schemas or
+// descriptions — still waits: an operation present in both keeps its ACCEPTED
+// definition.
 //
 // Operations are matched by `METHOD path`, the identity the spec itself
 // gives them (an operationId can be added, renamed or dropped without the
@@ -44,11 +45,12 @@ export const operationKeysOf = (document: Record<string, unknown>): ReadonlySet<
     return keys;
   }
   for (const [path, written] of Object.entries(paths)) {
-    // The cache holds the SOURCE document (#89), so a path item may still be
-    // a `{ $ref }` to a shared one. Following it is what keeps every method
-    // under it from reading as removed. The candidate's refs were checked
-    // before it was written; one that still does not resolve (or loops)
-    // leaves the path without keys, i.e. withheld, the fail-closed direction.
+    // The cache holds the SOURCE document (kaisers-io/openapi-mcp-archive#89),
+    // so a path item may still be a `{ $ref }` to a shared one. Following it is
+    // what keeps every method under it from reading as removed. The candidate's
+    // refs were checked before it was written; one that still does not resolve
+    // (or loops) leaves the path without keys, i.e. withheld, the fail-closed
+    // direction.
     let item: unknown;
     try {
       item = resolveShallow(document, written);

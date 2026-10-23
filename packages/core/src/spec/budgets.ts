@@ -10,13 +10,14 @@ export const SPEC_BUDGETS = {
   maxSchemaNodes: 500_000,
   maxRefDepth: 64,
   // Bounds what is EXPOSED to the model, i.e. the operations left after
-  // --allow/--deny filtering (issue #32)
+  // --allow/--deny filtering (issue kaisers-io/openapi-mcp-archive#32)
   maxToolCount: 512,
-  // The exposed-set budget under --tool-mode discover (issue #38). tools/list
-  // then carries four fixed tools whatever the operation count, so this no
-  // longer bounds model context; it bounds the per-operation tool generation,
-  // output-validator compilation and search-index work instead, and is set to
-  // the raw operation cap so a filter is never required just to start.
+  // The exposed-set budget under --tool-mode discover (issue
+  // kaisers-io/openapi-mcp-archive#38). tools/list then carries four fixed
+  // tools whatever the operation count, so this no longer bounds model context;
+  // it bounds the per-operation tool generation, output-validator compilation
+  // and search-index work instead, and is set to the raw operation cap so a
+  // filter is never required just to start.
   maxDiscoverToolCount: 4096,
   // Raw sanity cap on the unfiltered document. maxSpecBytes and maxSchemaNodes
   // already bound the document's size; this bounds the per-operation
@@ -28,7 +29,8 @@ export const SPEC_BUDGETS = {
   // UTF-8 bytes of the root server URL after variable expansion. A base URL is
   // a prefix of every request URL, and RFC 9110 §4.1 only recommends
   // supporting 8000-octet request targets; real base URLs are a few dozen
-  // bytes. Checked BEFORE the expansion is materialized (issue #37).
+  // bytes. Checked BEFORE the expansion is materialized (issue
+  // kaisers-io/openapi-mcp-archive#37).
   maxServerUrlBytes: 2048,
 } as const;
 

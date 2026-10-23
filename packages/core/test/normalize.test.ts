@@ -80,7 +80,7 @@ describe('normalizeSpec — extraction', () => {
     expect(verbose?.['schema']).toEqual({ type: 'string' });
   });
 
-  it('lets an operation-level header override a path-level one that differs only in case (issue #67)', () => {
+  it('lets an operation-level header override a path-level one that differs only in case (issue kaisers-io/openapi-mcp-archive#67)', () => {
     const spec = normalizeSpec(
       doc({
         '/x': {
@@ -192,7 +192,9 @@ describe('normalizeSpec — extraction', () => {
 
   // The case-insensitive header override is keyed on the RESOLVED name/in;
   // the parameter is kept as written, so 3.1 keywords next to a $ref still
-  // apply when the operation is dereferenced (issues #67, #89, #63).
+  // apply when the operation is dereferenced (issues
+  // kaisers-io/openapi-mcp-archive#67, kaisers-io/openapi-mcp-archive#89,
+  // kaisers-io/openapi-mcp-archive#63).
   const refHeaderDoc = (pathLevel: unknown, opLevel: unknown): Record<string, unknown> =>
     doc(
       {
@@ -559,7 +561,7 @@ describe('normalizeSpec — server URL extraction', () => {
   });
 });
 
-describe('normalizeSpec — expanded server URL budget (issue #37)', () => {
+describe('normalizeSpec — expanded server URL budget (issue kaisers-io/openapi-mcp-archive#37)', () => {
   const budget = SPEC_BUDGETS.maxServerUrlBytes;
   type ServerFields = {
     operations: readonly { path: string }[];

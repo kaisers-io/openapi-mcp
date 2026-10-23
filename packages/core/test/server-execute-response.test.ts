@@ -104,7 +104,7 @@ describe('compileEnvelopeValidator', () => {
   });
 });
 
-describe('createEnvelopeCompiler — one compiler context per snapshot (issue #42)', () => {
+describe('createEnvelopeCompiler — one compiler context per snapshot (issue kaisers-io/openapi-mcp-archive#42)', () => {
   const envelope = (data: Record<string, unknown>): Record<string, unknown> => ({
     type: 'object',
     oneOf: [
@@ -315,10 +315,11 @@ describe('mapResponse — HTTP error status (>=400)', () => {
     expect(text).toBe('upstream request failed with status 500');
   });
 
-  // Issue #58: secrets are registered as whole header values, so these
-  // bodies — which echo only the credential, a decoded Basic part, or an
-  // encoding the redactor did not know — used to come back verbatim.
-  describe('echoed credentials derived from an Authorization value (#58)', () => {
+  // Issue kaisers-io/openapi-mcp-archive#58: secrets are registered as whole
+  // header values, so these bodies — which echo only the credential, a decoded
+  // Basic part, or an encoding the redactor did not know — used to come back
+  // verbatim.
+  describe('echoed credentials derived from an Authorization value (kaisers-io/openapi-mcp-archive#58)', () => {
     const token = 'example-token-not-a-secret';
     const basicHeader = `Basic ${Buffer.from('alice:example/pass word-not-a-secret').toString('base64')}`;
 
@@ -448,7 +449,7 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     expect(result.content[0]?.text).toBe('hello world');
   });
 
-  it('a 200 text/* body echoing a bare Bearer credential is returned redacted (#58)', () => {
+  it('a 200 text/* body echoing a bare Bearer credential is returned redacted (kaisers-io/openapi-mcp-archive#58)', () => {
     const redactor = createRedactor(['Bearer example-token-not-a-secret']);
     const outcome = response(200, 'text/plain', 'your key is example-token-not-a-secret');
     const result = mapResponse(defaultOpts({ outcome, redactor }));
@@ -865,9 +866,10 @@ describe('mapResponse — large structured results: one secret scan, bounded tex
   });
 });
 
-// #33: end-to-end through the real generated outputSchema — an upstream that
-// adds an undocumented response field must still yield structured output.
-describe('mapResponse — generated outputSchema with an undocumented field (#33)', () => {
+// Issue kaisers-io/openapi-mcp-archive#33: end-to-end through the real
+// generated outputSchema — an upstream that adds an undocumented response field
+// must still yield structured output.
+describe('mapResponse — generated outputSchema with an undocumented field (kaisers-io/openapi-mcp-archive#33)', () => {
   it('returns structuredContent, not an output-schema error', () => {
     const outputSchema = deriveOutputSchema(
       {
@@ -900,8 +902,9 @@ describe('mapResponse — generated outputSchema with an undocumented field (#33
   });
 });
 
-// #72: with --default-response-is-error, an undocumented 2xx names the flag.
-describe('mapResponse — undocumented 2xx under the default-is-error assumption (#72)', () => {
+// Issue kaisers-io/openapi-mcp-archive#72: with --default-response-is-error, an
+// undocumented 2xx names the flag.
+describe('mapResponse — undocumented 2xx under the default-is-error assumption (kaisers-io/openapi-mcp-archive#72)', () => {
   const outputSchema = sampleOutputSchema();
   const validator = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
   const hint = '--default-response-is-error';
@@ -914,7 +917,7 @@ describe('mapResponse — undocumented 2xx under the default-is-error assumption
     expect(text).toContain(hint);
   });
 
-  it('says the upstream reported success and warns against a blind retry (D13)', () => {
+  it('says the upstream reported success and warns against a blind retry', () => {
     const outcome = response(201, 'application/json', '{"id":1}');
     const opts = defaultOpts({ outcome, outputSchema, validator, undeclaredSuccessHint: hint });
     const text = isError(mapResponse(opts));

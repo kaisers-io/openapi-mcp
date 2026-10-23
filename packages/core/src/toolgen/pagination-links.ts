@@ -102,8 +102,9 @@ type QueryFields = Readonly<Record<string, PaginationField>>;
 
 // A deepObject parameter on the wire: `name[key]`, exactly one level, with
 // neither part empty nor containing a bracket (the serializer refuses
-// bracketed keys as ambiguous with nesting, #108). Brackets may arrive
-// percent-encoded (`%5B`/`%5D`); URLSearchParams has decoded them by now.
+// bracketed keys as ambiguous with nesting,
+// kaisers-io/openapi-mcp-archive#108). Brackets may arrive percent-encoded
+// (`%5B`/`%5D`); URLSearchParams has decoded them by now.
 const DEEP_OBJECT_KEY_RE = /^(?<name>[^[\]]+)\[(?<key>[^[\]]+)\]$/u;
 
 // One next-link query parameter mapped onto the tool's fields: a form or

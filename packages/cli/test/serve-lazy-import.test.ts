@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { testContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 
-// The serve command imports its action on demand (issue #91). When that chunk
-// cannot be loaded (a broken install), the failure must take serve's own
-// error path: plain text on stderr even under --json, nothing on stdout,
-// which stays MCP-only.
+// The serve command imports its action on demand (issue
+// kaisers-io/openapi-mcp-archive#91). When that chunk cannot be loaded (a
+// broken install), the failure must take serve's own error path: plain text on
+// stderr even under --json, nothing on stdout, which stays MCP-only.
 vi.mock(import('../src/commands/serve-action.ts'), () => {
   throw new Error('chunk serve-action is missing');
 });

@@ -126,7 +126,7 @@ describe('validateOpenApiDocument', () => {
   });
 });
 
-describe('precompiled meta-schema validators (issue #76)', () => {
+describe('precompiled meta-schema validators (issue kaisers-io/openapi-mcp-archive#76)', () => {
   it('are exactly what the generator produces from the installed dependencies', () => {
     // Fails after a bump of ajv, ajv-formats, ajv-draft-04 or the schema
     // package until `node scripts/generate-validators.ts` is run

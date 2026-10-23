@@ -71,7 +71,7 @@ export type DereferencerOptions = {
   // cycle, instead of expanding it until the cycle closes. See below.
   collapseCycles?: boolean;
   // Whether keywords next to a $ref apply (3.1) or are ignored (3.0, or no
-  // version given), issue #63
+  // version given), issue kaisers-io/openapi-mcp-archive#63
   openapiVersion?: OpenapiVersion;
 };
 
@@ -82,10 +82,11 @@ export type Dereferencer = {
   resolve: (node: unknown) => unknown;
 };
 
-// Memoized dereferencing (issue #89). Each $ref target is expanded once and
-// the SAME output object is returned for every occurrence, so the output is a
-// DAG instead of a tree: memory, the unique-node budget and any consumer that
-// memoizes by identity scale with the source, not with the expansion.
+// Memoized dereferencing (issue kaisers-io/openapi-mcp-archive#89). Each $ref
+// target is expanded once and the SAME output object is returned for every
+// occurrence, so the output is a DAG instead of a tree: memory, the unique-node
+// budget and any consumer that memoizes by identity scale with the source, not
+// with the expansion.
 //
 // Memoization must not change the output. An expansion is reused only if it
 // emitted no cycle marker for a ref outside itself (`open` is empty): such a

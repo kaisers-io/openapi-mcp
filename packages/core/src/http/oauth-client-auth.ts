@@ -3,7 +3,8 @@ import { Buffer } from 'node:buffer';
 // The client-authentication half of the client-credentials grant, kept free
 // of the transport: the CLI's option parsing uses it at registration time,
 // and importing oauth-client-credentials.ts there would load the pinned
-// dispatcher (and undici) for every command, not only `serve` (issue #91).
+// dispatcher (and undici) for every command, not only `serve` (issue
+// kaisers-io/openapi-mcp-archive#91).
 
 export type ClientAuthMethod = 'client_secret_basic' | 'client_secret_post';
 

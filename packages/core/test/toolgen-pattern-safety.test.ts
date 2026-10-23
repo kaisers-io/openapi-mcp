@@ -8,7 +8,8 @@ import {
 } from '../src/index.ts';
 import type { EnvelopeValidator, OperationRecord } from '../src/index.ts';
 
-// #39 / D11: response patterns with nested quantifiers are never handed to Ajv.
+// Issue kaisers-io/openapi-mcp-archive#39: response patterns with nested
+// quantifiers are never handed to Ajv.
 describe('hasNestedQuantifier', () => {
   it.each([
     '^(a+)+$',
@@ -61,7 +62,7 @@ const unsafe = {
   properties: { code: { type: 'string', pattern: '^(a+)+$' } },
 };
 
-describe('output schema with an unsafe response pattern (#39)', () => {
+describe('output schema with an unsafe response pattern (kaisers-io/openapi-mcp-archive#39)', () => {
   it('withholds the output schema and says why', () => {
     const result = explainOutputSchema(op(unsafe), '3.1');
     expect(result.outputSchema).toBeUndefined();
