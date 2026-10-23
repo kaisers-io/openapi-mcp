@@ -29,6 +29,10 @@ export type GeneratedTool = {
   // Surfaced by `tools`, and used at runtime to name the flag when an
   // undocumented 2xx arrives.
   outputSchemaAssumesDefaultIsError?: true;
+  // Set when `nullableResponseFields` (issue #3) widened this tool's
+  // outputSchema, i.e. some response property now also admits null.
+  // Surfaced by `tools`.
+  outputSchemaAdmitsNullFields?: true;
   // Why the tool has no outputSchema, when the agent should know
   // (kaisers-io/openapi-mcp-archive#39: a response `pattern` with nested
   // quantifiers). Also folded into the description.
@@ -101,6 +105,7 @@ const buildToolEntry = (
   reservedHeaders: ReadonlySet<string>,
   openapiVersion: OpenapiVersion,
   defaultResponseIsError: boolean,
+  nullableResponseFields: boolean,
   projection: boolean,
 ): GeneratedTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
@@ -117,11 +122,16 @@ const buildToolEntry = (
     };
   }
   const pagination = detectPagination(named.operation, layout.ok.mapper, wireResult.ok);
-  const { outputSchema, withheld } = explainOutputSchema(named.operation, openapiVersion, {
-    defaultResponseIsError,
-    pagination: pagination !== undefined,
-    projection: layout.ok.projection,
-  });
+  const { outputSchema, withheld, admitsNullFields } = explainOutputSchema(
+    named.operation,
+    openapiVersion,
+    {
+      defaultResponseIsError,
+      nullableResponseFields,
+      pagination: pagination !== undefined,
+      projection: layout.ok.projection,
+    },
+  );
   const description = composeDescription(named.operation, withheld);
   const annotations = deriveAnnotations(named.operation.method);
   const assumesDefaultIsError =
@@ -138,6 +148,7 @@ const buildToolEntry = (
     annotations,
     ...(outputSchema === undefined ? {} : { outputSchema }),
     ...(assumesDefaultIsError ? { outputSchemaAssumesDefaultIsError: true as const } : {}),
+    ...(admitsNullFields === true ? { outputSchemaAdmitsNullFields: true as const } : {}),
     ...(withheld === undefined ? {} : { outputSchemaWithheld: withheld }),
     ...(pagination === undefined ? {} : { pagination }),
     ...(layout.ok.projection ? { projection: true } : {}),
@@ -154,6 +165,10 @@ export const buildTools = (
     reservedHeaders: ReadonlySet<string>;
     openapiVersion: OpenapiVersion;
     defaultResponseIsError?: boolean;
+    // Admit null for every object property in derived output schemas
+    // (serve/tools --nullable-response-fields, issue #3). Off by default:
+    // without it the output schemas are exactly the strict ones.
+    nullableResponseFields?: boolean;
     // Offer the optional `_fields` argument on JSON tools (serve
     // --response-projection). Off by default: it grows tools/list by about
     // a third, paid in every session.
@@ -179,6 +194,7 @@ export const buildTools = (
         reservedHeaders,
         opts.openapiVersion,
         opts.defaultResponseIsError === true,
+        opts.nullableResponseFields === true,
         opts.projection === true,
       ),
     ),

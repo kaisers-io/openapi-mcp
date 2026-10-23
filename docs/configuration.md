@@ -63,6 +63,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback addresses for spec fetch redirects and for API requests to a spec-derived origin or redirect, and the token URL with `--upstream-oauth-*`; with `--http-auth oauth` also the authorization-server metadata and JWKS fetches (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
+| `--nullable-response-fields` | no | admit `null` for every object property in derived output schemas, for specs that omit `nullable` (see below) | off |
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
@@ -242,6 +243,30 @@ Notes:
   action happened. The error text says so: the upstream reported success (status N), the
   request was likely applied, and the caller should not retry it blindly. For write-heavy
   APIs whose specs under-document success statuses, leave the flag off.
+- `--nullable-response-fields` is opt-in. Some generators (springdoc, for one) leave
+  `nullable` out unless a field is annotated, while the server serializes every unset field
+  as `null`. OpenAPI 3.0 defaults `nullable` to `false`, so the derived output schema rejects
+  such a response and the call fails with "upstream response for status N did not match the
+  tool's declared output schema", even though the data is usable. With the flag, every value
+  under an object's `properties` in the derived response (`data`) schema also admits `null`:
+  at every depth, through `$ref`s, and in the properties of `allOf`/`anyOf`/`oneOf` members.
+  That includes properties listed in `required`, because these generators use "required"
+  for "the key is always serialized", not "never null".
+
+  Not widened: `required` itself (a required key must still be present), array items (a
+  `null` element is still refused), `additionalProperties` values, the root `data` value,
+  request and input schemas, and the envelope fields (`status`, `contentType`, `headers`,
+  `pagination`, `projection`). A property that already admits `null` (3.0 `nullable: true`,
+  3.1 `type: [T, "null"]`) is left as it is. A wrong non-null type and a missing required
+  key still fail with the same status-only message. The flag only relaxes validation: the
+  upstream data is returned unchanged, nulls included, and `_fields` works on it as usual.
+  It applies to `--tool-mode discover` (`call_operation`) as well. `tools --json` marks each
+  widened tool with `outputSchemaAdmitsNullFields: true`.
+
+  Prefer fixing the spec at its source when you can (in springdoc, annotate the fields with
+  `@Schema(nullable = true)`, or `types = {"string", "null"}` for OpenAPI 3.1): that keeps
+  the null check strict for the fields that are never null. Without the flag, no output
+  schema is widened.
 - Size limits: a spec may document at most 4096 operations (a hard stop before anything is
   cached, whatever the filters), and at most 512 tools may be exposed after `--allow`/`--deny`
   filtering. A larger API can be served by narrowing the exposed set with `--allow`/`--deny`;
@@ -394,6 +419,7 @@ preview it.
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
+| `--nullable-response-fields` | no | admit `null` for every object property in derived output schemas, for specs that omit `nullable` (see below) | off |
 
 Example (an operationId glob, so it matches only operationIds that start with `read`):
 
@@ -405,7 +431,9 @@ Output: one line per tool. A tool whose output schema exists only because of
 `--default-response-is-error` ends with `[output schema assumes default = error]`. With the
 global `--json` flag each tool is an object; besides `name`, `method`, `path`, `summary` and
 `deprecated` it carries `outputSchema` (`true`/`false`, JSON only) and, for the tools the text
-marker flags, `outputSchemaAssumesDefaultIsError: true`. A tool whose output schema was
+marker flags, `outputSchemaAssumesDefaultIsError: true`. With `--nullable-response-fields`,
+a tool whose output schema it widened carries `outputSchemaAdmitsNullFields: true` (JSON only:
+with the flag this is nearly every tool, so the text output does not mark it). A tool whose output schema was
 withheld because a response `pattern` has nested quantifiers (see
 [security.md](security.md#response-envelope-and-redacted-errors)) carries
 `outputSchemaWithheld` with the sentence its description starts with.

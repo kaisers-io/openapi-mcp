@@ -734,6 +734,37 @@ describe('tools command — --default-response-is-error (kaisers-io/openapi-mcp-
   });
 });
 
+// Issue #3: opt-in --nullable-response-fields.
+describe('tools command — --nullable-response-fields (#3)', () => {
+  type Row = { name: string; outputSchema: boolean; outputSchemaAdmitsNullFields?: true };
+  const toolsJson = async (extra: readonly string[]): Promise<Row[]> => {
+    const { lines, ctx } = fileCtx();
+    const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'petstore.json'];
+    const code = await run(ctx, [...argv, '--allow', '**', ...extra]);
+    expect(code).toBe(EXIT.OK);
+    return (JSON.parse(lines[0]!) as { data: { tools: Row[] } }).data.tools;
+  };
+
+  it('without the flag: no tool is reported as admitting null fields', async () => {
+    const rows = await toolsJson([]);
+    expect(rows.find((row) => row.name === 'listPets')).toMatchObject({ outputSchema: true });
+    for (const row of rows) {
+      expect(row.outputSchemaAdmitsNullFields).toBeUndefined();
+    }
+  });
+
+  it('with the flag: reports the tools whose output schema it widened', async () => {
+    const rows = await toolsJson(['--nullable-response-fields']);
+    expect(rows.find((row) => row.name === 'listPets')).toMatchObject({
+      outputSchema: true,
+      outputSchemaAdmitsNullFields: true,
+    });
+    // No output schema, nothing widened
+    const createPet = rows.find((row) => row.name === 'createPet');
+    expect(createPet?.outputSchemaAdmitsNullFields).toBeUndefined();
+  });
+});
+
 // Issue kaisers-io/openapi-mcp-archive#39: a withheld output schema is reported
 // in --json output.
 describe('tools command — withheld output schema (kaisers-io/openapi-mcp-archive#39)', () => {

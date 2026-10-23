@@ -92,6 +92,7 @@ export type SpecCmdOpts = {
   trustSpecUpdates?: boolean;
   allowPrivateNetwork?: boolean;
   defaultResponseIsError?: boolean;
+  nullableResponseFields?: boolean;
 };
 
 // The --spec/--allow/--deny/... flags shared by every command that runs the
@@ -147,6 +148,10 @@ export const registerSpecOptions = (
     .option(
       '--default-response-is-error',
       'derive output schemas for operations with a "default" response, assuming it covers errors only (an undocumented 2xx then fails)',
+    )
+    .option(
+      '--nullable-response-fields',
+      'admit null for every object property in derived output schemas (for specs, e.g. springdoc, that omit "nullable")',
     );
 
 export type SpecPipelineArgs = {

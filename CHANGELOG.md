@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--nullable-response-fields` on `serve` and `tools` (#3).** Some generators (springdoc,
+  for one) leave `nullable` out unless a field is annotated, while the server serializes
+  unset fields as `null`; one such `null` failed the whole tool call with "upstream response
+  for status 200 did not match the tool's declared output schema". With the flag, every value
+  under an object's `properties` in a derived output schema also admits `null`, at every
+  depth, through `$ref`s and composition members, `required` properties included. Unchanged:
+  `required` (the key must still be present), array items, `additionalProperties` values, the
+  root `data` value, request schemas and the envelope fields. Discover mode (`call_operation`)
+  applies it too. The flag only relaxes validation: the upstream data, nulls included, is
+  returned unchanged. Off by default; without it the output schemas and `tools/list` are
+  byte-identical to 0.4.0. `tools --json` reports the widened tools with
+  `outputSchemaAdmitsNullFields: true`.
+
 ## [0.4.0] - 2026-10-23
 
 ### BREAKING

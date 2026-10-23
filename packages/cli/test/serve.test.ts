@@ -490,6 +490,35 @@ describe('serve — stdio subprocess E2E', () => {
     expect(await fieldsOffered(['--response-projection'])).toBe(true);
   }, 15_000);
 
+  // Issue #3: the flag reaches the served output schemas; off by default.
+  it('admits null fields in output schemas only with --nullable-response-fields', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    const listPetsOutput = async (extraArgs: readonly string[]) => {
+      child = spawn(
+        process.execPath,
+        [
+          CLI_ENTRY,
+          'serve',
+          '--spec',
+          'petstore.json',
+          '--base-url',
+          'http://127.0.0.1:1',
+          ...extraArgs,
+        ],
+        { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+      );
+      const { stdoutLines } = collectLines(child);
+      sendModern(child, 1, 'tools/list');
+      await waitFor(() => stdoutLines.length > 0);
+      child.kill();
+      const result = (JSON.parse(stdoutLines[0] as string) as JsonRpcMessage).result ?? {};
+      const tools = result['tools'] as { name: string; outputSchema?: unknown }[];
+      return JSON.stringify(tools.find((tool) => tool.name === 'listPets')?.outputSchema);
+    };
+    expect(await listPetsOutput([])).not.toContain('"null"');
+    expect(await listPetsOutput(['--nullable-response-fields'])).toContain('"null"');
+  }, 15_000);
+
   it.each(['0', '-1', '1.5', '513'])(
     'rejects --tools-page-size %s as a usage error naming the flag',
     async (value) => {
