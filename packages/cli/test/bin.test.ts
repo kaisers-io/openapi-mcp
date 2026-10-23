@@ -89,6 +89,10 @@ describe('Node floor: engines, docs, CI and the bin stub agree', SPAWN_BUDGET, (
   it('documents the range in both READMEs and tests every line floor in the CI matrix', () => {
     expect(repoFile('README.md')).toContain(`Requirements: Node.js \`${floor}\``);
     expect(repoFile('packages/cli/README.md')).toContain(`Requirements: Node.js \`${floor}\``);
+    // No other place may state the old floor (e.g. a Development section)
+    for (const file of ['README.md', 'packages/cli/README.md', 'docs/configuration.md']) {
+      expect(repoFile(file)).not.toMatch(/Node(?:\.js)? `>=24\.11`/u);
+    }
     for (const line of lines) {
       expect(repoFile('.github/workflows/ci.yml')).toContain(`'${version(line)}'`);
     }
