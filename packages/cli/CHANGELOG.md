@@ -221,7 +221,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every pull request is tested on Linux, macOS and Windows.** The `check` matrix runs on macOS
   as well as Ubuntu, the Windows test job runs without an opt-in label, and the smoke test of the
   packed and globally installed CLI runs on all three platforms, which exercises npm's `.cmd` shim
-  on Windows.
+  on Windows. CI no longer restores a pnpm dependency cache: a fresh install takes seconds, and a
+  failed cache restore had stalled macOS jobs for about ten minutes.
 - **The release workflow refuses more mistakes and needs an approval outside the tagged tree.**
   `verify` refuses a tag whose version is not strictly newer than the version npm serves as
   `latest`, refuses prerelease versions, and stops when the registry lookup fails (only a
