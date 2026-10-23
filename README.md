@@ -364,7 +364,7 @@ globally instead of invoking via `npx`).
 
 ## Development
 
-Requires Node.js `>=24.11` and pnpm `>=11`.
+Requires Node.js `^22.19.0 || >=24.11.0` (the dev pin in `.node-version` is 24) and pnpm `>=11`.
 
 ```bash
 git clone https://github.com/kaisers-io/openapi-mcp.git
