@@ -49,7 +49,7 @@ export const resolveToolMode = (requested: RequestedToolMode, exposedCount: numb
   return requested;
 };
 
-// Startup warning (decision D15): under discover, a host that approves per
+// Startup warning: under discover, a host that approves per
 // tool sees ONE approval surface, call_operation, for every exposed
 // operation. "Always allow call_operation" then also allows every write the
 // filters expose. Undefined when every exposed operation is read-only (the

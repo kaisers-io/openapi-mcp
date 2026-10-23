@@ -89,8 +89,8 @@ export type SpecPipelineResult = {
 
 export type CacheLockState = 'held' | 'stale';
 
-// `spec` is normalized from the NOT yet dereferenced `document` (decision D2,
-// issue #89): its operations carry the raw parameters, request body and
+// `spec` is normalized from the NOT yet dereferenced `document`
+// (issue #89): its operations carry the raw parameters, request body and
 // responses, $refs included. Only the operations that survive filtering are
 // dereferenced, in finish.
 type ProcessedSpec = {
@@ -126,7 +126,7 @@ const enforceToolBudget = (exposedCount: number, maxToolCount: number): void => 
 // Parse, validate, check every $ref, normalize, and enforce the raw operation
 // cap. Every cache write happens downstream of this function, so an
 // unvalidated, dangling-$ref or over-limit spec can never reach the disk. The
-// validated document itself is what gets cached (decision D1): it is the
+// validated document itself is what gets cached: it is the
 // source's own size, where its dereferenced form was 15-30x larger.
 const processSpecText = (text: string): ProcessedSpec => {
   const parsed = parseSpecText(text);
@@ -589,7 +589,7 @@ const finish = (
       : [PENDING_PROMOTION_WARNING]),
     ...(withholding.warning === undefined ? [] : [withholding.warning]),
   ];
-  // Filter first, then dereference only what is exposed (decision D2): the
+  // Filter first, then dereference only what is exposed: the
   // node budgets now measure what the model will actually see
   const dereferencer = createDereferencer(processed.document, {
     collapseCycles: true,

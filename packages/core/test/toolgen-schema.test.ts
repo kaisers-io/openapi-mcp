@@ -265,7 +265,7 @@ describe('convertSchema — enum, const, null', () => {
     expect('unrepresentable' in convertSchema({ type: ['string', 'number'] })).toBe(true);
   });
 
-  it('3.0: a sibling nullable admits null next to an enum that does not list it (D9)', () => {
+  it('3.0: a sibling nullable admits null next to an enum that does not list it', () => {
     // {type:string, nullable:true, enum:['a']} (older Swashbuckle/NSwag): the
     // author marked the value nullable, so null is admitted in both directions;
     // every other non-enumerated value is still rejected.
@@ -302,7 +302,7 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('b').success).toBe(false);
   });
 
-  it('3.0: a sibling nullable admits null next to a const (D9)', () => {
+  it('3.0: a sibling nullable admits null next to a const', () => {
     const s = ok(convertSchema({ const: 'a', nullable: true }, '3.0'));
     expect(s.safeParse('a').success).toBe(true);
     expect(s.safeParse(null).success).toBe(true);
@@ -315,7 +315,7 @@ describe('convertSchema — enum, const, null', () => {
     expect(s.safeParse('a').success).toBe(false);
   });
 
-  it('represents a 3.0 nullable composition and admits null in a request (#41, D9)', () => {
+  it('represents a 3.0 nullable composition and admits null in a request (#41)', () => {
     // The boolean `nullable` is honoured only under 3.0 (build gates it on
     // version === '3.0'); a 3.1 `[T,'null']`-union combined with oneOf is caught
     // earlier by the conflict gate.
@@ -1003,7 +1003,7 @@ describe('convertSchema — request/response mode (#33, #47)', () => {
 describe('convertSchema — nullable and single-member allOf idioms (#41)', () => {
   const obj = { type: 'object', properties: { a: { type: 'string' } } };
 
-  it('3.0 nullable allOf: null admitted in both directions (D9: a PATCH can clear the field)', () => {
+  it('3.0 nullable allOf: null admitted in both directions (a PATCH can clear the field)', () => {
     const node = { nullable: true, allOf: [obj] };
     const request = ok(convertSchema(node, '3.0'));
     expect(request.safeParse({ a: 'x' }).success).toBe(true);
@@ -1086,11 +1086,11 @@ describe('convertSchema — nullable and single-member allOf idioms (#41)', () =
   });
 });
 
-// #43 / decision D12: oneOf requires EXACTLY one matching subschema (JSON
+// #43: oneOf requires EXACTLY one matching subschema (JSON
 // Schema Core 2020-12 §10.2.1.3). Exclusivity (z.xor, `oneOf` on the wire) is
 // used only in request mode and only when the branches are disjoint by
 // enforced keywords; otherwise the inclusive union keeps every tool callable.
-describe('convertSchema — oneOf exclusivity (#43, D12)', () => {
+describe('convertSchema — oneOf exclusivity (#43)', () => {
   const wireOf = (schema: z.ZodType): Record<string, unknown> => z.toJSONSchema(schema);
 
   const card = {
@@ -1241,7 +1241,7 @@ describe('convertSchema — oneOf exclusivity (#43, D12)', () => {
   });
 });
 
-// #39 / D11: a response `pattern` with nested quantifiers is unrepresentable.
+// #39: a response `pattern` with nested quantifiers is unrepresentable.
 describe('convertSchema — response pattern safety (#39)', () => {
   it('response mode: a nested-quantifier pattern is unrepresentable', () => {
     const result = convertSchema(

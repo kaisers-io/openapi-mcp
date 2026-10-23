@@ -995,7 +995,7 @@ describe('buildRequest — body reassembly defensive invariants', () => {
   });
 });
 
-// #54 / D5: the declared media type (with parameters) is what is sent, and
+// #54: the declared media type (with parameters) is what is sent, and
 // every JSON variant is JSON-encoded.
 describe('buildRequest — declared JSON media-type variants (#54)', () => {
   const mapperFor = (bodyContentType: string): RequestMapper => ({

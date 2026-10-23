@@ -174,7 +174,7 @@ describe('resolveToolMode', () => {
   });
 });
 
-describe('discoverApprovalWarning (decision D15)', () => {
+describe('discoverApprovalWarning', () => {
   it('says nothing when every exposed operation is read-only, or outside discover', () => {
     const readOnly = snapshotFor('discover');
     expect(discoverApprovalWarning(readOnly.toolMode, readOnly.operations)).toBeUndefined();

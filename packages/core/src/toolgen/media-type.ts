@@ -1,6 +1,6 @@
 // Media-type keys of a request body's `content` map are spec-controlled text
-// that ends up VERBATIM in the outgoing Content-Type header (decision D5:
-// send the declared media type, parameters included). Only a key that is a
+// that ends up VERBATIM in the outgoing Content-Type header (it is
+// sent as declared, parameters included). Only a key that is a
 // syntactically valid media type per RFC 9110 §8.3.1 is ever selected:
 //   media-type = type "/" subtype parameters
 //   parameters = *( OWS ";" OWS [ parameter ] )

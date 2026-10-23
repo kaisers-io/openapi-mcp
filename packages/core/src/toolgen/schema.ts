@@ -785,11 +785,11 @@ const arraySchema = (
     : { ok: withMax };
 };
 
-// --- Static disjointness of oneOf branches (decision D12, #43) -------------
+// --- Static disjointness of oneOf branches (#43) ---
 // Every helper is conservative: "unknown" never proves anything. A branch is
 // summarised by what it admits, as far as enforced keywords tell: a finite
 // list of values (const/enum), a set of JSON types, or unknown. `nullable`
-// records a 3.0 `nullable: true`, which admits null as well (D9).
+// records a 3.0 `nullable: true`, which admits null as well.
 type BranchShape =
   | { kind: 'values'; values: readonly unknown[]; nullable: boolean }
   | { kind: 'types'; types: readonly string[] }
@@ -980,8 +980,8 @@ const unionSchema = (
     return { ok: members[0] as z.ZodType };
   }
   // `oneOf` passes only if EXACTLY one subschema matches (JSON Schema Core
-  // 2020-12 §10.2.1.3); `anyOf` if at least one does (§10.2.1.2). Decision
-  // D12 (#43): z.xor (emitted as `oneOf` on the wire) is used only where it
+  // 2020-12 §10.2.1.3); `anyOf` if at least one does (§10.2.1.2).
+  // z.xor (emitted as `oneOf` on the wire, #43) is used only where it
   // cannot reject a value the spec allows:
   //   - response mode: always the inclusive z.union. Response objects are
   //     open (#33), so a discriminator-mapping `oneOf` (Cat/Dog without a
@@ -1184,7 +1184,7 @@ const build = (
   // value against a sibling `type` — including a 3.1 type array like
   // `['string','integer']` that normalizeType would reject as multi-type.
   //
-  // Nullability (#41, decision D9): wherever the spec marks a value nullable,
+  // Nullability (#41): wherever the spec marks a value nullable,
   // null is admitted in BOTH directions. A 3.0 `nullable: true` next to an
   // enum/const that does not list null (`{type:'string', nullable:true,
   // enum:['a']}`, as older Swashbuckle/NSwag emit) admits null too. OAS 3.0.3
@@ -1222,7 +1222,7 @@ const build = (
     // drf-spectacular idiom for a nullable $ref, #41). OAS 3.0.3 §4.7.24.2
     // reads nullable strictly ("only if `type` is explicitly defined", and the
     // members "may disallow" null), but every generator emitting this idiom
-    // means "this reference may be null". Decision D9: admit null in BOTH
+    // means "this reference may be null". Null is admitted in BOTH
     // directions — a request can clear the field (`"manager": null` in a
     // PATCH), and a response carrying null does not fail the call. Every
     // non-null value is still checked against the composition.

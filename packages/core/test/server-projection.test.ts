@@ -327,7 +327,7 @@ describe('_fields availability', () => {
   });
 });
 
-describe('_fields cost (D14)', () => {
+describe('_fields cost', () => {
   it('is off unless the operator enables it: no _fields, no projection branch', () => {
     const built = buildTools([listItems(true)], {
       reservedHeaders: SYSTEM_HEADERS,

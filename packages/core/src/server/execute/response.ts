@@ -469,7 +469,7 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   ) {
     // An undocumented success STATUS under the operator's "default = errors
     // only" assumption: still fail closed (the declared outputSchema must
-    // never be violated), but say why, naming the flag. Decision D13: the
+    // never be violated), but say why, naming the flag. The
     // upstream REPORTED SUCCESS, so the message must not read like a plain
     // failure — an agent that retries a POST here could apply it twice. The
     // hint is operator-supplied CLI text, never upstream data.

@@ -1247,7 +1247,7 @@ describe('createExecutor — forwarded upstream response headers', () => {
     });
     const validate = compileEnvelopeValidator(tool.wireTool.outputSchema);
     expect(validate?.(outcome.structuredContent)).toBe(true);
-    // D4: the raw Link URL never reaches the model; Set-Cookie never at all.
+    // The raw Link URL never reaches the model; Set-Cookie never at all.
     expect(JSON.stringify(outcome)).not.toContain('page=2');
     expect(JSON.stringify(outcome)).not.toContain(SECRET);
     expect(JSON.stringify(outcome)).not.toContain('not-forwarded');
@@ -1499,7 +1499,7 @@ describe('createExecutor — pagination hints', () => {
     expect(outcome.isError).toBe(false);
     expect(nextOf(outcome)).toEqual({ org: 'acme', page: 2, per_page: 2 });
     expect(valid).toBe(true);
-    // No raw URL reaches the result (D4).
+    // No raw URL reaches the result.
     expect(JSON.stringify(outcome)).not.toContain('https://api.example.test/orgs');
   });
 
@@ -1865,7 +1865,7 @@ describe('createExecutor — pagination hints', () => {
     const next = nextOf(outcome);
     expect(next).toEqual({ page: { number: 3, size: 2 }, filter: { status: 'published' } });
     expect(acceptedAsInput(tool, next)).toBe(true);
-    // Still arguments, never the URL (D4).
+    // Still arguments, never the URL.
     expect(JSON.stringify(outcome.structuredContent?.['pagination'])).not.toContain('https://');
   });
 

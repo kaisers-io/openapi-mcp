@@ -25,7 +25,7 @@ export type PageInput = {
 // outright if its value or its name contains a registered secret — dropping one header is
 // enough; the response body itself is unaffected.
 //
-// Upstream URLs never reach the model as-is (decision D4):
+// Upstream URLs never reach the model as-is:
 // - `Link` is not forwarded at all; pagination hints are derived from it
 //   as tool arguments instead.
 // - `Location` is forwarded only when it resolves to the SAME origin as the
@@ -112,7 +112,7 @@ export const upstreamRetryAfterMs = (
 // Adds a short trailing `headers:` section to a text-only result (a
 // structured success carries them inside its envelope instead), and the
 // parsed upstream back-off — named `upstreamRetryAfterMs`, distinct from the
-// local limiter's `retryAfterMs` (decision D6) — in `_meta`.
+// local limiter's `retryAfterMs` — in `_meta`.
 export const decorateTextOutcome = (
   outcome: ToolCallOutcome,
   forwarded: Readonly<Record<string, string>>,

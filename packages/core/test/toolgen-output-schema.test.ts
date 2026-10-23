@@ -258,7 +258,7 @@ describe('deriveOutputSchema — response-mode conversion (#33, #47)', () => {
   });
 });
 
-describe('deriveOutputSchema — oneOf in responses (#43, D12)', () => {
+describe('deriveOutputSchema — oneOf in responses (#43)', () => {
   it('validates a response oneOf inclusively, so a discriminator-mapping payload passes', () => {
     const branch = (extra: string) => ({
       type: 'object',

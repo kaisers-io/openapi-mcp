@@ -686,10 +686,10 @@ describe('buildLayout — path template consistency', () => {
   });
 });
 
-// #54 / decision D5: every JSON media-type variant is accepted (`+json`
+// #54: every JSON media-type variant is accepted (`+json`
 // suffix, parameters), the DECLARED media type is what gets sent, and the
 // choice among several variants is deterministic.
-describe('buildLayout — JSON media-type variants (#54, D5)', () => {
+describe('buildLayout — JSON media-type variants (#54)', () => {
   const objectSchema = { type: 'object', properties: { name: { type: 'string' } } };
   const withContent = (content: Record<string, unknown>) =>
     buildLayout(bodyOp({ required: true, content }), new Set());

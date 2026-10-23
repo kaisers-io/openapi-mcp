@@ -12,7 +12,7 @@ import type { EnvelopeValidator, NamedOperation } from '../src/index.ts';
 // same verdicts as a context of its own, for the output schemas the other
 // stacks generate: default responses under --default-response-is-error
 // (#117), the projection branch (#136), the inclusive response oneOf (#102)
-// and an output schema withheld for an unsafe pattern (#39, D11). The schema
+// and an output schema withheld for an unsafe pattern (#39). The schema
 // objects are shared between tools, as the dereferencer hands them out.
 
 const pet: Record<string, unknown> = {
@@ -52,7 +52,7 @@ const operations: NamedOperation[] = [
       ],
     }),
   }),
-  // #39 / D11: nested quantifiers withhold the output schema
+  // #39: nested quantifiers withhold the output schema
   op('getUnsafe', { '200': json({ type: 'string', pattern: '^(a+)+$' }) }),
 ];
 

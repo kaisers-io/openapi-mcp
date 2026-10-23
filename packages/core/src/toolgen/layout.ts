@@ -50,7 +50,7 @@ export type QueryStyle = 'form' | 'deepObject' | 'spaceDelimited' | 'pipeDelimit
 export type RequestMapper = {
   bodyMode: 'flattened' | 'single' | 'none';
   // The request body's media type exactly as the spec declares it (parameters
-  // included, decision D5): `application/json`, any `application/*+json`
+  // included): `application/json`, any `application/*+json`
   // variant, or `application/x-www-form-urlencoded`. Sent verbatim as the
   // Content-Type; buildRequest picks the encoding from its essence.
   bodyContentType?: string;
@@ -327,7 +327,7 @@ const jsonTier = (json: readonly MediaCandidate[]): readonly MediaCandidate[] =>
   return mergePatch.length > 0 ? mergePatch : json;
 };
 
-// Picks the request body media type deterministically (#54, decision D5):
+// Picks the request body media type deterministically (#54):
 //   1. `application/json` (any case, with or without parameters);
 //   2. otherwise one `application/*+json` variant — if several are declared,
 //      `application/merge-patch+json` (RFC 7396) wins: it is the

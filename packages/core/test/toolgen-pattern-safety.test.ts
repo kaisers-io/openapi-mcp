@@ -8,7 +8,7 @@ import {
 } from '../src/index.ts';
 import type { EnvelopeValidator, OperationRecord } from '../src/index.ts';
 
-// #39 / D11: response patterns with nested quantifiers are never handed to Ajv.
+// #39: response patterns with nested quantifiers are never handed to Ajv.
 describe('hasNestedQuantifier', () => {
   it.each([
     '^(a+)+$',
