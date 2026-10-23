@@ -35,8 +35,6 @@ $ pnpm check
       shows it) was updated to match
 - [ ] If this changes `tools/list` size on purpose, `scripts/bench/baseline.json` was regenerated
       with `pnpm bench:baseline` and the reason is stated below
-- [ ] If this touches paths, the cache's filesystem code, the bin stub or process handling, the
-      pull request carries the `ci:windows` label (or asks a maintainer to add it)
 - [ ] If this is user-facing, `CHANGELOG.md` and `packages/cli/CHANGELOG.md` were updated
       identically, under `## [Unreleased]`
 - [ ] Version numbers were not edited by hand (use `pnpm versions --set <version>`), and
