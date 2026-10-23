@@ -22,6 +22,34 @@ describe('summarize', () => {
   });
 });
 
+describe('memory rules', () => {
+  // The flat-500 failure on a docs-only pull request: the same build, one run
+  // per GC mode
+  const sameBuildRss = { reference: [199.2, 198.6, 199.5], head: [271.4, 267.8, 272.1] };
+
+  it('reports peak RSS without failing the gate on it', () => {
+    const findings = compareResults(
+      result({ warmRssMB: summarize(sameBuildRss.head) }),
+      result({ warmRssMB: summarize(sameBuildRss.reference) }),
+      'base',
+    );
+    expect(findings.find((finding) => finding.metric === 'warmRssMB')?.verdict).toBe('changed');
+    expect(hasRegression(findings)).toBe(false);
+  });
+
+  it('fails on retained memory: the live heap after a full GC', () => {
+    const findings = compareResults(
+      result({ warmLiveHeapMB: summarize([62.1, 62.3, 62.2]) }),
+      result({ warmLiveHeapMB: summarize([47.7, 47.7, 47.8]) }),
+      'base',
+    );
+    expect(findings.find((finding) => finding.metric === 'warmLiveHeapMB')?.verdict).toBe(
+      'regressed',
+    );
+    expect(hasRegression(findings)).toBe(true);
+  });
+});
+
 describe('judge — timed metrics', () => {
   const rule = { kind: 'timed', maxRatio: 1.25, minDelta: 25 } as const;
 

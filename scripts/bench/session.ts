@@ -3,8 +3,8 @@
 
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
 import type { Fixture } from './fixtures.ts';
+import { createLiveHeapReader, peakRssMB, PROBE_FLAGS } from './memory.ts';
 import { summarize } from './stats.ts';
 import type { Upstream } from './upstream.ts';
 
@@ -29,6 +29,9 @@ type JsonRpcResponse = {
 type RpcChild = {
   request: (id: number, method: string, params: Record<string, unknown>) => Promise<string>;
   notify: (method: string) => void;
+  // Heap in use after a full GC, in MB (heap-probe.ts); undefined where
+  // POSIX signals are unavailable
+  liveHeapMB: () => Promise<number | undefined>;
   pid: number;
   close: () => Promise<void>;
 };
@@ -40,13 +43,14 @@ const childEnv = (home: string): NodeJS.ProcessEnv => ({
 });
 
 const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild => {
-  const child = spawn(process.execPath, [cli, ...args], {
+  const child = spawn(process.execPath, [...PROBE_FLAGS, cli, ...args], {
     env: childEnv(home),
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   const pending = new Map<number, PromiseWithResolvers<string>>();
   let buffer = '';
   let stderr = '';
+  const liveHeap = createLiveHeapReader(child);
   // A hung server must not hang the benchmark: kill it, which rejects every
   // pending request through the exit handler below
   const timer = setTimeout(() => {
@@ -75,7 +79,9 @@ const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild 
     }
   });
   child.stderr.on('data', (chunk: Buffer) => {
-    stderr += chunk.toString('utf8');
+    const text = chunk.toString('utf8');
+    stderr += text;
+    liveHeap.observe(text);
   });
   const exited = once(child, 'exit');
   child.once('exit', () => {
@@ -85,6 +91,7 @@ const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild 
       waiter.reject(new Error(`the server exited before answering: ${lastLine}`));
     }
     pending.clear();
+    liveHeap.fail(new Error(`the server exited before reporting its heap: ${lastLine}`));
   });
   return {
     request: (id, method, params) => {
@@ -96,6 +103,7 @@ const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild 
     notify: (method) => {
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method })}\n`);
     },
+    liveHeapMB: liveHeap.read,
     pid: child.pid ?? -1,
     close: async () => {
       // Closing stdin ends the stdio session, and the server exits on its own
@@ -105,27 +113,13 @@ const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild 
   };
 };
 
-const VM_HWM_RE = /^VmHWM:\s+(?<kb>\d+) kB$/mu;
-
-// Peak RSS of a live process. /proc is Linux-only; elsewhere the metric is
-// simply absent from the report rather than estimated.
-const peakRssMB = async (pid: number): Promise<number | undefined> => {
-  let status: string;
-  try {
-    status = await readFile(`/proc/${String(pid)}/status`, 'utf8');
-  } catch {
-    return undefined;
-  }
-  const kb = VM_HWM_RE.exec(status)?.groups?.['kb'];
-  return kb === undefined ? undefined : Number(kb) / 1024;
-};
-
 export type SessionSample = {
   startupMs: number;
   toolsListMs: number;
   toolsListBytes: number;
   toolCount: number;
   rssMB?: number;
+  liveHeapMB?: number;
   sequentialCallMs?: number;
   parallelCallMs?: number;
   parallelErrors?: number;
@@ -210,13 +204,17 @@ const measureSession = async (
   }
   const tools = (list.result?.['tools'] ?? []) as unknown[];
   const calls = input.withCalls ? await runCalls(rpc, input.fixture, input.upstream) : {};
+  // Peak RSS first: it is the process's high-water mark, which the forced
+  // collection below cannot lower but would otherwise come after
   const rssMB = await peakRssMB(rpc.pid);
+  const liveHeapMB = await rpc.liveHeapMB();
   return {
     startupMs,
     toolsListMs,
     toolsListBytes: Buffer.byteLength(listLine),
     toolCount: tools.length,
     ...(rssMB === undefined ? {} : { rssMB }),
+    ...(liveHeapMB === undefined ? {} : { liveHeapMB }),
     ...calls,
   };
 };

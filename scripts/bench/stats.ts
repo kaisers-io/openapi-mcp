@@ -16,6 +16,9 @@
 // explicit, reviewable step). A ratio threshold would let many small steps
 // drift past it unaccepted. Against the base build they are only reported.
 
+import { CLI_RULES, FIXTURE_RULES } from './rules.ts';
+import type { CountRule, ExactRule, Rule, TimedRule } from './rules.ts';
+
 export type Summary = {
   median: number;
   min: number;
@@ -50,9 +53,14 @@ export type FixtureMetrics = {
   warmStartupMs?: Summary;
   // First tools/list request until its response (cold process)
   toolsListMs?: Summary;
-  // Peak resident set size (VmHWM) of the cold / warm process, Linux only
+  // Peak resident set size (VmHWM) of the cold / warm process, Linux only.
+  // Reported, not gated: it depends on GC timing (see heap-probe.ts)
   rssMB?: Summary;
   warmRssMB?: Summary;
+  // Heap in use after a full GC once the session is done, cold / warm
+  // process (heap-probe.ts): what the server keeps alive. Gated.
+  liveHeapMB?: Summary;
+  warmLiveHeapMB?: Summary;
   // Median of the sequential tools/call round trips of one sample
   sequentialCallMs?: Summary;
   // Wall time of one batch of parallel tools/calls
@@ -86,49 +94,6 @@ export type Report = {
   parallelCalls: number;
   upstreamLatencyMs: number;
   results: Record<string, CliResult>;
-};
-
-type TimedRule = {
-  kind: 'timed';
-  // Fail only if head/base exceeds this ratio for both median and min...
-  maxRatio: number;
-  // ...and the median grew by more than this many units
-  minDelta: number;
-};
-
-type ExactRule = {
-  kind: 'exact';
-  // Fail if head/baseline exceeds this ratio (reported only against the base)
-  maxRatio: number;
-};
-
-type CountRule = {
-  kind: 'count';
-  // Fail if the count grows (errors); otherwise informational
-  failOnIncrease: boolean;
-};
-
-type Rule = TimedRule | ExactRule | CountRule;
-
-export const FIXTURE_RULES: Record<keyof Omit<FixtureMetrics, 'error'>, Rule> = {
-  startupMs: { kind: 'timed', maxRatio: 1.25, minDelta: 25 },
-  warmStartupMs: { kind: 'timed', maxRatio: 1.25, minDelta: 25 },
-  toolsListMs: { kind: 'timed', maxRatio: 1.25, minDelta: 10 },
-  sequentialCallMs: { kind: 'timed', maxRatio: 1.25, minDelta: 5 },
-  parallelCallMs: { kind: 'timed', maxRatio: 1.25, minDelta: 25 },
-  rssMB: { kind: 'timed', maxRatio: 1.15, minDelta: 5 },
-  warmRssMB: { kind: 'timed', maxRatio: 1.15, minDelta: 5 },
-  // 5%: a duplicated description on the flat-500 fixture already adds 12%
-  toolsListBytes: { kind: 'exact', maxRatio: 1.05 },
-  toolCount: { kind: 'count', failOnIncrease: false },
-  omittedCount: { kind: 'count', failOnIncrease: false },
-  parallelErrors: { kind: 'count', failOnIncrease: true },
-  upstreamConnections: { kind: 'count', failOnIncrease: false },
-};
-
-export const CLI_RULES: Record<keyof CliMetrics, Rule> = {
-  versionMs: { kind: 'timed', maxRatio: 1.25, minDelta: 15 },
-  toolsMs: { kind: 'timed', maxRatio: 1.25, minDelta: 25 },
 };
 
 // `outdated`: an exact metric differs from the committed baseline (see header)
@@ -201,6 +166,11 @@ export const judge = (
 ): { verdict: Verdict; ratio: number | undefined } => {
   if (head === undefined || reference === undefined) {
     return { verdict: head === reference ? 'ok' : 'missing', ratio: undefined };
+  }
+  if (rule.kind === 'info' && isSummary(head) && isSummary(reference)) {
+    const ratio = head.median / reference.median;
+    const beyond = ratio > rule.maxRatio || ratio < 1 / rule.maxRatio;
+    return { verdict: beyond ? 'changed' : 'ok', ratio };
   }
   if (rule.kind === 'timed' && isSummary(head) && isSummary(reference)) {
     return {

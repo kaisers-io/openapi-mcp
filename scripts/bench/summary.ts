@@ -51,6 +51,8 @@ const summarizeFixture = (samples: FixtureSamples): FixtureMetrics => {
     ...summaryEntry('toolsListMs', samples.cold, 'toolsListMs'),
     ...summaryEntry('rssMB', samples.cold, 'rssMB'),
     ...summaryEntry('warmRssMB', samples.warm, 'rssMB'),
+    ...summaryEntry('liveHeapMB', samples.cold, 'liveHeapMB'),
+    ...summaryEntry('warmLiveHeapMB', samples.warm, 'liveHeapMB'),
     ...summaryEntry('sequentialCallMs', samples.warm, 'sequentialCallMs'),
     ...summaryEntry('parallelCallMs', samples.warm, 'parallelCallMs'),
     ...maxEntry('toolsListBytes', samples.cold, 'toolsListBytes'),
