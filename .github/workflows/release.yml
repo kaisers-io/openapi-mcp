@@ -8,8 +8,9 @@ permissions:
   contents: read
 jobs:
   # Gate: re-runs the full CI check suite against the exact tagged commit, plus release-only guards
-  # (tag/version match, branch containment, tarball content allowlist) and a smoke test of the packed
-  # tarball. Holds only read permissions — no publish credentials live here. This is also where the CLI
+  # (tag/version match, branch containment, changelog heading, version newer than npm's `latest`,
+  # tarball content allowlist) and a smoke test of the packed tarball. Holds only read
+  # permissions — no publish credentials live here. This is also where the CLI
   # bundle is built: `dist/openapi-mcp.mjs` is gitignored build output (not committed; `bin/openapi-mcp.mjs`
   # is the committed stub), so this unprivileged job builds it, proves the build is reproducible, guards
   # its shape, and hands it to `publish` as a workflow artifact.
@@ -85,6 +86,64 @@ jobs:
             exit 1
           fi
           echo "CHANGELOG.md has a heading for $VERSION"
+      - name: Guard — this version is newer than the one npm serves as latest
+        # `pnpm versions --set` refuses a non-newer version, but only against the version in the
+        # checkout it runs in; this is the registry-side check. npm 11 already refuses to publish a
+        # version below the current stable `latest` on the implicit tag, so this is a stricter
+        # restatement rather than the only thing in the way: the registry's own check can be
+        # bypassed with an explicit `--tag` or `--force`, and this one cannot be, from an honest
+        # release.
+        #
+        # It matters because the ancestor guard above deliberately allows tagging an OLDER main
+        # commit: a lower version prepared on main and never published would pass every other guard
+        # here, and new installs of `@kaisers-io/openapi-mcp` would get it.
+        #
+        # This guard is in the tagged tree, like every other one, so it constrains an honest release
+        # and not an adversarial tag. The gate that does not live here is the Environment on
+        # `publish` — see CONTRIBUTING.md, "Releasing". `TAG` goes through env, as in the first guard.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          # Fails closed: a DNS failure, a timeout or a registry outage must not read as "nothing is
+          # published yet". Only a lookup that SUCCEEDS and reports no version is a first publication.
+          if ! LOOKUP="$(npm view @kaisers-io/openapi-mcp@latest version --registry=https://registry.npmjs.org 2>&1)"; then
+            case "$LOOKUP" in
+              *E404*) LOOKUP='' ;;
+              *) echo "::error::could not read the published version from npm: $LOOKUP" >&2; exit 1 ;;
+            esac
+          fi
+          LATEST="$(printf '%s' "$LOOKUP" | tail -n 1)"
+          if [ -z "$LATEST" ]; then
+            echo "npm reports no published release yet — nothing to compare against"
+            exit 0
+          fi
+          # The script is JavaScript: its `${...}` are template literals, not shell expansions.
+          # shellcheck disable=SC2016
+          node -e '
+            const [version, latest] = process.argv.slice(1);
+            // Canonical three-part decimal only. A prerelease is deliberately refused rather than
+            // ordered: this workflow publishes stable releases, and guessing an order for
+            // `1.0.0-rc.1` is how a release goes out under the wrong dist-tag. `1..1` and
+            // `Infinity.0.0` are refused for the same reason — `Number()` accepts both.
+            const CANONICAL = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
+            const parse = (value, what) => {
+              if (!CANONICAL.test(value)) {
+                console.error(`::error::${what} ${value} is not a plain x.y.z version`);
+                process.exit(1);
+              }
+              return value.split(".").map(Number);
+            };
+            const candidate = parse(version, "the tagged version");
+            const published = parse(latest, "the published version");
+            const at = candidate.findIndex((part, index) => part !== published[index]);
+            if (at === -1 || candidate[at] < published[at]) {
+              console.error(`::error::${version} is not newer than the published latest ${latest} — refusing to move latest backwards`);
+              process.exit(1);
+            }
+            console.log(`${version} is newer than the published latest ${latest}`);
+          ' "$VERSION" "$LATEST"
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm check
       - run: pnpm build
@@ -104,7 +163,9 @@ jobs:
           # Shipping a new file requires deliberately updating this set. dist/ holds the entry plus
           # the chunks its dynamic imports split off (content-hashed names, issue
           # kaisers-io/openapi-mcp-archive#91), so its part of the set is exactly what the
-          # determinism-checked build above wrote there.
+          # determinism-checked build above wrote there. The script's `${...}` are JavaScript
+          # template literals, not shell expansions.
+          # shellcheck disable=SC2016
           node -e '
             const { readdirSync } = require("node:fs");
             const pack = JSON.parse(process.argv[1])[0];
@@ -148,12 +209,43 @@ jobs:
   publish:
     needs: verify
     runs-on: ubuntu-latest
+    # The one gate a tag's own tree cannot supply. Everything else authorizing this release — every
+    # guard in `verify`, the `needs` edge above, this `permissions` block — is content of the pushed
+    # ref, because GitHub resolves a push-triggered workflow from that ref. A tag whose tree deletes
+    # them is never subjected to them.
+    #
+    # An Environment moves the gate into repository settings, which a tag cannot edit: protection
+    # rules (required reviewers, a deployment branch/tag restriction) are evaluated by GitHub before
+    # the job starts. Deleting this key from a tag's tree does not evade it either, as long as the npm
+    # Trusted Publisher entry names the same environment — npm then refuses a token minted without
+    # it. Both halves have to be configured outside this file; see CONTRIBUTING.md, "Releasing".
+    environment: npm-publish
     # A publish takes seconds; this only bounds a hung registry call (GitHub's default is 6 hours).
     timeout-minutes: 10
     permissions:
       id-token: write # npm Trusted Publishing (OIDC) — see the publish step
       contents: read
     steps:
+      - name: Guard — a provenance attestation needs a public repository
+        # The `--provenance` flag below hard-fails on the prerequisites npm checks (`id-token`, the CI
+        # provider, npm package visibility) but never on repository visibility: npm looks at that only
+        # on its automatic path, which stating the flag bypasses. From a private repository the
+        # publish would still sign — attesting to a source URL nobody can resolve and writing the
+        # private repository's name into the public transparency log. Refuse here instead, while
+        # nothing has left the runner.
+        #
+        # Written fail-closed on purpose. An `if:` condition on the payload value would skip this step
+        # silently if the field were ever absent, which is the failure mode it exists to prevent — so
+        # an empty value is an error too, and only a literal `false` passes.
+        env:
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          if [ "${REPO_PRIVATE:-}" != "false" ]; then
+            echo "::error::Repository visibility reads '${REPO_PRIVATE:-<absent>}', expected 'false'. A provenance attestation would name a repository nobody can resolve. Refusing to publish." >&2
+            exit 1
+          fi
+          echo "repository is public — provenance can be attested"
       # No git operation follows, so the token is not persisted into .git/config.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -182,12 +274,140 @@ jobs:
         working-directory: packages/cli
         # No NPM_TOKEN / secrets.* anywhere: authentication is the short-lived OIDC token GitHub mints
         # from `id-token: write` above, exchanged by npm CLI for a publish token. This requires a
-        # ONE-TIME manual step by the package owner: configure this repo + this exact workflow file as a
-        # Trusted Publisher for `@kaisers-io/openapi-mcp` on npmjs.com. Until that is done, this step
+        # ONE-TIME manual step by the package owner: configure this repo + this exact workflow file + the
+        # `npm-publish` environment as a Trusted Publisher for `@kaisers-io/openapi-mcp` on npmjs.com
+        # (CONTRIBUTING.md, "Releasing", says why the environment must be named). Until that is done, this step
         # fails with an auth error — expected and safe (there is no fallback long-lived token to leak).
         # `--ignore-scripts`: no lifecycle scripts run at publish time.
-        # Provenance: under Trusted Publishing npm generates the provenance attestation automatically —
-        # no `--provenance` flag needed — but only when the source repository is public. While the repo
-        # is private none is generated, so the first release after the repo goes public gets provenance
-        # without any change here. https://docs.npmjs.com/trusted-publishers#automatic-provenance-generation
-        run: npm publish --ignore-scripts
+        # `--provenance`: Trusted Publishing attaches an attestation on its own, but only when the
+        # source repository is public, and that check fails in silence — a release from a private
+        # repository simply ships without one
+        # (https://docs.npmjs.com/trusted-publishers#automatic-provenance-generation). Stating the flag
+        # skips that automatic path and hard-fails instead on the prerequisites this job does control:
+        # `id-token: write`, a supported CI provider, a public npm package. It does not re-check
+        # repository visibility; the first step of this job does.
+        run: npm publish --ignore-scripts --provenance
+
+  # The GitHub release entry. Separate from `publish` on purpose: creating one needs `contents: write`,
+  # and the publish job is deliberately the narrowest thing in this repository — it holds
+  # `id-token: write`, runs no repository-controlled code, and installs nothing. Handing it write
+  # access to the repository as well would undo that. This job holds the other half instead, and
+  # never sees the npm identity.
+  #
+  # `contents: write` is the narrowest scope GitHub offers for creating a release, not a scope limited
+  # to releases: it also permits pushing to unprotected branches and creating or deleting tags. That
+  # is why `--verify-tag` below is not decoration.
+  #
+  # `needs: publish` so a failed publish leaves no release entry announcing something that never
+  # shipped. The reverse gap is the tolerable one: a published package with no release entry is
+  # visible and can be fixed by hand.
+  announce:
+    needs: publish
+    runs-on: ubuntu-latest
+    # Read Latest, then create: two announcements running at once could both decide against the same
+    # Latest. One group for every tag serializes them; nothing in progress is cancelled. GitHub keeps
+    # at most one waiting job per group and cancels an older waiting one, so in a burst of three
+    # releases one entry can be left for a re-run — a missing entry, never a wrong Latest.
+    concurrency:
+      group: release-announce
+      cancel-in-progress: false
+    # Three API calls; this only bounds a hang (GitHub's default is 6 hours).
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      # Only CHANGELOG.md is read; `gh` below authenticates through GH_TOKEN, not .git/config.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - name: Extract this version's changelog section as the release notes
+        # `verify` already proved the heading exists, so a missing section here means the two jobs
+        # disagree about the tag — worth failing on rather than publishing an empty release body.
+        # `TAG` goes through env, never spliced into the script (same reasoning as in `verify`).
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          awk -v heading="## [$VERSION] - " '
+            index($0, heading) == 1 { capturing = 1; next }
+            capturing && /^## \[/ { exit }
+            capturing { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/release-notes.md"
+          # Not `test -s`: a heading followed straight by the next one captures the blank line between
+          # them, which is a nonempty file and an empty release. `verify` proves the heading exists,
+          # not that anything was written under it.
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/release-notes.md"; then
+            echo "::error::the changelog section for $VERSION is empty or missing — nothing to put in the release" >&2
+            exit 1
+          fi
+          echo "release notes: $(wc -l < "$RUNNER_TEMP/release-notes.md") lines"
+      - name: Decide whether this release becomes Latest
+        id: latest
+        # `verify` proves this version is newer than npm's `latest` at verify time, not at announce
+        # time: a failed announce for v0.4.0, re-run after v0.5.0 has been released, would otherwise
+        # move the repository's Latest release backwards. So compare against the current Latest
+        # GitHub release (drafts and prereleases are never Latest), with the same plain-x.y.z rule as
+        # the regression guard. "release not found" means there is none yet; any other lookup error
+        # stops the job rather than guessing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! LOOKUP="$(gh release view --json tagName --jq .tagName 2>&1)"; then
+            case "$LOOKUP" in
+              *"release not found"*) LOOKUP='' ;;
+              *) echo "::error::could not read the current Latest release: $LOOKUP" >&2; exit 1 ;;
+            esac
+          fi
+          if [ -z "$LOOKUP" ]; then
+            echo "no Latest release yet — $TAG becomes Latest"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The script is JavaScript: its `${...}` are template literals, not shell expansions.
+          # shellcheck disable=SC2016
+          node -e '
+            const [version, latest] = process.argv.slice(1).map((tag) => tag.replace(/^v/u, ""));
+            const CANONICAL = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
+            const parse = (value, what) => {
+              if (!CANONICAL.test(value)) {
+                console.error(`::error::${what} ${value} is not a plain x.y.z version`);
+                process.exit(1);
+              }
+              return value.split(".").map(Number);
+            };
+            const candidate = parse(version, "the tagged version");
+            const current = parse(latest, "the current Latest release");
+            const at = candidate.findIndex((part, index) => part !== current[index]);
+            const newer = at !== -1 && candidate[at] > current[at];
+            console.log(`${version} vs current Latest ${latest}: ${newer ? "becomes Latest" : "stays below it"}`);
+            require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `make_latest=${newer}\n`);
+          ' "$TAG" "$LOOKUP"
+      - name: Create the release
+        # Notes come from the changelog rather than `--generate-notes`: the changelog is written for
+        # the people a release affects, and a list of commit subjects is not.
+        #
+        # `--verify-tag` matters more than it looks. Without it, `gh release create` CREATES a missing
+        # tag, pointing at the default branch's current head — so this sequence would fabricate one:
+        # publish succeeds, this job fails, someone deletes the tag while sorting that out, then
+        # re-runs the failed job. `needs` is already satisfied by the successful publish in the same
+        # run, so this job would run alone and resurrect the tag on whatever `main` points at by then
+        # — a commit `verify` never checked, wearing the released version's name. With the flag it
+        # fails instead, which is the only acceptable outcome.
+        #
+        # `--latest` is always stated, with the value the previous step decided: left out, the API
+        # defaults `make_latest` to true.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          MAKE_LATEST: ${{ steps.latest.outputs.make_latest }}
+        run: |
+          set -euo pipefail
+          case "$MAKE_LATEST" in
+            true | false) ;;
+            *) echo "::error::no Latest decision ('$MAKE_LATEST') — refusing to let the API default it" >&2; exit 1 ;;
+          esac
+          gh release create "$TAG" --verify-tag --title "$TAG" --latest="$MAKE_LATEST" --notes-file "$RUNNER_TEMP/release-notes.md"
