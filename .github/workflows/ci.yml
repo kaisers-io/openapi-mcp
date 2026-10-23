@@ -60,6 +60,19 @@ jobs:
         with: { node-version-file: .node-version, cache: pnpm }
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm test
+  # Every version site (packages/cli/package.json, the README and docs pins, the doctor example) must
+  # declare the same version; see scripts/versions/run.ts. All of them are knowable on a PR, so drift
+  # is caught here rather than at release time. Plain Node, no install, one platform. The script's
+  # own tests run with the rest of the suite in `pnpm check`.
+  versions:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: .node-version, package-manager-cache: false }
+      - run: node scripts/versions/run.ts --check
   bundle-determinism:
     timeout-minutes: 10
     runs-on: ubuntu-latest

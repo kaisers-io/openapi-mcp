@@ -64,11 +64,27 @@ jobs:
             echo "::error::tagged commit $GITHUB_SHA is not reachable from origin/main — refusing to publish from a stray branch" >&2
             exit 1
           fi
-      - name: Guard — packaged CHANGELOG.md matches the repository one
-        # The tarball ships packages/cli/CHANGELOG.md (npm packs only files inside the package
-        # directory); this fails the release when a bump edits only the root copy.
-        # test/changelog-copy.test.ts checks the same on every pull request.
-        run: cmp CHANGELOG.md packages/cli/CHANGELOG.md
+      - name: Guard — every version site declares this CLI version
+        # Which files carry the version and why they must agree: see scripts/versions/run.ts.
+        # `--check` also runs on every PR (ci.yml `versions`), so by tag time this is a
+        # re-assertion. Placed after the origin/main containment guard and before `pnpm install`: it
+        # needs no dependencies, and repo-controlled code runs only once the commit is known to be
+        # reachable from main.
+        run: node scripts/versions/run.ts --check
+      - name: Guard — CHANGELOG.md has a heading for the released version
+        # `--check` cannot require this (on a PR the top section is `## [Unreleased]`), but a tag
+        # can: `pnpm versions --set` writes the heading, so a missing one means the release entries
+        # are still under `## [Unreleased]`. `TAG` goes through env, as in the first guard.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          if ! grep -qF "## [$VERSION] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$VERSION] - <date>' heading — the entry for this release is probably still under '## [Unreleased]'" >&2
+            exit 1
+          fi
+          echo "CHANGELOG.md has a heading for $VERSION"
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm check
       - run: pnpm build
