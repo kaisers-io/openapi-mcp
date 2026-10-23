@@ -1,0 +1,97 @@
+name: Bug report
+description: Something in openapi-mcp does not behave as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The exact command line and the smallest spec that reproduces the
+        problem answer most of the questions a maintainer would otherwise have to ask.
+
+        **Do not report security issues here.** Use
+        [private vulnerability reporting](https://github.com/kaisers-io/openapi-mcp/security/advisories/new)
+        instead.
+
+        **Never paste a secret.** `openapi-mcp` reads credentials only from environment
+        variables; replace their values with placeholders such as `example-token-not-a-secret`
+        before pasting anything, including your MCP host's configuration.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you run, and what did openapi-mcp do?
+      placeholder: |
+        I ran `openapi-mcp tools --spec ./openapi.yaml` and it exited 3 with "..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command line or MCP host configuration
+      description: |
+        The full `openapi-mcp` invocation, or the server entry from your host's configuration
+        (`.mcp.json`, `config.toml`, ...). Environment variable names are useful; their values are not.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`openapi-mcp --json doctor` output"
+      description: |
+        It reports the CLI and Node versions and the cache root. The paths contain your user name;
+        edit them if you prefer.
+      render: json
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run openapi-mcp?
+      options:
+        - "npx -y @kaisers-io/openapi-mcp@<version> from an MCP host"
+        - "npm i -g @kaisers-io/openapi-mcp"
+        - From a clone of this repository
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal spec
+      description: |
+        The smallest OpenAPI document that shows the problem, or a link to a public one. Strip
+        anything private; a spec with one or two operations is ideal.
+      render: yaml
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: |
+        `--verbose` adds a stack trace to an error, and `serve --log json` logs each call on stderr.
+        Both are redacted, but check them for anything private before pasting.

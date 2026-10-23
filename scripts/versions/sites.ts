@@ -17,6 +17,9 @@ const PINNED_READMES = ['README.md', 'packages/cli/README.md'];
 const DOCS_DIR = 'docs';
 const DOCTOR_EXAMPLE = 'docs/configuration.md';
 const CHANGELOG = 'CHANGELOG.md';
+// What npm users see: npm packs only files inside the package directory, so the tarball ships this
+// copy (`files` in packages/cli/package.json). It must stay byte-identical to CHANGELOG.md.
+const PACKAGED_CHANGELOG = 'packages/cli/CHANGELOG.md';
 
 // A JSON key at the start of a line. The anchor keeps this off a `version` substring in a
 // description, and a JSON string cannot contain a raw newline, so a match is always a key.
@@ -227,37 +230,55 @@ const releaseChangelog = (text: string, version: string): string | undefined => 
   return `${text.slice(0, heading.index)}## [Unreleased]\n\n## [${version}] - ${releaseDate()}${rest}`;
 };
 
+const describeRelease = (version: string): string =>
+  `## [Unreleased] -> ## [${version}] - ${releaseDate()}`;
+
 // `--check` requires the `## [Unreleased]` heading that `--set` will release, never a released
-// heading: on a pull request the top section is `## [Unreleased]`.
-const changelogSite = async (): Promise<Site | undefined> => {
+// heading: on a pull request the top section is `## [Unreleased]`. It also requires the packaged
+// copy to equal CHANGELOG.md byte for byte, and `--set` writes the same release to both, so a
+// bump cannot leave npm users with a changelog that lacks the release it ships in.
+const changelogSites = async (): Promise<Site[]> => {
   const text = await readText(CHANGELOG);
+  const packaged = await readText(PACKAGED_CHANGELOG);
   if (text === undefined) {
-    return undefined;
+    return [];
   }
   const count = [...text.matchAll(UNRELEASED)].length;
   if (count !== 1) {
     problem(
       `${CHANGELOG} has ${count} "## [Unreleased]" heading(s), expected exactly one for --set to release`,
     );
-    return undefined;
   }
-  return {
-    file: CHANGELOG,
-    values: [],
-    rewrite: (version) => releaseChangelog(text, version),
-    describeChange: (version) => `## [Unreleased] -> ## [${version}] - ${releaseDate()}`,
+  if (packaged !== undefined && packaged !== text) {
+    problem(
+      `${PACKAGED_CHANGELOG} differs from ${CHANGELOG} — the npm package ships it, so it must be a byte-identical copy (cp ${CHANGELOG} ${PACKAGED_CHANGELOG})`,
+    );
+  }
+  if (count !== 1 || packaged !== text) {
+    return [];
+  }
+  // One release text for both files, computed once, so a refusal is reported once.
+  const released = new Map<string, string | undefined>();
+  const rewrite = (version: string): string | undefined => {
+    if (!released.has(version)) {
+      released.set(version, releaseChangelog(text, version));
+    }
+    return released.get(version);
   };
+  return [
+    { file: CHANGELOG, values: [], rewrite, describeChange: describeRelease },
+    { file: PACKAGED_CHANGELOG, values: [], rewrite, describeChange: describeRelease },
+  ];
 };
 
-/** Every readable site, in write order: the source of truth first, the changelog last. */
+/** Every readable site, in write order: the source of truth first, the two changelogs last. */
 export const readSites = async (): Promise<Site[]> => {
   const sites = [await sourceSite()];
   for (const file of await docFiles()) {
     const text = await readText(file);
     sites.push(text === undefined ? undefined : docSite(file, text));
   }
-  sites.push(await changelogSite());
-  return sites.filter((site) => site !== undefined);
+  return [...sites.filter((site) => site !== undefined), ...(await changelogSites())];
 };
 
 /** The value every other site must equal. Unusable means there is nothing to check against. */

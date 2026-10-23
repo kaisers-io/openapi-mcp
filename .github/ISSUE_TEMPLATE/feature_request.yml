@@ -1,0 +1,57 @@
+name: Feature request
+description: Suggest something openapi-mcp should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `openapi-mcp` has a deliberately narrow scope: it turns an OpenAPI spec into a strict,
+        locally running MCP server, with no code generation and no config file of its own. Its
+        defaults are strict and fail closed: read-only unless `--allow` widens it, secrets only from
+        environment variables, refreshed specs applied only after `cache promote`. A proposal that
+        loosens one of those by default needs a strong case; an opt-in flag is usually the better
+        shape.
+
+        Every tool definition is sent to the model whenever a host lists the tools, so a feature
+        that makes `tools/list` larger has a cost for everyone who does not use it.
+
+        The most convincing feature requests describe a concrete API and a situation where the
+        current behaviour fell short.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting?
+      description: Describe the situation and the API involved, not the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What do you do today instead?
+      description: |
+        Including "nothing, I gave up". If an existing flag nearly works, say where it falls short.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like openapi-mcp to do?
+      description: If you have a flag or a behaviour in mind, sketch it.
+
+  - type: textarea
+    id: spec
+    attributes:
+      label: Spec excerpt
+      description: The part of the OpenAPI document the feature is about, if it is about one.
+      render: yaml
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: I have checked that no existing flag covers it (`openapi-mcp <command> --help`, `docs/configuration.md`).
+        - label: This does not require a configuration file of its own; everything can come from flags and environment variables.

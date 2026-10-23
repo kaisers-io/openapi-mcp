@@ -13,6 +13,8 @@
 //                              packages/cli/package.json's version verbatim
 //   CHANGELOG.md               `## [Unreleased]`, which `--set` turns into `## [<version>] - <date>`
 //                              (Keep a Changelog form) under a fresh, empty `## [Unreleased]`
+//   packages/cli/CHANGELOG.md  the copy the npm tarball ships: byte-identical to CHANGELOG.md, and
+//                              released by `--set` together with it
 //
 // Why the pins must follow the version: the host examples pin an exact version, never `latest`,
 // because the server runs with the user's API credentials and an unpinned `npx` runs whatever was

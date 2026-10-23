@@ -22,8 +22,9 @@ jobs:
     steps:
       # Credentials stay persisted here (unlike every other checkout): the "reachable from origin/main"
       # guard below runs `git fetch`, which needs the token while the repository is private. The token
-      # is `contents: read` only, and the only artifact this job uploads is the single bundle file, so
-      # the token cannot leak through it (the risk zizmor's artipacked audit is about).
+      # is `contents: read` only, and the only artifact this job uploads is the bundle directory
+      # (packages/cli/dist, build output only), so the token cannot leak through it (the risk
+      # zizmor's artipacked audit is about).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 } # zizmor: ignore[artipacked]
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -100,10 +101,20 @@ jobs:
           PACK_JSON="$(npm pack ./packages/cli --json --ignore-scripts --pack-destination "$PACK_DIR")"
           # Regression net for "no source code in the tarball": the tarball must contain EXACTLY this
           # file set — extras (leaked source) and missing files (dropped LICENSE/README) both fail.
-          # Shipping a new file requires deliberately updating this set.
+          # Shipping a new file requires deliberately updating this set. dist/ holds the entry plus
+          # the chunks its dynamic imports split off (content-hashed names, issue #91), so its part
+          # of the set is exactly what the determinism-checked build above wrote there.
           node -e '
+            const { readdirSync } = require("node:fs");
             const pack = JSON.parse(process.argv[1])[0];
-            const expected = ["LICENSE", "README.md", "bin/openapi-mcp.mjs", "dist/openapi-mcp.mjs", "package.json"];
+            const dist = readdirSync("packages/cli/dist", { recursive: true, withFileTypes: true })
+              .filter((entry) => entry.isFile())
+              .map((entry) => `${entry.parentPath.slice("packages/cli/".length)}/${entry.name}`);
+            if (!dist.includes("dist/openapi-mcp.mjs") || !dist.every((path) => /^dist\/[\w-]+\.mjs$/.test(path))) {
+              console.error("unexpected build output in packages/cli/dist:", dist.join(", "));
+              process.exit(1);
+            }
+            const expected = ["CHANGELOG.md", "LICENSE", "README.md", "bin/openapi-mcp.mjs", "package.json", ...dist].sort();
             const actual = pack.files.map((f) => f.path).sort();
             if (JSON.stringify(actual) !== JSON.stringify(expected)) {
               console.error("tarball shape mismatch — expected exactly:", expected.join(", "));
@@ -118,12 +129,14 @@ jobs:
           export PATH="$PREFIX/bin:$PATH"
           bash scripts/smoke-cli.sh
       - name: Upload the built CLI bundle for the publish job
-        # This is the ONLY channel that gets `dist/openapi-mcp.mjs` into `publish`: the artifact built,
-        # determinism-checked, and shape-guarded above by this unprivileged (no id-token) job.
+        # This is the ONLY channel that gets the bundle (`dist/openapi-mcp.mjs` and the chunks it
+        # imports) into `publish`: the artifact built, determinism-checked, and shape-guarded above by
+        # this unprivileged (no id-token) job. The whole directory goes: the entry alone would publish
+        # a CLI that fails on its first dynamic import.
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-bundle
-          path: packages/cli/dist/openapi-mcp.mjs
+          path: packages/cli/dist
           if-no-files-found: error
           retention-days: 1
   # Publish: the only job with OIDC (`id-token: write`) reach. Runs only after `verify` passes, against

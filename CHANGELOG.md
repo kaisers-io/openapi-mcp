@@ -202,6 +202,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **Security policy, contribution guide and templates for the public repository.**
+  `SECURITY.md` asks for private vulnerability reports through GitHub's advisory form and
+  lists what is in and out of scope; `CONTRIBUTING.md` takes over the README's Development,
+  Releasing and Benchmarks sections (now naming the post-GC live heap, not peak RSS, as the
+  gated memory metric) and describes what CI runs and what fails review; `CODE_OF_CONDUCT.md`
+  adopts the Contributor Covenant 2.1; issue and pull request templates ask for the details a
+  report needs and the checks a change needs. The npm package now ships this changelog
+  (`packages/cli/CHANGELOG.md`, a byte-identical copy: `pnpm versions --set` rewrites both
+  copies and `pnpm versions --check` fails when they differ) and declares `keywords`,
+  `homepage` and `bugs`.
 - **A version bump is one command: `pnpm versions --set <version>`.** It writes the version to
   `packages/cli/package.json`, every `@kaisers-io/openapi-mcp@<version>` pin in the READMEs and
   `docs/`, and the `--json doctor` example, and turns `## [Unreleased]` into
@@ -211,7 +221,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It runs in a new `versions` CI job and in the release workflow, which also requires a
   changelog heading for the tagged version. It replaces `test/readme-pins.test.ts` (#158).
   This changelog now follows Keep a Changelog. The release steps, including the Windows smoke
-  test of the published tarball, are in the README under "Releasing".
+  test of the published tarball, are in `CONTRIBUTING.md` under "Releasing".
 - **The benchmark gate checks retained memory, not peak RSS.** Peak RSS of a `serve` start
   depends on when V8 grows its young generation and collects old space. For the same build,
   flat-500's warm peak alternated between modes about 70 MB apart, which failed the gate on
