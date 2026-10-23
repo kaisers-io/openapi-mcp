@@ -56,6 +56,18 @@ describe('run', () => {
     );
   });
 
+  // Issue #3: the flag is shared by serve and tools, with one help text.
+  it('describes --nullable-response-fields in serve and tools help', async () => {
+    const help =
+      '--nullable-response-fields admit null for every object property in derived output schemas (for specs, e.g. springdoc, that omit "nullable")';
+    for (const command of ['serve', 'tools']) {
+      const lines: string[] = [];
+      const code = await run(testContext({ lines }), ['node', 'openapi-mcp', command, '--help']);
+      expect(code).toBe(EXIT.OK);
+      expect(lines.join('\n').replaceAll(/\s+/gu, ' ')).toContain(help);
+    }
+  });
+
   it('treats an unknown command as a usage error on stderr with exit 2', async () => {
     const lines: string[] = [];
     const errLines: string[] = [];

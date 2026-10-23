@@ -27,6 +27,10 @@ type ToolRow = {
   outputSchema: boolean;
   // The outputSchema exists only because of --default-response-is-error.
   outputSchemaAssumesDefaultIsError?: true;
+  // --nullable-response-fields widened the outputSchema (some response
+  // property also admits null). JSON output only: with the flag it applies to
+  // nearly every tool, so a human-output marker would be noise.
+  outputSchemaAdmitsNullFields?: true;
   // Why there is no outputSchema, when the tool description tells the agent
   // (kaisers-io/openapi-mcp-archive#39: a response pattern with nested
   // quantifiers).
@@ -42,6 +46,9 @@ const toToolRow = (generated: GeneratedTool): ToolRow => ({
   outputSchema: generated.outputSchema !== undefined,
   ...(generated.outputSchemaAssumesDefaultIsError === true
     ? { outputSchemaAssumesDefaultIsError: true as const }
+    : {}),
+  ...(generated.outputSchemaAdmitsNullFields === true
+    ? { outputSchemaAdmitsNullFields: true as const }
     : {}),
   ...(generated.outputSchemaWithheld === undefined
     ? {}
@@ -67,6 +74,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           reservedHeaders: SYSTEM_HEADERS,
           openapiVersion: result.spec.openapiVersion,
           defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
+          nullableResponseFields: cmdOpts.nullableResponseFields === true,
         });
         const allOmitted = [...result.spec.omitted, ...built.omitted];
         const tools: ToolRow[] = built.tools.map(toToolRow);

@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { compileEnvelopeValidator, deriveOutputSchema } from '../src/index.ts';
-import type { EnvelopeValidator, OperationRecord } from '../src/index.ts';
+import { withConvertMemo } from '../src/toolgen/schema.ts';
+import {
+  buildTools,
+  compileEnvelopeValidator,
+  dereference,
+  deriveOutputSchema,
+  explainOutputSchema,
+  SYSTEM_HEADERS,
+} from '../src/index.ts';
+import type { EnvelopeValidator, NamedOperation, OperationRecord } from '../src/index.ts';
 
 const op = (responses: Record<string, unknown>): OperationRecord => ({
   method: 'get',
@@ -337,5 +345,259 @@ describe('deriveOutputSchema — defaultResponseIsError opt-in (kaisers-io/opena
     const onlyDefault = op({ default: responses.default });
     const schema = deriveOutputSchema(onlyDefault, '3.1', { defaultResponseIsError: true });
     expect(schema).toBeUndefined();
+  });
+});
+
+// Issue #3: opt-in — every value under an object's `properties` in the derived
+// `data` schema also admits null, for specs whose generator omits `nullable`
+// while the server serializes unset fields as null.
+describe('deriveOutputSchema — nullableResponseFields opt-in (#3)', () => {
+  // The issue's repro, with real `$ref`s resolved the way the pipeline does.
+  const reproDocument = (): Record<string, unknown> => ({
+    openapi: '3.0.1',
+    info: { title: 'repro', version: '1.0.0' },
+    paths: {
+      '/shops/{id}': {
+        get: {
+          responses: {
+            '200': {
+              description: 'OK',
+              content: {
+                'application/json': { schema: { $ref: '#/components/schemas/Shop' } },
+              },
+            },
+          },
+        },
+      },
+    },
+    components: {
+      schemas: {
+        Shop: {
+          type: 'object',
+          required: ['id', 'name'],
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            district: { type: 'string' },
+            logo: { $ref: '#/components/schemas/Image' },
+            tags: { type: 'array', items: { type: 'string' } },
+          },
+        },
+        Image: { type: 'object', properties: { url: { type: 'string' } } },
+      },
+    },
+  });
+  const reproResponses = (): Record<string, unknown> => {
+    const resolved = dereference(reproDocument(), '3.0') as {
+      paths: Record<string, Record<string, { responses: Record<string, unknown> }>>;
+    };
+    return resolved.paths['/shops/{id}']!['get']!.responses;
+  };
+  const envelope = (data: unknown) => ({ status: 200, contentType: 'application/json', data });
+  const validatorFor = (
+    responses: Record<string, unknown>,
+    nullableResponseFields?: boolean,
+  ): EnvelopeValidator => {
+    const outputSchema = deriveOutputSchema(
+      op(responses),
+      '3.0',
+      nullableResponseFields === undefined ? {} : { nullableResponseFields },
+    );
+    if (outputSchema === undefined) {
+      throw new Error('expected an outputSchema');
+    }
+    return compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+  };
+  const withSchema = (schema: unknown): Record<string, unknown> => ({
+    '200': { content: { 'application/json': { schema } } },
+  });
+  const REPRO_BODY = { id: '1', name: null, district: null, logo: null, tags: ['a'] };
+
+  it('rejects the repro body without the option (the strict default is pinned)', () => {
+    expect(validatorFor(reproResponses())(envelope(REPRO_BODY))).toBe(false);
+    expect(validatorFor(reproResponses(), false)(envelope(REPRO_BODY))).toBe(false);
+  });
+
+  it('accepts the repro body with the option', () => {
+    expect(validatorFor(reproResponses(), true)(envelope(REPRO_BODY))).toBe(true);
+  });
+
+  it('still rejects a wrong non-null type', () => {
+    const validate = validatorFor(reproResponses(), true);
+    expect(validate(envelope({ ...REPRO_BODY, name: 42 }))).toBe(false);
+    expect(validate(envelope({ ...REPRO_BODY, logo: { url: 7 } }))).toBe(false);
+  });
+
+  it('still rejects a missing required key (required means present, null or not)', () => {
+    const { name: _name, ...withoutName } = REPRO_BODY;
+    expect(validatorFor(reproResponses(), true)(envelope(withoutName))).toBe(false);
+  });
+
+  it('does not widen array items, additionalProperties values or the root value', () => {
+    const validate = validatorFor(reproResponses(), true);
+    expect(validate(envelope({ ...REPRO_BODY, tags: ['a', null] }))).toBe(false);
+    expect(validate(envelope(null))).toBe(false);
+    const map = validatorFor(
+      withSchema({ type: 'object', additionalProperties: { type: 'string' } }),
+      true,
+    );
+    expect(map(envelope({ a: 'x' }))).toBe(true);
+    expect(map(envelope({ a: null }))).toBe(false);
+  });
+
+  it('admits null for a $ref property and for the properties of the referenced object', () => {
+    const validate = validatorFor(reproResponses(), true);
+    expect(validate(envelope({ ...REPRO_BODY, logo: null }))).toBe(true);
+    expect(validate(envelope({ ...REPRO_BODY, logo: { url: null } }))).toBe(true);
+  });
+
+  it('admits null at every depth of nested objects, including inside array items', () => {
+    const validate = validatorFor(
+      withSchema({
+        type: 'object',
+        properties: {
+          owner: {
+            type: 'object',
+            properties: { address: { type: 'object', properties: { city: { type: 'string' } } } },
+          },
+          list: {
+            type: 'array',
+            items: { type: 'object', properties: { n: { type: 'integer' } } },
+          },
+        },
+      }),
+      true,
+    );
+    expect(validate(envelope({ owner: null }))).toBe(true);
+    expect(validate(envelope({ owner: { address: null } }))).toBe(true);
+    expect(validate(envelope({ owner: { address: { city: null } } }))).toBe(true);
+    expect(validate(envelope({ list: [{ n: null }] }))).toBe(true);
+    expect(validate(envelope({ owner: { address: { city: 1 } } }))).toBe(false);
+  });
+
+  it('admits null for properties contributed by allOf and anyOf members', () => {
+    const image = { type: 'object', properties: { url: { type: 'string' } } };
+    const validate = validatorFor(
+      withSchema({
+        type: 'object',
+        properties: {
+          merged: {
+            allOf: [image, { type: 'object', properties: { width: { type: 'integer' } } }],
+          },
+          either: {
+            anyOf: [
+              { type: 'string' },
+              { type: 'object', required: ['b'], properties: { b: { type: 'integer' } } },
+            ],
+          },
+        },
+      }),
+      true,
+    );
+    expect(validate(envelope({ merged: { url: null, width: null } }))).toBe(true);
+    expect(validate(envelope({ either: { b: null } }))).toBe(true);
+    expect(validate(envelope({ either: null }))).toBe(true);
+    expect(validate(envelope({ merged: { width: 'wide' } }))).toBe(false);
+    expect(validate(envelope({ either: {} }))).toBe(false);
+  });
+
+  it('leaves a 3.0 `nullable: true` property as it was (no second null)', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        name: { type: 'string', nullable: true },
+        kind: { type: 'string', nullable: true, enum: ['a', 'b'] },
+      },
+    };
+    const off = deriveOutputSchema(op(withSchema(schema)), '3.0');
+    const on = deriveOutputSchema(op(withSchema(schema)), '3.0', { nullableResponseFields: true });
+    expect(on).toEqual(off);
+  });
+
+  it("leaves a 3.1 `type: [T, 'null']` property as it was (no second null)", () => {
+    const schema = {
+      type: 'object',
+      properties: { name: { type: ['string', 'null'] }, free: {} },
+    };
+    const off = deriveOutputSchema(op(withSchema(schema)), '3.1');
+    const on = deriveOutputSchema(op(withSchema(schema)), '3.1', { nullableResponseFields: true });
+    expect(on).toEqual(off);
+  });
+
+  it('keeps the enum and const of a widened property', () => {
+    const validate = validatorFor(
+      withSchema({
+        type: 'object',
+        properties: { kind: { type: 'string', enum: ['a', 'b'] }, fixed: { const: 'x' } },
+      }),
+      true,
+    );
+    expect(validate(envelope({ kind: null, fixed: null }))).toBe(true);
+    expect(validate(envelope({ kind: 'a', fixed: 'x' }))).toBe(true);
+    expect(validate(envelope({ kind: 'c' }))).toBe(false);
+    expect(validate(envelope({ fixed: 'y' }))).toBe(false);
+  });
+
+  it('leaves the envelope fields alone', () => {
+    const outputSchema = deriveOutputSchema(op(reproResponses()), '3.0', {
+      nullableResponseFields: true,
+      pagination: true,
+      projection: true,
+    }) as { oneOf: { properties: Record<string, unknown> }[] };
+    const plain = deriveOutputSchema(op(reproResponses()), '3.0', {
+      pagination: true,
+      projection: true,
+    }) as { oneOf: { properties: Record<string, unknown> }[] };
+    const { data: _on, ...envelopeOn } = outputSchema.oneOf[0]!.properties;
+    const { data: _off, ...envelopeOff } = plain.oneOf[0]!.properties;
+    expect(envelopeOn).toEqual(envelopeOff);
+    expect(outputSchema.oneOf[1]).toEqual(plain.oneOf[1]);
+    const validate = compileEnvelopeValidator(outputSchema) as EnvelopeValidator;
+    expect(validate({ ...envelope(REPRO_BODY), status: null })).toBe(false);
+  });
+
+  it('is byte-identical to the default when off', () => {
+    const responses = reproResponses();
+    const omitted = JSON.stringify(deriveOutputSchema(op(responses), '3.0'));
+    const off = JSON.stringify(
+      deriveOutputSchema(op(responses), '3.0', { nullableResponseFields: false }),
+    );
+    expect(off).toBe(omitted);
+    expect(omitted).not.toContain('null');
+  });
+
+  it('never mutates the memoized data schema shared across operations of one build', () => {
+    const responses = reproResponses();
+    const [plain, widened, plainAgain] = withConvertMemo(() => [
+      explainOutputSchema(op(responses), '3.0').outputSchema,
+      explainOutputSchema(op(responses), '3.0', { nullableResponseFields: true }).outputSchema,
+      explainOutputSchema(op(responses), '3.0').outputSchema,
+    ]);
+    const dataOf = (schema: unknown): unknown =>
+      (schema as { oneOf: { properties: { data: unknown } }[] }).oneOf[0]!.properties.data;
+    // The two plain derivations share one memoized object, which the widened
+    // derivation in between left untouched.
+    expect(dataOf(plainAgain)).toBe(dataOf(plain));
+    expect(JSON.stringify(dataOf(plain))).not.toContain('null');
+    expect(JSON.stringify(dataOf(widened))).toContain('null');
+    expect(compileEnvelopeValidator(plain)!(envelope(REPRO_BODY))).toBe(false);
+    expect(compileEnvelopeValidator(widened)!(envelope(REPRO_BODY))).toBe(true);
+  });
+
+  it('gives operations sharing a schema one widened object per build, and builds differ by the option', () => {
+    const shared = reproResponses();
+    const named = (toolName: string): NamedOperation => ({
+      toolName,
+      operation: { ...op(shared), path: `/${toolName}` },
+    });
+    const opts = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.0' as const };
+    const on = buildTools([named('a'), named('b')], { ...opts, nullableResponseFields: true });
+    const off = buildTools([named('a'), named('b')], opts);
+    const dataOf = (schema: unknown): unknown =>
+      (schema as { oneOf: { properties: { data: unknown } }[] }).oneOf[0]!.properties.data;
+    expect(dataOf(on.tools[0]!.outputSchema)).toBe(dataOf(on.tools[1]!.outputSchema));
+    expect(compileEnvelopeValidator(on.tools[1]!.outputSchema)!(envelope(REPRO_BODY))).toBe(true);
+    expect(compileEnvelopeValidator(off.tools[1]!.outputSchema)!(envelope(REPRO_BODY))).toBe(false);
+    expect(JSON.stringify(off.tools[0]!.outputSchema)).not.toContain('null');
   });
 });

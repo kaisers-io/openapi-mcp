@@ -121,13 +121,18 @@ const PIPELINE = {
 const snapshotFor = (
   toolMode: ToolMode | undefined,
   filters: { allow?: string[]; deny?: string[] } = {},
+  toolgen: { operations?: readonly NamedOperation[]; nullableResponseFields?: boolean } = {},
 ): ServerSnapshot => {
   const { exposed } = applyFilters(
-    OPERATIONS,
+    toolgen.operations ?? OPERATIONS,
     (filters.allow ?? []).map((raw) => parseFilterPattern(raw)),
     (filters.deny ?? []).map((raw) => parseFilterPattern(raw)),
   );
-  const built = buildTools(exposed, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
+  const built = buildTools(exposed, {
+    reservedHeaders: SYSTEM_HEADERS,
+    openapiVersion: '3.1',
+    nullableResponseFields: toolgen.nullableResponseFields === true,
+  });
   return buildSnapshot(built, PIPELINE, toolMode === undefined ? {} : { toolMode });
 };
 
@@ -461,6 +466,7 @@ describe('call_operation — captured upstream request', () => {
   const capture = async (
     snapshot: ServerSnapshot,
     request: { name: string; arguments: unknown },
+    upstreamBody: unknown = [{ id: 'a1' }],
   ): Promise<{ captured: Captured[]; outcome: ToolCallOutcome }> => {
     const captured: Captured[] = [];
     const fetch: PinnedDeps['fetch'] = (input, init) => {
@@ -474,7 +480,7 @@ describe('call_operation — captured upstream request', () => {
             ? undefined
             : Buffer.from(options.body as Uint8Array | string).toString('utf8'),
       });
-      return Promise.resolve(Response.json([{ id: 'a1' }], { status: 200 }));
+      return Promise.resolve(Response.json(upstreamBody, { status: 200 }));
     };
     const validators = new Map<string, EnvelopeValidator | undefined>(
       snapshot.operations.map((tool) => [
@@ -562,5 +568,51 @@ describe('call_operation — captured upstream request', () => {
       'x-client': 'openapi-mcp',
     });
     expect(JSON.parse(captured[0]?.body ?? '')).toEqual({ name: 'widget', count: 3 });
+  });
+
+  // Issue #3: call_operation validates with the same (widened) output schema
+  // as the per-operation tool.
+  it('applies nullableResponseFields to call_operation exactly as to the per-operation tool', async () => {
+    const getShop = op('getShop', {
+      method: 'get',
+      path: '/shops/{id}',
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      responses: {
+        '200': {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['id', 'name'],
+                properties: {
+                  id: { type: 'string' },
+                  name: { type: 'string' },
+                  logo: { type: 'object', properties: { url: { type: 'string' } } },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const body = { id: '1', name: null, logo: null };
+    const run = async (toolMode: ToolMode, nullableResponseFields: boolean) => {
+      const snapshot = snapshotFor(toolMode, {}, { operations: [getShop], nullableResponseFields });
+      const request =
+        toolMode === 'discover'
+          ? { name: 'call_operation', arguments: { name: 'getShop', arguments: { id: '1' } } }
+          : { name: 'getShop', arguments: { id: '1' } };
+      const { outcome } = await capture(snapshot, request, body);
+      return outcome;
+    };
+    const viaCall = await run('discover', true);
+    expect(viaCall.isError).toBe(false);
+    expect(viaCall.structuredContent).toMatchObject({ status: 200, data: body });
+    expect(viaCall).toEqual(await run('per-operation', true));
+    const strict = await run('discover', false);
+    expect(strict.isError).toBe(true);
+    expect(textOf(strict)).toBe(
+      "upstream response for status 200 did not match the tool's declared output schema",
+    );
   });
 });

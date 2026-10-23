@@ -472,6 +472,7 @@ export const runServe = async (
       openapiVersion: result.spec.openapiVersion,
       projection: cmdOpts.responseProjection === true,
       defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
+      nullableResponseFields: cmdOpts.nullableResponseFields === true,
     });
     const snapshot = buildSnapshot(built, result, {
       toolMode: resolveToolMode(requestedToolMode, built.tools.length),

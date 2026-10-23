@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import { admitNullProperties } from './nullable-fields.ts';
 import { PAGINATION_SCHEMA } from './pagination.ts';
 import { convertSchema, memoizedJsonSchema, UNSAFE_PATTERN_REASON } from './schema.ts';
 
@@ -75,6 +76,12 @@ export type OutputSchemaOptions = {
   pagination?: boolean;
   // A projectable tool (`_fields`) also gets ONE `projection` branch.
   projection?: boolean;
+  // Every value under an object's `properties` in the derived `data` schema
+  // also admits null (issue #3; see admitNullProperties). For specs whose
+  // generator omits `nullable` while the server serializes unset fields as
+  // null: OAS 3.0.3 §4.7.24.1 defaults `nullable` to false, so the strict
+  // schema rejects such a response even though the data is usable.
+  nullableResponseFields?: boolean;
 };
 
 // Minimal on purpose: the projected values come from `data` that already
@@ -110,6 +117,8 @@ export const OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN =
 
 export type OutputSchemaDerivation = {
   outputSchema?: JsonSchemaRecord;
+  // Set when nullableResponseFields changed at least one `data` schema.
+  admitsNullFields?: true;
   // Agent-facing sentence explaining a withheld output schema (see above).
   withheld?: string;
 };
@@ -127,6 +136,8 @@ export const explainOutputSchema = (
     return {};
   }
   const branches: JsonSchemaRecord[] = [];
+  // Per branch: did nullableResponseFields change its data schema?
+  const widened: boolean[] = [];
   // Imperative on purpose: ANY single malformed/unbounded response branch
   // aborts the WHOLE envelope (fail-closed, see the comment above) before
   // later keys are even converted. `successKeys` is attacker-influenced (a
@@ -178,10 +189,14 @@ export const explainOutputSchema = (
     }
     // The same response schema (one shared node, one memoized Zod schema) is
     // emitted once per build, not once per operation that returns it
-    const dataSchema = memoizedJsonSchema(converted.ok, toDataSchema);
-    if (dataSchema === undefined) {
+    const strictData = memoizedJsonSchema(converted.ok, toDataSchema);
+    if (strictData === undefined) {
       return {};
     }
+    // The root value is never widened: only object properties are
+    const dataSchema =
+      options.nullableResponseFields === true ? admitNullProperties(strictData) : strictData;
+    widened.push(dataSchema !== strictData);
     branches.push({
       type: 'object',
       properties: {
@@ -204,6 +219,7 @@ export const explainOutputSchema = (
       type: 'object',
       oneOf: options.projection === true ? [...branches, PROJECTION_BRANCH] : branches,
     },
+    ...(widened.includes(true) ? { admitsNullFields: true as const } : {}),
   };
 };
 

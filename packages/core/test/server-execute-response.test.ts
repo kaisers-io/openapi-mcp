@@ -13,6 +13,7 @@ import {
 import type {
   EnvelopeValidator,
   MapResponseOptions,
+  OperationRecord,
   PinnedErrorReason,
   PinnedOutcome,
   Redactor,
@@ -939,5 +940,97 @@ describe('mapResponse — undocumented 2xx under the default-is-error assumption
     const text = isError(mapResponse(opts));
     expect(text).toContain('404');
     expect(text).not.toContain(hint);
+  });
+});
+
+// Issue #3: with nullableResponseFields, an upstream body carrying null for
+// properties the spec does not declare nullable passes the compiled validator
+// on both the plain and the `_fields` path, and the nulls are returned as sent.
+describe('mapResponse — null property values under nullableResponseFields (#3)', () => {
+  const image = { type: 'object', properties: { url: { type: 'string' } } };
+  const operation: OperationRecord = {
+    method: 'get',
+    path: '/shops/{id}',
+    tags: [],
+    deprecated: false,
+    parameters: [],
+    responses: {
+      '200': {
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['id', 'name'],
+              properties: {
+                id: { type: 'string' },
+                name: { type: 'string' },
+                district: { type: 'string' },
+                logo: image,
+                tags: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+  const body = '{"id":"1","name":null,"district":null,"logo":null,"tags":["a"]}';
+  const derive = (nullableResponseFields: boolean) => {
+    const outputSchema = deriveOutputSchema(operation, '3.0', {
+      nullableResponseFields,
+      projection: true,
+    });
+    return { outputSchema, validator: compileEnvelopeValidator(outputSchema) as EnvelopeValidator };
+  };
+  const failure =
+    "upstream response for status 200 did not match the tool's declared output schema";
+  const mapped = (overrides: Partial<MapResponseOptions>): ToolCallOutcome =>
+    mapResponse(defaultOpts(overrides));
+
+  it('fails with the status-only message without the option (plain and projection paths)', () => {
+    const { outputSchema, validator } = derive(false);
+    const outcome = response(200, 'application/json', body);
+    expect(isError(mapped({ outcome, outputSchema, validator }))).toBe(failure);
+    const fields = ['/id'];
+    expect(isError(mapped({ outcome, outputSchema, validator, fields }))).toBe(failure);
+  });
+
+  it('returns structuredContent with the nulls unchanged', () => {
+    const { outputSchema, validator } = derive(true);
+    const outcome = response(200, 'application/json', body);
+    const result = mapResponse(defaultOpts({ outcome, outputSchema, validator }));
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      data: { id: '1', name: null, district: null, logo: null, tags: ['a'] },
+    });
+  });
+
+  it('projects such a response with `_fields`', () => {
+    const { outputSchema, validator } = derive(true);
+    const outcome = response(200, 'application/json', body);
+    const fields = ['/id', '/name', '/logo'];
+    const result = mapResponse(defaultOpts({ outcome, outputSchema, validator, fields }));
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      projection: { '/id': '1', '/name': null, '/logo': null },
+    });
+  });
+
+  it('still fails a wrong type or a missing required key with the same status-only message', () => {
+    const { outputSchema, validator } = derive(true);
+    for (const bad of [
+      '{"id":"1","name":42}',
+      '{"id":"1"}',
+      '{"id":"1","name":"n","tags":[null]}',
+    ]) {
+      const outcome = response(200, 'application/json', bad);
+      expect(isError(mapped({ outcome, outputSchema, validator }))).toBe(failure);
+      const fields = ['/id'];
+      expect(isError(mapped({ outcome, outputSchema, validator, fields }))).toBe(failure);
+    }
   });
 });
