@@ -460,7 +460,10 @@ describe('realContext cacheFs with an injected fs failure', () => {
     // is the case where the cleanup actually has something to remove
     const file = join(dir, 'meta.json');
     await writeFile(file, 'old');
-    const failure = injectedFsError('EACCES', 'rename', file);
+    // EXDEV, not EACCES: on Windows EACCES/EPERM/EBUSY from rename are retried
+    // (a reader holding the target open, see renameReplacing), so only an
+    // error no retry can fix fails on the first attempt on every platform
+    const failure = injectedFsError('EXDEV', 'rename', file);
     vi.mocked(rename).mockRejectedValueOnce(failure);
     await expect(realContext().cacheFs.writeFileAtomic(file, 'new')).rejects.toBe(failure);
     expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);

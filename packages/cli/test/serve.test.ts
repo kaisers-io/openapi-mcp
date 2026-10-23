@@ -253,7 +253,14 @@ describe('serve — stdio subprocess E2E', () => {
     expect(notFoundResponse.result?.['structuredContent']).toBeUndefined();
     expect(JSON.stringify(notFoundResponse)).not.toContain(SECRET);
 
-    child.kill('SIGTERM');
+    // Windows cannot deliver a signal to a child (ChildProcess#kill() ends it
+    // abruptly there), so the session ends the way an MCP host ends it on
+    // every platform: by closing stdin
+    if (process.platform === 'win32') {
+      child.stdin?.end();
+    } else {
+      child.kill('SIGTERM');
+    }
     await upstream.close();
     const exitCode = await new Promise<number | null>((resolve) => {
       child?.once('exit', (code) => resolve(code));

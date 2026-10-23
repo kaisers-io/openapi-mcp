@@ -237,17 +237,15 @@ const isTransientReplaceError = (err: unknown): boolean =>
 export type RenameDeps = {
   platform: NodeJS.Platform;
   rename: (from: string, to: string) => Promise<void>;
-  sleep: (ms: number) => Promise<void>;
+  sleep: (ms: number) => Promise<unknown>;
   now: () => number;
 };
 
 const realRenameDeps: RenameDeps = {
   platform: process.platform,
   rename,
-  sleep: async (ms) => {
-    await sleep(ms);
-  },
-  now: () => Date.now(),
+  sleep,
+  now: Date.now,
 };
 
 // `deps` is injectable so the retry schedule is testable on every platform
