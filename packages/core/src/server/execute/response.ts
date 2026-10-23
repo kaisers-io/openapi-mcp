@@ -77,8 +77,8 @@ export type EnvelopeCompiler = (
 // is more important".
 //
 // Identical schemas share one compiled validator (issue #7). Many operations
-// return the same envelope (for GitHub `--allow tag:repos`, 99 distinct
-// schemas among 137 tools), but Ajv's own cache is keyed by object identity
+// return the same envelope (for GitHub `--allow tag:repos`, 100 distinct
+// schemas among 138 tools), but Ajv's own cache is keyed by object identity
 // and every tool has its own schema object. The key is the serialized
 // schema: Ajv's result depends only on the schema and this instance's
 // options, and a validator keeps no state between calls that a caller here
