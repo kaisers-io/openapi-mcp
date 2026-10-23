@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
 import { Response } from 'undici';
 import {
@@ -303,5 +304,218 @@ describe('createExecutor — OAuth2 client credentials', () => {
     });
     expect(JSON.stringify(outcome)).toContain('exceeds the outbound resource budget');
     expect(seen).toHaveLength(0);
+  });
+});
+
+// Issue #21: a caller waiting for a shared token request stops waiting when
+// it is cancelled or its time budget runs out, without aborting the request
+// the other callers share, and never starts an API request past its budget.
+describe('createExecutor — OAuth2 token waits honour each caller (#21)', () => {
+  // One token request, settled by the test
+  const pendingTokens = (): {
+    source: TokenSource;
+    issue: (result: TokenResult) => void;
+    requested: () => number;
+  } => {
+    let requests = 0;
+    let shared: Promise<TokenResult> | undefined;
+    const { promise, resolve } = Promise.withResolvers<TokenResult>();
+    return {
+      source: {
+        getToken: () => {
+          if (shared === undefined) {
+            requests += 1;
+            shared = promise;
+          }
+          return shared;
+        },
+        invalidate: () => true,
+      },
+      issue: resolve,
+      requested: () => requests,
+    };
+  };
+
+  const executorWith = (
+    tokens: TokenSource,
+    options: {
+      statuses?: number[];
+      timeoutMs?: number;
+      maxConcurrent?: number;
+      timeoutSignal?: (ms: number) => AbortSignal;
+      now?: () => number;
+      onFetch?: () => void;
+    } = {},
+  ) => {
+    const sent: string[] = [];
+    const reports: CallTelemetry[] = [];
+    const fetch: PinnedDeps['fetch'] = (_input, init) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      sent.push(headers['authorization'] ?? '');
+      options.onFetch?.();
+      const status = options.statuses?.[sent.length - 1] ?? 204;
+      return Promise.resolve(new Response(status === 204 ? null : 'denied', { status }));
+    };
+    const executor = createExecutor(
+      {
+        baseUrl: 'https://api.example.test',
+        baseTrusted: true,
+        allowPrivateNetwork: false,
+        allowInsecureHttp: false,
+        secretHeaders: [],
+        staticHeaders: [],
+        reservedHeaderNames: new Set(SYSTEM_HEADERS),
+        redactor: createRedactor([]),
+        timeoutMs: options.timeoutMs ?? 5000,
+        maxResponseBytes: 65_536,
+        outboundBudgets: { maxUrlLength: 8192, maxHeaderBytes: 16_384, maxBodyBytes: 65_536 },
+        maxConcurrent: options.maxConcurrent ?? 4,
+        validators: new Map(
+          snapshot.tools.map((entry) => [
+            entry.name,
+            compileEnvelopeValidator(entry.wireTool.outputSchema),
+          ]),
+        ),
+        oauth: { tokens, envVarHint: 'CID / CSECRET' },
+      },
+      {
+        transport: {
+          fetch,
+          resolve: () => Promise.reject(new Error('no DNS')),
+          timeoutSignal: options.timeoutSignal ?? (() => new AbortController().signal),
+        },
+        retry: {
+          sleep: () => Promise.resolve(),
+          random: () => 0,
+          now: options.now ?? (() => 0),
+        },
+      },
+    );
+    const call = (name: string, signal = new AbortController().signal) =>
+      executor(tool(name), name === 'create' ? { name: 'x' } : {}, signal, undefined, (entry) => {
+        reports.push(entry);
+      });
+    return { call, sent, reports };
+  };
+
+  it('a cancelled caller stops waiting at once; the other caller still gets the token', async () => {
+    const tokens = pendingTokens();
+    const { call, sent, reports } = executorWith(tokens.source);
+    const cancelled = new AbortController();
+    const first = call('create', cancelled.signal);
+    const second = call('ping');
+    await Promise.resolve();
+    cancelled.abort();
+    const outcome = await first;
+    // Settled before the token arrived, and nothing was sent for it
+    expect(outcome.isError).toBe(true);
+    expect(JSON.stringify(outcome)).toContain('the request was cancelled');
+    expect(sent).toEqual([]);
+    expect(reports).toMatchObject([{ outcome: 'cancelled', method: 'POST' }]);
+    tokens.issue({ ok: 'shared-token' });
+    const served = await second;
+    expect(served.isError).toBe(false);
+    expect(sent).toEqual(['Bearer shared-token']);
+    expect(tokens.requested()).toBe(1);
+  });
+
+  it('a cancelled caller frees its slot before the token arrives', async () => {
+    const tokens = pendingTokens();
+    const { call } = executorWith(tokens.source, { maxConcurrent: 1 });
+    const cancelled = new AbortController();
+    const first = call('ping', cancelled.signal);
+    await Promise.resolve();
+    cancelled.abort();
+    await first;
+    // The only slot is free again: a new call gets it and waits for the token
+    const second = call('ping');
+    tokens.issue({ ok: 'shared-token' });
+    const served = await second;
+    expect(served.isError).toBe(false);
+  });
+
+  it('a caller whose budget runs out while waiting for the first token times out', async () => {
+    const tokens = pendingTokens();
+    const { call, sent, reports } = executorWith(tokens.source, {
+      timeoutMs: 40,
+      timeoutSignal: (ms) => AbortSignal.timeout(ms),
+    });
+    const outcome = await call('create');
+    expect(JSON.stringify(outcome)).toContain('timed out waiting for an OAuth2 access token');
+    expect(sent).toEqual([]);
+    expect(reports).toMatchObject([{ outcome: 'timeout', method: 'POST' }]);
+    // The shared request is not aborted for the others
+    tokens.issue({ ok: 'late-token' });
+  });
+
+  it('a caller whose budget runs out while waiting for a refreshed token times out', async () => {
+    let calls = 0;
+    const issued = Promise.withResolvers<TokenResult>();
+    const tokens: TokenSource = {
+      getToken: () => {
+        calls += 1;
+        return calls === 1 ? Promise.resolve({ ok: 'stale' }) : issued.promise;
+      },
+      invalidate: () => true,
+    };
+    const { call, sent } = executorWith(tokens, {
+      statuses: [401],
+      timeoutMs: 40,
+      timeoutSignal: (ms) => AbortSignal.timeout(ms),
+    });
+    const outcome = await call('ping');
+    expect(JSON.stringify(outcome)).toContain('timed out waiting for an OAuth2 access token');
+    expect(sent).toEqual(['Bearer stale']);
+    issued.resolve({ ok: 'fresh' });
+  });
+
+  it('sends nothing when the token arrives just as the budget runs out', async () => {
+    let clock = 0;
+    const tokens: TokenSource = {
+      getToken: () => {
+        clock = 1000;
+        return Promise.resolve({ ok: 'late' });
+      },
+      invalidate: () => true,
+    };
+    const { call, sent, reports } = executorWith(tokens, { timeoutMs: 1000, now: () => clock });
+    const outcome = await call('create');
+    expect(JSON.stringify(outcome)).toContain('the call timed out before the request was sent');
+    expect(sent).toEqual([]);
+    expect(reports).toMatchObject([{ outcome: 'timeout', method: 'POST' }]);
+  });
+
+  it('sends no 401 replay once the budget is spent', async () => {
+    let clock = 0;
+    const tokens = fakeTokens();
+    const { call, sent, reports } = executorWith(tokens.source, {
+      statuses: [401, 204],
+      timeoutMs: 1000,
+      now: () => clock,
+      // The first attempt uses up the whole budget
+      onFetch: () => {
+        clock += 1000;
+      },
+    });
+    const outcome = await call('create');
+    expect(JSON.stringify(outcome)).toContain(
+      'the call timed out before the request could be sent again with a fresh OAuth2 access token; it was not applied',
+    );
+    expect(sent).toEqual(['Bearer oauth-access-token-1']);
+    expect(reports).toMatchObject([{ outcome: 'timeout', method: 'POST' }]);
+  });
+
+  it('removes its abort listener from the caller signal when the wait is abandoned', async () => {
+    const tokens = pendingTokens();
+    const { call } = executorWith(tokens.source);
+    const cancelled = new AbortController();
+    const first = call('ping', cancelled.signal);
+    await Promise.resolve();
+    expect(EventEmitter.getEventListeners(cancelled.signal, 'abort')).toHaveLength(1);
+    cancelled.abort();
+    await first;
+    // Nothing else ever listened: the call never reached the transport
+    expect(EventEmitter.getEventListeners(cancelled.signal, 'abort')).toHaveLength(0);
+    tokens.issue({ ok: 'late-token' });
   });
 });

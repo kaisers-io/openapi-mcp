@@ -305,7 +305,10 @@ and sends it as `Authorization: Bearer <token>` on every API request.
   Concurrent calls share one token request. A failed token request is answered from memory for
   5 s, so an authorization-server outage costs it one request per 5 s, not one per tool call.
   The token request is bounded by `--request-timeout`; when a call has to wait for a token,
-  that wait counts against the call's own `--request-timeout` budget.
+  that wait counts against the call's own `--request-timeout` budget. A call that is
+  cancelled or runs out of time while it waits ends at once, with `cancelled` or `timeout`,
+  and sends nothing; the token request keeps running for the other calls waiting on it. No
+  request, a `401` replay included, is sent once the call's budget is spent.
 - An upstream `401` discards the token, fetches a new one and replays the request exactly
   once (a 401 means the request was not authorized, so this applies to writes too). A second
   `401` is returned as usual. Within 30 s of such a replacement, a further `401` keeps the

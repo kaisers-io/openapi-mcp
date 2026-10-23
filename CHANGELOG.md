@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   operation fail with a tool error before anything is sent, and `serve` names the operation
   once on stderr. `per-operation` mode still compiles every validator at startup.
 
+### Fixed
+
+- **A call waiting for an OAuth2 access token now honours its own cancellation and deadline
+  (#21).** Before, a call cancelled while the shared token request was still running kept
+  its concurrency slot until the token arrived, and the wait for a first or refreshed token
+  could outlast the call's `--request-timeout`. Now each waiting call ends at once when it is
+  cancelled or its budget runs out, frees its slot and sends nothing, while the token request
+  keeps serving the other callers. A `401` replay is no longer sent once the budget is spent.
+
 ## [0.4.1] - 2026-10-23
 
 ### Added

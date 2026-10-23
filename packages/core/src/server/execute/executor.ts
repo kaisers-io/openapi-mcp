@@ -281,6 +281,43 @@ const overFinalBudget = (
 // socket keeps the process alive.
 export type UpstreamExecutor = ToolExecutor & { close: () => Promise<void> };
 
+// One caller's wait for an OAuth2 token, raced against that caller's
+// cancellation and the rest of its time budget (issue #21). The token request
+// is shared by every waiting caller and bounded by its own timeout, so it is
+// never aborted here: an abandoned wait only stops listening, and the token
+// still reaches the callers that keep waiting. A caller that is already
+// cancelled or out of time asks for no token at all. Promise.race subscribes
+// to the request, so a request that settles (or fails) after its waiter left
+// never goes unhandled.
+const waitForToken = async <Result>(
+  request: () => Promise<Result>,
+  signal: AbortSignal,
+  deadline: AbortSignal,
+): Promise<Result | 'cancelled' | 'timeout'> => {
+  if (signal.aborted) {
+    return 'cancelled';
+  }
+  if (deadline.aborted) {
+    return 'timeout';
+  }
+  const pending = request();
+  const stopped = Promise.withResolvers<'cancelled' | 'timeout'>();
+  const onCancel = (): void => {
+    stopped.resolve('cancelled');
+  };
+  const onDeadline = (): void => {
+    stopped.resolve('timeout');
+  };
+  signal.addEventListener('abort', onCancel, { once: true });
+  deadline.addEventListener('abort', onDeadline, { once: true });
+  try {
+    return await Promise.race([pending, stopped.promise]);
+  } finally {
+    signal.removeEventListener('abort', onCancel);
+    deadline.removeEventListener('abort', onDeadline);
+  }
+};
+
 const runUpstreamCall = async (
   config: ExecutorConfig,
   transport: PinnedDeps,
@@ -440,8 +477,30 @@ const runUpstreamCall = async (
   // The call's time budget runs from here: the token request (when one is
   // needed) and every upstream attempt share it.
   const upstreamStarted = retryDeps.now();
-  const remainingMs = (): number =>
-    Math.max(Math.floor(timeoutMs - (retryDeps.now() - upstreamStarted)), 1);
+  const budgetLeftMs = (): number => Math.floor(timeoutMs - (retryDeps.now() - upstreamStarted));
+  const remainingMs = (): number => Math.max(budgetLeftMs(), 1);
+  // A token for this call, or the tool error that ends it: a cancelled or
+  // expired wait sends nothing.
+  const tokenFor = async (
+    tokens: NonNullable<ExecutorConfig['oauth']>['tokens'],
+  ): Promise<{ token: string } | { failed: ToolCallOutcome }> => {
+    const result = await waitForToken(
+      async () => await tokens.getToken(),
+      signal,
+      transport.timeoutSignal(remainingMs()),
+    );
+    if (result === 'cancelled') {
+      report({ outcome: 'cancelled', ...operationFacts });
+      return { failed: isError('the request was cancelled') };
+    }
+    if (result === 'timeout') {
+      report({ outcome: 'timeout', ...operationFacts });
+      return {
+        failed: isError('timed out waiting for an OAuth2 access token; no API request was sent'),
+      };
+    }
+    return 'error' in result ? { failed: tokenError(result.error) } : { token: result.ok };
+  };
   const send = async (
     headers: HopHeaders,
     retriesLeft: number,
@@ -468,13 +527,18 @@ const runUpstreamCall = async (
       retryDeps,
     );
   };
-  const first = oauth === undefined ? undefined : await oauth.tokens.getToken();
-  if (first !== undefined && 'error' in first) {
-    return tokenError(first.error);
+  const first = oauth === undefined ? undefined : await tokenFor(oauth.tokens);
+  if (first !== undefined && 'failed' in first) {
+    return first.failed;
   }
-  const firstHeaders = headersFor(first?.ok);
+  const firstHeaders = headersFor(first?.token);
   if (firstHeaders === undefined) {
     return overBudget();
+  }
+  // A token that arrived just as the budget ran out
+  if (budgetLeftMs() <= 0) {
+    report({ outcome: 'timeout', ...operationFacts });
+    return isError('the call timed out before the request was sent');
   }
   const idempotencyKey =
     generatedKey === undefined ? undefined : firstHeaders.sameOriginHeaders['idempotency-key'];
@@ -495,13 +559,22 @@ const runUpstreamCall = async (
     first !== undefined &&
     outcome.kind === 'response' &&
     outcome.status === 401 &&
-    oauth.tokens.invalidate(first.ok)
+    oauth.tokens.invalidate(first.token)
   ) {
-    const fresh = await oauth.tokens.getToken();
-    if ('error' in fresh) {
-      return tokenError(fresh.error);
+    const fresh = await tokenFor(oauth.tokens);
+    if ('failed' in fresh) {
+      return fresh.failed;
     }
-    const replayHeaders = headersFor(fresh.ok);
+    // A spent budget sends no replay: the clamp in remainingMs would
+    // otherwise still grant it a millisecond. The 401 had no effect, so
+    // nothing was applied.
+    if (budgetLeftMs() <= 0) {
+      report({ outcome: 'timeout', ...operationFacts });
+      return isError(
+        'the call timed out before the request could be sent again with a fresh OAuth2 access token; it was not applied',
+      );
+    }
+    const replayHeaders = headersFor(fresh.token);
     if (replayHeaders === undefined) {
       return overBudget();
     }
