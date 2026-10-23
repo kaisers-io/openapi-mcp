@@ -9,8 +9,10 @@ import {
   buildSnapshot,
   buildTools,
   compileEnvelopeValidator,
+  createEnvelopeCompiler,
   createExecutor,
   createRedactor,
+  lazyEnvelopeValidators,
   SYSTEM_HEADERS,
 } from '../src/index.ts';
 import type {
@@ -1041,6 +1043,45 @@ describe('createExecutor — fail-closed wiring', () => {
     expect(outcome.isError).toBe(true);
     expect(outcome.content[0]?.text).toMatch(/validator/u);
     expect(calls).toHaveLength(0);
+  });
+
+  it('refuses a call whose lazily compiled validator fails, before sending anything (issue #8)', async () => {
+    const snapshot = buildToolSnapshot([createThingOp]);
+    const tool = snapshot.toolsByName['createThing'] as SnapshotTool;
+    const { deps, calls } = recordingTransport(() => textResponse(201, ''));
+    const failures: string[] = [];
+    const validators = lazyEnvelopeValidators(
+      createEnvelopeCompiler(),
+      new Map([['createThing', { type: 'object', oneOf: 'not-an-array' }]]),
+      (toolName) => {
+        failures.push(toolName);
+      },
+    );
+    const executor = createExecutor(baseConfig({ validators }), deps);
+    for (const _ of [1, 2]) {
+      const outcome = await executor(tool, { name: 'x' }, freshSignal());
+      expect(outcome.isError).toBe(true);
+      expect(outcome.content[0]?.text).toBe(
+        "tool execution failed: this tool's output schema could not be compiled, so its response cannot be validated; the request was not sent",
+      );
+    }
+    // The write was never sent, and the operator hears about the schema once
+    expect(calls).toHaveLength(0);
+    expect(failures).toEqual(['createThing']);
+  });
+
+  it('validates through a lazily compiled validator like an eager one (issue #8)', async () => {
+    const snapshot = buildToolSnapshot([idPathOp]);
+    const tool = snapshot.toolsByName['getThing'] as SnapshotTool;
+    const { deps } = recordingTransport(() => jsonResponse(200, { id: 'not-an-integer' }));
+    const validators = lazyEnvelopeValidators(
+      createEnvelopeCompiler(),
+      new Map(snapshot.tools.map((entry) => [entry.name, entry.wireTool.outputSchema])),
+    );
+    const executor = createExecutor(baseConfig({ validators }), deps);
+    const outcome = await executor(tool, { id: '1' }, freshSignal());
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toMatch(/did not match the tool's declared output schema/u);
   });
 
   it('defensively refuses a tool with no generated upstream operation', async () => {

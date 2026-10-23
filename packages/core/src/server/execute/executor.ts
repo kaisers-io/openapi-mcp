@@ -22,7 +22,7 @@ import { deriveAccept } from './accept.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
 import { mapResponse } from './response.ts';
-import type { EnvelopeValidator } from './response.ts';
+import type { EnvelopeValidator, EnvelopeValidators } from './response.ts';
 import type { PageInput } from './forwarded-headers.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
 import { PROJECTION_FIELD } from '../../toolgen/projection.ts';
@@ -72,9 +72,10 @@ export type ExecutorConfig = {
   // traceparent/tracestate headers, same-origin hops only. Off unless set
   // (serve turns it on; --no-trace-propagation turns it off).
   propagateTraceContext?: boolean;
-  // By tool name; compiled eagerly once at server startup — this module only
-  // looks the map up per call.
-  validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
+  // By tool name: a Map compiled at server startup, or
+  // lazyEnvelopeValidators, which compiles on a tool's first call. This
+  // module only looks a tool up per call, before anything is sent.
+  validators: EnvelopeValidators;
   // OAuth2 client-credentials (--upstream-oauth-*): every call carries
   // `Authorization: Bearer <token>` from this source, and an upstream 401
   // invalidates the token and replays the request ONCE with a fresh one.
@@ -309,7 +310,19 @@ const runUpstreamCall = async (
     report({ outcome: 'internal_error' });
     return isError('no response validator is registered for this tool');
   }
-  const validator = config.validators.get(tool.name);
+  // A validator compiled on demand can fail here. That happens before the
+  // request is built, so a refused schema never follows a sent write. The
+  // cause is the operator's to read (lazyEnvelopeValidators reports it);
+  // the caller gets fixed text.
+  let validator: EnvelopeValidator | undefined;
+  try {
+    validator = config.validators.get(tool.name);
+  } catch {
+    report({ outcome: 'internal_error' });
+    return isError(
+      "this tool's output schema could not be compiled, so its response cannot be validated; the request was not sent",
+    );
+  }
   // Imperative on purpose (security-module rule: no control-flow
   // restructuring / helper extraction across a guard boundary here):
   // `new URL` can throw synchronously on a malformed string, and the catch

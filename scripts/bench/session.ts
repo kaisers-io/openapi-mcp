@@ -234,6 +234,7 @@ export const runSession = async (input: SessionInput): Promise<SessionSample> =>
       input.upstream.url,
       '--trust-spec-updates',
       ...input.fixture.filterArgs,
+      ...(input.fixture.serveArgs ?? []),
     ],
     input.home,
   );

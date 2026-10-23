@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Faster `serve` startup for large specs (#6, #7, #8).** Output validators are compiled
+  without Ajv's code-optimization pass, which only shrinks the generated code and took most of
+  the compile time; operations with identical output schemas now share one validator; and in
+  `--tool-mode discover` an operation's validator is compiled on its first call instead of at
+  startup. For the GitHub REST description, time until `initialize` answered dropped from
+  about 27 s to about 2 s in `discover` mode (`--allow '**'`) and from about 3.8 s to about
+  1.7 s with `--allow tag:repos` (one development machine, warm spec cache). Validation results
+  are unchanged; a single validation can take up to about 1 µs longer. In `discover` mode, an output schema that cannot be compiled no longer stops
+  `serve` at startup: calls to that operation fail with a tool error before anything is sent,
+  and `serve` names the operation once on stderr. `per-operation` mode still compiles every
+  validator at startup.
+
 ## [0.4.1] - 2026-10-23
 
 ### Added

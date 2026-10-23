@@ -383,10 +383,15 @@ decides it from annotations, sees one approval surface for all operations: appro
 startup when `discover` exposes any non-read-only operation; narrow the set with
 `--allow`/`--deny` if that matters (see [security](security.md#discovery-tool-mode)).
 
-Startup cost: `serve` compiles one output validator per exposed operation before it answers,
-so start-up time grows with the number of exposed operations. Measured on a development
-machine with a warm spec cache: about 3.5 s until `tools/list` answers for 2,000 exposed
-operations.
+Startup cost: in `per-operation` mode, `serve` compiles one output validator per exposed
+operation before it answers `initialize`, so an output schema the validator cannot compile
+stops `serve` at startup. Operations with identical output schemas share one validator. In
+`discover` mode, which can expose thousands of operations, an operation's validator is
+compiled on its first call instead, before the request is sent: an output schema that cannot
+be compiled then fails that operation's calls with a tool error, and `serve` names it once on
+stderr. Measured on a development machine with a warm spec cache, for the GitHub REST
+description (1,241 operations exposed with `--allow '**'`): about 2 s until `initialize` answers in
+`discover` mode.
 
 Measured `tools/list` sizes (2026-07-28 stdio response, tokens ≈ bytes / 4):
 

@@ -10,6 +10,7 @@ import {
   buildTools,
   createClientCredentialsSource,
   createEnvelopeCompiler,
+  lazyEnvelopeValidators,
   discoverApprovalWarning,
   createExecutor,
   createCallStats,
@@ -35,6 +36,7 @@ import {
 import type {
   CallObserver,
   EnvelopeValidator,
+  EnvelopeValidators,
   ExecutorConfig,
   NormalizedSpec,
   RequestedToolMode,
@@ -538,27 +540,45 @@ export const runServe = async (
       ...(httpConfig?.auth.kind === 'static' ? [httpConfig.auth.token] : []),
     ]);
 
-    // Every upstream tool's outputSchema is compiled eagerly HERE, at
-    // startup, so an incompatible schema fails fast rather than on the
-    // first matching call. `validators.has` is the executor's fail-closed
-    // contract — every upstream tool gets an entry, `undefined` only for a
-    // genuine no-outputSchema tool. One compiler context serves the whole
-    // snapshot (issue kaisers-io/openapi-mcp-archive#42): the meta-schema is
-    // compiled once, not per tool. Created per snapshot, never module-global:
-    // Ajv caches every compiled schema by identity, so a future snapshot reload
-    // must build a new compiler rather than reuse this one, or old schemas pile
-    // up.
+    // `validators.has` is the executor's fail-closed contract: every
+    // upstream tool gets an entry, `undefined` only for a genuine
+    // no-outputSchema tool. One compiler context serves the whole snapshot
+    // (issue kaisers-io/openapi-mcp-archive#42): the meta-schema is compiled
+    // once, not per tool, and identical schemas once (issue #7). Created per
+    // snapshot, never module-global: the compiler retains every validator it
+    // built, so a future snapshot reload must build a new one rather than
+    // reuse this one, or old schemas pile up.
+    //
+    // per-operation compiles every validator HERE, at startup, so an
+    // incompatible schema fails fast rather than on the first matching
+    // call; its tools/list publishes every output schema anyway. discover
+    // can expose up to 4,096 operations, and compiling all of them first
+    // kept a large spec from answering `initialize` within common host
+    // start-up timeouts (issue #8): it compiles a validator on the
+    // operation's first call instead, before the request is sent.
     const compileToolValidator = createEnvelopeCompiler();
-    const validatorEntries = snapshot.operations.map((tool) => {
-      try {
-        return [tool.name, compileToolValidator(tool.wireTool.outputSchema)] as const;
-      } catch (error) {
-        throw usageError(
-          `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
-        );
-      }
-    });
-    const validators = new Map<string, EnvelopeValidator | undefined>(validatorEntries);
+    let validators: EnvelopeValidators;
+    if (snapshot.toolMode === 'discover') {
+      validators = lazyEnvelopeValidators(
+        compileToolValidator,
+        new Map(snapshot.operations.map((tool) => [tool.name, tool.wireTool.outputSchema])),
+        (toolName, error) =>
+          emitWarnings(ctx, [
+            `tool "${toolName}" has an output schema that cannot be compiled, so its calls fail: ${describeCause(error)}`,
+          ]),
+      );
+    } else {
+      const validatorEntries = snapshot.operations.map((tool) => {
+        try {
+          return [tool.name, compileToolValidator(tool.wireTool.outputSchema)] as const;
+        } catch (error) {
+          throw usageError(
+            `tool "${tool.name}" has an output schema that cannot be compiled: ${describeCause(error)}`,
+          );
+        }
+      });
+      validators = new Map<string, EnvelopeValidator | undefined>(validatorEntries);
+    }
 
     const executorConfig: ExecutorConfig = {
       baseUrl: resolvedBase.url.toString(),

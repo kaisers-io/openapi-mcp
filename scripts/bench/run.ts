@@ -113,8 +113,8 @@ const countOmitted = async (
     ...fixture.filterArgs,
   ];
   const result = await withHome((home) => runCommand(cli.path, args, home));
-  const parsed = JSON.parse(result.stdout) as { data?: { omitted?: unknown[] } };
-  return parsed.data?.omitted?.length;
+  const parsed = JSON.parse(result.stdout) as { ok?: boolean; data?: { omitted?: unknown[] } };
+  return parsed.ok === false ? undefined : (parsed.data?.omitted?.length ?? 0);
 };
 
 const emptySamples = (fixtures: readonly Fixture[]): CliSamples => ({
@@ -208,8 +208,12 @@ const measure = async (plan: Plan, runs: number): Promise<Record<string, CliResu
     for (const fixture of plan.fixtures) {
       const target = samples.get(cli.label)?.fixtures.get(fixture.name);
       if (target?.error === undefined && target !== undefined) {
+        // Unknown, not 0, when `tools` cannot list the fixture (it keeps the
+        // 512-tool budget that --tool-mode discover lifts for serve)
         const omittedCount = await countOmitted(cli, fixture, plan);
-        target.omittedCount = omittedCount ?? 0;
+        if (omittedCount !== undefined) {
+          target.omittedCount = omittedCount;
+        }
       }
     }
   }

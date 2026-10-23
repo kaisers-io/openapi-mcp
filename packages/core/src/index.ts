@@ -77,11 +77,13 @@ export type {
 export {
   compileEnvelopeValidator,
   createEnvelopeCompiler,
+  lazyEnvelopeValidators,
   mapResponse,
 } from './server/execute/response.ts';
 export type {
   EnvelopeCompiler,
   EnvelopeValidator,
+  EnvelopeValidators,
   MapResponseOptions,
 } from './server/execute/response.ts';
 export { MAX_REDIRECTS, fetchSpec, fetchSpecConditional } from './spec/fetch.ts';
