@@ -318,6 +318,121 @@ const conflictingCombination = (
   return `"${determiner}" combined with a sibling "type"`;
 };
 
+// `{type: T, oneOf|anyOf: [...]}` (issue #20). JSON Schema applies sibling
+// keywords together, so the node is the union of its branches each
+// intersected with `type: T` (JSON Schema Core 2020-12 §10.2). Where every
+// branch is a schema object that declares no `type` or exactly `T`, that
+// intersection is the branch with `type: T`, and the sibling moves into the
+// branches. A branch `T` contradicts (an enum of strings under `type:
+// 'object'`) then fails its own conflict check, so nothing is widened. Any
+// other shape (a type array, a 3.0 `nullable` sibling, a branch of another
+// type) keeps the conflict, and the operation stays omitted.
+// One typed copy per branch and type, so the conversion memo, which is keyed
+// by node identity, still converts a shared branch once.
+const typedBranches = new WeakMap<Record<string, unknown>, Map<string, Record<string, unknown>>>();
+
+const typedBranch = (branch: Record<string, unknown>, type: string): Record<string, unknown> => {
+  if (branch['type'] === type) {
+    return branch;
+  }
+  const byType = typedBranches.get(branch) ?? new Map<string, Record<string, unknown>>();
+  typedBranches.set(branch, byType);
+  const cached = byType.get(type);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const typed = { ...branch, type };
+  byType.set(type, typed);
+  return typed;
+};
+
+const typeMovedIntoBranches = (
+  node: Record<string, unknown>,
+): Record<string, unknown> | undefined => {
+  const { type } = node;
+  if (typeof type !== 'string' || node['nullable'] !== undefined) {
+    return undefined;
+  }
+  const determiners = SHAPE_DETERMINERS.filter((keyword) => node[keyword] !== undefined);
+  const [determiner] = determiners;
+  if (determiners.length !== 1 || (determiner !== 'oneOf' && determiner !== 'anyOf')) {
+    return undefined;
+  }
+  const branches = node[determiner];
+  if (
+    !Array.isArray(branches) ||
+    !branches.every(
+      (branch) => isRecord(branch) && (branch['type'] === undefined || branch['type'] === type),
+    )
+  ) {
+    return undefined;
+  }
+  const rest = Object.fromEntries(Object.entries(node).filter(([key]) => key !== 'type'));
+  return {
+    ...rest,
+    [determiner]: branches.map((branch) => typedBranch(branch as Record<string, unknown>, type)),
+  };
+};
+
+// Keys a `required`-only anyOf branch may carry besides `required`.
+const REQUIRED_BRANCH_ANNOTATIONS: ReadonlySet<string> = new Set(['title', 'description']);
+
+// `{type: 'object', properties, anyOf: [{required: [a]}, {required: [b]}]}`
+// (issue #20): at least one of these key sets must be present, the way
+// GitHub's REST description words partial updates. The branches only add
+// `required` lists to the sibling object, so the node is that object plus
+// the condition that one list is complete. Every name must be a declared
+// property that is neither readOnly nor writeOnly, so each alternative can
+// actually be satisfied; anything else keeps the conflict.
+const requiredAlternatives = (
+  node: Record<string, unknown>,
+): readonly (readonly string[])[] | undefined => {
+  const { anyOf, properties } = node;
+  if (
+    !Array.isArray(anyOf) ||
+    anyOf.length === 0 ||
+    !isRecord(properties) ||
+    (node['type'] !== undefined && node['type'] !== 'object') ||
+    node['nullable'] !== undefined ||
+    SHAPE_DETERMINERS.some((keyword) => keyword !== 'anyOf' && node[keyword] !== undefined)
+  ) {
+    return undefined;
+  }
+  const alternatives: string[][] = [];
+  for (const branch of anyOf) {
+    if (
+      !isRecord(branch) ||
+      !Object.keys(branch).every(
+        (key) => key === 'required' || key.startsWith('x-') || REQUIRED_BRANCH_ANNOTATIONS.has(key),
+      )
+    ) {
+      return undefined;
+    }
+    const names: unknown = branch['required'];
+    if (
+      !Array.isArray(names) ||
+      names.length === 0 ||
+      new Set(names).size !== names.length ||
+      !names.every(
+        (name) =>
+          typeof name === 'string' &&
+          Object.hasOwn(properties, name) &&
+          !isAccessOnly(properties[name], 'readOnly') &&
+          !isAccessOnly(properties[name], 'writeOnly'),
+      )
+    ) {
+      return undefined;
+    }
+    alternatives.push(names as string[]);
+  }
+  return alternatives;
+};
+
+const alternativesMessage = (alternatives: readonly (readonly string[])[]): string =>
+  `must include ${alternatives
+    .map((names) => names.map((name) => JSON.stringify(name)).join(' and '))
+    .join(', or ')}`;
+
 // Property descriptions in the dereferenced document are raw; sanitized here
 // before entering model context via .describe(). `format` and
 // `pattern` are surfaced through the wire schema (via .meta in convertSchema),
@@ -1379,14 +1494,35 @@ const convertUncached = (
   ) {
     return { unrepresentable: UNSAFE_PATTERN_REASON };
   }
-  const conflict = conflictingCombination(node, version);
+  // Two compositions with sibling keywords that convert faithfully once
+  // rewritten (issue #20); every other combination is checked as written.
+  const alternatives = requiredAlternatives(node);
+  const effective =
+    alternatives === undefined
+      ? (typeMovedIntoBranches(node) ?? node)
+      : Object.fromEntries(Object.entries(node).filter(([key]) => key !== 'anyOf'));
+  const conflict = conflictingCombination(effective, version);
   if (conflict !== undefined) {
     return { unrepresentable: conflict };
   }
-  const built = build(node, depth, version, mode);
-  if (!('ok' in built)) {
-    return built;
+  const converted = build(effective, depth, version, mode);
+  if (!('ok' in converted)) {
+    return converted;
   }
+  // Enforced on the parsed object (a request; absent keys are not
+  // materialized), advertised as the spec's own `anyOf` below (Ajv enforces
+  // that on a response).
+  const built =
+    alternatives === undefined
+      ? converted
+      : {
+          ok: converted.ok.refine(
+            (value) =>
+              isRecord(value) &&
+              alternatives.some((names) => names.every((name) => Object.hasOwn(value, name))),
+            { message: alternativesMessage(alternatives) },
+          ),
+        };
   // Advertise `pattern` and `format` uniformly: attach them as wire metadata on
   // whatever the branch produced — string, enum, const, composite, or a
   // typeless z.unknown() — so z.toJSONSchema emits the keywords WITHOUT Zod
@@ -1422,6 +1558,9 @@ const convertUncached = (
   }
   if (typeof node['maxProperties'] === 'number') {
     meta['maxProperties'] = node['maxProperties'];
+  }
+  if (alternatives !== undefined) {
+    meta['anyOf'] = alternatives.map((names) => ({ required: [...names] }));
   }
   const advertised = Object.keys(meta).length > 0 ? built.ok.meta(meta) : built.ok;
   return { ok: withDescription(advertised, node) };

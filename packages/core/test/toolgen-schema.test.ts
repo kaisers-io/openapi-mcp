@@ -1370,3 +1370,141 @@ describe('convertSchema — uniqueItems / minProperties / maxProperties (kaisers
     expect('unrepresentable' in convertSchema(node)).toBe(true);
   });
 });
+
+// Issue #20: two compositions with sibling keywords that GitHub's REST
+// description uses, accepted where they convert faithfully.
+describe('convertSchema — oneOf/anyOf with a redundant sibling type (#20)', () => {
+  const pair = (type?: string) => ({
+    type: 'object',
+    oneOf: [
+      {
+        ...(type === undefined ? {} : { type }),
+        properties: { ref: { type: 'string' } },
+        required: ['ref'],
+        additionalProperties: false,
+      },
+      {
+        type: 'object',
+        properties: { repo: { type: 'integer' } },
+        required: ['repo'],
+        additionalProperties: false,
+      },
+    ],
+  });
+
+  it('accepts branches that all declare the sibling type', () => {
+    const s = ok(convertSchema(pair('object')));
+    expect(s.safeParse({ ref: 'main' }).success).toBe(true);
+    expect(s.safeParse({ repo: 1 }).success).toBe(true);
+    expect(s.safeParse({ ref: 1 }).success).toBe(false);
+  });
+
+  it('moves the sibling type into branches that declare none', () => {
+    const s = ok(convertSchema(pair()));
+    expect(s.safeParse({ ref: 'main' }).success).toBe(true);
+    // The branch alone would accept a non-object; the sibling type does not
+    expect(s.safeParse('main').success).toBe(false);
+    const wire = z.toJSONSchema(s) as { oneOf?: { type?: string }[]; anyOf?: { type?: string }[] };
+    const branches = wire.oneOf ?? wire.anyOf ?? [];
+    expect(branches.map((branch) => branch.type)).toEqual(['object', 'object']);
+  });
+
+  it('applies to anyOf and to array items, in both directions', () => {
+    const items = { type: 'array', items: { type: 'object', anyOf: pair().oneOf } };
+    for (const mode of ['request', 'response'] as const) {
+      const s = ok(convertSchema(items, '3.1', 0, mode));
+      expect(s.safeParse([{ ref: 'main' }, { repo: 2 }]).success).toBe(true);
+      expect(s.safeParse(['main']).success).toBe(false);
+    }
+  });
+
+  it('still omits a branch of another type, a type array and a 3.0 nullable sibling', () => {
+    expect(convertSchema(pair('string'))).toEqual({
+      unrepresentable: '"oneOf" combined with a sibling "type"',
+    });
+    expect('unrepresentable' in convertSchema({ ...pair(), type: ['object', 'null'] })).toBe(true);
+    expect('unrepresentable' in convertSchema({ ...pair(), nullable: true }, '3.0')).toBe(true);
+  });
+
+  it('omits the union when the moved type contradicts a branch', () => {
+    const result = convertSchema({
+      type: 'object',
+      oneOf: [{ enum: ['a', 'b'] }, { type: 'object' }],
+    });
+    expect(result).toEqual({
+      unrepresentable: 'union member: "enum" values incompatible with the sibling type "object"',
+    });
+  });
+});
+
+describe('convertSchema — anyOf of required-only branches beside properties (#20)', () => {
+  const reviewers = {
+    type: 'object',
+    properties: {
+      reviewers: { type: 'array', items: { type: 'string' } },
+      team_reviewers: { type: 'array', items: { type: 'string' } },
+    },
+    anyOf: [{ required: ['reviewers'] }, { required: ['team_reviewers'] }],
+  };
+
+  it('requires one of the alternatives in a request', () => {
+    const s = ok(convertSchema(reviewers));
+    expect(s.safeParse({ reviewers: ['a'] }).success).toBe(true);
+    expect(s.safeParse({ team_reviewers: ['t'] }).success).toBe(true);
+    expect(s.safeParse({ reviewers: ['a'], team_reviewers: ['t'] }).success).toBe(true);
+    const missing = s.safeParse({});
+    expect(missing.success).toBe(false);
+    expect(missing.error?.issues[0]?.message).toBe('must include "reviewers", or "team_reviewers"');
+    // The object stays strict: an undeclared key is still refused
+    expect(s.safeParse({ reviewers: ['a'], other: 1 }).success).toBe(false);
+  });
+
+  it('advertises the alternatives as the spec states them', () => {
+    const wire = z.toJSONSchema(ok(convertSchema(reviewers))) as { anyOf?: unknown };
+    expect(wire.anyOf).toEqual([{ required: ['reviewers'] }, { required: ['team_reviewers'] }]);
+  });
+
+  it('accepts multi-key alternatives and a sibling required list', () => {
+    const s = ok(
+      convertSchema({
+        type: 'object',
+        required: ['id'],
+        properties: { id: { type: 'string' }, a: { type: 'string' }, b: { type: 'string' } },
+        anyOf: [{ required: ['a', 'b'] }, { required: ['id'] }],
+      }),
+    );
+    expect(s.safeParse({ id: 'x' }).success).toBe(true);
+    expect(s.safeParse({ a: 'x' }).success).toBe(false);
+  });
+
+  it('keeps the alternatives in a response schema, where Ajv enforces them', () => {
+    const wire = z.toJSONSchema(ok(convertSchema(reviewers, '3.1', 0, 'response'))) as {
+      anyOf?: unknown;
+    };
+    expect(wire.anyOf).toEqual([{ required: ['reviewers'] }, { required: ['team_reviewers'] }]);
+  });
+
+  it('still omits alternatives it cannot represent faithfully', () => {
+    const variants: Record<string, unknown>[] = [
+      // A name that is not a declared property
+      { ...reviewers, anyOf: [{ required: ['reviewers'] }, { required: ['public'] }] },
+      // A branch that constrains more than presence
+      {
+        ...reviewers,
+        anyOf: [{ required: ['reviewers'], properties: { reviewers: { minItems: 1 } } }],
+      },
+      // A nullable root (3.0) and a non-object type
+      { ...reviewers, nullable: true },
+      { ...reviewers, type: 'array' },
+      // A readOnly name can never be sent
+      {
+        ...reviewers,
+        properties: { ...reviewers.properties, id: { type: 'string', readOnly: true } },
+        anyOf: [{ required: ['id'] }],
+      },
+    ];
+    for (const variant of variants) {
+      expect('unrepresentable' in convertSchema(variant, '3.0')).toBe(true);
+    }
+  });
+});

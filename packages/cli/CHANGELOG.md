@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   means "never null", as springdoc derives it from `@NotNull`. The bare flag and `all` keep
   the 0.4.1 behaviour (every property). The documentation also names a server-side fix for
   Spring Boot, `spring.jackson.default-property-inclusion=non_null` (#19).
+- **Two more schema shapes convert instead of omitting the operation (#20).** A
+  `oneOf`/`anyOf` with a sibling `type` is accepted when every branch declares that type or
+  none: the type then applies to each branch, as JSON Schema defines it. An `anyOf` whose
+  branches only list `required` keys beside the object's `properties` ("send at least one of
+  these") is enforced on the tool input and advertised unchanged. With the GitHub REST
+  description, 16 of the 28 operations omitted before are now served, among them the
+  rulesets, Actions policies, the Dependabot, code scanning and secret scanning alert
+  updates, and requesting pull request reviewers. Shapes that cannot be represented exactly stay omitted: a branch of
+  another type, a `nullable` or non-object root, a key that is not a declared property, or a
+  `readOnly`/`writeOnly` key.
 
 ### Changed
 
