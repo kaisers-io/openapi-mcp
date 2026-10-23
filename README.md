@@ -424,6 +424,20 @@ pnpm build
 node packages/cli/bin/openapi-mcp.mjs --help
 ```
 
+### Releasing
+
+The version lives in `packages/cli/package.json`. The READMEs, `docs/` and `CHANGELOG.md`
+repeat it, and `pnpm versions --check` (run by CI on every pull request) fails when they
+disagree. Do not edit version numbers by hand:
+
+1. `pnpm versions --set x.y.z` on a branch. It writes the version to every site and turns
+   `## [Unreleased]` in `CHANGELOG.md` into `## [x.y.z] - <date>`. Review it with `git diff`.
+2. Open a pull request and merge it.
+3. Tag the merge commit on `main` as `vx.y.z` and push the tag. The `release` workflow checks
+   that the tag, every version site and the changelog heading agree, then publishes to npm.
+4. Smoke-test the published package on Windows with an absolute drive path
+   (`openapi-mcp tools --spec C:\path\to\spec.json`).
+
 ### Benchmarks
 
 `pnpm bench` measures the built CLI (run `pnpm build` first) over stdio, offline: time until the

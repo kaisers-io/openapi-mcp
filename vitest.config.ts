@@ -7,6 +7,7 @@ export default defineConfig({
       'packages/*/vitest.config.ts',
       'packages/cli/vitest.e2e.config.ts',
       'scripts/bench/vitest.config.ts',
+      'scripts/versions/vitest.config.ts',
     ],
     coverage: {
       provider: 'custom',
