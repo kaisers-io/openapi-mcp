@@ -67,7 +67,7 @@ describe('Node floor: engines, docs, CI and the bin stub agree', SPAWN_BUDGET, (
   const version = ([major, minor]: readonly [number, number]): string =>
     `${String(major)}.${String(minor)}.0`;
   // Just below each line's floor (a `.0` floor has no lower minor in its major), and every
-  // major between two lines (an odd, end-of-life line such as 23.x).
+  // major between two lines (such as 23.x).
   const rejected = lines.flatMap(([major, minor], index): string[] => {
     const below = minor === 0 ? [] : [version([major, minor - 1])];
     const nextMajor = lines[index + 1]?.[0] ?? major + 1;

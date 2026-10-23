@@ -26,7 +26,8 @@ if (!PLATFORMS.includes(process.platform)) {
 
 // One [major, minor] floor per supported release line, oldest first. Every line but the last
 // is closed (`^22.19.0`: only 22.x from 22.19); the last one is open (`>=24.11.0`: 24.11 and
-// every later major). A major between two lines (23.x, an end-of-life odd line) is refused.
+// every later major). A major between two lines (23.x) is refused; majors after the last line
+// are accepted, as `engines` does.
 // RANGE must equal `engines.node` in every package.json — test/bin.test.ts enforces that by
 // spawning this stub just below and exactly at each line's floor.
 const LINES = [
