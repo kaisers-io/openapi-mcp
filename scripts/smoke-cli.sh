@@ -38,8 +38,13 @@ node -e '
 # chunk missing from the tarball fails here.
 node -e '
   const { spawn } = require("node:child_process");
-  // On Windows the global bin is an npm `.cmd` shim, which Node only starts through a shell
-  const child = spawn("openapi-mcp", ["serve", "--spec", process.argv[1], "--base-url", "https://api.example.com"], { shell: process.platform === "win32" });
+  // On Windows the global bin is an npm `.cmd` shim, which Node only starts through a shell. With
+  // `shell: true` an args array is joined unescaped (DEP0190 on Node 24), so the command goes in as
+  // one string with every argument quoted; elsewhere the bin is spawned directly.
+  const args = ["serve", "--spec", process.argv[1], "--base-url", "https://api.example.com"];
+  const child = process.platform === "win32"
+    ? spawn(args.reduce((command, arg) => `${command} "${arg}"`, "openapi-mcp"), { shell: true })
+    : spawn("openapi-mcp", args);
   const timer = setTimeout(() => { console.error("serve smoke FAILED: no initialize answer"); child.kill(); process.exit(1); }, 15000);
   let out = "";
   child.stdout.on("data", (chunk) => {
