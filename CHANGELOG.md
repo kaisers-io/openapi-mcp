@@ -205,8 +205,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A version bump is one command: `pnpm versions --set <version>`.** It writes the version to
   `packages/cli/package.json`, every `@kaisers-io/openapi-mcp@<version>` pin in the READMEs and
   `docs/`, and the `--json doctor` example, and turns `## [Unreleased]` into
-  `## [<version>] - <date>` under a fresh `## [Unreleased]`. It writes nothing if any file
-  cannot be updated. `pnpm versions --check` fails on any site that differs from
+  `## [<version>] - <date>` under a fresh `## [Unreleased]`. It refuses a version that is not
+  newer than the current one, and writes nothing if any file cannot be updated. `pnpm versions --check` fails on any site that differs from
   `packages/cli/package.json`, and on a pin that is not an exact version (`latest`, `^1.2.3`).
   It runs in a new `versions` CI job and in the release workflow, which also requires a
   changelog heading for the tagged version. It replaces `test/readme-pins.test.ts` (#158).

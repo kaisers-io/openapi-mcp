@@ -19,6 +19,9 @@
 // published last (README "Upgrading"). Users copy the pin verbatim, so a pin that lags the release
 // installs an older version than the one the same README documents.
 //
+// `--set` takes only a version newer than the current one (SemVer precedence), and writes nothing
+// unless every site can be rewritten.
+//
 // Every site is knowable on a pull request, so `--check` runs in CI on every PR (ci.yml `versions`)
 // and again in release.yml before publishing. Plain Node with no dependencies (TypeScript through
 // Node's type stripping, like scripts/bench), so both run it before `pnpm install`. Every problem is
@@ -38,6 +41,7 @@ import {
   problems,
   readSites,
 } from './sites.ts';
+import type { Site } from './sites.ts';
 
 const EXIT_PROBLEMS = 1;
 const EXIT_USAGE = 2;
@@ -92,6 +96,84 @@ const writeEdits = async (edits: Edit[], version: string): Promise<void> => {
   console.log(`every version site now declares ${version}; review the result with git diff`);
 };
 
+type Parsed = { core: number[]; prerelease: string[] };
+
+const parse = (version: string): Parsed => {
+  const [withoutBuild = ''] = version.split('+');
+  const dash = withoutBuild.indexOf('-');
+  const core = dash === -1 ? withoutBuild : withoutBuild.slice(0, dash);
+  const prerelease = dash === -1 ? [] : withoutBuild.slice(dash + 1).split('.');
+  return { core: core.split('.').map(Number), prerelease };
+};
+
+const NUMERIC = /^\d+$/u;
+
+// SemVer 2.0.0 §11.4: numeric identifiers compare numerically and rank below alphanumeric ones,
+// which compare in ASCII order.
+const compareIdentifiers = (left: string, right: string): number => {
+  const leftNumeric = NUMERIC.test(left);
+  const rightNumeric = NUMERIC.test(right);
+  if (leftNumeric && rightNumeric) {
+    return Number(left) - Number(right);
+  }
+  if (leftNumeric !== rightNumeric) {
+    return leftNumeric ? -1 : 1;
+  }
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+};
+
+/**
+ * SemVer 2.0.0 precedence (semver.org §11), negative when `left` is older. The cores compare
+ * numerically, a release outranks its own prereleases, prereleases compare identifier by
+ * identifier (a longer list wins when one is a prefix of the other), and build metadata is ignored.
+ */
+const comparePrecedence = (left: string, right: string): number => {
+  const older = parse(left);
+  const newer = parse(right);
+  for (const [index, part] of older.core.entries()) {
+    const difference = part - (newer.core[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  if (older.prerelease.length === 0 || newer.prerelease.length === 0) {
+    return newer.prerelease.length - older.prerelease.length;
+  }
+  for (const [index, identifier] of older.prerelease.entries()) {
+    const other = newer.prerelease[index];
+    if (other === undefined) {
+      return 1;
+    }
+    const difference = compareIdentifiers(identifier, other);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return older.prerelease.length - newer.prerelease.length;
+};
+
+// Re-releasing the current version, or going back, would move every Unreleased entry under a
+// heading for a version npm already has (or ranks lower), and `npm publish` refuses that only after
+// the bump is merged and tagged.
+const refuseIfNotNewer = (sites: Site[], version: string): void => {
+  const current = expectedFrom(sites);
+  if (current === undefined) {
+    return;
+  }
+  if (!SEMVER.test(current)) {
+    problem(
+      `${SOURCE_OF_TRUTH} .version ${describeValue(current)} is not a valid semantic version`,
+    );
+  } else if (comparePrecedence(version, current) <= 0) {
+    problem(
+      `${version} is not newer than ${current}, the version in ${SOURCE_OF_TRUTH} — --set takes the next version`,
+    );
+  }
+};
+
 const set = async (version: string): Promise<void> => {
   if (!SEMVER.test(version)) {
     console.error(`::error::"${version}" is not a valid semantic version (expected e.g. 1.2.3)`);
@@ -99,6 +181,9 @@ const set = async (version: string): Promise<void> => {
     return;
   }
   const sites = await readSites();
+  if (problems.length === 0) {
+    refuseIfNotNewer(sites, version);
+  }
   // Every file is rewritten in memory, and every problem with it reported, before the first byte is
   // written, so one unrewritable file refuses the bump instead of half-applying it. A read problem
   // stops here: rewriting a broken file only piles follow-on errors onto the real one.

@@ -22,10 +22,12 @@ const CHANGELOG = 'CHANGELOG.md';
 // description, and a JSON string cannot contain a raw newline, so a match is always a key.
 const JSON_VERSION_LINE = /^(?<prefix>[ \t]*"version"[ \t]*:[ \t]*)"(?:[^"\\]|\\.)*"/gmu;
 const CLI_VERSION_LINE = /^(?<prefix>[ \t]*"cliVersion"[ \t]*:[ \t]*)"(?<version>[^"\\]*)"/gmu;
-// A pin in a JSON or TOML string, a shell command or backticked prose. The value runs to the first
-// character that ends it in any of those contexts, so `latest` or `^1.2.3` is captured whole and
-// reported rather than skipped. `@kaisers-io/openapi-mcp-core@` does not match.
-const PIN = /(?<prefix>@kaisers-io\/openapi-mcp@)(?<version>[^\s"'`,)\]]+)/gu;
+// A pin in a JSON or TOML string, a shell command, backticked prose or an autolink (`<…>`). The
+// value runs to the first character that ends it in any of those contexts, so `latest` or `^1.2.3`
+// is captured whole and reported rather than skipped; a sentence's closing `.` or `:` is not part
+// of it, while a prerelease's own dots are. `@kaisers-io/openapi-mcp-core@` does not match.
+const PIN =
+  /(?<prefix>@kaisers-io\/openapi-mcp@)(?<version>[^\s"'`,)\]<>;]+?)(?=[.:]?(?:[\s"'`,)\]<>;]|$))/gu;
 const UNRELEASED = /^## \[Unreleased\][ \t]*$/gmu;
 const NEXT_SECTION = /^## /mu;
 
@@ -182,14 +184,18 @@ const docSite = (file: string, text: string): Site | undefined => {
   };
 };
 
+// The required files plus every other `docs/*.md`. The doctor example is required by name, not
+// left to discovery: deleted or renamed, it would otherwise drop its site without a word, and
+// reading it is what reports it missing.
 const docFiles = async (): Promise<string[]> => {
+  const required = [...PINNED_READMES, DOCTOR_EXAMPLE];
   try {
     const names = await readdir(join(ROOT, DOCS_DIR));
-    const docs = names.filter((name) => name.endsWith('.md')).toSorted();
-    return [...PINNED_READMES, ...docs.map((name) => `${DOCS_DIR}/${name}`)];
+    const docs = names.filter((name) => name.endsWith('.md')).map((name) => `${DOCS_DIR}/${name}`);
+    return [...new Set([...required, ...docs.toSorted()])];
   } catch (error) {
     problem(`${DOCS_DIR}/ could not be listed: ${errorMessage(error)}`);
-    return PINNED_READMES;
+    return required;
   }
 };
 

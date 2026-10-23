@@ -96,12 +96,28 @@ const run = (root: string, ...args: string[]): Run => {
   return { code: result.status, err: result.stderr, errors, out: result.stdout };
 };
 
+const RENAMED = 'docs/config.md';
+const MISSING = '(missing)';
+
+/** Every fixture file's content, plus the renamed doctor example; `(missing)` for an absent one. */
 const readTree = async (root: string): Promise<Record<string, string>> => {
   const entries = await Promise.all(
-    Object.keys(FILES).map(async (file) => [file, await readFile(join(root, file), 'utf8')]),
+    [...Object.keys(FILES), RENAMED].map(async (file) => {
+      try {
+        return [file, await readFile(join(root, file), 'utf8')];
+      } catch {
+        return [file, MISSING];
+      }
+    }),
   );
   return Object.fromEntries(entries) as Record<string, string>;
 };
+
+// The doctor example deleted, or renamed so that `docs/*.md` discovery still finds its pins.
+const WITHOUT_DOCTOR_EXAMPLE: [string, Record<string, string | undefined>][] = [
+  ['deleted', { [CONFIGURATION]: undefined }],
+  ['renamed', { [CONFIGURATION]: undefined, [RENAMED]: configuration(AT) }],
+];
 
 const escape = (text: string): string => text.replaceAll(/[$()*+.?[\\\]^{|}]/gu, String.raw`\$&`);
 
@@ -110,6 +126,20 @@ const expectError = (result: Run, ...parts: string[]): void => {
   const pattern = new RegExp(parts.map((part) => escape(part)).join('.*'), 'u');
   expect(result.errors).toContainEqual(expect.stringMatching(pattern));
 };
+
+/** Overrides that put every version site of a fixture tree at `version`. */
+const atVersion = (version: string): Record<string, string> =>
+  Object.fromEntries(Object.entries(FILES).map(([file, render]) => [file, render(version)]));
+
+// Pins in prose: at the end of a sentence, before a colon, and inside an autolink.
+const prose = (version: string): string =>
+  [
+    `Pin @kaisers-io/openapi-mcp@${version}.`,
+    `Pin @kaisers-io/openapi-mcp@${version}: it is exact.`,
+    `See <https://www.npmjs.com/package/@kaisers-io/openapi-mcp@${version}>.`,
+    'The core package @kaisers-io/openapi-mcp-core@0.1.0 is not a pin.',
+    '',
+  ].join('\n');
 
 const withPin = (pin: string): string =>
   readme(AT).replace(`openapi-mcp@${AT} serve --spec`, `openapi-mcp@${pin} serve --spec`);
@@ -165,6 +195,21 @@ describe('versions --check', () => {
     expectError(result, `${README}:7`, pin, 'not an exact version');
   });
 
+  // A sentence's closing `.` or `:`, and an autolink's `>`, end the pin rather than becoming part of
+  // its version. A prerelease's own dots stay in it.
+  it.each([AT, '1.0.0-rc.1'])('reads pins in prose at %s without false errors', async (version) => {
+    const tree = { ...atVersion(version), [SECURITY]: prose(version) };
+    const result = run(await makeTree(tree), '--check');
+    expect(result).toMatchObject({ code: EXIT_OK });
+    expect(result.out).toContain('across 9 sites');
+  });
+
+  it('still reports a drifted pin in prose, with its line', async () => {
+    const result = run(await makeTree({ [SECURITY]: prose(WRONG) }), '--check');
+    expect(result.errors).toHaveLength(3);
+    expectError(result, `${SECURITY}:3`, `"${WRONG}"`, `${SOURCE} is ${AT}`);
+  });
+
   // Without this, deleting every pin (or a pin the pattern stops recognising) would pass vacuously.
   it('fails when a README has no pin at all', async () => {
     const result = run(await makeTree({ [CLI_README]: '# openapi-mcp\n' }), '--check');
@@ -177,6 +222,17 @@ describe('versions --check', () => {
     expect(result.code).toBe(EXIT_PROBLEMS);
     expectError(result, CONFIGURATION, '0 "cliVersion" line(s), expected exactly one');
   });
+
+  // The doctor example is a required input, not just whatever `docs/*.md` happens to contain:
+  // otherwise deleting or renaming it would drop its site from the check without a word.
+  it.each(WITHOUT_DOCTOR_EXAMPLE)(
+    'fails when docs/configuration.md is %s',
+    async (_case, overrides) => {
+      const result = run(await makeTree(overrides), '--check');
+      expect(result.code).toBe(EXIT_PROBLEMS);
+      expectError(result, `${CONFIGURATION} could not be read`);
+    },
+  );
 
   it('fails when the changelog has no Unreleased heading for --set to release', async () => {
     const released = '# Changelog\n\n## [1.2.3] - 2026-01-01\n\n- Old.\n';
@@ -221,12 +277,13 @@ describe('versions --check', () => {
 
 /** Runs a `--set` that must be refused as a whole, and proves that no file was touched. */
 const expectRefusedSet = async (
-  overrides: Record<string, string>,
+  overrides: Record<string, string | undefined>,
   reason: string,
+  target = NEXT,
 ): Promise<void> => {
   const root = await makeTree(overrides);
   const before = await readTree(root);
-  const result = run(root, '--set', NEXT);
+  const result = run(root, '--set', target);
   expect(result).toMatchObject({ code: EXIT_PROBLEMS });
   expect(result.err).toContain(reason);
   expect(result.err).toContain('nothing was written');
@@ -282,13 +339,47 @@ describe('versions --set', () => {
     },
   );
 
-  it.each(['0.4.0', '1.2.3-rc.1', '1.2.3+build.5', '0.0.0'])('accepts %s', async (good) => {
+  it.each(['1.2.4', '1.3.0-rc.1', '2.0.0+build.5', '10.0.0'])('accepts %s', async (good) => {
     const root = await makeTree();
     expect(run(root, '--set', good).code).toBe(EXIT_OK);
     expect(run(root, '--check').code).toBe(EXIT_OK);
     expect(await readFile(join(root, CLI_README), 'utf8')).toContain(
       `"@kaisers-io/openapi-mcp@${good}"`,
     );
+  });
+
+  // Re-releasing the current version, or going back, would move every Unreleased entry under a
+  // heading for a version npm already has (or will refuse), and `npm publish` reports that only
+  // after the bump is merged and tagged. Order is SemVer precedence; build metadata is ignored.
+  it.each([
+    [AT, AT],
+    [AT, '1.2.3+build.5'],
+    [AT, '1.2.2'],
+    [AT, '1.1.9'],
+    [AT, '0.9.9'],
+    [AT, '1.2.3-rc.1'],
+    ['1.2.3-rc.2', '1.2.3-rc.1'],
+    ['1.2.3-rc.10', '1.2.3-rc.9'],
+    ['1.2.3-beta', '1.2.3-alpha'],
+    ['1.2.3-alpha.1', '1.2.3-alpha'],
+    ['1.2.3-alpha.beta', '1.2.3-alpha.1'],
+  ])('refuses to go from %s to %s, which is not newer', async (current, target) => {
+    await expectRefusedSet(atVersion(current), 'is not newer than', target);
+  });
+
+  it.each([
+    ['1.2.3-rc.1', '1.2.3'],
+    ['1.2.3-rc.1', '1.2.3-rc.2'],
+    ['1.2.3-rc.9', '1.2.3-rc.10'],
+    ['1.2.3-alpha', '1.2.3-alpha.1'],
+    ['1.2.3-alpha.1', '1.2.3-alpha.beta'],
+    ['1.2.3-alpha', '1.2.3-beta'],
+    ['1.2.3', '1.2.4-rc.1'],
+    ['1.9.9', '1.10.0'],
+  ])('accepts going from %s to %s', async (current, target) => {
+    const root = await makeTree(atVersion(current));
+    expect(run(root, '--set', target)).toMatchObject({ code: EXIT_OK });
+    expect(run(root, '--check').code).toBe(EXIT_OK);
   });
 
   // Two "version"-shaped lines in the source of truth (one nested) trip the surgical rewrite's line
@@ -311,6 +402,19 @@ describe('versions --set', () => {
 
   it('refuses a pin that is not an exact version rather than overwrite it', async () => {
     await expectRefusedSet({ [README]: withPin('latest') }, 'not an exact version');
+  });
+
+  it.each(WITHOUT_DOCTOR_EXAMPLE)(
+    'refuses the bump when docs/configuration.md is %s',
+    async (_case, overrides) => {
+      await expectRefusedSet(overrides, `${CONFIGURATION} could not be read`);
+    },
+  );
+
+  it('rewrites pins in prose and keeps the punctuation after them', async () => {
+    const root = await makeTree({ [SECURITY]: prose(AT) });
+    expect(run(root, '--set', NEXT)).toMatchObject({ code: EXIT_OK });
+    expect(await readFile(join(root, SECURITY), 'utf8')).toBe(prose(NEXT));
   });
 
   // The source of truth is written first, so locking it recreates the case the write loop's
