@@ -155,13 +155,23 @@ One gate lives outside the tagged tree, and it has two halves that must both be 
 settings. A pull request cannot change either:
 
 1. **A GitHub Environment named `npm-publish`**, which the `publish` job declares, with a
-   **required reviewer who is not the principal that can push the tag**, and "Prevent self-review"
-   enabled. A deployment tag rule (`v*`) alone is not enough: it checks the ref's name, so an
-   adversarial tag keeps `environment: npm-publish`, deletes `verify`, and satisfies it. GitHub
-   needs only one listed reviewer to approve, so a reviewer list that contains the tag pusher is no
-   gate at all. This holds with a single maintainer too: a credential that can push a tag (a token,
-   a deploy key, a compromised machine) is not the same authority as that person approving a
-   deployment interactively.
+   **required reviewer** and **"Allow administrators to bypass configured protection rules"
+   turned off** (it is on by default and lets an admin credential skip the approval). A
+   deployment tag rule (`v*`) alone is not enough: it checks the ref's name, so an adversarial
+   tag keeps `environment: npm-publish`, deletes `verify`, and satisfies it.
+
+   This project has a single maintainer, who is the only required reviewer, with "Prevent
+   self-review" **off**: with it on, nobody could approve a tag that maintainer pushes
+   ([required reviewers](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#required-reviewers)).
+   In that setup the gate guarantees that every release needs an explicit approval by the
+   maintainer, in the web UI or through the API. A workflow token, a collaborator who is not a
+   reviewer, or a tag pushed from a compromised workflow cannot publish on its own. It does
+   **not** protect against a stolen token of the maintainer with `repo` scope: that token can
+   push the tag and approve the job itself through the REST API
+   ([`pending_deployments`](https://docs.github.com/en/rest/actions/workflow-runs#review-pending-deployments-for-a-workflow-run)).
+   If more maintainers or release automation come later, the stronger setup is to push release
+   tags from a separate identity that is not a reviewer (a bot account or a GitHub App) and turn
+   "Prevent self-review" on, so the tag pusher and the approver are always different identities.
 2. **The npm Trusted Publisher entry for `@kaisers-io/openapi-mcp` must name that environment**,
    next to the repository (`kaisers-io/openapi-mcp`) and the workflow filename (`release.yml`).
    npm binds the workflow by its filename, not its contents, so without the environment a tag that

@@ -9,7 +9,8 @@ permissions:
 jobs:
   # Gate: re-runs the full CI check suite against the exact tagged commit, plus release-only guards
   # (tag/version match, branch containment, changelog heading, version newer than npm's `latest`,
-  # tarball content allowlist) and a smoke test of the packed tarball. Holds only read permissions — no publish credentials live here. This is also where the CLI
+  # tarball content allowlist) and a smoke test of the packed tarball. Holds only read
+  # permissions — no publish credentials live here. This is also where the CLI
   # bundle is built: `dist/openapi-mcp.mjs` is gitignored build output (not committed; `bin/openapi-mcp.mjs`
   # is the committed stub), so this unprivileged job builds it, proves the build is reproducible, guards
   # its shape, and hands it to `publish` as a workflow artifact.
