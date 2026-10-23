@@ -1,0 +1,5 @@
+# Every text file is checked out with LF line endings, on every platform. Git for Windows
+# defaults to core.autocrlf=true, which turns the committed LF into CRLF in the working tree;
+# the byte-exact checks (the generated validators, content-hashed fixtures, oxfmt) would then
+# fail on Windows only. The repository itself stores LF only.
+* text=auto eol=lf

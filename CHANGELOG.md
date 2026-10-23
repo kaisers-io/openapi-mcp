@@ -28,6 +28,18 @@
 
 ### Changed
 
+- **Windows is supported natively (#158).** The package's `os` field and the bin stub now
+  accept `win32` next to `darwin` and `linux`; Windows users are no longer sent to WSL.
+  Three Windows differences, each measured on `windows-latest`, are handled: `--spec` takes
+  absolute drive paths (`C:\specs\api.json`, `C:/specs/api.json`) and UNC paths instead of
+  refusing them as URL scheme `c:`; the cache treats the `EPERM` that Windows returns for
+  every directory fsync as "no directory barrier" (only on win32); and replacing
+  `meta.json` while another process reads it retries `EPERM`/`EACCES`/`EBUSY` for at most
+  2 s before failing as before. On Windows the cache's trust basis is the user profile's
+  ACL instead of `0700`/`0600` modes (see [docs/security.md](docs/security.md#windows)).
+  The README shows the `cmd /c npx` form for MCP hosts that start servers without a
+  shell. Linux and macOS behave exactly as before. A `windows-latest` CI job runs the
+  test suite on main and on PRs labelled `ci:windows`.
 - **Node.js 22 is supported: `^22.19.0 || >=24.11.0`.** The published packages, the
   bin stub's version guard and the docs now accept Node 22.19+ (22.x is maintenance LTS
   until April 2027) next to 24.11+. 22.19.0 is the bundled undici's own floor; older 22.x
@@ -185,6 +197,11 @@
 
 ### Development
 
+- **Release checklist: version pins and a Windows smoke test (#158).** Bump every README
+  pin (`@kaisers-io/openapi-mcp@<version>`) together with the version:
+  `test/readme-pins.test.ts` fails on any pin that differs from `packages/cli/package.json`.
+  Then smoke-test the published tarball on Windows with an absolute drive path
+  (`openapi-mcp tools --spec C:\path\to\spec.json`).
 - **The benchmark gate checks retained memory, not peak RSS.** Peak RSS of a `serve` start
   depends on when V8 grows its young generation and collects old space. For the same build,
   flat-500's warm peak alternated between modes about 70 MB apart, which failed the gate on

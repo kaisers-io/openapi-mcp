@@ -43,7 +43,7 @@ export const SUBPROCESS_E2E_FILES = [
 // repository root, so files of any package can be listed.
 export const LIGHT_SUBPROCESS_FILES: Readonly<Record<string, string>> = {
   'packages/cli/test/context.test.ts':
-    'one spawnSync of `node -e` that loads context.ts only (umask probe), not the CLI',
+    'one spawnSync of `node -e` that loads context.ts only (umask probe), plus `icacls` on Windows (ACL check), not the CLI',
   'packages/core/test/http-token-docs.test.ts':
     'runs the documented token generators (`openssl rand`, `node -p`), not the CLI',
 };

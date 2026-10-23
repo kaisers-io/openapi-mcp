@@ -64,7 +64,7 @@ const writeDenied = await deniedByModeBits(0o500, (dir) => mkdir(join(dir, 'sub'
 // Appended to the name of a real-mode-bit test only when it is skipped, so a
 // skip says why in the reporter output, not only in this file
 const skipNote = (denied: boolean): string =>
-  denied ? '' : ' [skipped: this process bypasses real mode bits, e.g. root]';
+  denied ? '' : ' [skipped: this process bypasses real mode bits, e.g. root, or the OS has none]';
 
 const injectedFsError = (code: string, syscall: string, path: string): NodeJS.ErrnoException =>
   Object.assign(new Error(`${code}: injected ${syscall} failure, '${path}'`), {
@@ -167,6 +167,18 @@ const modeOf = async (path: string): Promise<string> => {
   return (stats.mode & 0o7777).toString(8);
 };
 
+// Windows does not enforce POSIX modes: chmod only toggles the read-only
+// attribute, and stat reports 666 for files and directories alike (measured on
+// windows-latest). The cache relies on the user profile's ACL there instead,
+// which the Windows-only test at the end of this block checks, so mode
+// assertions apply on POSIX only. Everything else in each test runs everywhere.
+const POSIX_MODES = process.platform !== 'win32';
+const expectMode = async (path: string, mode: string): Promise<void> => {
+  if (POSIX_MODES) {
+    expect(await modeOf(path)).toBe(mode);
+  }
+};
+
 describe('realContext cacheFs', () => {
   let dir: string;
 
@@ -181,8 +193,10 @@ describe('realContext cacheFs', () => {
   it('creates directories at 0700 including parents', async () => {
     const target = join(dir, 'ns', 'objects');
     await realContext().cacheFs.mkdirSecure(target);
-    expect(await modeOf(target)).toBe('700');
-    expect(await modeOf(join(dir, 'ns'))).toBe('700');
+    const created = await stat(target);
+    expect(created.isDirectory()).toBe(true);
+    await expectMode(target, '700');
+    await expectMode(join(dir, 'ns'), '700');
   });
 
   it.skipIf(!searchDenied)(
@@ -240,9 +254,9 @@ describe('realContext cacheFs', () => {
     // repaired, not inherited — mkdir's mode option does not apply to it
     const target = join(dir, 'ns');
     await mkdir(target, { mode: 0o755 });
-    expect(await modeOf(target)).toBe('755');
-    await realContext().cacheFs.mkdirSecure(target);
-    expect(await modeOf(target)).toBe('700');
+    await expectMode(target, '755');
+    await expect(realContext().cacheFs.mkdirSecure(target)).resolves.toBeUndefined();
+    await expectMode(target, '700');
   });
 
   it('refuses to chmod a non-directory sitting at the namespace path', async () => {
@@ -259,7 +273,7 @@ describe('realContext cacheFs', () => {
     await expect(realContext().cacheFs.mkdirSecure(target)).rejects.toMatchObject({
       code: 'cache_path_type',
     });
-    expect(await modeOf(target)).toBe('644');
+    await expectMode(target, '644');
   });
 
   // `stat`/`chmod` FOLLOW symlinks, so a same-user attacker who can write
@@ -289,7 +303,7 @@ describe('realContext cacheFs', () => {
       });
       // The victim directory itself must be untouched: no mode change, no
       // write landed inside it via the symlink.
-      expect(await modeOf(victim)).toBe('750');
+      await expectMode(victim, '750');
       expect(await readdir(victim)).toEqual([]);
     } finally {
       await rm(victim, { recursive: true, force: true });
@@ -300,7 +314,7 @@ describe('realContext cacheFs', () => {
     const file = join(dir, 'meta.json');
     await realContext().cacheFs.writeFileAtomic(file, '{"a":1}');
     expect(await readFile(file, 'utf8')).toBe('{"a":1}');
-    expect(await modeOf(file)).toBe('600');
+    await expectMode(file, '600');
   });
 
   it('enforces 0600 when replacing a file that was created world-readable', async () => {
@@ -308,10 +322,10 @@ describe('realContext cacheFs', () => {
     // only applies at creation. The temp-file + rename path is what fixes it.
     const file = join(dir, 'meta.json');
     await writeFile(file, 'old', { mode: 0o644 });
-    expect(await modeOf(file)).toBe('644');
+    await expectMode(file, '644');
     await realContext().cacheFs.writeFileAtomic(file, 'new');
     expect(await readFile(file, 'utf8')).toBe('new');
-    expect(await modeOf(file)).toBe('600');
+    await expectMode(file, '600');
   });
 
   it('leaves no temp files behind after a successful write', async () => {
@@ -339,7 +353,7 @@ describe('realContext cacheFs', () => {
     const { cacheFs } = realContext();
     const lock = join(dir, '.lock');
     expect(await cacheFs.createExclusive(lock, 'one')).toBe(true);
-    expect(await modeOf(lock)).toBe('600');
+    await expectMode(lock, '600');
     // The second attempt must neither throw nor clobber the incumbent record
     expect(await cacheFs.createExclusive(lock, 'two')).toBe(false);
     expect(await readFile(lock, 'utf8')).toBe('one');
@@ -377,6 +391,25 @@ describe('realContext cacheFs', () => {
     await cacheFs.mkdirSecure(join(dir, 'bbb'));
     expect([...(await cacheFs.readDirNames(dir))].toSorted()).toEqual(['aaa', 'bbb']);
   });
+
+  // The Windows counterpart of the 0700/0600 assertions above: a cache
+  // directory created under the user profile (the OS temp directory is inside
+  // it, like the real cache root) inherits the profile's ACL, which grants no
+  // access to other standard users. icacls prints one line per access entry.
+  it.runIf(process.platform === 'win32')(
+    'creates cache directories that other standard users cannot access (inherited profile ACL)',
+    async () => {
+      const target = join(dir, 'ns', 'objects');
+      await realContext().cacheFs.mkdirSecure(target);
+      await realContext().cacheFs.writeFileAtomic(join(target, 'meta.json'), '{}');
+      for (const path of [join(dir, 'ns'), target, join(target, 'meta.json')]) {
+        const acl = spawnSync('icacls', [path], { encoding: 'utf8' });
+        expect(acl.status).toBe(0);
+        expect(acl.stdout).toContain(path);
+        expect(acl.stdout).not.toMatch(/Everyone|BUILTIN\\Users|Authenticated Users|\\Guests/u);
+      }
+    },
+  );
 });
 
 // Uid-independent twins of the real-mode-bit tests above: the failure is
@@ -427,7 +460,10 @@ describe('realContext cacheFs with an injected fs failure', () => {
     // is the case where the cleanup actually has something to remove
     const file = join(dir, 'meta.json');
     await writeFile(file, 'old');
-    const failure = injectedFsError('EACCES', 'rename', file);
+    // EXDEV, not EACCES: on Windows EACCES/EPERM/EBUSY from rename are retried
+    // (a reader holding the target open, see renameReplacing), so only an
+    // error no retry can fix fails on the first attempt on every platform
+    const failure = injectedFsError('EXDEV', 'rename', file);
     vi.mocked(rename).mockRejectedValueOnce(failure);
     await expect(realContext().cacheFs.writeFileAtomic(file, 'new')).rejects.toBe(failure);
     expect(vi.mocked(rename)).toHaveBeenCalledTimes(1);
@@ -489,6 +525,13 @@ describe('realContext cacheFs under a restrictive umask', () => {
       leaf: string;
       parent: string;
     };
+    // Windows has no umask and no mode bits (see POSIX_MODES): there the
+    // child only proves that mkdirSecure builds a tree it can write into
+    // (the probe write above), and nothing below applies
+    if (!POSIX_MODES) {
+      await rm(base, { recursive: true, force: true });
+      return;
+    }
     // The defect this decision exists for: the recursive form creates its
     // intermediate component 0600 — no search bit — on every uid...
     expect(result.naiveParent).toBe('600');

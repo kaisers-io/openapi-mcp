@@ -1,3 +1,4 @@
+import { sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CACHE_MAX_PERSISTED_BYTES,
@@ -102,7 +103,7 @@ export const candidateTextOf = (fs: MemoryCacheFs): string | undefined => {
 // superseded generations and that a commit never overwrote a live one
 export const objectNamesOf = (fs: MemoryCacheFs, layout = LAYOUT): readonly string[] =>
   [...fs.files.keys()]
-    .filter((key) => key.startsWith(`${layout.objectsDir}/`))
+    .filter((key) => key.startsWith(`${layout.objectsDir}${sep}`))
     .map((key) => key.slice(layout.objectsDir.length + 1))
     .toSorted();
 

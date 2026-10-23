@@ -1,3 +1,4 @@
+import { basename, dirname, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   HTTP_METHODS,
@@ -78,8 +79,8 @@ const toolNames = (result: SpecPipelineResult): readonly string[] =>
   result.namedOperations.map((named) => named.toolName);
 
 const layoutOf = (fs: MemoryCacheFs): CacheLayout => {
-  const metaPath = [...fs.files.keys()].find((key) => key.endsWith('/meta.json'))!;
-  return cacheLayout('/cache', metaPath.split('/')[2]!);
+  const metaPath = [...fs.files.keys()].find((key) => key.endsWith(`${sep}meta.json`))!;
+  return cacheLayout('/cache', basename(dirname(metaPath)));
 };
 const metaOf = (fs: MemoryCacheFs): CacheMeta =>
   JSON.parse(fs.files.get(layoutOf(fs).metaPath)!) as CacheMeta;

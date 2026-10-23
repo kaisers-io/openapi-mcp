@@ -1,3 +1,4 @@
+import { dirname, join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   HTTP_METHODS,
@@ -65,7 +66,7 @@ describe('orphaned temp files in the entry directory are collected (#88 item 2)'
   const plant = async (fs: MemoryCacheFs, mtimes: Record<string, number>): Promise<void> => {
     await fs.mkdirSecure(LAYOUT.objectsDir);
     for (const name of Object.keys(mtimes)) {
-      fs.files.set(`${LAYOUT.dir}/${name}`, 'x');
+      fs.files.set(join(LAYOUT.dir, name), 'x');
     }
     fs.modifiedAtMs = (path) => {
       const name = path.slice(LAYOUT.dir.length + 1);
@@ -78,7 +79,10 @@ describe('orphaned temp files in the entry directory are collected (#88 item 2)'
 
   const entryNames = (fs: MemoryCacheFs): readonly string[] =>
     [...fs.files.keys()]
-      .filter((key) => key.startsWith(`${LAYOUT.dir}/`) && !key.startsWith(`${LAYOUT.objectsDir}/`))
+      .filter(
+        (key) =>
+          key.startsWith(`${LAYOUT.dir}${sep}`) && !key.startsWith(`${LAYOUT.objectsDir}${sep}`),
+      )
       .map((key) => key.slice(LAYOUT.dir.length + 1))
       .toSorted();
 
@@ -168,15 +172,15 @@ describe('orphaned temp files in the entry directory are collected (#88 item 2)'
     });
     const url = 'https://api.example.com/openapi.json';
     await runSpecPipeline(url, opts, deps(fs));
-    const metaPath = [...fs.files.keys()].find((key) => key.endsWith('/meta.json'))!;
-    const dir = metaPath.slice(0, -'/meta.json'.length);
+    const metaPath = [...fs.files.keys()].find((key) => key.endsWith(`${sep}meta.json`))!;
+    const dir = dirname(metaPath);
     // The process dies inside touchRevalidated: the meta temp is written, the
     // rename never happens
     const crashing: MemoryCacheFs = {
       ...fs,
       writeFileAtomic: (path) => {
         if (path === metaPath) {
-          fs.files.set(`${dir}/.meta.json.${UUID_A}.tmp`, 'partial');
+          fs.files.set(join(dir, `.meta.json.${UUID_A}.tmp`), 'partial');
         }
         return Promise.reject(new Error('killed'));
       },
@@ -184,17 +188,17 @@ describe('orphaned temp files in the entry directory are collected (#88 item 2)'
     await expect(
       runSpecPipeline(url, { ...opts, nowMs: NOW + 5000 }, deps(crashing)),
     ).rejects.toThrow();
-    expect(fs.files.has(`${dir}/.meta.json.${UUID_A}.tmp`)).toBe(true);
+    expect(fs.files.has(join(dir, `.meta.json.${UUID_A}.tmp`))).toBe(true);
     const next = await runSpecPipeline(url, { ...opts, nowMs: NOW + 10_000 }, deps(fs));
     expect(next.cacheStatus).toBe('revalidated');
-    expect(fs.files.has(`${dir}/.meta.json.${UUID_A}.tmp`)).toBe(false);
+    expect(fs.files.has(join(dir, `.meta.json.${UUID_A}.tmp`))).toBe(false);
   });
 
   it('leaves lock temps alone when the filesystem cannot report their age', async () => {
     const fs = memoryCacheFs();
     await fs.mkdirSecure(LAYOUT.objectsDir);
-    fs.files.set(`${LAYOUT.dir}/.lock.${UUID_A}.tmp`, 'x');
-    fs.files.set(`${LAYOUT.dir}/.meta.json.${UUID_A}.tmp`, 'x');
+    fs.files.set(join(LAYOUT.dir, `.lock.${UUID_A}.tmp`), 'x');
+    fs.files.set(join(LAYOUT.dir, `.meta.json.${UUID_A}.tmp`), 'x');
     await writeAccepted(LAYOUT, fs, input(NOW));
     expect(entryNames(fs)).toStrictEqual([`.lock.${UUID_A}.tmp`, 'meta.json']);
   });

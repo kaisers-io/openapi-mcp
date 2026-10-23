@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   cacheLayout,
@@ -13,7 +13,8 @@ import type { CliContext } from '../src/context.ts';
 import { run } from '../src/main.ts';
 
 const HOME = '/home/tester';
-const ROOT = `${HOME}/.kaisers-io/openapi-mcp/cache`;
+// The CLI joins paths with the platform separator, so the fake below does too
+const ROOT = join(HOME, '.kaisers-io', 'openapi-mcp', 'cache');
 
 // MemoryCacheFs adds only `files`/`calls`, neither of which is a CacheFs
 // member name, so this intersection cannot silently collapse an inherited
@@ -52,11 +53,11 @@ const memoryCacheFs = (): MemoryCacheFs => {
     },
     readDirNames: (path) => {
       calls.push('readDirNames');
-      const prefix = `${path}/`;
+      const prefix = `${path}${sep}`;
       const names = new Set<string>();
       for (const key of [...files.keys(), ...dirs]) {
         if (key.startsWith(prefix)) {
-          names.add(key.slice(prefix.length).split('/')[0] ?? '');
+          names.add(key.slice(prefix.length).split(sep)[0] ?? '');
         }
       }
       return Promise.resolve([...names].filter((name) => name !== ''));
@@ -64,7 +65,7 @@ const memoryCacheFs = (): MemoryCacheFs => {
     removeDir: (path) => {
       calls.push('removeDir');
       for (const key of files.keys()) {
-        if (key === path || key.startsWith(`${path}/`)) {
+        if (key === path || key.startsWith(`${path}${sep}`)) {
           files.delete(key);
         }
       }
@@ -76,7 +77,7 @@ const memoryCacheFs = (): MemoryCacheFs => {
       return Promise.resolve(
         files.has(path) ||
           dirs.has(path) ||
-          [...files.keys()].some((key) => key.startsWith(`${path}/`)),
+          [...files.keys()].some((key) => key.startsWith(`${path}${sep}`)),
       );
     },
     createExclusive: (path, data) => {
@@ -157,7 +158,7 @@ const seed = async (capture: Capture): Promise<void> => {
 };
 
 const idOf = (capture: Capture): string =>
-  [...capture.cacheFs.files.keys()][0]!.slice(ROOT.length + 1).split('/')[0]!;
+  [...capture.cacheFs.files.keys()][0]!.slice(ROOT.length + 1).split(sep)[0]!;
 
 // Plants a healthy namespace directly (meta.json + one object) under a chosen
 // 16-hex id, bypassing the real pipeline so clearAllNamespaces tests can pin
@@ -466,7 +467,7 @@ describe('cache clear', () => {
 });
 
 describe('cache unlock', () => {
-  const lockPathOf = (capture: Capture): string => `${ROOT}/${idOf(capture)}/.lock`;
+  const lockPathOf = (capture: Capture): string => join(ROOT, idOf(capture), '.lock');
 
   it('refuses to clear a namespace another process is writing', async () => {
     const capture = cacheCtx();

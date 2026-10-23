@@ -20,10 +20,10 @@ openapi-mcp --version
 openapi-mcp tools --spec https://api.example.com/openapi.json   # preview the tools, no server
 ```
 
-Requirements: Node.js `^22.19.0 || >=24.11.0`, macOS or Linux. Use the latest patch release of your Node line: older
-patches miss its security fixes. Windows is not supported natively (the cache relies on POSIX file permissions and
-rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/). Other POSIX systems (e.g. FreeBSD)
-are refused because they are untested, not because they are known to be unsafe.
+Requirements: Node.js `^22.19.0 || >=24.11.0`, macOS, Linux or Windows. Use the latest patch release of your Node line:
+older patches miss its security fixes. On Windows the cache directories are private through your user profile's
+access control list (owner, SYSTEM, Administrators), not through `0700`/`0600` modes. Other
+platforms (e.g. FreeBSD) are refused because they are untested, not because they are known to be unsafe.
 
 The first run per user writes Node's compile cache to `~/.kaisers-io/openapi-mcp/compile-cache/`
 and is slower; `NODE_DISABLE_COMPILE_CACHE=1` turns it off.
@@ -72,6 +72,12 @@ args = [
 ]
 env_vars = ["SPEC_TOKEN", "API_TOKEN"]
 ```
+
+Windows: `npx` is a `.cmd` script. Hosts that resolve it (Claude Desktop) take the config
+above unchanged; a host that spawns commands without a shell fails with `ENOENT`/`EINVAL` or
+"client closed" — use `"command": "cmd"` with `"args": ["/c", "npx", "-y", ...]` there, keep
+`& | < > ^ %` out of the arguments, and double backslashes in JSON paths
+(`"C:\\specs\\petstore.json"`).
 
 Host config examples always pin an exact version, never `latest` — this process runs with
 your API credentials on every launch. `--cache-key` is required when the spec fetch is

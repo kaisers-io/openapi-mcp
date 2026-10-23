@@ -32,10 +32,10 @@ Four pillars:
 
 ## Install
 
-Requirements: Node.js `^22.19.0 || >=24.11.0`, macOS or Linux. Use the latest patch release of your Node line: older
-patches miss its security fixes. Windows is not supported natively (the cache relies on POSIX file permissions and
-rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/). Other POSIX systems (e.g. FreeBSD)
-are refused because they are untested, not because they are known to be unsafe.
+Requirements: Node.js `^22.19.0 || >=24.11.0`, macOS, Linux or Windows. Use the latest patch release of your Node line:
+older patches miss its security fixes. On Windows the cache directories are private through your user profile's
+access control list, not through `0700`/`0600` modes (see [Windows](docs/security.md#windows)). Other
+platforms (e.g. FreeBSD) are refused because they are untested, not because they are known to be unsafe.
 
 ```bash
 npm i -g @kaisers-io/openapi-mcp
@@ -145,6 +145,53 @@ args = [
 ]
 env_vars = ["SPEC_TOKEN", "API_TOKEN"]
 ```
+
+### Windows hosts
+
+Native Windows support needs a release that includes it (it is listed under Unreleased in
+[CHANGELOG.md](CHANGELOG.md)); earlier versions refuse to install on Windows. Pin that version
+or a later one in the examples below.
+
+On Windows, `npx` (and a globally installed `openapi-mcp`) is a `.cmd` script, not an
+executable. Hosts that resolve it themselves take the configs above unchanged — Claude
+Desktop's own Windows example uses `"command": "npx"`. A host that starts the command directly,
+without a shell, cannot run a `.cmd` file: the server then never starts, and the host log shows
+`ENOENT`, `EINVAL` (Node refuses to spawn `.cmd` files without a shell since its April 2024
+security release) or just "client closed". Start it through `cmd /c` instead:
+
+```json
+{
+  "mcpServers": {
+    "petstore": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@kaisers-io/openapi-mcp@0.3.1",
+        "serve",
+        "--spec",
+        "C:\\specs\\petstore.json",
+        "--cache-key",
+        "petstore"
+      ]
+    }
+  }
+}
+```
+
+- Backslashes are doubled in JSON. `--spec` takes absolute drive paths (`C:\specs\x.json`,
+  `C:/specs/x.json`) and UNC paths (`\\server\share\x.json`); a drive-relative `C:x.json` is
+  refused like any other scheme-like value; give the full path.
+- `cmd` treats `&`, `|`, `<`, `>`, `^` and `%` in arguments as its own syntax: keep them out of
+  `args`. Secrets belong in `env` anyway.
+- Config files: Claude Desktop `%APPDATA%\Claude\claude_desktop_config.json` (`mcpServers`),
+  VS Code `.vscode/mcp.json` (`servers`, each with `"type": "stdio"`), Cursor
+  `%USERPROFILE%\.cursor\mcp.json` (`mcpServers`). GUI hosts may not see the `PATH` of your
+  terminal; if `npx` is not found, give its full path, or install globally and run `node` with
+  the full path of the installed `bin\openapi-mcp.mjs` (under `%APPDATA%\npm\node_modules`).
+- The host stops the server by closing its stdin, which `openapi-mcp` treats as a clean
+  shutdown on every platform.
 
 ### HTTP transport (both hosts)
 
@@ -365,6 +412,9 @@ globally instead of invoking via `npx`).
 ## Development
 
 Requires Node.js `^22.19.0 || >=24.11.0` (the dev pin in `.node-version` is 24) and pnpm `>=11`.
+Development is supported on Linux and macOS. Windows is a supported runtime for the published
+package, not a development platform: CI runs the test suite there, but the development scripts
+(benchmarks, smoke and release scripts) assume a POSIX shell.
 
 ```bash
 git clone https://github.com/kaisers-io/openapi-mcp.git

@@ -34,7 +34,8 @@ const runGenerator = (command: string): string => {
       : spawnSync(process.execPath, ['-p', node.groups?.['script'] ?? ''], { encoding: 'utf8' });
   // The command and stderr ride along in the subject so a failure shows why it failed.
   expect({ command, status: result.status, stderr: result.stderr }).toMatchObject({ status: 0 });
-  return result.stdout.replace(/\n+$/u, '');
+  // `$(...)` strips trailing newlines; on Windows a native tool (openssl) ends its line with CRLF
+  return result.stdout.replace(/[\r\n]+$/u, '');
 };
 
 describe('HTTP token documentation matches the validator', () => {

@@ -198,7 +198,7 @@ const declaredOs = (): string[] => {
 };
 
 describe(
-  'platform: package.json, docs and the bin stub agree on macOS and Linux',
+  'platform: package.json, docs and the bin stub agree on macOS, Linux and Windows',
   SPAWN_BUDGET,
   () => {
     // A built-looking package, so a case that gets past the guard visibly loads the entry.
@@ -223,37 +223,37 @@ describe(
       }
     });
 
-    it('declares exactly darwin and linux in the published package.json, so npm refuses other platforms', () => {
-      expect(declaredOs()).toStrictEqual(['darwin', 'linux']);
+    it('declares exactly darwin, linux and win32 in the published package.json, so npm refuses other platforms', () => {
+      expect(declaredOs()).toStrictEqual(['darwin', 'linux', 'win32']);
     });
 
-    it('points Windows users at WSL and calls other platforms untested in both READMEs', () => {
+    it('documents native Windows support, no WSL-only wording, and calls other platforms untested in both READMEs', () => {
       for (const readme of ['README.md', 'packages/cli/README.md']) {
-        expect(repoFile(readme)).toContain('WSL');
+        expect(repoFile(readme)).toContain('macOS, Linux or Windows');
+        expect(repoFile(readme)).not.toContain('run it inside [WSL]');
         expect(repoFile(readme)).toContain('refused because they are untested');
       }
     });
 
-    it.each(['darwin', 'linux'])('runs the CLI on %s', (platform) => {
+    it.each(['darwin', 'linux', 'win32'])('runs the CLI on %s', (platform) => {
       const result = runStub(makeBuilt(), asPlatform(platform), []);
       expect(result.stderr).toBe('');
       expect(result.stdout.trim()).toBe('loaded');
       expect(result.status).toBe(0);
     });
 
-    // Only Windows users get the WSL hint; on any other platform it would be a non sequitur.
-    it.each([
-      ['win32', 'On Windows, run it inside WSL.'],
-      ['freebsd', 'Other platforms are untested and therefore refused.'],
-      ['android', 'Other platforms are untested and therefore refused.'],
-    ])('refuses %s with one line and exit 1, before loading the CLI', (platform, advice) => {
-      const result = runStub(makeBuilt(), asPlatform(platform), ['--version']);
-      expect(result.status).toBe(1);
-      // Nothing on stdout: the entry, which would print "loaded", was never imported.
-      expect(result.stdout).toBe('');
-      expect(result.stderr.trim().split('\n')).toStrictEqual([
-        `openapi-mcp supports macOS and Linux only (found ${platform}). ${advice}`,
-      ]);
-    });
+    it.each(['freebsd', 'android', 'aix'])(
+      'refuses %s with one line and exit 1, before loading the CLI',
+      (platform) => {
+        const result = runStub(makeBuilt(), asPlatform(platform), ['--version']);
+        expect(result.status).toBe(1);
+        // Nothing on stdout: the entry, which would print "loaded", was never imported.
+        expect(result.stdout).toBe('');
+        expect(result.stderr.trim().split('\n')).toStrictEqual([
+          `openapi-mcp supports macOS, Linux and Windows only (found ${platform}). ` +
+            'Other platforms are untested and therefore refused.',
+        ]);
+      },
+    );
   },
 );

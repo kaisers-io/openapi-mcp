@@ -1,3 +1,4 @@
+import { basename, dirname, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   HTTP_METHODS,
@@ -117,12 +118,11 @@ const run = (
 };
 
 const layoutOf = (fs: MemoryCacheFs): CacheLayout => {
-  const metaPath = [...fs.files.keys()].find((key) => key.endsWith('/meta.json'))!;
-  const dir = metaPath.slice(0, -'/meta.json'.length);
-  return cacheLayout('/cache', dir.slice('/cache/'.length));
+  const metaPath = [...fs.files.keys()].find((key) => key.endsWith(`${sep}meta.json`))!;
+  return cacheLayout('/cache', basename(dirname(metaPath)));
 };
 const metaOf = (fs: MemoryCacheFs): CacheMeta | undefined => {
-  const entry = [...fs.files.entries()].find(([key]) => key.endsWith('/meta.json'));
+  const entry = [...fs.files.entries()].find(([key]) => key.endsWith(`${sep}meta.json`));
   return entry === undefined ? undefined : (JSON.parse(entry[1]) as CacheMeta);
 };
 

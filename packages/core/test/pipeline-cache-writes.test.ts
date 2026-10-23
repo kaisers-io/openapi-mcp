@@ -1,3 +1,4 @@
+import { dirname, join, sep } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -61,7 +62,7 @@ const deps = (cacheFs: CacheFs, fetcher?: SpecFetcher): SpecPipelineDeps => ({
 });
 
 const metaEntry = (fs: MemoryCacheFs): [string, string] => {
-  const entry = [...fs.files.entries()].find(([key]) => key.endsWith('/meta.json'));
+  const entry = [...fs.files.entries()].find(([key]) => key.endsWith(`${sep}meta.json`));
   if (entry === undefined) {
     throw new Error('no meta.json written');
   }
@@ -142,7 +143,7 @@ describe('unchanged sources do not rewrite the cache (#75)', () => {
     ]);
     await runSpecPipeline(specUrl, opts, deps(fs, fetcher));
     const accepted = metaOf(fs).acceptedContentHash;
-    const objectPath = `${metaEntry(fs)[0].replace(/meta\.json$/u, 'objects/')}${accepted}.json`;
+    const objectPath = join(dirname(metaEntry(fs)[0]), 'objects', `${accepted}.json`);
     calls.length = 0;
 
     const later = opts.nowMs + opts.ttlMs + 1;

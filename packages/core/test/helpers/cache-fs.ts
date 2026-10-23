@@ -1,4 +1,4 @@
-import { dirname } from 'node:path';
+import { dirname, normalize, sep } from 'node:path';
 import { validationError } from '../../src/index.ts';
 import type { CacheFs } from '../../src/index.ts';
 
@@ -38,17 +38,24 @@ const absenceError = (path: string): Error =>
 // on every call makes the property the single source of truth, so
 // reassigning it actually redirects subsequent operations, matching what the
 // tests assume.
+// Paths are compared as strings, in the platform's own form: the store builds
+// them with node:path, so on Windows they carry backslashes. The roots are
+// normalized the same way ('/cache' is '\cache' there), so is every path a
+// caller passes in, and children are found by the platform separator. On
+// POSIX, normalize leaves all of these paths unchanged.
 export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCacheFs => {
   const self: MemoryCacheFs = {
     files: new Map<string, string>(),
-    dirs: new Set<string>(roots),
-    mkdirSecure: (path) => {
+    dirs: new Set<string>(roots.map((root) => normalize(root))),
+    mkdirSecure: (rawPath) => {
+      const path = normalize(rawPath);
       for (const dir of ancestors(path)) {
         self.dirs.add(dir);
       }
       return Promise.resolve();
     },
-    writeFileAtomic: (path, data) => {
+    writeFileAtomic: (rawPath, data) => {
+      const path = normalize(rawPath);
       const parent = dirname(path);
       if (!self.dirs.has(parent)) {
         return Promise.reject(absenceError(parent));
@@ -56,7 +63,8 @@ export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCach
       self.files.set(path, data);
       return Promise.resolve();
     },
-    readFileTextCapped: (path, maxBytes) => {
+    readFileTextCapped: (rawPath, maxBytes) => {
+      const path = normalize(rawPath);
       const found = self.files.get(path);
       if (found === undefined) {
         // The fake must be FAITHFUL to Node here too: without a
@@ -75,15 +83,16 @@ export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCach
       }
       return Promise.resolve(found);
     },
-    readDirNames: (path) => {
+    readDirNames: (rawPath) => {
+      const path = normalize(rawPath);
       if (!self.dirs.has(path)) {
         return Promise.reject(absenceError(path));
       }
-      const prefix = `${path}/`;
+      const prefix = `${path}${sep}`;
       const names = new Set<string>();
       for (const key of [...self.files.keys(), ...self.dirs]) {
         if (key.startsWith(prefix)) {
-          const [head] = key.slice(prefix.length).split('/');
+          const [head] = key.slice(prefix.length).split(sep);
           if (head !== undefined) {
             names.add(head);
           }
@@ -91,8 +100,9 @@ export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCach
       }
       return Promise.resolve([...names]);
     },
-    removeDir: (path) => {
-      const prefix = `${path}/`;
+    removeDir: (rawPath) => {
+      const path = normalize(rawPath);
+      const prefix = `${path}${sep}`;
       for (const key of self.files.keys()) {
         if (key === path || key.startsWith(prefix)) {
           self.files.delete(key);
@@ -105,8 +115,12 @@ export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCach
       }
       return Promise.resolve();
     },
-    pathExists: (path) => Promise.resolve(self.files.has(path) || self.dirs.has(path)),
-    createExclusive: (path, data) => {
+    pathExists: (rawPath) => {
+      const path = normalize(rawPath);
+      return Promise.resolve(self.files.has(path) || self.dirs.has(path));
+    },
+    createExclusive: (rawPath, data) => {
+      const path = normalize(rawPath);
       // The real implementation opens with 'wx', which fails EEXIST — and
       // therefore resolves false — for an existing directory just as much as
       // an existing file. Refusing on files.has alone would let a store bug
@@ -121,7 +135,8 @@ export const memoryCacheFs = (roots: readonly string[] = ['/cache']): MemoryCach
       self.files.set(path, data);
       return Promise.resolve(true);
     },
-    removeFile: (path) => {
+    removeFile: (rawPath) => {
+      const path = normalize(rawPath);
       self.files.delete(path);
       return Promise.resolve();
     },

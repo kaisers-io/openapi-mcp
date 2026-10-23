@@ -1,3 +1,4 @@
+import { join, sep } from 'node:path';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
@@ -23,7 +24,10 @@ const URL_SOURCE: SpecSource = {
 
 describe('defaultCacheRoot', () => {
   it('places the cache under the documented app directory', () => {
-    expect(defaultCacheRoot('/home/u')).toBe('/home/u/.kaisers-io/openapi-mcp/cache');
+    // The platform's own separator: '/home/u/.kaisers-io/openapi-mcp/cache' on POSIX
+    expect(defaultCacheRoot('/home/u')).toBe(
+      join('/home/u', '.kaisers-io', 'openapi-mcp', 'cache'),
+    );
   });
 });
 
@@ -206,13 +210,16 @@ describe('cacheNamespace', () => {
 
 describe('cacheLayout', () => {
   it('derives every path from root and namespace', () => {
+    // Built with the platform's separator, so on POSIX these are exactly
+    // '/c/abcdef0123456789', '/c/abcdef0123456789/meta.json', ...
+    const dir = join('/c', 'abcdef0123456789');
     expect(cacheLayout('/c', 'abcdef0123456789')).toEqual({
       root: '/c',
       namespace: 'abcdef0123456789',
-      dir: '/c/abcdef0123456789',
-      metaPath: '/c/abcdef0123456789/meta.json',
-      lockPath: '/c/abcdef0123456789/.lock',
-      objectsDir: '/c/abcdef0123456789/objects',
+      dir,
+      metaPath: join(dir, 'meta.json'),
+      lockPath: join(dir, '.lock'),
+      objectsDir: join(dir, 'objects'),
     });
   });
 
@@ -230,7 +237,7 @@ describe('objectPath', () => {
 
   it('names the object after the hash of its own contents', () => {
     expect(objectPath(layout, 'a'.repeat(64))).toBe(
-      `/c/abcdef0123456789/objects/${'a'.repeat(64)}.json`,
+      join('/c', 'abcdef0123456789', 'objects', `${'a'.repeat(64)}.json`),
     );
   });
 
@@ -240,9 +247,9 @@ describe('objectPath', () => {
 
   it('stays inside the namespace for every hash parseContentHash admits', () => {
     for (const hash of ['0'.repeat(64), 'f'.repeat(64), `${'0'.repeat(63)}a`]) {
-      expect(objectPath(layout, parseContentHash(hash)).startsWith(`${layout.objectsDir}/`)).toBe(
-        true,
-      );
+      expect(
+        objectPath(layout, parseContentHash(hash)).startsWith(`${layout.objectsDir}${sep}`),
+      ).toBe(true);
     }
   });
 });

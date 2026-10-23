@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Crash durability cannot be observed from inside one process: a write that
@@ -86,7 +86,12 @@ const durabilityTrace = (target: string): readonly string[] => {
     .filter((step) =>
       ['open', 'writeFile', 'sync', 'datasync', 'close', 'rename', 'link'].includes(step.op),
     )
-    .map((step) => `${step.op} ${step.path.replaceAll(tmpPattern, '/TMP').replaceAll(dir, 'DIR')}`);
+    .map((step) => {
+      // DIR first, then the platform separator as "/", so the trace reads the
+      // same on Windows, where the adapter's paths carry backslashes
+      const path = step.path.replaceAll(dir, 'DIR').replaceAll(sep, '/');
+      return `${step.op} ${path.replaceAll(tmpPattern, '/TMP')}`;
+    });
 };
 
 describe('realContext cacheFs durability ordering', () => {

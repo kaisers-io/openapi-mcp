@@ -7,8 +7,10 @@ Nothing here should ever drift from the CLI's own `--help` — if in doubt, run
 
 There is no separate `openapi-mcp` config file. All configuration is CLI flags and
 environment variables, resolved through your MCP host's own config
-(`.mcp.json` for Claude Code, `config.toml` for Codex). `~/.kaisers-io/openapi-mcp/` holds
-only caches, all created private (`0700`):
+(`.mcp.json` for Claude Code, `config.toml` for Codex). `~/.kaisers-io/openapi-mcp/`
+(`%USERPROFILE%\.kaisers-io\openapi-mcp\` on Windows) holds only caches, all created private
+(`0700`; on Windows through the profile's access control list, see
+[security.md](security.md#windows)):
 
 - `cache/`, the on-disk spec cache, managed by `cache list` / `cache clear` and reported by
   `doctor`;
