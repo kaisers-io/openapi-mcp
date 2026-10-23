@@ -59,7 +59,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
-| `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
+| `--allow-private-network` | no | permit private/loopback addresses for spec fetch redirects and for API requests to a spec-derived origin or redirect, and the token URL with `--upstream-oauth-*`; with `--http-auth oauth` also the authorization-server metadata and JWKS fetches (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
@@ -82,7 +82,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--port <n>` | no | HTTP port | `3044` |
 | `--http-token-env <ENV>` | no | env var holding the bearer token required for HTTP requests; mandatory with `--http` in `static` mode. Exactly 32 cryptographically secure random bytes as padded Base64 or unpadded Base64URL ([rules](security.md#http-mode-authentication-and-limits)) | none |
 | `--http-auth <mode>` | no | `static` (one bearer token from `--http-token-env`) or `oauth` (OAuth resource-server mode, see [security.md](security.md#oauth-resource-server-mode-opt-in)) | `static` |
-| `--http-host <addr>` | no | IP address to bind; anything but loopback requires `--http-auth oauth` and an `https` `--oauth-audience` | `127.0.0.1` |
+| `--http-host <addr>` | no | IP address to bind; accepted only with `--http-auth oauth` (in `static` mode the server always binds `127.0.0.1`), and a non-loopback address also requires an `https` `--oauth-audience` | `127.0.0.1` |
 | `--oauth-issuer <url>` | no | authorization server issuer whose JWT access tokens are accepted; required with `--http-auth oauth` | none |
 | `--oauth-audience <uri>` | no | this server's canonical resource URI (its public URL); tokens must carry it in `aud`; required with `--http-auth oauth` | none |
 | `--oauth-required-scope <scope>` | yes | scope every access token must grant; advertised as `scopes_supported` | `[]` |
@@ -111,8 +111,9 @@ Notes:
   works with such a spec; without it, `serve` stops with the usual "no absolute server URL"
   usage error, also for a spec loaded from a URL (no fallback to the spec's own origin).
 - `--request-timeout` replaces `--timeout` for upstream API calls. **Upgrading:** if you raised
-  `--timeout` to make slow API calls work, set `--request-timeout` instead; `--timeout` now
-  covers only the spec fetch.
+  `--timeout` to make slow API calls work, set `--request-timeout` instead. `--timeout` no
+  longer applies to API calls: it bounds the spec fetch and, with `--http-auth oauth`, each
+  authorization-server metadata and JWKS fetch.
 - `Accept` is derived from the operation's declared 2xx media types (JSON first, `*/*;q=0.1`
   last). A header parameter named `Accept` in the spec is ignored (OpenAPI says so), so an API
   that needs a vendor media type expressed only there (e.g. a GitHub preview
@@ -149,8 +150,16 @@ Notes:
   does not prove the data is exhausted (e.g. an `offset` API without a `Link` header). A
   `Link: <…>; rel="next"` header is used only if it has the same origin and the same
   (byte-identical) path as the request, and all of its query parameters map onto the tool's
-  own query parameters. Values are decoded by the parameter's declared type and form style
-  (booleans, numbers, comma-joined or repeated arrays). Otherwise a body cursor is used:
+  own query parameters. Values are decoded by the parameter's declared type and style
+  (booleans, numbers, comma-joined or repeated arrays, space- or pipe-delimited arrays).
+  `name[key]` parameters (JSON:API `page[number]=2&page[size]=10`, `filter[status]=x`) map
+  back onto a `deepObject` parameter `name`, but only keys its schema declares, one level
+  deep, each once; a name that could be either a literal parameter or a `deepObject` key
+  gives `null`. Without a pagination `Link` header, a JSON:API response (media type
+  `application/vnd.api+json`, or a response schema that declares `links.next`) uses its
+  top-level `links.next` (a URL or a link object's `href`) under the same rules;
+  `links.next: null` means the last page.
+  Otherwise a body cursor is used:
   `next_cursor`/`nextCursor` maps to `cursor`, `next_page_token` to `page_token`,
   `nextPageToken` to `pageToken`, and Stripe-style `has_more` with the last item's `id` maps to
   `starting_after`. A body cursor needs a structured result (an output schema), so a
@@ -348,9 +357,9 @@ startup when `discover` exposes any non-read-only operation; narrow the set with
 `--allow`/`--deny` if that matters (see [security](security.md#discovery-tool-mode)).
 
 Startup cost: `serve` compiles one output validator per exposed operation before it answers,
-about 12 ms each with the current per-tool compilation, so a few thousand operations under
-`discover` take tens of seconds to start. Shared validator compilation (#137) removes most of
-that cost.
+so start-up time grows with the number of exposed operations. Measured on a development
+machine with a warm spec cache: about 3.5 s until `tools/list` answers for 2,000 exposed
+operations.
 
 Measured `tools/list` sizes (2026-07-28 stdio response, tokens ≈ bytes / 4):
 
@@ -365,7 +374,10 @@ Measured `tools/list` sizes (2026-07-28 stdio response, tokens ≈ bytes / 4):
 Preview the operation inventory an OpenAPI spec generates, with filters applied — no server
 is started. Shares the spec-loading and filtering flags with `serve`; it has none of the
 API-request or transport flags (no `--base-url`, `--header*`, `--max-response-bytes`,
-`--allow-insecure-http`, `--http*`), since no API requests are ever made.
+`--allow-insecure-http`, `--http*`), since no API requests are ever made. It has no
+`--tool-mode` either, so it always applies the 512-tool limit: an inventory that only
+`serve --tool-mode discover` can expose fails here; narrow it with `--allow`/`--deny` to
+preview it.
 
 | Flag | Repeatable | Meaning | Default |
 |---|---|---|---|
@@ -374,14 +386,18 @@ API-request or transport flags (no `--base-url`, `--header*`, `--max-response-by
 | `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
 | `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
-| `--timeout <duration>` | no | spec fetch timeout; also each authorization-server metadata and JWKS fetch in `--http-auth oauth` mode | `30s` |
+| `--timeout <duration>` | no | spec fetch timeout | `30s` |
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 
-Example:
+Example (an operationId glob, so it matches only operationIds that start with `read`):
+
+```bash
+openapi-mcp tools --spec https://api.example.com/openapi.json --allow "read*"
+```
 
 Output: one line per tool. A tool whose output schema exists only because of
 `--default-response-is-error` ends with `[output schema assumes default = error]`. With the
@@ -391,10 +407,6 @@ marker flags, `outputSchemaAssumesDefaultIsError: true`. A tool whose output sch
 withheld because a response `pattern` has nested quantifiers (see
 [security.md](security.md#response-envelope-and-redacted-errors)) carries
 `outputSchemaWithheld` with the sentence its description starts with.
-
-```bash
-openapi-mcp tools --spec https://api.example.com/openapi.json --allow "read*"
-```
 
 When the exposed operations declare `security` requirements, `tools` prints one `auth:` line
 per referenced `components.securitySchemes` entry naming the credential it expects and the
@@ -562,3 +574,20 @@ openapi-mcp --json doctor
   "warnings": []
 }
 ```
+
+## Exit codes
+
+| Code | Meaning | Examples |
+|---|---|---|
+| `0` | success | |
+| `1` | unexpected error; also the start-up guard for an unsupported platform or Node version | |
+| `2` | usage error | unknown flag, invalid flag value, missing `--base-url`, `--http` without `--http-token-env` |
+| `3` | validation error | invalid spec, `--strict-filters` with a dead pattern, malformed HTTP token, refused egress target |
+| `4` | not found | unreadable spec file, missing cache entry, `cache unlock` on an entry without a lock |
+| `5` | conflict | cache lock held by another process, `cache promote --hash` mismatch |
+
+With the global `--json` flag, `tools`, `doctor` and the `cache` commands print an error as
+`{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`. Two exceptions print plain
+text on stderr whatever the flags: `serve`, whose stdout is reserved for MCP traffic (it stays
+empty on an error), and the launcher's platform and Node version checks (exit `1`), which run
+before any option is parsed.

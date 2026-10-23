@@ -52,8 +52,9 @@
   refused call (`overloaded`, or over the new `--rate-limit`, default `120/1m`) is a tool
   error whose `_meta` carries `openapi-mcp/error` and `openapi-mcp/retryAfterMs`.
 
-- **New `--request-timeout` for upstream API calls (#68).** `--timeout` now covers only the
-  spec fetch. **Upgrading:** if you raised `--timeout` to make slow API calls work, set
+- **New `--request-timeout` for upstream API calls (#68).** `--timeout` no longer applies to
+  API calls; it covers the spec fetch (and, with `--http-auth oauth`, the metadata and JWKS
+  fetches). **Upgrading:** if you raised `--timeout` to make slow API calls work, set
   `--request-timeout` instead (default `30s`); it is the per-call budget, queue wait included.
 - **HTTP client fixes (#68).** `Accept` is derived from the operation's declared 2xx media
   types (a spec `Accept` header parameter is ignored, per OpenAPI; `--header Accept:`
@@ -79,6 +80,17 @@
   returns `pagination.next`: the arguments for the next call (never a URL), decoded to the
   tool's own parameter types, or `null` when no next page is known (not proof that the data
   is exhausted). Its output schema gains an optional `pagination` property.
+
+- **Next-page hints for JSON:API and `deepObject`/delimited query parameters (#145).** A
+  JSON:API response (`application/vnd.api+json`, or a schema declaring `links.next`) now
+  gets `pagination.next` from its body `links.next`, under the same rules as a `Link`
+  header (same origin and path, every parameter maps, the tool's input schema accepts it);
+  a `Link` header still wins when both are sent. Next URLs using `page[number]=2&page[size]=10`,
+  `page[after]=…` or `filter[status]=x` map back onto the tool's `deepObject` parameters
+  (declared keys only), and space- or pipe-delimited array values are split on their
+  delimiter. Before, all of these gave `next: null`. Anything ambiguous (an undeclared or
+  nested key, a repeated key, a name that is both a literal parameter and a `deepObject`
+  key) still gives `null`.
 
 - **Opt-in retries for retry-safe requests (#82).** `--retries <n>` (0–3, default `0`)
   retries 429/502/503/504 and connection errors before any response for GET, HEAD, PUT and
@@ -141,6 +153,16 @@
   request once with a fresh token; that replay is separate from `--retries`. A call whose token
   could not be obtained is logged with the new outcome `token_error`.
 
+### Documentation
+
+- **READMEs match the current CLI.** The host examples no longer pass `--allow "read*"` (an
+  operationId glob that is not "read operations" and matches nothing on many specs); they keep
+  the read-only default. The READMEs now describe tool naming, the egress policy, trace
+  propagation being on by default, the newer serve options, the compile cache and the exit
+  codes, and list the `--header` deny-list as the code enforces it. The npm README no longer
+  links to the source repository. `serve --help` now describes `--allow-private-network` as
+  also covering API requests, and `--http-host` as accepted only with `--http-auth oauth`.
+
 ### Performance
 
 - **Faster starts after the first run, slower first run (#76).** The OpenAPI meta-schema
@@ -160,3 +182,13 @@
   flag takes effect immediately. A validation rule added by a newer release is not applied to
   an unchanged file until the file changes (or `openapi-mcp cache clear`); before, such a file
   was served as the last known good baseline with a warning.
+
+### Development
+
+- **The benchmark gate checks retained memory, not peak RSS.** Peak RSS of a `serve` start
+  depends on when V8 grows its young generation and collects old space. For the same build,
+  flat-500's warm peak alternated between modes about 70 MB apart, which failed the gate on
+  a docs-only pull request. The harness now preloads a small probe into every measured
+  process, which reports the heap still in use after a full garbage collection. That value
+  is gated (`liveHeapMB`, `warmLiveHeapMB`); peak RSS is still reported, but no longer fails
+  the gate.

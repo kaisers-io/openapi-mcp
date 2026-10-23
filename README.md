@@ -15,7 +15,8 @@ Four pillars:
   Secrets are read exclusively from environment variables, with central redaction.
 - **Zero own config** — all configuration flows through CLI flags and env vars, i.e. through
   your MCP host's own config (`.mcp.json` for Claude Code, `config.toml` for Codex).
-  `~/.kaisers-io/openapi-mcp/` is cache-only; there is no separate config file to maintain.
+  `~/.kaisers-io/openapi-mcp/` holds only caches (the spec cache and Node's compile cache);
+  there is no separate config file to maintain.
 - **Context-efficient** — filtered tool exposure, concise AI-oriented descriptions, response
   size caps.
 
@@ -50,6 +51,10 @@ openapi-mcp doctor
 `openapi-mcp doctor` prints CLI/Node versions and the effective cache root — a good first
 check when something looks wrong.
 
+The first run per user is slower: it writes Node's V8 compile cache to
+`~/.kaisers-io/openapi-mcp/compile-cache/`, which later starts reuse. Set
+`NODE_DISABLE_COMPILE_CACHE=1` to turn it off, e.g. where the home directory does not persist.
+
 ## Quickstart
 
 Preview the tools a spec would generate, without starting a server:
@@ -58,11 +63,14 @@ Preview the tools a spec would generate, without starting a server:
 openapi-mcp tools --spec https://api.example.com/openapi.json
 ```
 
-Then run it as an MCP server over stdio, exposing only read operations:
+Then run it as an MCP server over stdio. With no `--allow`, only `GET`/`HEAD` operations are
+exposed:
 
 ```bash
-openapi-mcp serve --spec https://api.example.com/openapi.json --allow "read*"
+openapi-mcp serve --spec https://api.example.com/openapi.json
 ```
+
+If the spec has no absolute `servers` URL, add `--base-url <url>`.
 
 Every command accepts `--json` for a stable, machine-readable envelope and `--verbose` for
 stack traces on error. Run `openapi-mcp --help` or `openapi-mcp <command> --help` — the CLI's
@@ -71,7 +79,8 @@ own help is the authoritative, always-current reference for every flag and defau
 ## Use as an MCP server
 
 Secrets are supplied through environment variables only, never through argv or a committed
-config file. Host examples below always pin an exact version (never `latest`) — an unpinned
+config file. The examples keep the read-only default (no `--allow`); see
+[Filtering](#filtering) to expose more. Host examples below always pin an exact version (never `latest`) — an unpinned
 version executing with your credentials on every launch is a supply-chain risk; see
 [Upgrading](#upgrading).
 
@@ -95,8 +104,6 @@ never appear literally in the committed file:
         "Authorization=SPEC_TOKEN",
         "--header-env",
         "Authorization=API_TOKEN",
-        "--allow",
-        "read*",
         "--cache-key",
         "petstore",
         "--ttl",
@@ -131,8 +138,6 @@ args = [
   "Authorization=SPEC_TOKEN",
   "--header-env",
   "Authorization=API_TOKEN",
-  "--allow",
-  "read*",
   "--cache-key",
   "petstore",
   "--ttl",
@@ -203,12 +208,17 @@ Pass `--strict-filters` to turn a dead pattern (one that matches nothing) into a
 error instead of a warning — useful once a filter set is stable and you want drift to fail
 loudly. Full flag reference: [`docs/configuration.md`](docs/configuration.md).
 
+Patterns match the spec's raw operationId, path and tags, not the generated tool name. A tool
+name is the operationId reduced to `[A-Za-z0-9_-]` (at most 64 characters; `repos.get` becomes
+`repos_get`, accented letters become their base letter), or method and path when there is no usable operationId
+(`GET /users/{id}` becomes `get_users_by_id`). Colliding names get a stable hash suffix.
+
 ### Large APIs: `--tool-mode discover`
 
 By default every exposed operation is its own MCP tool, and every tool's schemas are sent to
 the model up front — about 30k tokens for DigitalOcean's read-only operations. With
 `--tool-mode discover` the server lists three tools instead — `search_operations`,
-`describe_operation`, `call_operation` — and `tools/list` stays around 4 KB however many
+`describe_operation`, `call_operation` — and `tools/list` stays under 5 KB however many
 operations are exposed (up to 4096). Filters, validation and redaction apply exactly as for a
 direct call. `--tool-mode auto` picks `discover` above 64 exposed operations. Details and
 trade-offs: [Tool modes](docs/configuration.md#tool-modes).
@@ -223,14 +233,20 @@ from argv, config files, or the model context:
 - `--spec-header-env Header=ENV` / `--header-env Header=ENV` — **equals** syntax; the value
   comes from the named env var.
 - `--header Header:value` — **colon** syntax, for static, non-secret headers only.
-  `--header` rejects sensitive header names (`Authorization`, `Cookie`, and anything matching
-  `auth`/`token`/`secret`/`key`/`session`/`credential`/`cookie`/`signature`) — those must use
-  `--header-env`.
+  `--header` rejects sensitive header names (`Authorization`, `Proxy-Authorization`, `Cookie`,
+  `Set-Cookie`, and any name containing `auth`, `token`, `secret`, `key`, `session`,
+  `credential`, `signature`, `password`, `bearer` or `jwt`) — those must use `--header-env`.
 
 For safe terminal testing, avoid leaving secrets in shell history: prefix the command with a
 space if your shell has `HIST_IGNORE_SPACE`/`HISTCONTROL=ignorespace` enabled, use `read -s`
 to prompt without echoing, or pull the value from a secret-manager CLI (e.g.
 `TOKEN=$(op read op://vault/item/token) openapi-mcp serve ...`).
+
+Outbound requests follow an egress policy: an address that comes from the spec (its `servers`
+URL) or from a redirect is refused when it is private, loopback or a cloud-metadata endpoint.
+`--allow-private-network` permits private and loopback addresses, never cloud metadata. A
+`--spec` or `--base-url` you pass yourself may be private or loopback without that flag;
+cloud-metadata addresses are refused everywhere.
 
 See [`docs/security.md`](docs/security.md) for the full threat model.
 
@@ -294,14 +310,48 @@ including hex, is rejected at startup. Exact rules and an openssl-free generator
 Clients must send `Authorization: Bearer <token>`. `--port` defaults to `3044`.
 
 For a shared deployment, `--http-auth oauth` makes the server an OAuth resource server instead:
-it publishes Protected Resource Metadata, validates JWT access tokens from `--oauth-issuer`
-for `--oauth-audience`, and is the only mode that may bind a non-loopback `--http-host`. See
+it publishes Protected Resource Metadata and validates JWT access tokens from `--oauth-issuer`
+for `--oauth-audience`. `--http-host` is accepted only in this mode, and a non-loopback address
+also needs an `https` `--oauth-audience`. See
 [docs/security.md](docs/security.md#oauth-resource-server-mode-opt-in).
 
 The server speaks MCP revision `2026-07-28` and is stateless: each request is served on its
 own, with no `initialize` handshake and no session state (no `Mcp-Session-Id`). Older, 2025-era
 clients are served the same stateless way. The endpoint is POST-only — `GET` and `DELETE`
 return `405`. Cancellation is the client closing the request stream.
+
+## Other options and behaviour
+
+Each is off unless a default or "on" is stated; details in
+[`docs/configuration.md`](docs/configuration.md).
+
+- `--request-timeout <duration>` (default `30s`): the budget for each upstream call, queue wait
+  included. `--timeout` is separate: it bounds the spec fetch and, with `--http-auth oauth`, the
+  authorization-server metadata and JWKS fetches.
+- `--retries <n>` (default `0`, at most `3`): retry 429/502/503/504 for `GET`/`HEAD`/`PUT`/
+  `DELETE`, and connection errors before any response for `GET`/`HEAD`/`PUT` (never `DELETE`).
+  `POST`/`PATCH` are retried only when the operation declares an `Idempotency-Key` header.
+- Trace propagation is **on** by default: a valid W3C `traceparent`/`tracestate` from a call's
+  `_meta` is forwarded upstream. Pass `--no-trace-propagation` for APIs you do not operate.
+- `--log json`: one JSON line per tool call on stderr, without arguments, header values or bodies.
+- `--response-projection`: an optional `_fields` argument (JSON Pointers) on JSON tools, so a
+  call returns only the selected fields. Adds about 30% to `tools/list`.
+- `--tools-page-size <n>`: page `tools/list`. Only for hosts that follow `nextCursor`; other
+  hosts would see only the first page.
+- `--upstream-oauth-client-id-env` / `--upstream-oauth-client-secret-env`: obtain the upstream
+  API's access token with the OAuth2 client-credentials grant.
+- Request bodies: JSON, form, `multipart/form-data` and `application/octet-stream` (binary as a
+  base64 argument). Query styles: `form`, `deepObject`, `spaceDelimited`, `pipeDelimited`.
+  Binary responses are not returned; they are a tool error.
+- Results carry selected response headers (`ETag`, same-origin `Location`, rate-limit headers,
+  …) and, for paginated `GET` tools, a `pagination.next` hint with the next call's arguments.
+
+[Exit codes](docs/configuration.md#exit-codes): `0` success, `1` unexpected error, `2` usage error, `3` validation error (e.g. an
+invalid spec or HTTP token), `4` not found (spec file, cache entry), `5` conflict (cache lock,
+candidate mismatch). With `--json`, `tools`, `doctor` and `cache` print an error as
+`{"ok": false, "error": {"code", "message"}}`. `serve` always reports errors as text on stderr
+(stdout is reserved for MCP), and the platform and Node checks print plain text before any
+option is read.
 
 ## Upgrading
 
@@ -313,6 +363,8 @@ host config deliberately (and re-run `npm i -g @kaisers-io/openapi-mcp` if you i
 globally instead of invoking via `npx`).
 
 ## Development
+
+Requires Node.js `>=24.11` and pnpm `>=11`.
 
 ```bash
 git clone https://github.com/kaisers-io/openapi-mcp.git

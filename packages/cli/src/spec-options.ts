@@ -107,7 +107,18 @@ export type SpecCmdOpts = {
 // it (a caller's `.action((cmdOpts: SpecCmdOpts) => ...)` is what actually
 // enforces that, since a drifted shape fails typecheck there).
 // GlobalOpts is left unspecified: the class default is already `{}`.
-export const registerSpecOptions = (command: Command): Command<[], SpecCmdOpts> =>
+//
+// The one deliberate difference is the --allow-private-network help text:
+// `tools` only fetches the spec, while in `serve` the same flag also governs
+// API egress (a private spec-derived servers[0] origin and redirect hops), so
+// each command describes the scope the flag actually has there.
+const SPEC_FETCH_PRIVATE_NETWORK_HELP =
+  'permit private/loopback redirect targets during the spec fetch (never cloud-metadata)';
+
+export const registerSpecOptions = (
+  command: Command,
+  allowPrivateNetworkHelp: string = SPEC_FETCH_PRIVATE_NETWORK_HELP,
+): Command<[], SpecCmdOpts> =>
   command
     .requiredOption('--spec <url|file>', 'OpenAPI spec source, JSON or YAML')
     .option('--allow <pattern>', 'whitelist pattern (repeatable)', collect, [] as readonly string[])
@@ -132,10 +143,7 @@ export const registerSpecOptions = (command: Command): Command<[], SpecCmdOpts> 
     )
     .option('--cache-key <name>', 'durable cache namespace label; required for authenticated specs')
     .option('--trust-spec-updates', 'auto-accept refreshed specs instead of gating them')
-    .option(
-      '--allow-private-network',
-      'permit private/loopback redirect targets during the spec fetch (never cloud-metadata)',
-    )
+    .option('--allow-private-network', allowPrivateNetworkHelp)
     .option(
       '--default-response-is-error',
       'derive output schemas for operations with a "default" response, assuming it covers errors only (an undocumented 2xx then fails)',

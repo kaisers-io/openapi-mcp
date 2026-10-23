@@ -1,6 +1,8 @@
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { RequestMapper } from './layout.ts';
-import { fieldOf, hintValue, linkValue } from './pagination-values.ts';
+import { isJsonApiResponse, jsonApiBranches, queryArgs } from './pagination-links.ts';
+import type { JsonApiBranches } from './pagination-links.ts';
+import { fieldOf, hintValue } from './pagination-values.ts';
 import type { PaginationField } from './pagination-values.ts';
 
 export type { PaginationField } from './pagination-values.ts';
@@ -46,6 +48,10 @@ export type PaginationPlan = {
   bodyCursors: readonly { property: string; field: PaginationField }[];
   // Stripe-style `has_more` + last item id -> `starting_after`.
   startingAfter?: PaginationField;
+  // The success responses declared JSON:API-shaped (pagination-links.ts):
+  // when the actual response is one of them, its top-level `links.next` URL
+  // is read like a Link header's. Absent when the operation has none.
+  jsonApiLinks?: JsonApiBranches;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -73,13 +79,7 @@ export const detectPagination = (
   const carried: string[] = [];
   for (const [field, mapping] of Object.entries(mapper.fields)) {
     if (mapping.destination === 'query') {
-      // Link values are decoded by the form style only; the other query
-      // styles (deepObject, space/pipe-delimited) cannot carry a hint yet
-      // (follow-up #145), so a next link using them yields null.
-      query[mapping.wireName] =
-        mapping.style === 'form'
-          ? fieldOf(field, properties[field], mapping.explode)
-          : { field, kind: 'unsupported' };
+      query[mapping.wireName] = fieldOf(field, properties[field], mapping);
     } else {
       carried.push(field);
     }
@@ -93,11 +93,13 @@ export const detectPagination = (
     return field === undefined ? [] : [{ property, field }];
   });
   const startingAfter = query['starting_after'];
+  const jsonApiLinks = jsonApiBranches(operation.responses);
   return {
     query,
     carried,
     bodyCursors,
     ...(startingAfter === undefined ? {} : { startingAfter }),
+    ...(jsonApiLinks === undefined ? {} : { jsonApiLinks }),
   };
 };
 
@@ -123,6 +125,9 @@ export type HintInput = {
   requestUrl: string;
   // The parsed response body, when available.
   data?: unknown;
+  // The response's status and Content-Type (which documented response it is).
+  status?: number;
+  contentType?: string;
   // The arguments of the call that produced this page.
   args: Readonly<Record<string, unknown>>;
 };
@@ -150,18 +155,19 @@ const parseUrl = (raw: string, base?: string): URL | undefined => {
   }
 };
 
-// From `Link: <...>; rel="next"`: only a target with the SAME origin and
-// path as the request is accepted, and every one of its query parameters
-// must map onto one of the tool's own query fields — otherwise no hint.
-// A hostile upstream therefore cannot steer the next call to another host,
-// path or parameter. Returns `{ next }` whenever a Link header was sent
-// (its verdict is final), undefined when there was none.
-const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | undefined => {
-  if (input.links === undefined) {
-    return undefined;
-  }
-  const link = input.links.find((candidate) => candidate.rels.includes('next'));
-  const target = link === undefined ? undefined : parseUrl(link.target, input.responseUrl);
+// A next-page URL (from a Link header or a JSON:API `links.next`) turned
+// into arguments: only a target with the SAME origin and path as the
+// request is accepted, and every one of its query parameters must map onto
+// one of the tool's own query fields (a deepObject field's properties
+// included) — otherwise no hint. A hostile upstream therefore cannot steer
+// the next call to another host, path or parameter. A relative target is
+// resolved against the response URL.
+const fromNextUrl = (
+  plan: PaginationPlan,
+  input: HintInput,
+  raw: string | undefined,
+): { next?: Args } => {
+  const target = raw === undefined ? undefined : parseUrl(raw, input.responseUrl);
   const request = parseUrl(input.requestUrl);
   if (
     target === undefined ||
@@ -171,17 +177,59 @@ const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | und
   ) {
     return {};
   }
-  const mapped: Args = carriedArgs(plan, input.args);
-  for (const name of new Set(target.searchParams.keys())) {
-    const field = plan.query[name];
-    const value =
-      field === undefined ? undefined : linkValue(target.searchParams.getAll(name), field);
-    if (field === undefined || value === undefined) {
-      return {};
-    }
-    mapped[field.field] = value;
+  const next = queryArgs(plan.query, target.searchParams, carriedArgs(plan, input.args));
+  return next === undefined ? {} : { next };
+};
+
+// The RFC 8288 / IANA relation types that describe pagination. A Link
+// header that carries none of them (only `deprecation`, `describedby`, ...,
+// or nothing parsable) says nothing about pages.
+const PAGINATION_RELS: ReadonlySet<string> = new Set(['next', 'prev', 'previous', 'first', 'last']);
+
+// From `Link: <...>; rel="next"`. Returns `{ next }` when the Link header
+// speaks about pagination (its verdict is final, even "no next": e.g. only
+// rel="prev" on the last page), undefined when there was none or it carried
+// no pagination relation, so a body link or cursor still gets its turn.
+const fromLink = (plan: PaginationPlan, input: HintInput): { next?: Args } | undefined => {
+  const paging = input.links?.some((candidate) =>
+    candidate.rels.some((rel) => PAGINATION_RELS.has(rel.toLowerCase())),
+  );
+  if (input.links === undefined || paging !== true) {
+    return undefined;
   }
-  return { next: mapped };
+  const link = input.links.find((candidate) =>
+    candidate.rels.some((rel) => rel.toLowerCase() === 'next'),
+  );
+  return fromNextUrl(plan, input, link?.target);
+};
+
+// A JSON:API link is a URI-reference string or a link object whose `href`
+// is one (JSON:API 1.1, "Links"); null means the link does not exist.
+const jsonApiHref = (link: unknown): string | undefined => {
+  if (typeof link === 'string') {
+    return link;
+  }
+  const href = isRecord(link) ? link['href'] : undefined;
+  return typeof href === 'string' ? href : undefined;
+};
+
+// From a JSON:API document's top-level `links.next` (only when the actual
+// response is one of the declared JSON:API branches). A `links` object is the document's verdict: a next link
+// is mapped like a Link target, and anything else (null on the last page,
+// absent, malformed) is "no next page". Undefined when the body has no
+// `links` object, so the body cursors still get their turn.
+const fromJsonApiLinks = (plan: PaginationPlan, input: HintInput): { next?: Args } | undefined => {
+  const { data } = input;
+  if (
+    plan.jsonApiLinks === undefined ||
+    input.status === undefined ||
+    !isJsonApiResponse(plan.jsonApiLinks, input.status, input.contentType) ||
+    !isRecord(data) ||
+    !isRecord(data['links'])
+  ) {
+    return undefined;
+  }
+  return fromNextUrl(plan, input, jsonApiHref(data['links']['next']));
 };
 
 const withArg = (args: Args, field: PaginationField, raw: unknown): Args | undefined => {
@@ -207,9 +255,10 @@ const fromBody = (plan: PaginationPlan, input: HintInput): Args | undefined => {
 };
 
 // `next` for a paginated tool's result: a `Link` header decides when the
-// upstream sent one (even "no next"); otherwise a recognized body cursor.
+// upstream sent one (even "no next"); then a JSON:API `links` object; then
+// a recognized body cursor.
 export const nextPageHint = (plan: PaginationPlan, input: HintInput): PageHint => {
-  const linked = fromLink(plan, input);
+  const linked = fromLink(plan, input) ?? fromJsonApiLinks(plan, input);
   const next = linked === undefined ? fromBody(plan, input) : linked.next;
   return { next: next ?? NO_NEXT_PAGE };
 };
