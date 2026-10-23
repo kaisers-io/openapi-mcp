@@ -1,5 +1,6 @@
 // Merges one file's child-process coverage into the worker's coverage for the
-// same file by canonical source identity (issue #86 review).
+// same file by canonical source identity (issue
+// kaisers-io/openapi-mcp-archive#86 review).
 //
 // The worker's map is converted from Vite's transform of the file through its
 // source map; a child's from Node's type-stripped original. Both agree on

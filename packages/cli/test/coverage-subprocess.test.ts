@@ -5,11 +5,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 
-// End-to-end regression test for the custom coverage provider (issue #86
-// review): a nested vitest run in which one typed function runs both in the
-// vitest worker and in a spawned Node child. Its function must be ONE entry
-// with the summed count; before the fix the two conversions' entries were
-// kept side by side and inflated the function percentage.
+// End-to-end regression test for the custom coverage provider (issue
+// kaisers-io/openapi-mcp-archive#86 review): a nested vitest run in which one
+// typed function runs both in the vitest worker and in a spawned Node child.
+// Its function must be ONE entry with the summed count; before the fix the two
+// conversions' entries were kept side by side and inflated the function
+// percentage.
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const config = fileURLToPath(
   new URL('fixtures/coverage-merge/vitest.fixture.config.ts', import.meta.url),

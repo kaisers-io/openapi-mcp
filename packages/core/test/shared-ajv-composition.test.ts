@@ -8,12 +8,14 @@ import {
 } from '../src/index.ts';
 import type { EnvelopeValidator, NamedOperation } from '../src/index.ts';
 
-// One shared Ajv context per snapshot (issue #42) must give every tool the
-// same verdicts as a context of its own, for the output schemas the other
-// stacks generate: default responses under --default-response-is-error
-// (#117), the projection branch (#136), the inclusive response oneOf (#102)
-// and an output schema withheld for an unsafe pattern (#39). The schema
-// objects are shared between tools, as the dereferencer hands them out.
+// One shared Ajv context per snapshot (issue kaisers-io/openapi-mcp-archive#42)
+// must give every tool the same verdicts as a context of its own, for the
+// output schemas the other features generate: default responses under
+// --default-response-is-error (kaisers-io/openapi-mcp-archive#117), the
+// projection branch (kaisers-io/openapi-mcp-archive#136), the inclusive
+// response oneOf (kaisers-io/openapi-mcp-archive#102) and an output schema
+// withheld for an unsafe pattern (kaisers-io/openapi-mcp-archive#39). The
+// schema objects are shared between tools, as the dereferencer hands them out.
 
 const pet: Record<string, unknown> = {
   type: 'object',
@@ -39,11 +41,13 @@ const op = (toolName: string, responses: Record<string, unknown>): NamedOperatio
 });
 
 const operations: NamedOperation[] = [
-  // #117: only the documented 2xx form the schema under the option
+  // PR kaisers-io/openapi-mcp-archive#117: only the documented 2xx form the
+  // schema under the option
   op('getPetOrDefault', { '200': json(pet), default: { description: 'error' } }),
   // The same schema object in a second tool
   op('getPet', { '200': json(pet), '201': json(pet) }),
-  // #102: overlapping branches, so response mode must accept a value both match
+  // PR kaisers-io/openapi-mcp-archive#102: overlapping branches, so response
+  // mode must accept a value both match
   op('getEither', {
     '200': json({
       oneOf: [
@@ -52,7 +56,8 @@ const operations: NamedOperation[] = [
       ],
     }),
   }),
-  // #39: nested quantifiers withhold the output schema
+  // Issue kaisers-io/openapi-mcp-archive#39: nested quantifiers withhold the
+  // output schema
   op('getUnsafe', { '200': json({ type: 'string', pattern: '^(a+)+$' }) }),
 ];
 

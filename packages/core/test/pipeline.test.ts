@@ -388,7 +388,7 @@ describe('runSpecPipeline — cache', () => {
     expect(result.warnings.join('\n')).toContain('cache');
   });
 
-  it('warns about an over-budget server URL on the first fetch AND when served from the cache (issue #37)', async () => {
+  it('warns about an over-budget server URL on the first fetch AND when served from the cache (issue kaisers-io/openapi-mcp-archive#37)', async () => {
     const parsed = JSON.parse(remoteSpec('Big')) as Record<string, unknown>;
     const big = JSON.stringify({
       ...parsed,
@@ -1074,8 +1074,8 @@ describe('runSpecPipeline — filters', () => {
 
   it('does not count operations the filters drop against the tool budget', async () => {
     // 513 POSTs the read-only default drops: nothing is exposed, so the
-    // exposed-set budget (issue #32) has nothing to refuse. The raw cap below
-    // still bounds the unfiltered document.
+    // exposed-set budget (issue kaisers-io/openapi-mcp-archive#32) has nothing
+    // to refuse. The raw cap below still bounds the unfiltered document.
     const result = await runSpecPipeline(
       'https://api.example.com/big.json',
       baseOpts,
@@ -1085,7 +1085,7 @@ describe('runSpecPipeline — filters', () => {
   });
 });
 
-describe('runSpecPipeline — tool budget after filtering (issue #32)', () => {
+describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/openapi-mcp-archive#32)', () => {
   it('lets a narrow --allow carve one tool out of a spec with more operations than the budget', async () => {
     const result = await runSpecPipeline(
       'https://api.example.com/big.json',
@@ -1215,8 +1215,9 @@ describe('runSpecPipeline — tool budget after filtering (issue #32)', () => {
   });
 
   it('refuses an over-budget exposed set on an unchanged 200 before any bookkeeping touch', async () => {
-    // The unchanged-200 path only touches meta.json (#106); that touch must
-    // not happen for a run the tool budget refuses (#32)
+    // The unchanged-200 path only touches meta.json
+    // (kaisers-io/openapi-mcp-archive#106); that touch must not happen for a
+    // run the tool budget refuses (kaisers-io/openapi-mcp-archive#32)
     const cacheFs = memoryCacheFs();
     const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
     await runSpecPipeline(
@@ -1270,10 +1271,10 @@ describe('runSpecPipeline — tool budget after filtering (issue #32)', () => {
   });
 });
 
-describe('runSpecPipeline — filter before dereference, raw-document cache (issue #89)', () => {
+describe('runSpecPipeline — filter before dereference, raw-document cache (issue kaisers-io/openapi-mcp-archive#89)', () => {
   const specUrl = 'https://api.example.com/layered.json';
-  // Issue #89's generator: `schemas` schemas in `layers` layers, each
-  // referencing `refs` schemas of the next one
+  // Issue kaisers-io/openapi-mcp-archive#89's generator: `schemas` schemas in
+  // `layers` layers, each referencing `refs` schemas of the next one
   const layered = (schemas: number, refs: number, pathCount: number, layers: number): string => {
     const perLayer = Math.ceil(schemas / layers);
     const components: Record<string, unknown> = {};
@@ -1442,7 +1443,7 @@ describe('runSpecPipeline — filter before dereference, raw-document cache (iss
     }
   });
 
-  it('migrates a pre-#89 entry: refetched without validators, rewritten as the source document', async () => {
+  it('migrates a version 1 cache entry: refetched without validators, rewritten as the source document', async () => {
     const cacheFs = memoryCacheFs();
     const text = remoteSpec('Remote');
     const seen: (string | null)[] = [];
@@ -1493,7 +1494,7 @@ describe('runSpecPipeline — filter before dereference, raw-document cache (iss
     expect(seen).toHaveLength(2);
   });
 
-  it('serves a pre-#89 entry as the last known good baseline when the migration fetch fails', async () => {
+  it('serves a version 1 cache entry as the last known good baseline when the migration fetch fails', async () => {
     const cacheFs = memoryCacheFs();
     const text = remoteSpec('Remote');
     const opts = { ...baseOpts, cacheRoot: '/cache', ...allowAll };
@@ -1514,7 +1515,7 @@ describe('runSpecPipeline — filter before dereference, raw-document cache (iss
   });
 });
 
-describe('runSpecPipeline — wide containers (issue #89 review)', () => {
+describe('runSpecPipeline — wide containers (issue kaisers-io/openapi-mcp-archive#89 review)', () => {
   // 130,000 elements is far inside every spec budget, but well past V8's
   // argument-count limit for a variadic call such as push(...array)
   const WIDE = 130_000;
@@ -1568,7 +1569,7 @@ describe('runSpecPipeline — wide containers (issue #89 review)', () => {
   });
 });
 
-describe('runSpecPipeline — densely cyclic models (issue #89)', () => {
+describe('runSpecPipeline — densely cyclic models (issue kaisers-io/openapi-mcp-archive#89)', () => {
   it('serves a spec whose cyclic models used to exhaust the node budget, failing closed per schema', async () => {
     // Ten mutually referencing schemas, like a SaaS model where customer,
     // subscription and invoice all expand each other
@@ -1625,7 +1626,7 @@ describe('runSpecPipeline — densely cyclic models (issue #89)', () => {
   });
 });
 
-describe('runSpecPipeline — collapseCycles differential (issue #89 review)', () => {
+describe('runSpecPipeline — collapseCycles differential (issue kaisers-io/openapi-mcp-archive#89 review)', () => {
   // Mulberry32: a tiny seeded PRNG so a failure names a reproducible seed
   const prng = (seed: number): (() => number) => {
     let state = seed >>> 0;

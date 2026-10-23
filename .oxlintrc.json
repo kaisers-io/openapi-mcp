@@ -11,7 +11,7 @@
   // Type-aware rules (typescript/no-floating-promises and friends) only run
   // with type information, which oxlint gets from oxlint-tsgolint. Set here
   // rather than as a CLI flag so `pnpm lint`, CI and editor integrations all
-  // run the same rule set (issue #85).
+  // run the same rule set (issue kaisers-io/openapi-mcp-archive#85).
   "options": { "typeAware": true },
   "rules": {
     "capitalized-comments": ["error", "always", { "ignoreConsecutiveComments": true }],
@@ -163,11 +163,12 @@
     // flow. Too broad for file-scoped overrides to stay honest, so the
     // exception stays global.
     "no-continue": "off",
-    // Async sequencing guards (issue #85). The cache lock must be released
-    // only after run() settles, commitEntry must write objects before
-    // meta.json, and a rejection must reach its catch; a single un-awaited
-    // call breaks that silently and tsc does not report it. Listed
-    // explicitly so they stay on whatever happens to the categories above.
+    // Async sequencing guards (issue kaisers-io/openapi-mcp-archive#85). The
+    // cache lock must be released only after run() settles, commitEntry must
+    // write objects before meta.json, and a rejection must reach its catch; a
+    // single un-awaited call breaks that silently and tsc does not report it.
+    // Listed explicitly so they stay on whatever happens to the categories
+    // above.
     "typescript/no-floating-promises": "error",
     "typescript/no-misused-promises": "error",
     "typescript/await-thenable": "error",
@@ -184,11 +185,13 @@
     // The default would also demand removing the deliberate `return await`
     // outside a try, which keeps the caller's frame in async stack traces.
     "typescript/return-await": ["error", "error-handling-correctness-only"],
-    // Off for now: type-aware rules outside #85's scope that the categories
-    // above switch on together with the ones above, and that have findings
-    // on main (counts as of #115's merge with main). Each needs its own
+    // Off for now: type-aware rules outside kaisers-io/openapi-mcp-archive#85's
+    // scope that the categories above switch on together with the ones above,
+    // and that have findings on main (counts as of
+    // kaisers-io/openapi-mcp-archive#115's merge with main). Each needs its own
     // review of whether the code or the rule should change, so they are
-    // follow-up work, not part of the async guard: tracked in #148.
+    // follow-up work, not part of the async guard: tracked in
+    // kaisers-io/openapi-mcp-archive#148.
     "typescript/prefer-readonly-parameter-types": "off", // 1616
     "typescript/no-unsafe-type-assertion": "off", // 589
     "typescript/no-confusing-void-expression": "off", // 87

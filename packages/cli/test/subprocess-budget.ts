@@ -1,5 +1,6 @@
 // Time budget for the suites that spawn real `openapi-mcp` processes, sized
-// from per-test durations measured on CI (issue #96) rather than guessed:
+// from per-test durations measured on CI (issue
+// kaisers-io/openapi-mcp-archive#96) rather than guessed:
 //
 // - In normal runs the slowest subprocess test (the five-process refresh
 //   storm in cache-concurrency.test.ts) took up to 4.4 s on ubuntu-latest and

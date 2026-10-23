@@ -5,8 +5,9 @@ import { isRecord } from './refs.ts';
 export type Resolve = (node: unknown) => unknown;
 
 // A parameter as written (a `{ $ref }` stays one: keywords next to the $ref
-// are applied when the operation is dereferenced, OpenAPI 3.1, issue #63)
-// with the name and location of what it resolves to.
+// are applied when the operation is dereferenced, OpenAPI 3.1, issue
+// kaisers-io/openapi-mcp-archive#63) with the name and location of what it
+// resolves to.
 type Entry = { written: Record<string, unknown>; name: string; in: string };
 
 // One level's parameters keyed by exact resolved `in name`, the last

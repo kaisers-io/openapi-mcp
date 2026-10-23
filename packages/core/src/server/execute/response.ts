@@ -55,11 +55,11 @@ export type EnvelopeCompiler = (
   outputSchema: Record<string, unknown> | undefined,
 ) => EnvelopeValidator | undefined;
 
-// One compiler context for a whole server snapshot (issue #42). A fresh Ajv
-// instance per tool compiled the draft 2020-12 META-schema again for every
-// tool (Ajv compiles it lazily, the first time an instance validates a schema
-// against it): about 85% of the per-tool cost, 5.9 s for 500 tools. Sharing
-// one instance pays that once.
+// One compiler context for a whole server snapshot (issue
+// kaisers-io/openapi-mcp-archive#42). A fresh Ajv instance per tool compiled
+// the draft 2020-12 META-schema again for every tool (Ajv compiles it lazily,
+// the first time an instance validates a schema against it): about 85% of the
+// per-tool cost, 5.9 s for 500 tools. Sharing one instance pays that once.
 //
 // Scoped, not global: the caller creates one per snapshot, so the compiled
 // validators it retains live exactly as long as the server that uses them and
@@ -109,9 +109,9 @@ export type MapResponseOptions = {
   // Clock for an HTTP-date Retry-After; Date.now by default.
   now?: () => number;
   // Set (to the CLI flag name) when this tool's outputSchema exists only
-  // because the operator assumed `default` documents errors (#72): an
-  // undocumented 2xx then names that assumption, so the operator can tell a
-  // spec gap from a server bug.
+  // because the operator assumed `default` documents errors
+  // (kaisers-io/openapi-mcp-archive#72): an undocumented 2xx then names that
+  // assumption, so the operator can tell a spec gap from a server bug.
   undeclaredSuccessHint?: string;
   // For a paginated tool: computes the `pagination` hint for a successful
   // response from its parsed Link header and (structured path only) its

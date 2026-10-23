@@ -13,14 +13,14 @@ import type { CacheLayout } from './paths.ts';
 // "cache unlock" needs --force.
 export const LOCK_STALE_MS = 60_000;
 
-// Bounded retry before a STRICT acquisition reports a conflict (#65), so two
-// writers that merely overlap for a moment serialize instead of one failing.
-// Exponential with "equal jitter" (half fixed, half random — see AWS,
-// "Exponential Backoff And Jitter"): the random half de-synchronizes
-// processes that started together, the fixed half keeps every wait
-// meaningful. The schedule sums to at most ~2 s, after which a holder is
-// assumed not to be finishing soon (a long refresh, or a crashed owner) and
-// the conflict is reported exactly as before.
+// Bounded retry before a STRICT acquisition reports a conflict
+// (kaisers-io/openapi-mcp-archive#65), so two writers that merely overlap for a
+// moment serialize instead of one failing. Exponential with "equal jitter"
+// (half fixed, half random — see AWS, "Exponential Backoff And Jitter"): the
+// random half de-synchronizes processes that started together, the fixed half
+// keeps every wait meaningful. The schedule sums to at most ~2 s, after which a
+// holder is assumed not to be finishing soon (a long refresh, or a crashed
+// owner) and the conflict is reported exactly as before.
 export const LOCK_RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200, 400, 600, 600];
 
 // A caller that knows how long the operator is prepared to wait (the spec
@@ -178,14 +178,14 @@ const withNamespaceLockImpl = async <T>(
   return runHolding(layout, fs, acquisition.owner, run);
 };
 
-// The best-effort variant (#65), for writes that are only bookkeeping on an
-// entry the caller has already verified (a 304, or a 200 with unchanged
-// bytes, refreshing fetchedAt and validators). One attempt, no retry: when
-// several servers start together, the first to get the lock records the
-// revalidation and the others need not wait for it. A held lock is reported
-// as a value, never thrown, so the caller can keep serving the verified
-// baseline with a warning. Anything else (I/O failure, a corrupt entry found
-// under the lock) still throws.
+// The best-effort variant (kaisers-io/openapi-mcp-archive#65), for writes that
+// are only bookkeeping on an entry the caller has already verified (a 304, or a
+// 200 with unchanged bytes, refreshing fetchedAt and validators). One attempt,
+// no retry: when several servers start together, the first to get the lock
+// records the revalidation and the others need not wait for it. A held lock is
+// reported as a value, never thrown, so the caller can keep serving the
+// verified baseline with a warning. Anything else (I/O failure, a corrupt entry
+// found under the lock) still throws.
 const tryWithNamespaceLockImpl = async <T>(
   layout: CacheLayout,
   fs: CacheFs,

@@ -8,6 +8,10 @@ hit.
 Security problems are the exception: report them privately, as [SECURITY.md](SECURITY.md)
 describes, never in a public issue or pull request.
 
+References of the form `kaisers-io/openapi-mcp-archive#N` in code comments, tests and the changelog
+point to issues and pull requests in the project's earlier private tracker. Numbers in this
+repository start again from one.
+
 ## Requirements
 
 - **Node.js `^22.19.0 || >=24.11.0`** is the supported range for the published CLI (`engines` in

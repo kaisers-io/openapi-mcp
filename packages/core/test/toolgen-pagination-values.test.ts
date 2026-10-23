@@ -9,8 +9,9 @@ import {
 const FORM = { style: 'form', explode: true } as const;
 
 // Direct coverage of how a pagination hint value is typed and decoded
-// (issue #86 floors): the schema shapes zod emits for optional/nullable
-// fields, and body cursors that arrive as JSON numbers or booleans.
+// (issue kaisers-io/openapi-mcp-archive#86 floors): the schema shapes zod emits
+// for optional/nullable fields, and body cursors that arrive as JSON numbers or
+// booleans.
 describe('fieldOf', () => {
   it('unwraps a nullable anyOf to its single non-null branch', () => {
     const schema = { anyOf: [{ type: 'integer' }, { type: 'null' }] };

@@ -28,7 +28,8 @@ type ToolRow = {
   // The outputSchema exists only because of --default-response-is-error.
   outputSchemaAssumesDefaultIsError?: true;
   // Why there is no outputSchema, when the tool description tells the agent
-  // (#39: a response pattern with nested quantifiers).
+  // (kaisers-io/openapi-mcp-archive#39: a response pattern with nested
+  // quantifiers).
   outputSchemaWithheld?: string;
 };
 

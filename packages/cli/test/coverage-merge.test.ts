@@ -90,7 +90,7 @@ const pct = (counts: Record<string, number>): number => {
   return values.filter((count) => count > 0).length / values.length;
 };
 
-describe('mergeFileCoverageByIdentity (issue #86 review)', () => {
+describe('mergeFileCoverageByIdentity (issue kaisers-io/openapi-mcp-archive#86 review)', () => {
   it('counts a function that ran in a worker AND a child once, with the summed count', () => {
     const merged = mergeFileCoverageByIdentity(worker(), child());
     // 3 worker functions + 1 child-only, not 3 + 2

@@ -17,8 +17,9 @@ const LOCK_FILE_MAX_BYTES = 1024;
 export type LockHolder = {
   owner: string;
   acquiredAt: number;
-  // Who holds it (#65), when the writer had a runtime to record. Optional:
-  // records written by earlier versions carry neither.
+  // Who holds it (kaisers-io/openapi-mcp-archive#65), when the writer had a
+  // runtime to record. Optional: records written by earlier versions carry
+  // neither.
   pid?: number;
   hostname?: string;
 };

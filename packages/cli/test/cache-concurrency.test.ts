@@ -115,7 +115,7 @@ describe('cross-process cache races and the authenticated bypass (real filesyste
       expect(await readMeta()).toMatchObject({ specVersion: '1.0.0' });
     });
 
-    it('lets every concurrent start on an unchanged, revalidating spec succeed (#65)', async () => {
+    it('lets every concurrent start on an unchanged, revalidating spec succeed (kaisers-io/openapi-mcp-archive#65)', async () => {
       // MCP hosts start several servers at once. Past the TTL each of these
       // revalidates an unchanged spec; only one can record that under the
       // writer lock, and the others must still serve the verified baseline
@@ -142,7 +142,7 @@ describe('cross-process cache races and the authenticated bypass (real filesyste
       expect(names).not.toContain('.lock');
     }, 30_000);
 
-    it('serves a verified entry past a lock left by a crashed writer (#65)', async () => {
+    it('serves a verified entry past a lock left by a crashed writer (kaisers-io/openapi-mcp-archive#65)', async () => {
       await new Promise((resolve) => {
         setTimeout(resolve, 1100);
       });

@@ -344,13 +344,13 @@ describe('applyFilters — aggregate work budget', () => {
   });
 
   it('keeps headroom for 256 patterns over a spec at the raw operation cap', () => {
-    // Issue #32 moved the tool budget after filtering, so filters now run over
-    // up to SPEC_BUDGETS.maxOperationCount operations instead of 512. Worst
-    // realistic shape: 127 allow patterns that match nothing (all three forms,
-    // one with a leading wildcard) before a final "**", and 128 deny patterns,
-    // so every operation is checked against every pattern, plus the
-    // dead-pattern pass. Measured: 28,858,075 steps (14.4% of the cap) at
-    // 4096 operations, about 0.2-0.7 s; 3,960,757 at 512.
+    // Issue kaisers-io/openapi-mcp-archive#32 moved the tool budget after
+    // filtering, so filters now run over up to SPEC_BUDGETS.maxOperationCount
+    // operations instead of 512. Worst realistic shape: 127 allow patterns that
+    // match nothing (all three forms, one with a leading wildcard) before a
+    // final "**", and 128 deny patterns, so every operation is checked against
+    // every pattern, plus the dead-pattern pass. Measured: 28,858,075 steps
+    // (14.4% of the cap) at 4096 operations, about 0.2-0.7 s; 3,960,757 at 512.
     const resources = ['users', 'repos', 'orders', 'invoices', 'customers', 'payments'];
     const methods: readonly HttpMethod[] = ['get', 'put', 'post', 'delete', 'patch'];
     const operations = Array.from({ length: SPEC_BUDGETS.maxOperationCount }, (_, index) => {

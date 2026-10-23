@@ -41,8 +41,9 @@ const documentedErrors = (responses: Record<string, unknown>): string[] =>
     });
 
 // `note` is fixed server text (never spec text) about the tool itself, e.g.
-// why it has no output schema (#39). It is listed right after `[DEPRECATED]`,
-// before the cap, so a long spec description cannot truncate it away.
+// why it has no output schema (kaisers-io/openapi-mcp-archive#39). It is listed
+// right after `[DEPRECATED]`, before the cap, so a long spec description cannot
+// truncate it away.
 export const composeDescription = (operation: OperationRecord, note?: string): string => {
   const errors = documentedErrors(operation.responses);
   // `[DEPRECATED]` is listed FIRST, before sanitizeSpecText's cap runs below —

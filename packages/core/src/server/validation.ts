@@ -6,10 +6,10 @@ import type { SnapshotTool } from './types.ts';
 
 // Argument validation for a tool call, the redacted rendering of its
 // failures, and the guarded executor call that follows. Moved out of
-// dispatch.ts (the rendering unchanged) when call_operation (issue #38)
-// became a second caller: a direct tool call and call_operation share this
-// one validate-then-execute tail, so the same arguments produce the same
-// outcome through either entry point.
+// dispatch.ts (the rendering unchanged) when call_operation (issue
+// kaisers-io/openapi-mcp-archive#38) became a second caller: a direct tool call
+// and call_operation share this one validate-then-execute tail, so the same
+// arguments produce the same outcome through either entry point.
 
 // Bounds how many Zod issues are rendered into a validation-failure message —
 // defense in depth against a pathological schema producing thousands of

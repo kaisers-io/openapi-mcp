@@ -88,7 +88,8 @@ const callWith = async (
   op: NamedOperation,
   body: unknown,
   args: Record<string, unknown>,
-  // Through #144's call_operation instead of a direct call.
+  // Through kaisers-io/openapi-mcp-archive#144's call_operation instead of a
+  // direct call.
   discover = false,
 ) => {
   const snapshot = snapshotOf([op], discover ? 'discover' : 'per-operation');

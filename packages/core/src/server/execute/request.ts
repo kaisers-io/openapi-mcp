@@ -666,7 +666,8 @@ const serializeBody = (
     // REQUIRED body is sent even when every (optional) field is absent: it
     // falls through with the empty object, so the upstream receives `{}` (or
     // an empty form body) with its Content-Type rather than no body at all
-    // (#40). Presence comes from the mapper, never from populated fields.
+    // (kaisers-io/openapi-mcp-archive#40). Presence comes from the mapper,
+    // never from populated fields.
     if (!assembled.anyPresent && mapper.bodyRequired !== true) {
       return { ok: {} };
     }

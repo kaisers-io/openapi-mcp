@@ -15,10 +15,11 @@ import type { SpecPipelineDeps, SpecPipelineOptions, SpecPipelineResult } from '
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 import type { MemoryCacheFs } from './helpers/cache-fs.ts';
 
-// #76: a start whose source bytes are identical to the accepted ones reuses
-// the accepted document the run already read from the cache, instead of
-// parsing and validating the source again. The counters show which runs did
-// the work; everything else in the pipeline is the real implementation.
+// Issue kaisers-io/openapi-mcp-archive#76: a start whose source bytes are
+// identical to the accepted ones reuses the accepted document the run already
+// read from the cache, instead of parsing and validating the source again. The
+// counters show which runs did the work; everything else in the pipeline is the
+// real implementation.
 const counts = vi.hoisted(() => ({ parse: 0, validate: 0 }));
 
 vi.mock(import('../src/spec/parse.ts'), async (importOriginal) => {
@@ -201,7 +202,7 @@ const resetCounts = (): void => {
   counts.validate = 0;
 };
 
-describe('an unchanged source reuses the accepted document (#76)', () => {
+describe('an unchanged source reuses the accepted document (kaisers-io/openapi-mcp-archive#76)', () => {
   it('a second start of an unchanged YAML file neither parses nor validates it again', async () => {
     resetCounts();
     const { fs, source } = await primed();

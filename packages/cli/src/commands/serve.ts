@@ -15,9 +15,10 @@ const collect = (value: string, previous: string[] | undefined): string[] => [
 // Registration only: the options and help text are defined here, statically,
 // so `serve --help` and option parsing are unchanged. Everything the action
 // needs (MCP SDK, Streamable HTTP + hono, executor, Ajv) lives in
-// serve-action.ts and is imported when the action runs (issue #91), so the
-// other commands never load or evaluate it. A bundling mistake would surface
-// as a failure of `serve` itself, which the packed-CLI smoke test exercises.
+// serve-action.ts and is imported when the action runs (issue
+// kaisers-io/openapi-mcp-archive#91), so the other commands never load or
+// evaluate it. A bundling mistake would surface as a failure of `serve` itself,
+// which the packed-CLI smoke test exercises.
 export const registerServe: CommandRegistrar = (program, ctx, state) => {
   const command = registerApiOptions(
     registerSpecOptions(

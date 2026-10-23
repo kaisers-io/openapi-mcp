@@ -38,7 +38,8 @@ export type FieldMapping =
       destination: 'body';
       bodyPath: readonly string[];
       required: boolean;
-      // A multipart/form-data part carrying raw bytes, supplied as base64 (#71).
+      // A multipart/form-data part carrying raw bytes, supplied as base64
+      // (kaisers-io/openapi-mcp-archive#71).
       binary?: true;
       // The part's Content-Type: the property's declared concrete
       // `contentMediaType` (e.g. `image/png`), else application/octet-stream.
@@ -57,12 +58,13 @@ export type RequestMapper = {
   // `requestBody.required: true` (OAS 3.1.1 §4.8.13.1). Body PRESENCE is part
   // of the contract and cannot be inferred from which flattened fields are
   // populated: a required body whose properties are all optional must still
-  // be sent (as `{}`) when every field is absent (#40).
-  // Encoding is deliberately asymmetric: the key is present (and `true`) only
-  // for a required body, and ABSENT — never `false` — for an optional one, so
-  // a mapper for an optional body stays byte-identical to the pre-#40 shape.
-  // Anything that serializes, compares or memoizes mappers must treat a
-  // missing key as "optional", not as "unknown".
+  // be sent (as `{}`) when every field is absent
+  // (kaisers-io/openapi-mcp-archive#40). Encoding is deliberately asymmetric:
+  // the key is present (and `true`) only for a required body, and ABSENT —
+  // never `false` — for an optional one, so a mapper for an optional body stays
+  // byte-identical to its shape before kaisers-io/openapi-mcp-archive#40.
+  // Anything that serializes, compares or memoizes mappers must treat a missing
+  // key as "optional", not as "unknown".
   bodyRequired?: true;
   fields: Record<string, FieldMapping>;
 };
@@ -327,7 +329,8 @@ const jsonTier = (json: readonly MediaCandidate[]): readonly MediaCandidate[] =>
   return mergePatch.length > 0 ? mergePatch : json;
 };
 
-// Picks the request body media type deterministically (#54):
+// Picks the request body media type deterministically
+// (kaisers-io/openapi-mcp-archive#54):
 //   1. `application/json` (any case, with or without parameters);
 //   2. otherwise one `application/*+json` variant — if several are declared,
 //      `application/merge-patch+json` (RFC 7396) wins: it is the
@@ -378,8 +381,9 @@ const selectMedia = (
       entry: content[chosenForm.contentType] as Record<string, unknown>,
     };
   }
-  // 3b. `multipart/form-data` (#71). A declared key with parameters is not
-  //     selected: the boundary parameter is generated per request.
+  // 3b. `multipart/form-data` (kaisers-io/openapi-mcp-archive#71). A declared
+  //     key with parameters is not selected: the boundary parameter is
+  //     generated per request.
   const multipart = Object.keys(content).filter((contentType) => {
     const parsed = parseMediaType(contentType);
     return (
@@ -395,8 +399,9 @@ const selectMedia = (
   if (multipartKey !== undefined) {
     return { contentType: multipartKey, entry: content[multipartKey] as Record<string, unknown> };
   }
-  // 4. `application/octet-stream` (#71), last: a structured alternative is
-  //    always preferred over raw bytes. Same tie rule as the JSON tiers.
+  // 4. `application/octet-stream` (kaisers-io/openapi-mcp-archive#71), last: a
+  //    structured alternative is always preferred over raw bytes. Same tie rule
+  //    as the JSON tiers.
   const binary: MediaCandidate[] = Object.keys(content).flatMap((contentType) => {
     const parsed = parseMediaType(contentType);
     return parsed?.essence === OCTET_STREAM && isRecord(content[contentType])
@@ -469,8 +474,9 @@ const partMediaType = (schema: Record<string, unknown>): string => {
 
 // A non-binary multipart part must be ONE scalar that is never null: the
 // serializer writes it as the part's text. Arrays (repeated parts), objects
-// (JSON parts) and null are not encoded (decision for #120: unrepresentable),
-// so a tool must not accept a value that can only fail at call time.
+// (JSON parts) and null are not encoded (decision for
+// kaisers-io/openapi-mcp-archive#120: unrepresentable), so a tool must not
+// accept a value that can only fail at call time.
 const isTextPartSchema = (schema: unknown): boolean => {
   if (!isRecord(schema) || !isScalarSchema(schema) || schema['nullable'] === true) {
     return false;

@@ -202,7 +202,7 @@ describe('buildTools — wire schema + sanitization', () => {
   });
 });
 
-describe('buildTools — common nullable / allOf idioms are no longer omitted (#41)', () => {
+describe('buildTools — common nullable / allOf idioms are no longer omitted (kaisers-io/openapi-mcp-archive#41)', () => {
   it('generates the operation instead of listing it in omitted', () => {
     const body = (schema: Record<string, unknown>) => ({
       required: true,
@@ -241,7 +241,7 @@ describe('buildTools — common nullable / allOf idioms are no longer omitted (#
   });
 });
 
-describe('buildTools — defaultResponseIsError (#72)', () => {
+describe('buildTools — defaultResponseIsError (kaisers-io/openapi-mcp-archive#72)', () => {
   const success = { content: { 'application/json': { schema: { type: 'string' } } } };
   const opWith = (responses: Record<string, unknown>): NamedOperation => ({
     toolName: 'getCharge',
@@ -273,9 +273,9 @@ describe('buildTools — defaultResponseIsError (#72)', () => {
   });
 });
 
-describe('buildTools — per-build memoization (issue #90)', () => {
+describe('buildTools — per-build memoization (issue kaisers-io/openapi-mcp-archive#90)', () => {
   // One shared schema node, as the dereferencer hands out for a $ref target
-  // used by several operations (issue #89)
+  // used by several operations (issue kaisers-io/openapi-mcp-archive#89)
   const shared: Record<string, unknown> = {
     type: 'object',
     required: ['id'],
@@ -340,7 +340,8 @@ describe('buildTools — per-build memoization (issue #90)', () => {
 
   it('keys the memo by request/response mode: a node shared by a request body and a response converts per mode', () => {
     // A readOnly property is dropped from requests, writeOnly from open responses, and a
-    // nested-quantifier pattern withholds only the output schema (#39).
+    // nested-quantifier pattern withholds only the output schema
+    // (kaisers-io/openapi-mcp-archive#39).
     const user: Record<string, unknown> = {
       type: 'object',
       required: ['id', 'password'],

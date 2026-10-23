@@ -697,8 +697,8 @@ describe('tools command — toolgen omissions', () => {
   });
 });
 
-// #72: opt-in --default-response-is-error.
-describe('tools command — --default-response-is-error (#72)', () => {
+// Issue kaisers-io/openapi-mcp-archive#72: opt-in --default-response-is-error.
+describe('tools command — --default-response-is-error (kaisers-io/openapi-mcp-archive#72)', () => {
   type Row = { name: string; outputSchema: boolean; outputSchemaAssumesDefaultIsError?: true };
   const toolsJson = async (extra: readonly string[]): Promise<Row[]> => {
     const { lines, ctx } = fileCtx();
@@ -734,8 +734,9 @@ describe('tools command — --default-response-is-error (#72)', () => {
   });
 });
 
-// #39: a withheld output schema is reported in --json output.
-describe('tools command — withheld output schema (#39)', () => {
+// Issue kaisers-io/openapi-mcp-archive#39: a withheld output schema is reported
+// in --json output.
+describe('tools command — withheld output schema (kaisers-io/openapi-mcp-archive#39)', () => {
   it('reports why a response pattern with nested quantifiers left the tool without one', async () => {
     const { lines, ctx } = fileCtx();
     const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'unsafe-pattern.json'];

@@ -145,7 +145,7 @@ describe('assignToolNames — collisions', () => {
   });
 });
 
-describe('assignToolNames — non-ASCII, mixed segments and the provider charset (issue #67)', () => {
+describe('assignToolNames — non-ASCII, mixed segments and the provider charset (issue kaisers-io/openapi-mcp-archive#67)', () => {
   const nameOf = (method: HttpMethod, path: string, operationId?: string): string | undefined =>
     assignToolNames([record(method, path, operationId)])[0]?.toolName;
 

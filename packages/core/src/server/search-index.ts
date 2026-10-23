@@ -6,10 +6,11 @@ import type { SnapshotTool } from './types.ts';
 import { SEARCH_LIMIT_DEFAULT, SEARCH_QUERY_MAX_TOKENS } from './discovery-schemas.ts';
 import type { SearchInput } from './discovery-schemas.ts';
 
-// The search_operations index (issue #38): a deterministic keyword ranking
-// (BM25 over weighted fields) of the snapshot's exposed operations, built once
-// at startup. No embeddings, no network, no model calls — which is what lets a
-// query be bounded and its result reproduced exactly.
+// The search_operations index (issue kaisers-io/openapi-mcp-archive#38): a
+// deterministic keyword ranking (BM25 over weighted fields) of the snapshot's
+// exposed operations, built once at startup. No embeddings, no network, no
+// model calls — which is what lets a query be bounded and its result reproduced
+// exactly.
 
 // Per-entry display caps for a search result. A result is a pointer to an
 // operation, not its documentation (describe_operation returns that), so the

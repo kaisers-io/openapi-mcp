@@ -181,9 +181,10 @@ describe('deriveOutputSchema — the object-envelope', () => {
   });
 });
 
-// #33 / #47: response schemas are converted in RESPONSE mode — validated with
-// the same Ajv2020 path the server uses at runtime.
-describe('deriveOutputSchema — response-mode conversion (#33, #47)', () => {
+// Issue kaisers-io/openapi-mcp-archive#33 / kaisers-io/openapi-mcp-archive#47:
+// response schemas are converted in RESPONSE mode — validated with the same
+// Ajv2020 path the server uses at runtime.
+describe('deriveOutputSchema — response-mode conversion (kaisers-io/openapi-mcp-archive#33, kaisers-io/openapi-mcp-archive#47)', () => {
   const validatorFor = (schema: Record<string, unknown>): EnvelopeValidator => {
     const outputSchema = deriveOutputSchema(
       op({ '200': { content: { 'application/json': { schema } } } }),
@@ -258,7 +259,7 @@ describe('deriveOutputSchema — response-mode conversion (#33, #47)', () => {
   });
 });
 
-describe('deriveOutputSchema — oneOf in responses (#43)', () => {
+describe('deriveOutputSchema — oneOf in responses (kaisers-io/openapi-mcp-archive#43)', () => {
   it('validates a response oneOf inclusively, so a discriminator-mapping payload passes', () => {
     const branch = (extra: string) => ({
       type: 'object',
@@ -295,8 +296,9 @@ describe('deriveOutputSchema — oneOf in responses (#43)', () => {
   });
 });
 
-// #72: opt-in — treat `default` as covering error statuses only.
-describe('deriveOutputSchema — defaultResponseIsError opt-in (#72)', () => {
+// Issue kaisers-io/openapi-mcp-archive#72: opt-in — treat `default` as covering
+// error statuses only.
+describe('deriveOutputSchema — defaultResponseIsError opt-in (kaisers-io/openapi-mcp-archive#72)', () => {
   const responses = {
     '200': {
       content: {

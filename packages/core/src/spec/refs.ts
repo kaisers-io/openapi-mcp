@@ -68,11 +68,11 @@ const pushChildren = (pending: unknown[], children: readonly unknown[]): void =>
 
 // Validates every $ref in the document WITHOUT expanding anything: each must
 // be an internal JSON pointer that resolves. Dereferencing itself is deferred
-// until the operations to expose are known (issue #89), but a
-// spec with a dangling or external reference is still refused as a whole,
-// before it can reach the cache — the same verdict a full expansion gave.
-// Iterative and O(document): the parse depth budget bounds the stack, and
-// each distinct ref string is resolved once.
+// until the operations to expose are known (issue
+// kaisers-io/openapi-mcp-archive#89), but a spec with a dangling or external
+// reference is still refused as a whole, before it can reach the cache — the
+// same verdict a full expansion gave. Iterative and O(document): the parse
+// depth budget bounds the stack, and each distinct ref string is resolved once.
 export const checkRefs = (document: Record<string, unknown>): void => {
   const checked = new Set<string>();
   const pending: unknown[] = [document];

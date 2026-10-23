@@ -78,35 +78,37 @@ export type SpecPipelineResult = {
   warnings: readonly string[];
   cacheStatus: CacheStatus;
   // Accepted operations hidden because the pending candidate removed them
-  // (#60); empty when no candidate is waiting
+  // (kaisers-io/openapi-mcp-archive#60); empty when no candidate is waiting
   withheldOperations: readonly OmittedOperation[];
   // Set when this run could not record its revalidation because another
-  // process holds the cache entry's writer lock (#65): "held" while a live
-  // writer is busy, "stale" when the holder looks gone, which will not clear
-  // by itself (an operator runs "openapi-mcp cache unlock")
+  // process holds the cache entry's writer lock
+  // (kaisers-io/openapi-mcp-archive#65): "held" while a live writer is busy,
+  // "stale" when the holder looks gone, which will not clear by itself (an
+  // operator runs "openapi-mcp cache unlock")
   cacheLock?: CacheLockState | undefined;
 };
 
 export type CacheLockState = 'held' | 'stale';
 
 // `spec` is normalized from the NOT yet dereferenced `document`
-// (issue #89): its operations carry the raw parameters, request body and
-// responses, $refs included. Only the operations that survive filtering are
-// dereferenced, in finish.
+// (issue kaisers-io/openapi-mcp-archive#89): its operations carry the raw
+// parameters, request body and responses, $refs included. Only the operations
+// that survive filtering are dereferenced, in finish.
 type ProcessedSpec = {
-  // RAW operations (issue #89): parameters, requestBody and responses may
-  // still hold `$ref`s. Only `namedOperations` in the result are dereferenced;
-  // nothing may read schemas from spec.operations.
+  // RAW operations (issue kaisers-io/openapi-mcp-archive#89): parameters,
+  // requestBody and responses may still hold `$ref`s. Only `namedOperations` in
+  // the result are dereferenced; nothing may read schemas from spec.operations.
   spec: NormalizedSpec;
   document: Record<string, unknown>;
 };
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
-// Two levels (issue #32). The raw cap bounds the unfiltered document and runs
-// before anything is cached; the tool budget bounds what is exposed and runs
-// after filtering (see finish), so --allow can carve a small tool set out of
-// an API that documents more operations than the budget.
+// Two levels (issue kaisers-io/openapi-mcp-archive#32). The raw cap bounds the
+// unfiltered document and runs before anything is cached; the tool budget
+// bounds what is exposed and runs after filtering (see finish), so --allow can
+// carve a small tool set out of an API that documents more operations than the
+// budget.
 const enforceOperationBudget = (spec: NormalizedSpec): void => {
   if (spec.operations.length > SPEC_BUDGETS.maxOperationCount) {
     throw validationError(
@@ -158,11 +160,12 @@ const processCachedDocument = (
 };
 
 // Refreshed bytes identical to the ones the accepted document was validated
-// from (#76) need no second parse and validation: the entry read at the start
-// of this run already holds that document, hash-verified against its object
-// name by readCacheEntry. A file source used to discard it and re-parse the
-// file on every start, which for a large YAML spec was most of the start-up
-// (DigitalOcean: ~0.6 s of YAML parsing per start).
+// from (kaisers-io/openapi-mcp-archive#76) need no second parse and validation:
+// the entry read at the start of this run already holds that document,
+// hash-verified against its object name by readCacheEntry. A file source used
+// to discard it and re-parse the file on every start, which for a large YAML
+// spec was most of the start-up (DigitalOcean: ~0.6 s of YAML parsing per
+// start).
 //
 // Exact on purpose. The source hash covers every byte of the input, and the
 // stored document is the output of parse + validate + checkRefs, which take
@@ -197,7 +200,8 @@ const unusableEntryError = (reason: string): Error =>
 // A strict cache write (first use, a candidate, an accepted update) waits for
 // a busy writer lock for as long as the operator allowed the spec fetch to
 // take (--timeout), not just the built-in ~2 s: a concurrent first use of a
-// large spec can hold the lock longer than that (#65)
+// large spec can hold the lock longer than that
+// (kaisers-io/openapi-mcp-archive#65)
 const withLockWait = (cacheFs: CacheFs, timeoutMs: number): CacheFs =>
   cacheFs.runtime === undefined
     ? cacheFs
@@ -288,7 +292,7 @@ const runSpecPipelineOnce = async (
 
   // File specs are re-read and hash-compared on every run, so
   // the TTL never short-circuits them; only URL sources take the no-network path.
-  // An entry in the pre-#89 format (its document is the dereferenced form) is
+  // A version 1 entry (its document is the dereferenced form) is
   // refetched WITHOUT validators, so the server sends the bytes rather than a
   // 304: unchanged bytes are then rewritten as an accepted entry in the
   // current format, and changed ones go through the usual candidate gate.
@@ -341,8 +345,9 @@ const runSpecPipelineOnce = async (
       // no etag/lastModified (see its construction above), so this degrades
       // to an ordinary GET — identical bytes, but with the response's
       // validators captured.
-      // Imported here, not at the top (issue #91): the fetch path pulls in
-      // undici and the DNS-pinned transport, which file specs never need
+      // Imported here, not at the top (issue
+      // kaisers-io/openapi-mcp-archive#91): the fetch path pulls in undici and
+      // the DNS-pinned transport, which file specs never need
       const { fetchSpecConditional } = await import('./fetch.ts');
       const conditional = await fetchSpecConditional(
         source.url,
@@ -426,12 +431,13 @@ const runSpecPipelineOnce = async (
     // A typed store error (notably a lock conflict, exit 5) passes through
     // untouched.
     //
-    // One retry on a stale revision (#34): another process changed the entry
-    // between this run's lock-free read and its commit (typically servers
-    // starting together). The fetched and validated bytes are still valid
-    // input, so the entry is read again and the decision re-made against
-    // what is current, without refetching. Only a second conflict exits 5:
-    // a decision is still never committed against a revision it did not see.
+    // One retry on a stale revision (kaisers-io/openapi-mcp-archive#34):
+    // another process changed the entry between this run's lock-free read and
+    // its commit (typically servers starting together). The fetched and
+    // validated bytes are still valid input, so the entry is read again and the
+    // decision re-made against what is current, without refetching. Only a
+    // second conflict exits 5: a decision is still never committed against a
+    // revision it did not see.
     const commitAgainst = (entry: CacheEntry | undefined): Promise<SpecPipelineResult> =>
       commitRefresh(processedRefresh, refreshed, entry, layout, opts, deps, warnings, source.kind);
     try {
@@ -460,10 +466,10 @@ const runSpecPipelineOnce = async (
   // Typed, like every other cache mutation, so a raw fs failure here
   // cannot surface as an unexpected exit 1.
   //
-  // Best effort (#65): the entry being served was read and hash-verified
-  // in this run and the source confirmed it unchanged, so the write only
-  // records fetchedAt and validators. A lock held by another process
-  // (servers starting together, or a crashed writer) must not fail the
+  // Best effort (kaisers-io/openapi-mcp-archive#65): the entry being served was
+  // read and hash-verified in this run and the source confirmed it unchanged,
+  // so the write only records fetchedAt and validators. A lock held by another
+  // process (servers starting together, or a crashed writer) must not fail the
   // start-up over that; the verified baseline is served with a warning.
   const cacheLock =
     layout === undefined
@@ -513,7 +519,8 @@ const touchBestEffort = async (
     return undefined;
   }
   warnings.push(`cache metadata not updated, serving the verified baseline: ${touched.reason}`);
-  // A revision that moved on (#34) is not a lock problem
+  // A revision that moved on (kaisers-io/openapi-mcp-archive#34) is not a lock
+  // problem
   if (touched.lockStale === undefined) {
     return undefined;
   }
@@ -525,7 +532,8 @@ type FinishInput = {
   candidateContentHash?: string | undefined;
   displaySource: string;
   cacheStatus: CacheStatus;
-  // The pending candidate's `METHOD path` keys, when one is waiting (#60)
+  // The pending candidate's `METHOD path` keys, when one is waiting
+  // (kaisers-io/openapi-mcp-archive#60)
   candidateOperationKeys?: ReadonlySet<string> | undefined;
   cacheLock?: CacheLockState | undefined;
   // The entry being served, when one is. A candidate recorded in it must
@@ -686,7 +694,8 @@ const commitRefresh = async (
       // representation the cache no longer had
       ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
       ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
-      // Compare-and-swap (#34): the revision this decision was made against
+      // Compare-and-swap (kaisers-io/openapi-mcp-archive#34): the revision this
+      // decision was made against
       expected: { meta: cached.meta },
     });
     warnings.push(
@@ -710,17 +719,18 @@ const commitRefresh = async (
   // Filtered (and the exposed-set tool budget enforced) BEFORE the accepted
   // write and before the bookkeeping touch below: a run that refuses to serve
   // must not leave a trust-on-first-use baseline or bookkeeping behind as a
-  // side effect (#32)
+  // side effect (kaisers-io/openapi-mcp-archive#32)
   const result = finish(processed, opts, warnings, {
     contentHash: refreshed.loaded.contentHash,
     displaySource: refreshed.loaded.displaySource,
     cacheStatus: acceptedCacheStatus(layout, cached, unchanged),
   });
   // Nothing to persist when the source is byte-identical to the accepted one
-  // and no candidate is waiting (#75). `cached` was read and hash-verified
-  // earlier in this run, so rewriting it would only re-serialize the
-  // document, re-read and re-hash the accepted object, take the writer lock
-  // and churn meta.json — every run, for bytes that are already on disk.
+  // and no candidate is waiting (kaisers-io/openapi-mcp-archive#75). `cached`
+  // was read and hash-verified earlier in this run, so rewriting it would only
+  // re-serialize the document, re-read and re-hash the accepted object, take
+  // the writer lock and churn meta.json — every run, for bytes that are already
+  // on disk.
   //  - A file source records nothing worth updating: its TTL never
   //    short-circuits (it is re-read on every run), so `fetchedAt` is unused.
   //  - A URL source answering 200 with identical bytes only refreshes its
@@ -728,18 +738,19 @@ const commitRefresh = async (
   //    304 already uses, with the 200's validators replacing the old ones.
   // A waiting candidate still takes the full write below: the source has
   // reverted to the accepted content, and that write is what clears it. So
-  // does an entry in an older cache format (#89): touching it would keep its
-  // old schemaVersion, so it would never migrate, and a URL source would
-  // refetch without validators on every start.
+  // does an entry in an older cache format (kaisers-io/openapi-mcp-archive#89):
+  // touching it would keep its old schemaVersion, so it would never migrate,
+  // and a URL source would refetch without validators on every start.
   const bookkeepingOnly =
     cached !== undefined &&
     unchanged &&
     cached.meta.candidate === undefined &&
     cached.meta.schemaVersion === CACHE_META_SCHEMA_VERSION;
   if (layout !== undefined && bookkeepingOnly && sourceKind === 'url') {
-    // Best effort for the same reason as the 304 path (#65). `result` was
-    // built above, so the touch's warning and lock state are added to it
-    // here rather than to `warnings`, which finish() has already copied
+    // Best effort for the same reason as the 304 path
+    // (kaisers-io/openapi-mcp-archive#65). `result` was built above, so the
+    // touch's warning and lock state are added to it here rather than to
+    // `warnings`, which finish() has already copied
     const touchWarnings: string[] = [];
     const cacheLock = await touchBestEffort(
       layout,
@@ -771,7 +782,8 @@ const commitRefresh = async (
       ...(opts.cacheKey === undefined ? {} : { cacheKey: opts.cacheKey }),
       ...(refreshed.etag === undefined ? {} : { etag: refreshed.etag }),
       ...(refreshed.lastModified === undefined ? {} : { lastModified: refreshed.lastModified }),
-      // Compare-and-swap (#34): the revision this decision was made against
+      // Compare-and-swap (kaisers-io/openapi-mcp-archive#34): the revision this
+      // decision was made against
       expected: { meta: cached?.meta },
     });
   }

@@ -12,12 +12,13 @@ import { memoryCacheFs } from './helpers/cache-fs.ts';
 
 const LAYOUT = cacheLayout('/cache', 'abcdef0123456789');
 
-// The real adapter fsyncs inside writeFileAtomic before it resolves (#69), so
-// the store's commit is crash-ordered ONLY IF every object write has fully
-// RESOLVED before the meta.json write STARTS. Each write here yields to the
-// event loop before completing, so a commit that fired its writes
-// concurrently (Promise.all, or a missing await) would interleave and fail
-// this check, while a strictly sequential commit cannot.
+// The real adapter fsyncs inside writeFileAtomic before it resolves
+// (kaisers-io/openapi-mcp-archive#69), so the store's commit is crash-ordered
+// ONLY IF every object write has fully RESOLVED before the meta.json write
+// STARTS. Each write here yields to the event loop before completing, so a
+// commit that fired its writes concurrently (Promise.all, or a missing await)
+// would interleave and fail this check, while a strictly sequential commit
+// cannot.
 const recordingFs = (): { fs: CacheFs; events: string[] } => {
   const inner = memoryCacheFs();
   const events: string[] = [];

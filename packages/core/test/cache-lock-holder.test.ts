@@ -3,9 +3,9 @@ import { readLockHolder } from '../src/cache/lock-holder.ts';
 import type { CacheFs } from '../src/cache/fs.ts';
 import type { CacheLayout } from '../src/cache/paths.ts';
 
-// The lock record is untrusted input (issue #86 floors): absent and
-// malformed records carry no holder, an unreadable one is not mistaken for
-// absent.
+// The lock record is untrusted input (issue kaisers-io/openapi-mcp-archive#86
+// floors): absent and malformed records carry no holder, an unreadable one is
+// not mistaken for absent.
 const layout = { lockPath: '/cache/entry/lock' } as CacheLayout;
 
 const fsReading = (read: () => Promise<string>): CacheFs =>

@@ -7,10 +7,11 @@ import type { CoverageProviderModule, ReportContext, Vitest } from 'vitest/node'
 import { mergeFileCoverageByIdentity } from './vitest.coverage-merge.ts';
 
 // The v8 coverage provider, extended so lines that run only inside spawned
-// `openapi-mcp` processes count (issue #86). The subprocess suites start the
-// CLI from its TypeScript source; with NODE_V8_COVERAGE set, every child
-// writes its raw V8 coverage to a directory when it exits, and this provider
-// converts those files and merges them into the report.
+// `openapi-mcp` processes count (issue kaisers-io/openapi-mcp-archive#86). The
+// subprocess suites start the CLI from its TypeScript source; with
+// NODE_V8_COVERAGE set, every child writes its raw V8 coverage to a directory
+// when it exits, and this provider converts those files and merges them into
+// the report.
 //
 // Why not vitest's own `coverage.autoAttachSubprocess`: it merges a child's
 // raw V8 ranges with the worker's ranges for the same file URL BEFORE

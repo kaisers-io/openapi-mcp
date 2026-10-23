@@ -10,14 +10,15 @@ import {
 } from '../src/index.ts';
 import type { NamedOperation, ServerSnapshot } from '../src/index.ts';
 
-// A HELD-OUT query set for search_operations (issue #38 review). The ranking
-// weights were chosen on task-style queries against DigitalOcean and GitHub;
-// these queries and this API were written afterwards, without looking at how
-// the index scores them, and must not be used to tune the weights. Changing
-// the ranking should keep (or improve) these numbers; a drop means the change
-// overfits. The API is a self-contained commerce/support service in the
-// naming styles real specs use (snake_case and camelCase operationIds,
-// nested resource paths, tags, path and query parameters).
+// A HELD-OUT query set for search_operations (issue
+// kaisers-io/openapi-mcp-archive#38 review). The ranking weights were chosen on
+// task-style queries against DigitalOcean and GitHub; these queries and this
+// API were written afterwards, without looking at how the index scores them,
+// and must not be used to tune the weights. Changing the ranking should keep
+// (or improve) these numbers; a drop means the change overfits. The API is a
+// self-contained commerce/support service in the naming styles real specs use
+// (snake_case and camelCase operationIds, nested resource paths, tags, path and
+// query parameters).
 
 const PIPELINE = {
   spec: { title: 't', specVersion: '1', omitted: [] },

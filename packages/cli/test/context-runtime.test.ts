@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { realContext } from '../src/context.ts';
 
 // The real cache runtime and file timestamps behind `cache unlock` and the
-// lock-holder report (#65), exercised in-process (issue #86 floors).
+// lock-holder report (kaisers-io/openapi-mcp-archive#65), exercised in-process
+// (issue kaisers-io/openapi-mcp-archive#86 floors).
 describe('realContext cache runtime', () => {
   const { runtime } = realContext().cacheFs;
 

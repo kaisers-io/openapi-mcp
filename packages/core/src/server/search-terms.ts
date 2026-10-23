@@ -1,6 +1,7 @@
-// Term extraction for the search_operations index (issue #38). The same
-// function turns operation text into index terms and a query into query
-// terms, so every normalization below applies symmetrically.
+// Term extraction for the search_operations index (issue
+// kaisers-io/openapi-mcp-archive#38). The same function turns operation text
+// into index terms and a query into query terms, so every normalization below
+// applies symmetrically.
 
 // Bounds one term: a hostile spec cannot make a single index key arbitrarily
 // long.

@@ -78,7 +78,7 @@ describe('dereference — resolution', () => {
     expect(dereference(doc, '3.0')['a']).toEqual({ kept: true });
   });
 
-  it('applies sibling keys next to $ref under OpenAPI 3.1 (issue #63)', () => {
+  it('applies sibling keys next to $ref under OpenAPI 3.1 (issue kaisers-io/openapi-mcp-archive#63)', () => {
     const doc = {
       components: { schemas: { Name: { type: 'string', description: 'shared' } } },
       a: { schema: { $ref: '#/components/schemas/Name', maxLength: 5, description: 'own' } },
@@ -250,9 +250,10 @@ describe('dereference — cycles and budgets', () => {
   });
 });
 
-// The layered schema graph from issue #89: `schemas` schemas in `layers`
-// layers, each referencing `refs` schemas of the next layer; `pathCount` paths
-// with a GET and a PUT referencing one schema each
+// The layered schema graph from issue kaisers-io/openapi-mcp-archive#89:
+// `schemas` schemas in `layers` layers, each referencing `refs` schemas of the
+// next layer; `pathCount` paths with a GET and a PUT referencing one schema
+// each
 const layeredSpec = (
   schemas: number,
   refs: number,
@@ -296,7 +297,7 @@ const layeredSpec = (
   };
 };
 
-describe('dereference — memoization (issue #89)', () => {
+describe('dereference — memoization (issue kaisers-io/openapi-mcp-archive#89)', () => {
   it('returns the same output object for every occurrence of an acyclic $ref', () => {
     const doc = {
       a: { $ref: '#/components/schemas/Pet' },
@@ -374,7 +375,8 @@ describe('dereference — memoization (issue #89)', () => {
 
   it('counts the node budget per unique output node, so shared models no longer trip it', () => {
     // 200 schemas x 2 refs x 8 layers: about 11,000 source nodes, but well
-    // over 500,000 once every occurrence is copied — refused before #89
+    // over 500,000 once every occurrence is copied — refused before
+    // kaisers-io/openapi-mcp-archive#89
     const spec = layeredSpec(200, 2, 200, 8);
     expect(() => dereference(spec)).not.toThrow();
   });

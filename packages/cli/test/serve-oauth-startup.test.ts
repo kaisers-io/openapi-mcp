@@ -20,9 +20,9 @@ const specFor = (tokenUrl: string): string =>
     },
   });
 
-// OAuth2 token-URL startup refusals (#55). They end the run before any
-// listener exists, so they run in-process; the subprocess E2E for the token
-// flow itself is serve-oauth.test.ts.
+// OAuth2 token-URL startup refusals (kaisers-io/openapi-mcp-archive#55). They
+// end the run before any listener exists, so they run in-process; the
+// subprocess E2E for the token flow itself is serve-oauth.test.ts.
 describe('serve — OAuth2 token URL startup checks (in-process)', () => {
   const runServe = async (tokenUrl: string, extra: readonly string[]): Promise<string> => {
     const spec = specFor(tokenUrl);

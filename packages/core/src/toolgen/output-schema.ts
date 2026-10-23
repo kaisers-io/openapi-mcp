@@ -45,9 +45,10 @@ const SUCCESS_STATUS_RE = /^2\d\d$/u;
 const RESPONSE_HEADERS_SCHEMA: JsonSchemaRecord = { type: 'object' };
 // A literal OpenAPI 3.1 status-code RANGE key ("2XX"/"2xx"), or the "default"
 // response — either is treated as "might cover a success we cannot bound".
-// With `defaultResponseIsError` (an explicit operator opt-in, #72) the
-// `default` key is assumed to document error statuses only and no longer
-// counts; a "2XX" range key always does — it is a success range by definition.
+// With `defaultResponseIsError` (an explicit operator opt-in,
+// kaisers-io/openapi-mcp-archive#72) the `default` key is assumed to document
+// error statuses only and no longer counts; a "2XX" range key always does — it
+// is a success range by definition.
 const WILDCARD_OR_DEFAULT_SUCCESS_RE = /^2xx$/iu;
 const hasUnboundedSuccess = (
   responses: Record<string, unknown>,
@@ -101,8 +102,9 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
 };
 
 // Why an operation has no output schema, when that is worth telling the
-// agent. Only the #39 regex policy is reported: the other omissions (no JSON
-// success, a `default` response, ...) are ordinary and need no explanation.
+// agent. Only the kaisers-io/openapi-mcp-archive#39 regex policy is reported:
+// the other omissions (no JSON success, a `default` response, ...) are ordinary
+// and need no explanation.
 export const OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN =
   'No output schema: a response regex "pattern" has nested quantifiers (unbounded matching cost), so results are returned as text only.';
 

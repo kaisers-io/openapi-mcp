@@ -11,8 +11,9 @@ import {
 } from '@kaisers-io/openapi-mcp-core';
 import { realContext } from '../src/context.ts';
 
-// #88 item 3: verified cache reads hash the raw bytes instead of decoding and
-// re-encoding them. Fail-closed behaviour must be exactly what it was.
+// Issue kaisers-io/openapi-mcp-archive#88 item 3: verified cache reads hash the
+// raw bytes instead of decoding and re-encoding them. Fail-closed behaviour
+// must be exactly what it was.
 describe('readFileBytesCapped and raw-byte verification', () => {
   let dir: string;
 

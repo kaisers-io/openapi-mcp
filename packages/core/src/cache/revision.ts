@@ -1,7 +1,7 @@
 import { conflictError } from '../errors.ts';
 import type { CacheMeta } from '../schemas/cache.ts';
 
-// Compare-and-swap for cache writers (#34).
+// Compare-and-swap for cache writers (kaisers-io/openapi-mcp-archive#34).
 //
 // The pipeline reads the cache entry lock-free, then fetches and validates
 // (network I/O, never under the lock), and only then takes the writer lock to

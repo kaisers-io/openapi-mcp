@@ -1,7 +1,7 @@
-// Benchmark harness (issue #80). Spawns the BUILT CLI (the minified bundle a
-// user runs, not the TypeScript source) as a black box, so the same harness
-// can measure any revision — including the PR base the CI gate compares
-// against, which may predate this script.
+// Benchmark harness (issue kaisers-io/openapi-mcp-archive#80). Spawns the BUILT
+// CLI (the minified bundle a user runs, not the TypeScript source) as a black
+// box, so the same harness can measure any revision — including the PR base the
+// CI gate compares against, which may predate this script.
 //
 // Per fixture and sample it starts `serve` twice over stdio with a private
 // HOME: once with an empty cache (cold) and once reusing the cache the first
@@ -80,7 +80,8 @@ const sampleFixture = async (
 };
 
 // `--version` and `tools --spec petstore`: the fixed cost every command pays
-// (bundle load, module evaluation), tracked for issues #76 and #91
+// (bundle load, module evaluation), tracked for issues
+// kaisers-io/openapi-mcp-archive#76 and kaisers-io/openapi-mcp-archive#91
 const sampleCommands = async (cli: Cli, plan: Plan, into: CliSamples): Promise<void> => {
   await withHome(async (home) => {
     const version = await runCommand(cli.path, ['--version'], home);

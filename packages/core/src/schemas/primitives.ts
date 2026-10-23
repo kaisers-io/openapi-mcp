@@ -12,10 +12,10 @@ export const MAX_DURATION_MS = 2_147_483_647;
 
 // A cache TTL is never handed to a timer: it is only compared with the age of
 // an entry (cache/ttl.ts, `ageMs < ttlMs`), so the timer limit does not apply
-// to it (#88). One year still bounds it: pinning a slowly changing spec for
-// months is reasonable, a TTL beyond a year is almost certainly a typo. Any
-// future feature that schedules a timer from the TTL must clamp or chunk it
-// to MAX_DURATION_MS at that point.
+// to it (kaisers-io/openapi-mcp-archive#88). One year still bounds it: pinning
+// a slowly changing spec for months is reasonable, a TTL beyond a year is
+// almost certainly a typo. Any future feature that schedules a timer from the
+// TTL must clamp or chunk it to MAX_DURATION_MS at that point.
 export const MAX_AGE_DURATION_MS = 365 * 86_400_000;
 
 const GRAMMAR_HINT =

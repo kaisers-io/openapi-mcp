@@ -13,11 +13,11 @@ import {
 import type { CacheFs } from '../src/index.ts';
 import { memoryCacheFs } from './helpers/cache-fs.ts';
 
-// #75 replaced the fragment-by-fragment serializer with a measuring walk plus
-// one native JSON.stringify. These properties pin the contract that change
-// must keep: byte-identical output, and an exact UTF-8 budget boundary, over
-// arbitrary JSON including non-ASCII, astral and lone-surrogate strings and
-// the characters JSON escapes.
+// Issue kaisers-io/openapi-mcp-archive#75 replaced the fragment-by-fragment
+// serializer with a measuring walk plus one native JSON.stringify. These
+// properties pin the contract that change must keep: byte-identical output, and
+// an exact UTF-8 budget boundary, over arbitrary JSON including non-ASCII,
+// astral and lone-surrogate strings and the characters JSON escapes.
 describe('serializeWithinBudget properties', () => {
   // 'binary' draws any code point, lone surrogates included; 'grapheme'
   // favours realistic multibyte text. Both units are needed: the first finds
@@ -129,7 +129,8 @@ describe('serializeWithinBudget properties', () => {
   });
 });
 
-// #75 point 3: one write must not read and hash the same object twice
+// Issue kaisers-io/openapi-mcp-archive#75 point 3: one write must not read and
+// hash the same object twice
 describe('commitEntry reuses an object already verified under the lock', () => {
   const LAYOUT = cacheLayout('/cache', 'abcdef0123456789');
   const DOC = { openapi: '3.1.0', info: { title: 'v1', version: '1' }, paths: {} };

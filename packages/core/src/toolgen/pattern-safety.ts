@@ -1,11 +1,12 @@
-// Response `pattern` safety (#39). An output schema is compiled by Ajv, which
-// runs every `pattern` as a JavaScript RegExp, synchronously, on upstream data
-// — after the request timeout has stopped applying. A backtracking pattern such
-// as `^(a+)+$` can then block the event loop for seconds on a short,
-// near-matching string. The policy is fail-closed at tool generation: a
-// response schema carrying a pattern with NESTED QUANTIFIERS (star height > 1,
-// the heuristic popularised by safe-regex) is unrepresentable, so the tool gets
-// no outputSchema and returns its result as text — the pattern is never run.
+// Response `pattern` safety (kaisers-io/openapi-mcp-archive#39). An output
+// schema is compiled by Ajv, which runs every `pattern` as a JavaScript RegExp,
+// synchronously, on upstream data — after the request timeout has stopped
+// applying. A backtracking pattern such as `^(a+)+$` can then block the event
+// loop for seconds on a short, near-matching string. The policy is fail-closed
+// at tool generation: a response schema carrying a pattern with NESTED
+// QUANTIFIERS (star height > 1, the heuristic popularised by safe-regex) is
+// unrepresentable, so the tool gets no outputSchema and returns its result as
+// text — the pattern is never run.
 //
 // "Nested" means a quantified group that itself contains a quantifier, where
 // at least one of the two is unbounded:

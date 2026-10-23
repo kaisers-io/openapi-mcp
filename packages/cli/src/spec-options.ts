@@ -163,7 +163,8 @@ export const parseSpecPipelineArgs = (cmdOpts: SpecCmdOpts, ctx: CliContext): Sp
   const specHeaders: readonly ResolvedHeader[] = resolveHeaderEnvMappings(mappings, ctx.env);
   const timeoutMs = parseDuration(cmdOpts.timeout, '--timeout');
   // An age, not a timer: --ttl is only compared with a cache entry's age, so
-  // it is not bound by the Node timer limit that --timeout is (#88)
+  // it is not bound by the Node timer limit that --timeout is
+  // (kaisers-io/openapi-mcp-archive#88)
   const ttlMs = parseAgeDuration(cmdOpts.ttl, '--ttl');
   const cacheKey = cmdOpts.cacheKey === undefined ? undefined : parseCacheKey(cmdOpts.cacheKey);
   const filters = parseFilters(cmdOpts.allow, cmdOpts.deny);

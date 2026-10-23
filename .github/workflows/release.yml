@@ -102,8 +102,9 @@ jobs:
           # Regression net for "no source code in the tarball": the tarball must contain EXACTLY this
           # file set — extras (leaked source) and missing files (dropped LICENSE/README) both fail.
           # Shipping a new file requires deliberately updating this set. dist/ holds the entry plus
-          # the chunks its dynamic imports split off (content-hashed names, issue #91), so its part
-          # of the set is exactly what the determinism-checked build above wrote there.
+          # the chunks its dynamic imports split off (content-hashed names, issue
+          # kaisers-io/openapi-mcp-archive#91), so its part of the set is exactly what the
+          # determinism-checked build above wrote there.
           node -e '
             const { readdirSync } = require("node:fs");
             const pack = JSON.parse(process.argv[1])[0];

@@ -64,10 +64,11 @@ const resolveEntry = (existsSync) => {
   return existsSync(src) ? src.href : undefined;
 };
 
-// V8 compile cache (issue #76): later starts reuse the compiled bundle instead of compiling
-// its source again. In a directory of this user's own (next to the spec cache), not the shared
-// OS temp default another local account could pre-create. NODE_DISABLE_COMPILE_CACHE=1 turns
-// it off; any failure only means no cache.
+// V8 compile cache (issue kaisers-io/openapi-mcp-archive#76): later starts reuse the
+// compiled bundle instead of compiling its source again. In a directory of this user's own
+// (next to the spec cache), not the shared OS temp default another local account could
+// pre-create. NODE_DISABLE_COMPILE_CACHE=1 turns it off; any failure only means
+// no cache.
 //
 // Node would create the directory recursively under the process umask (0755 by default), which
 // would leave the app root world-listable before the spec cache ever creates it 0700. So every

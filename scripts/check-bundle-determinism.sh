@@ -7,8 +7,9 @@ cd "$(git rev-parse --show-toplevel)"
 # against. Instead, this proves the build itself is reproducible: build twice in a row and require
 # byte-identical output (compared via sha256 through node so it is portable across CI's ubuntu/macos
 # runners without depending on either `sha256sum` (Linux) or `shasum` (macOS)).
-# The bundle is the entry plus the chunks its dynamic imports split off (issue #91): hash every
-# file name and its bytes, so a renamed or changed chunk counts as non-determinism too.
+# The bundle is the entry plus the chunks its dynamic imports split off (issue
+# kaisers-io/openapi-mcp-archive#91): hash every file name and its bytes, so a renamed or changed
+# chunk counts as non-determinism too.
 BUNDLE="packages/cli/dist"
 
 hash_bundle() {

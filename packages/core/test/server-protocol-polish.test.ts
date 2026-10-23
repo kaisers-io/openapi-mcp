@@ -265,8 +265,9 @@ describe('tools/call — W3C trace context', () => {
   });
 });
 
-// #144's discover mode routes an upstream call through call_operation: the
-// protocol features above must reach the upstream executor on that path too.
+// PR kaisers-io/openapi-mcp-archive#144's discover mode routes an upstream call
+// through call_operation: the protocol features above must reach the upstream
+// executor on that path too.
 describe('discover mode (call_operation)', () => {
   const PARENT = '00-0af7651916cd43dd8448eb211c80319c-00f067aa0ba902b7-01';
 

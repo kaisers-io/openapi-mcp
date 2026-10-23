@@ -115,10 +115,10 @@ describe('createRedactor', () => {
   });
 });
 
-// Issue #58: a header secret is registered as its WHOLE value
-// (`Bearer <token>`), but an upstream echoing the credential echoes only the
-// part after the auth scheme, or a Basic credential's decoded parts.
-describe('createRedactor — credentials derived from an auth-scheme value (#58)', () => {
+// Issue kaisers-io/openapi-mcp-archive#58: a header secret is registered as its
+// WHOLE value (`Bearer <token>`), but an upstream echoing the credential echoes
+// only the part after the auth scheme, or a Basic credential's decoded parts.
+describe('createRedactor — credentials derived from an auth-scheme value (kaisers-io/openapi-mcp-archive#58)', () => {
   const basic = (scheme: string, userPass: string): string =>
     `${scheme} ${Buffer.from(userPass, 'utf8').toString('base64')}`;
 
@@ -212,7 +212,7 @@ describe('createRedactor — credentials derived from an auth-scheme value (#58)
   });
 });
 
-describe('createRedactor — additional encoding variants (#58)', () => {
+describe('createRedactor — additional encoding variants (kaisers-io/openapi-mcp-archive#58)', () => {
   // The issue's own probe secret: '/', '+', ' ', ':' and '=' all encode.
   const secret = 'ab/cd+ef gh:ij==';
   const redactor = createRedactor([secret]);

@@ -33,8 +33,9 @@ node -e '
   console.log("tools smoke OK — generated:", o.data.tools.map((t) => t.name).join(", "));
 ' "$OUT"
 
-# `serve` runs from a chunk the bin imports only when the action starts (issue #91): start it over
-# stdio and require an `initialize` answer, so a chunk missing from the tarball fails here.
+# `serve` runs from a chunk the bin imports only when the action starts (issue
+# kaisers-io/openapi-mcp-archive#91): start it over stdio and require an `initialize` answer, so a
+# chunk missing from the tarball fails here.
 node -e '
   const { spawn } = require("node:child_process");
   const child = spawn("openapi-mcp", ["serve", "--spec", process.argv[1], "--base-url", "https://api.example.com"]);

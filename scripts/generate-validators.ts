@@ -1,6 +1,6 @@
-// Regenerates the precompiled OpenAPI meta-schema validators (issue #76).
-// Run after bumping ajv, ajv-formats, ajv-draft-04 or
-// @seriousme/openapi-schema-validator:
+// Regenerates the precompiled OpenAPI meta-schema validators (issue
+// kaisers-io/openapi-mcp-archive#76). Run after bumping ajv, ajv-formats,
+// ajv-draft-04 or @seriousme/openapi-schema-validator:
 //
 //   node scripts/generate-validators.ts
 //

@@ -1,17 +1,19 @@
-// Keywords next to a $ref (issue #63). In OpenAPI 3.1 a Schema Object is a
-// JSON Schema 2020-12 schema, where keywords beside $ref apply IN ADDITION to
-// the referenced schema; elsewhere a Reference Object may carry only `summary`
-// and `description`, which override the target's. OpenAPI 3.0 ignores all of
-// them (the dereferencer does not call into this module for 3.0).
+// Keywords next to a $ref (issue kaisers-io/openapi-mcp-archive#63). In OpenAPI
+// 3.1 a Schema Object is a JSON Schema 2020-12 schema, where keywords beside
+// $ref apply IN ADDITION to the referenced schema; elsewhere a Reference Object
+// may carry only `summary` and `description`, which override the target's.
+// OpenAPI 3.0 ignores all of them (the dereferencer does not call into this
+// module for 3.0).
 import { isRecord } from './refs.ts';
 import { canonical, meet, NO_MEET, scopeConflict } from './schema-meet.ts';
 
 // Where a node sits, which decides what keywords next to a $ref mean (issue
-// #63): `schema` inside a Schema Object, `schemas` for a map whose values are
-// schemas (components.schemas, `properties`, `$defs`, ...), `data` for literal
-// instance values inside a schema (`example`, `default`, `const`, `enum`, ...),
-// whose `$ref` keys are data, not references; `other` everywhere else
-// (parameters, responses, request bodies, ... — Reference Objects).
+// kaisers-io/openapi-mcp-archive#63): `schema` inside a Schema Object,
+// `schemas` for a map whose values are schemas (components.schemas,
+// `properties`, `$defs`, ...), `data` for literal instance values inside a
+// schema (`example`, `default`, `const`, `enum`, ...), whose `$ref` keys are
+// data, not references; `other` everywhere else (parameters, responses, request
+// bodies, ... — Reference Objects).
 export type Context = 'schema' | 'schemas' | 'data' | 'other';
 
 // Keywords of a schema whose value maps names to schemas
