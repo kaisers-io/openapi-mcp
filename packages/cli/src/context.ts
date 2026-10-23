@@ -195,11 +195,86 @@ const readFileBytesCapped = async (path: string, maxBytes: number): Promise<Buff
 // tolerated. Every other failure propagates: an fsync error is the kernel
 // reporting that written data may be lost (see PostgreSQL's "fsyncgate"), and
 // it must not be reported as a successful write.
-const isDirectoryBarrierUnsupported = (err: unknown): boolean =>
+//
+// Windows always refuses it, with EPERM: libuv implements fsync as
+// FlushFileBuffers, which requires a handle with GENERIC_WRITE access, and a
+// directory can only be opened read-only (probed on windows-latest, Node 24).
+// So on win32, and only there, EPERM means "no directory barrier" as well.
+// What Windows offers instead: the file's own FlushFileBuffers (handle.sync()
+// before the rename) persists the data, and NTFS journals the rename as one
+// metadata transaction, so after a crash the target is the old or the new
+// file, never a torn one. On Linux and macOS EPERM keeps propagating.
+export const isDirectoryBarrierUnsupported = (
+  err: unknown,
+  platform: NodeJS.Platform = process.platform,
+): boolean =>
   err !== null &&
   typeof err === 'object' &&
   'code' in err &&
-  (err.code === 'EINVAL' || err.code === 'ENOTSUP' || err.code === 'EOPNOTSUPP');
+  (err.code === 'EINVAL' ||
+    err.code === 'ENOTSUP' ||
+    err.code === 'EOPNOTSUPP' ||
+    (platform === 'win32' && err.code === 'EPERM'));
+
+// A rename() over an existing file is atomic on every platform, but on Windows
+// it fails (EPERM, sometimes EACCES or EBUSY) while ANY process has the target
+// open — here, a lock-free reader of meta.json in this or another openapi-mcp
+// process, or a virus scanner inspecting the new file (probed on
+// windows-latest). Such a reader closes within milliseconds, so the replace is
+// retried with a short, bounded backoff (10 ms steps up to 100 ms, the
+// schedule graceful-fs uses for the same Windows behaviour), and the last
+// error propagates once RENAME_RETRY_BUDGET_MS is spent — the write then
+// fails exactly as it does today, closed. POSIX rename never fails for an
+// open target, so on Linux and macOS there is exactly one attempt.
+export const RENAME_RETRY_BUDGET_MS = 2000;
+
+const isTransientReplaceError = (err: unknown): boolean =>
+  err !== null &&
+  typeof err === 'object' &&
+  'code' in err &&
+  (err.code === 'EPERM' || err.code === 'EACCES' || err.code === 'EBUSY');
+
+export type RenameDeps = {
+  platform: NodeJS.Platform;
+  rename: (from: string, to: string) => Promise<void>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+};
+
+const realRenameDeps: RenameDeps = {
+  platform: process.platform,
+  rename,
+  sleep: async (ms) => {
+    await sleep(ms);
+  },
+  now: () => Date.now(),
+};
+
+// `deps` is injectable so the retry schedule is testable on every platform
+export const renameReplacing = async (
+  from: string,
+  to: string,
+  deps: RenameDeps = realRenameDeps,
+): Promise<void> => {
+  if (deps.platform !== 'win32') {
+    await deps.rename(from, to);
+    return;
+  }
+  const deadline = deps.now() + RENAME_RETRY_BUDGET_MS;
+  let backoff = 10;
+  for (;;) {
+    try {
+      await deps.rename(from, to);
+      return;
+    } catch (error) {
+      if (!isTransientReplaceError(error) || deps.now() + backoff > deadline) {
+        throw error;
+      }
+    }
+    await deps.sleep(backoff);
+    backoff = Math.min(backoff + 10, 100);
+  }
+};
 
 const syncDirectory = async (path: string): Promise<void> => {
   // Imperative on purpose: the handle must be closed on every path, including
@@ -322,7 +397,7 @@ const realCacheFs = (): CacheFs => ({
       await handle.sync();
       await handle.close();
       handle = undefined;
-      await rename(tmp, path);
+      await renameReplacing(tmp, path);
       await syncDirectory(dirname(path));
     } catch (error) {
       if (handle !== undefined) {
