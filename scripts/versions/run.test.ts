@@ -250,7 +250,7 @@ describe('versions --check', () => {
     expectError(result, CHANGELOG, '0 "## [Unreleased]" heading(s), expected exactly one');
   });
 
-  // npm users read the packaged copy; a pull request that edits only the root one must fail here.
+  // The packaged copy is what npm users read; a pull request that edits only the root one must fail here.
   it.each([
     ['differs', `${CHANGES}- Only in the root copy.\n`],
     ['is missing', undefined],

@@ -230,6 +230,9 @@ const releaseChangelog = (text: string, version: string): string | undefined => 
   return `${text.slice(0, heading.index)}## [Unreleased]\n\n## [${version}] - ${releaseDate()}${rest}`;
 };
 
+const describeRelease = (version: string): string =>
+  `## [Unreleased] -> ## [${version}] - ${releaseDate()}`;
+
 // `--check` requires the `## [Unreleased]` heading that `--set` will release, never a released
 // heading: on a pull request the top section is `## [Unreleased]`. It also requires the packaged
 // copy to equal CHANGELOG.md byte for byte, and `--set` writes the same release to both, so a
@@ -262,11 +265,9 @@ const changelogSites = async (): Promise<Site[]> => {
     }
     return released.get(version);
   };
-  const describeChange = (version: string): string =>
-    `## [Unreleased] -> ## [${version}] - ${releaseDate()}`;
   return [
-    { file: CHANGELOG, values: [], rewrite, describeChange },
-    { file: PACKAGED_CHANGELOG, values: [], rewrite, describeChange },
+    { file: CHANGELOG, values: [], rewrite, describeChange: describeRelease },
+    { file: PACKAGED_CHANGELOG, values: [], rewrite, describeChange: describeRelease },
   ];
 };
 
