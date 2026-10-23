@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { OpenapiMcpError, hashContent, loadSpecFromFile, parseSpecSource } from '../src/index.ts';
 
-const cwd = { cwd: '/work/project' };
+// The POSIX path grammar is pinned explicitly, so these cases mean the same on every runner;
+// the Windows grammar has its own block below
+const cwd = { cwd: '/work/project', platform: 'linux' } as const;
 
 describe('parseSpecSource', () => {
   it('classifies an https URL', () => {
@@ -87,6 +89,47 @@ describe('parseSpecSource', () => {
       kind: 'file',
       path: '/tmp/spec.json',
     });
+  });
+
+  it('keeps a drive-letter path a URL scheme outside Windows (unchanged POSIX behaviour)', () => {
+    expect(() => parseSpecSource('C:/specs/api.json', cwd)).toThrow(/scheme "c:"/u);
+  });
+});
+
+describe('parseSpecSource on Windows', () => {
+  const win = { cwd: 'D:\\work\\project', platform: 'win32' } as const;
+
+  it.each([
+    ['C:\\specs\\api.json', 'C:\\specs\\api.json'],
+    ['c:\\specs\\api.json', 'c:\\specs\\api.json'],
+    ['C:/specs/api.json', 'C:\\specs\\api.json'],
+    ['D:\\work\\a\\..\\api.json', 'D:\\work\\api.json'],
+  ])('treats the drive-letter path %s as a file, not as a URL scheme', (raw, path) => {
+    expect(parseSpecSource(raw, win)).toEqual({ kind: 'file', path });
+  });
+
+  it('treats a UNC path as a file', () => {
+    expect(parseSpecSource('\\\\server\\share\\api.json', win)).toEqual({
+      kind: 'file',
+      path: '\\\\server\\share\\api.json',
+    });
+  });
+
+  it('resolves a relative path against a drive-letter cwd with backslashes', () => {
+    expect(parseSpecSource('specs/api.json', win)).toEqual({
+      kind: 'file',
+      path: 'D:\\work\\project\\specs\\api.json',
+    });
+  });
+
+  it('still refuses a drive-relative path and every real scheme', () => {
+    // "C:api.json" is relative to drive C's own current directory, a per-process state this
+    // tool does not resolve; it stays a scheme error that hints at the "./" escape
+    expect(() => parseSpecSource('C:api.json', win)).toThrow(/\.\//u);
+    for (const raw of ['file:///C:/specs/api.json', 'ftp://example.com/x', 'mailto:x@example.com']) {
+      expect(() => parseSpecSource(raw, win)).toThrow(/only http: and https:/u);
+    }
+    expect(parseSpecSource('https://api.example.com/spec.json', win).kind).toBe('url');
   });
 });
 

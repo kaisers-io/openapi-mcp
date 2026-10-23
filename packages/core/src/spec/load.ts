@@ -1,10 +1,16 @@
 import { createHash } from 'node:crypto';
-import { resolve } from 'node:path';
+import { posix, win32 } from 'node:path';
 import { notFoundError, usageError, validationError } from '../errors.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 
 // Any RFC 3986 scheme prefix, not just "://" forms — "file:/x" is a URL, not a path
 const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/iu;
+// On Windows an absolute path starts with a drive letter and a colon, which SCHEME_RE alone takes
+// for a one-letter URL scheme ("C:\specs\api.json" would be refused as scheme "c:"). A drive
+// letter followed by a separator is a path (Microsoft, "File path formats on Windows systems");
+// no registered URL scheme has one letter. A drive-relative "C:api.json" stays a scheme error
+// with the "./" hint, and UNC paths ("\\server\share\api.json") never matched SCHEME_RE.
+const WINDOWS_DRIVE_PATH_RE = /^[a-z]:[\\/]/iu;
 // Same sensitive-name deny-list as the --header rule, applied to query names
 const SENSITIVE_NAME_RE = /auth|token|secret|key|session|credential|cookie|signature/iu;
 
@@ -30,11 +36,17 @@ const parseUrlOrThrow = (raw: string): URL => {
   }
 };
 
-export const parseSpecSource = (raw: string, opts: { cwd: string }): SpecSource => {
+// `platform` defaults to the running one; tests pass it to cover the other path grammar.
+// Linux and macOS keep exactly the POSIX behaviour: there "C:/x" is still scheme "c:".
+export const parseSpecSource = (
+  raw: string,
+  opts: { cwd: string; platform?: NodeJS.Platform },
+): SpecSource => {
   if (raw === '') {
     throw usageError('--spec must not be empty');
   }
-  if (SCHEME_RE.test(raw)) {
+  const isWindows = (opts.platform ?? process.platform) === 'win32';
+  if (SCHEME_RE.test(raw) && !(isWindows && WINDOWS_DRIVE_PATH_RE.test(raw))) {
     const url = parseUrlOrThrow(raw);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {
       throw usageError(
@@ -58,7 +70,7 @@ export const parseSpecSource = (raw: string, opts: { cwd: string }): SpecSource 
     return { kind: 'url', url };
   }
   // Resolve() also canonicalizes already-absolute paths (drops "..", ".")
-  return { kind: 'file', path: resolve(opts.cwd, raw) };
+  return { kind: 'file', path: (isWindows ? win32 : posix).resolve(opts.cwd, raw) };
 };
 
 export const hashContent = (text: string): string =>
