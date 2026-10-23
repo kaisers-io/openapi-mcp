@@ -96,7 +96,7 @@ never appear literally in the committed file:
       "command": "npx",
       "args": [
         "-y",
-        "@kaisers-io/openapi-mcp@0.4.0",
+        "@kaisers-io/openapi-mcp@0.4.1",
         "serve",
         "--spec",
         "https://api.example.com/openapi.json",
@@ -130,7 +130,7 @@ own environment:
 command = "npx"
 args = [
   "-y",
-  "@kaisers-io/openapi-mcp@0.4.0",
+  "@kaisers-io/openapi-mcp@0.4.1",
   "serve",
   "--spec",
   "https://api.example.com/openapi.json",
@@ -166,7 +166,7 @@ security release) or just "client closed". Start it through `cmd /c` instead:
         "/c",
         "npx",
         "-y",
-        "@kaisers-io/openapi-mcp@0.4.0",
+        "@kaisers-io/openapi-mcp@0.4.1",
         "serve",
         "--spec",
         "C:\\specs\\petstore.json",
@@ -198,7 +198,7 @@ Run the server once with `--http`, then point either host at it as a remote MCP 
 
 ```bash
 export TOKEN=$(openssl rand -base64 32)
-npx -y @kaisers-io/openapi-mcp@0.4.0 serve --spec https://api.example.com/openapi.json \
+npx -y @kaisers-io/openapi-mcp@0.4.1 serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
 
@@ -401,7 +401,7 @@ option is read.
 ## Upgrading
 
 Host config examples above pin an exact version
-(`npx -y @kaisers-io/openapi-mcp@0.4.0 ...`) — **never `latest`**. This process runs with your
+(`npx -y @kaisers-io/openapi-mcp@0.4.1 ...`) — **never `latest`**. This process runs with your
 API credentials on every launch; letting `npx` silently resolve to whatever was just published
 is a supply-chain risk, not a convenience. To upgrade, bump the pinned version number in your
 host config deliberately (and re-run `npm i -g @kaisers-io/openapi-mcp` if you installed it
