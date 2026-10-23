@@ -58,6 +58,9 @@ If you changed what ends up in the bundle, also run `pnpm build` and
 - **`ci` / bundle-determinism**: builds twice and requires byte-identical output.
 - **`ci` / smoke**: packs the CLI, installs the tarball globally and runs
   `scripts/smoke-cli.sh` against the installed bundle.
+- **`ci` / versions**: `pnpm versions --check`. Every version site (the package version, the
+  README and `docs/` pins, the `--json doctor` example) must agree, `CHANGELOG.md` must have one
+  `## [Unreleased]` heading, and `packages/cli/CHANGELOG.md` must equal `CHANGELOG.md`.
 - **`ci` / zizmor**: lints the workflows themselves.
 - **`bench`**: builds your branch and its base in the same job and benchmarks both, interleaved
   (skipped for documentation-only changes). See [Benchmarks](#benchmarks).
@@ -71,12 +74,13 @@ If you changed what ends up in the bundle, also run `pnpm build` and
   contract. If a rule is genuinely wrong, say so and argue the case. Do not turn it off, lower a
   floor or widen a threshold to get a green tick.
 - **Editing version numbers by hand.** The released version appears in
-  `packages/cli/package.json`, in the README host examples and in the documentation, and a test
-  holds the README pins to the package version. Use `pnpm versions --set <version>`.
-- **Changing only one changelog.** Record user-visible changes under the Unreleased heading of
+  `packages/cli/package.json`, in the README host examples and in the documentation, and
+  `pnpm versions --check` (the `ci` / versions job) fails when they disagree. Use
+  `pnpm versions --set <version>`.
+- **Changing only one changelog.** Record user-visible changes under `## [Unreleased]` in
   `CHANGELOG.md`, and copy the file to `packages/cli/CHANGELOG.md`. The two must stay
-  byte-identical: the packaged copy is what npm users see, a test fails when they differ, and the
-  release workflow checks it again with `cmp`.
+  byte-identical: the packaged copy is what npm users see, and `pnpm versions --check` fails when
+  they differ.
 - **Tests that assert on implementation details** rather than observable behaviour. The tool
   definitions, tool results, error messages and the `--json` envelope are contracts. The shape of
   a private helper is not.
@@ -117,8 +121,23 @@ refused call fails the gate (`parallelErrors`).
 
 `docs/configuration.md` documents every flag, and `docs/security.md` the security model. If you
 change a flag, a default or an output, update the documentation in the same pull request. The
-README's host examples pin an exact version, and a test holds every pin to the version in
-`packages/cli/package.json`.
+README's host examples pin an exact version, and `pnpm versions --check` holds every pin to the
+version in `packages/cli/package.json`.
+
+## Releasing
+
+The version lives in `packages/cli/package.json`. The READMEs, `docs/` and both changelogs repeat
+it, and `pnpm versions --check` (run by CI on every pull request) fails when they disagree. Do not
+edit version numbers by hand:
+
+1. `pnpm versions --set x.y.z` on a branch. It refuses a version that is not newer than the
+   current one, writes the version to every site and turns `## [Unreleased]` in `CHANGELOG.md`
+   and `packages/cli/CHANGELOG.md` into `## [x.y.z] - <date>`. Review it with `git diff`.
+2. Open a pull request and merge it.
+3. Tag the merge commit on `main` as `vx.y.z` and push the tag. The `release` workflow checks
+   that the tag, every version site and the changelog heading agree, then publishes to npm.
+4. Smoke-test the published package on Windows with an absolute drive path
+   (`openapi-mcp tools --spec C:\path\to\spec.json`).
 
 ## Commits
 

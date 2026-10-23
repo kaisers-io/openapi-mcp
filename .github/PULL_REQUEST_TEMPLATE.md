@@ -28,7 +28,8 @@ $ pnpm check
 ## Checklist
 
 - [ ] `pnpm check` passes locally (lint, format, typecheck, tests with coverage)
-- [ ] No configuration was loosened to make a check pass (lint rules, coverage floors, benchmark rules)
+- [ ] No configuration was loosened to make a check pass (lint rules, coverage floors,
+      benchmark rules)
 - [ ] Behaviour changes are covered by a test that fails without the change
 - [ ] If a flag, a default or an output changed, `docs/configuration.md` (and the README, if it
       shows it) was updated to match
@@ -37,8 +38,9 @@ $ pnpm check
 - [ ] If this touches paths, the cache's filesystem code, the bin stub or process handling, the
       pull request carries the `ci:windows` label (or asks a maintainer to add it)
 - [ ] If this is user-facing, `CHANGELOG.md` and `packages/cli/CHANGELOG.md` were updated
-      identically, under Unreleased
-- [ ] Version numbers were not edited by hand (use `pnpm versions --set <version>`)
+      identically, under `## [Unreleased]`
+- [ ] Version numbers were not edited by hand (use `pnpm versions --set <version>`), and
+      `pnpm versions --check` passes
 
 ## Notes for the reviewer
 
