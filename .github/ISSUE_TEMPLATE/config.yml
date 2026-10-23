@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  # GitHub adds its own "Report a security vulnerability" entry to this chooser whenever
+  # SECURITY.md exists, and points it at the policy page. This one is deliberately named
+  # differently: it skips the policy and opens the advisory form itself.
+  - name: Open a private security advisory
+    url: https://github.com/kaisers-io/openapi-mcp/security/advisories/new
+    about: Goes straight to the report form. Never open a public issue for a vulnerability.
+  - name: Configuration reference
+    url: https://github.com/kaisers-io/openapi-mcp/blob/main/docs/configuration.md
+    about: Every flag, grouped by command, with its meaning, default and an example, plus the exit codes.
+  - name: Security model
+    url: https://github.com/kaisers-io/openapi-mcp/blob/main/docs/security.md
+    about: What openapi-mcp defends by default, what you opt into, and what stays your responsibility.
