@@ -1,6 +1,6 @@
 # Read by oxfmt. Generated Ajv standalone code (packages/core/src/spec/generate-validators.ts):
 # validate.test.ts requires it to match the generator byte for byte, so it is never reformatted.
 packages/core/src/spec/generated/
-# A byte-identical copy of the root CHANGELOG.md (test/changelog-copy.test.ts), which is outside
-# the formatted paths; formatting only the copy would make the two differ.
+# A byte-identical copy of the root CHANGELOG.md (`pnpm versions --check` compares them), which is
+# outside the formatted paths; formatting only the copy would make the two differ.
 packages/cli/CHANGELOG.md

@@ -14,6 +14,7 @@ const CLI_README = 'packages/cli/README.md';
 const CONFIGURATION = 'docs/configuration.md';
 const SECURITY = 'docs/security.md';
 const CHANGELOG = 'CHANGELOG.md';
+const PACKAGED_CHANGELOG = 'packages/cli/CHANGELOG.md';
 
 const EXIT_OK = 0;
 const EXIT_PROBLEMS = 1;
@@ -58,6 +59,7 @@ const FILES: Record<string, (version: string) => string> = {
   [CONFIGURATION]: configuration,
   [SECURITY]: () => '# Security\n\nNo pins here.\n',
   [CHANGELOG]: () => CHANGES,
+  [PACKAGED_CHANGELOG]: () => CHANGES,
 };
 const original = (file: string): string => FILES[file]?.(AT) ?? '';
 
@@ -66,8 +68,15 @@ const removeTrees = async (): Promise<void> => {
   await Promise.all(trees.map(async (root) => rm(root, { force: true, recursive: true })));
 };
 
-/** A throwaway tree with a copy of the script. `overrides` replaces content; `undefined` omits a file. */
-const makeTree = async (overrides: Record<string, string | undefined> = {}): Promise<string> => {
+/**
+ * A throwaway tree with a copy of the script. `overrides` replaces content; `undefined` omits a
+ * file. A changelog override applies to the packaged copy too unless that copy has its own.
+ */
+const makeTree = async (given: Record<string, string | undefined> = {}): Promise<string> => {
+  const overrides =
+    CHANGELOG in given && !(PACKAGED_CHANGELOG in given)
+      ? { ...given, [PACKAGED_CHANGELOG]: given[CHANGELOG] }
+      : given;
   const root = await mkdtemp(join(tmpdir(), 'openapi-mcp-versions-'));
   trees.push(root);
   await cp(join(SCRIPT_DIR, 'run.ts'), join(root, 'scripts/versions/run.ts'));
@@ -241,6 +250,20 @@ describe('versions --check', () => {
     expectError(result, CHANGELOG, '0 "## [Unreleased]" heading(s), expected exactly one');
   });
 
+  // npm users read the packaged copy; a pull request that edits only the root one must fail here.
+  it.each([
+    ['differs', `${CHANGES}- Only in the root copy.\n`],
+    ['is missing', undefined],
+  ])('fails when the packaged changelog %s', async (_case, packaged) => {
+    const result = run(await makeTree({ [PACKAGED_CHANGELOG]: packaged }), '--check');
+    expect(result.code).toBe(EXIT_PROBLEMS);
+    expectError(
+      result,
+      packaged === undefined ? `${PACKAGED_CHANGELOG} could not be read` : PACKAGED_CHANGELOG,
+      packaged === undefined ? '' : `differs from ${CHANGELOG}`,
+    );
+  });
+
   it('fails on malformed JSON without a stack trace', async () => {
     const result = run(await makeTree({ [SOURCE]: '{ "version": ' }), '--check');
     expect(result.code).toBe(EXIT_PROBLEMS);
@@ -312,6 +335,7 @@ describe('versions --set', () => {
     const released = (day: string): string =>
       CHANGES.replace('## [Unreleased]\n', `## [Unreleased]\n\n## [${NEXT}] - ${day}\n`);
     expect(days.map((day) => released(day))).toContain(after[CHANGELOG]);
+    expect(after[PACKAGED_CHANGELOG]).toBe(after[CHANGELOG]);
   });
 
   it('keeps the changelog below the new heading byte for byte', async () => {
@@ -393,6 +417,13 @@ describe('versions --set', () => {
   it('refuses a version the changelog already has a heading for', async () => {
     const twice = '# Changelog\n\n## [Unreleased]\n\n- New.\n\n## [2.0.0] - 2026-01-01\n\n- Old.\n';
     await expectRefusedSet({ [CHANGELOG]: twice }, 'already has a "## [2.0.0] - " heading');
+  });
+
+  it('refuses a bump while the packaged changelog differs from the root one', async () => {
+    await expectRefusedSet(
+      { [PACKAGED_CHANGELOG]: `${CHANGES}- Stale.\n` },
+      `${PACKAGED_CHANGELOG} differs from ${CHANGELOG}`,
+    );
   });
 
   it('refuses to release an empty Unreleased section', async () => {
