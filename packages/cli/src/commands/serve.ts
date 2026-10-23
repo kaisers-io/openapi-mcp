@@ -22,7 +22,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
   const command = registerApiOptions(
     registerSpecOptions(
       program.command('serve'),
-      'permit private/loopback addresses for the spec fetch redirects and for API requests to a spec-derived origin or redirect (never cloud-metadata)',
+      'permit private/loopback addresses for spec fetch redirects, for API requests to a spec-derived origin or redirect, and for the --upstream-oauth-* token URL (never cloud-metadata)',
     ),
   )
     .description(

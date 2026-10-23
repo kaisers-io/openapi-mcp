@@ -44,7 +44,7 @@ describe('run', () => {
     };
     const serve = await helpOf('serve');
     expect(serve).toContain(
-      '--allow-private-network permit private/loopback addresses for the spec fetch redirects and for API requests to a spec-derived origin or redirect (never cloud-metadata)',
+      '--allow-private-network permit private/loopback addresses for spec fetch redirects, for API requests to a spec-derived origin or redirect, and for the --upstream-oauth-* token URL (never cloud-metadata)',
     );
     expect(serve).toContain(
       '--http-host <addr> IP address to bind; only with --http-auth oauth (static mode always binds 127.0.0.1)',

@@ -59,7 +59,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
 | `--cache-key <name>` | no | durable cache namespace label; required for authenticated specs (see below) | none |
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
-| `--allow-private-network` | no | permit private/loopback addresses for spec fetch redirects and for API requests to a spec-derived origin or redirect, and the token URL with `--upstream-oauth-*` (never cloud-metadata) | off |
+| `--allow-private-network` | no | permit private/loopback addresses for spec fetch redirects and for API requests to a spec-derived origin or redirect, and the token URL with `--upstream-oauth-*`; with `--http-auth oauth` also the authorization-server metadata and JWKS fetches (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
@@ -155,7 +155,7 @@ Notes:
   `name[key]` parameters (JSON:API `page[number]=2&page[size]=10`, `filter[status]=x`) map
   back onto a `deepObject` parameter `name`, but only keys its schema declares, one level
   deep, each once; a name that could be either a literal parameter or a `deepObject` key
-  gives `null`. Without a `Link` header, a JSON:API response (media type
+  gives `null`. Without a pagination `Link` header, a JSON:API response (media type
   `application/vnd.api+json`, or a response schema that declares `links.next`) uses its
   top-level `links.next` (a URL or a link object's `href`) under the same rules;
   `links.next: null` means the last page.
