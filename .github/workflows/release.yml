@@ -302,7 +302,14 @@ jobs:
   announce:
     needs: publish
     runs-on: ubuntu-latest
-    # Two API calls; this only bounds a hang (GitHub's default is 6 hours).
+    # Read Latest, then create: two announcements running at once could both decide against the same
+    # Latest. One group for every tag serializes them; nothing in progress is cancelled. GitHub keeps
+    # at most one waiting job per group and cancels an older waiting one, so in a burst of three
+    # releases one entry can be left for a re-run — a missing entry, never a wrong Latest.
+    concurrency:
+      group: release-announce
+      cancel-in-progress: false
+    # Three API calls; this only bounds a hang (GitHub's default is 6 hours).
     timeout-minutes: 10
     permissions:
       contents: write
@@ -332,6 +339,50 @@ jobs:
             exit 1
           fi
           echo "release notes: $(wc -l < "$RUNNER_TEMP/release-notes.md") lines"
+      - name: Decide whether this release becomes Latest
+        id: latest
+        # `verify` proves this version is newer than npm's `latest` at verify time, not at announce
+        # time: a failed announce for v0.4.0, re-run after v0.5.0 has been released, would otherwise
+        # move the repository's Latest release backwards. So compare against the current Latest
+        # GitHub release (drafts and prereleases are never Latest), with the same plain-x.y.z rule as
+        # the regression guard. "release not found" means there is none yet; any other lookup error
+        # stops the job rather than guessing.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! LOOKUP="$(gh release view --json tagName --jq .tagName 2>&1)"; then
+            case "$LOOKUP" in
+              *"release not found"*) LOOKUP='' ;;
+              *) echo "::error::could not read the current Latest release: $LOOKUP" >&2; exit 1 ;;
+            esac
+          fi
+          if [ -z "$LOOKUP" ]; then
+            echo "no Latest release yet — $TAG becomes Latest"
+            echo "make_latest=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The script is JavaScript: its `${...}` are template literals, not shell expansions.
+          # shellcheck disable=SC2016
+          node -e '
+            const [version, latest] = process.argv.slice(1).map((tag) => tag.replace(/^v/u, ""));
+            const CANONICAL = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
+            const parse = (value, what) => {
+              if (!CANONICAL.test(value)) {
+                console.error(`::error::${what} ${value} is not a plain x.y.z version`);
+                process.exit(1);
+              }
+              return value.split(".").map(Number);
+            };
+            const candidate = parse(version, "the tagged version");
+            const current = parse(latest, "the current Latest release");
+            const at = candidate.findIndex((part, index) => part !== current[index]);
+            const newer = at !== -1 && candidate[at] > current[at];
+            console.log(`${version} vs current Latest ${latest}: ${newer ? "becomes Latest" : "stays below it"}`);
+            require("node:fs").appendFileSync(process.env.GITHUB_OUTPUT, `make_latest=${newer}\n`);
+          ' "$TAG" "$LOOKUP"
       - name: Create the release
         # Notes come from the changelog rather than `--generate-notes`: the changelog is written for
         # the people a release affects, and a list of commit subjects is not.
@@ -344,11 +395,17 @@ jobs:
         # — a commit `verify` never checked, wearing the released version's name. With the flag it
         # fails instead, which is the only acceptable outcome.
         #
-        # Latest: gh sends no `make_latest`, and the API defaults it to true, so whatever this creates
-        # becomes Latest. Correct for a forward release, which the version-regression guard in
-        # `verify` enforces.
+        # `--latest` is always stated, with the value the previous step decided: left out, the API
+        # defaults `make_latest` to true.
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md"
+          MAKE_LATEST: ${{ steps.latest.outputs.make_latest }}
+        run: |
+          set -euo pipefail
+          case "$MAKE_LATEST" in
+            true | false) ;;
+            *) echo "::error::no Latest decision ('$MAKE_LATEST') — refusing to let the API default it" >&2; exit 1 ;;
+          esac
+          gh release create "$TAG" --verify-tag --title "$TAG" --latest="$MAKE_LATEST" --notes-file "$RUNNER_TEMP/release-notes.md"

@@ -209,7 +209,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GitHub Environment, refuses to run unless the repository is public, and publishes with
   `--provenance` instead of relying on npm's automatic attestation, which is skipped without
   an error from a private repository. A new `announce` job creates the GitHub release from
-  the version's changelog section and refuses an empty one. `CONTRIBUTING.md` ("Releasing")
+  the version's changelog section, refuses an empty one, and marks it Latest only when it is
+  newer than the current Latest release. `CONTRIBUTING.md` ("Releasing")
   lists the two settings outside the repository that the release depends on: the
   environment's required reviewer and the npm Trusted Publisher entry that names it.
 - **Security policy, contribution guide and templates for the public repository.**
