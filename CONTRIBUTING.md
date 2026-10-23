@@ -135,9 +135,63 @@ edit version numbers by hand:
    and `packages/cli/CHANGELOG.md` into `## [x.y.z] - <date>`. Review it with `git diff`.
 2. Open a pull request and merge it.
 3. Tag the merge commit on `main` as `vx.y.z` and push the tag. The `release` workflow checks
-   that the tag, every version site and the changelog heading agree, then publishes to npm.
+   that the tag, every version site and the changelog heading agree and that the version is newer
+   than the one npm serves as `latest`. The `publish` job then waits for approval in the
+   `npm-publish` environment, publishes to npm with a provenance attestation, and the `announce`
+   job creates the GitHub release from the version's changelog section.
 4. Smoke-test the published package on Windows with an absolute drive path
    (`openapi-mcp tools --spec C:\path\to\spec.json`).
+
+### What the release guards cover, and what they do not
+
+A `v*` tag push is the only trigger, and every guard authorizing the release (the tag/version
+match, the version and changelog checks, the version-regression check, the `origin/main` ancestor
+check, the `needs` edges and the `id-token` grant) is content of the tagged tree, because GitHub
+resolves a push-triggered workflow from the pushed ref. **A tag whose tree deletes a guard is never
+subjected to it.** Every check in `release.yml` therefore constrains an honest release and nothing
+else.
+
+One gate lives outside the tagged tree, and it has two halves that must both be configured in
+settings. A pull request cannot change either:
+
+1. **A GitHub Environment named `npm-publish`**, which the `publish` job declares, with a
+   **required reviewer who is not the principal that can push the tag**, and "Prevent self-review"
+   enabled. A deployment tag rule (`v*`) alone is not enough: it checks the ref's name, so an
+   adversarial tag keeps `environment: npm-publish`, deletes `verify`, and satisfies it. GitHub
+   needs only one listed reviewer to approve, so a reviewer list that contains the tag pusher is no
+   gate at all. This holds with a single maintainer too: a credential that can push a tag (a token,
+   a deploy key, a compromised machine) is not the same authority as that person approving a
+   deployment interactively.
+2. **The npm Trusted Publisher entry for `@kaisers-io/openapi-mcp` must name that environment**,
+   next to the repository (`kaisers-io/openapi-mcp`) and the workflow filename (`release.yml`).
+   npm binds the workflow by its filename, not its contents, so without the environment a tag that
+   supplies its own workflow at that path mints the publish token regardless of what this
+   repository's `release.yml` says.
+
+**Check both, separately.** A failed publish proves nothing on its own, because an already
+published version fails too. What has to be established is that a job in the environment waits
+for an approval the tag pusher cannot give, that the approved identity authenticates, and that an
+otherwise identical identity without the environment is refused.
+
+List every trusted-publisher entry on the package, not only the one you edited. npm allows several
+independent entries, and an older entry without the environment keeps that route open. Binding
+the environment also means a commit whose `release.yml` predates it can no longer be released,
+even though the ancestor check still allows tagging it.
+
+The version-regression guard refuses a tag whose version is not strictly greater than the one npm
+serves as `latest`, and refuses anything that is not a plain `x.y.z`, prereleases included: this
+workflow publishes stable releases, and guessing an order for `1.0.0-rc.1` is how one goes out
+under the wrong dist-tag. `pnpm versions --set` checks newness only against the checkout it runs
+in; this guard checks the registry. npm 11 already rejects a lower version on the implicit tag, so
+the guard is a stricter restatement that `--tag` and `--force` cannot bypass. It fails closed: a
+lookup that errors stops the release, and only a registry that answers "not found" (E404) or
+reports no version is treated as the first publication.
+
+**Publishing requires the repository to be public.** `npm publish --provenance` signs an
+attestation that names the source repository and records it in a public transparency log; from a
+private repository that would point at a URL nobody can open. The `publish` job refuses unless the
+push event reports the repository as public (`private` is exactly `false`), so a release tagged
+while the repository is private stops before anything leaves the runner.
 
 ## Commits
 

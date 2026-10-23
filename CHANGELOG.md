@@ -202,6 +202,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **The release workflow refuses more mistakes and needs an approval outside the tagged tree.**
+  `verify` refuses a tag whose version is not strictly newer than the version npm serves as
+  `latest`, refuses prerelease versions, and stops when the registry lookup fails (only a
+  "not found" answer counts as a first publication). `publish` runs in the `npm-publish`
+  GitHub Environment, refuses to run unless the repository is public, and publishes with
+  `--provenance` instead of relying on npm's automatic attestation, which is skipped without
+  an error from a private repository. A new `announce` job creates the GitHub release from
+  the version's changelog section and refuses an empty one. `CONTRIBUTING.md` ("Releasing")
+  lists the two settings outside the repository that the release depends on: the
+  environment's required reviewer and the npm Trusted Publisher entry that names it.
 - **Security policy, contribution guide and templates for the public repository.**
   `SECURITY.md` asks for private vulnerability reports through GitHub's advisory form and
   lists what is in and out of scope; `CONTRIBUTING.md` takes over the README's Development,
