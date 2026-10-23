@@ -37,57 +37,94 @@ const asNode = (node: string): string[] => [
   `data:text/javascript,Object.defineProperty(process,'versions',{value:{...process.versions,node:${JSON.stringify(node)}}})`,
 ];
 
-// Single source of truth for the floor is `engines.node`; every other place that states it is
-// held to it here, so raising the floor in one file without the others fails the suite.
+// Single source of truth for the supported range is `engines.node`; every other place that
+// states it is held to it here, so changing it in one file without the others fails the suite.
 const enginesFloor = (path: string): string => {
   const pkg = JSON.parse(repoFile(path)) as { engines: { node: string } };
   return pkg.engines.node;
 };
 
+// `engines.node` is one `^MAJOR.MINOR.0` per closed release line, then one open `>=MAJOR.MINOR.0`
+// (e.g. `^22.19.0 || >=24.11.0`). Parsed into [major, minor] floors, oldest first.
+const parseRange = (range: string): [number, number][] | undefined => {
+  const parts = range.split(' || ');
+  const lines = parts.map((part, index) => {
+    const pattern =
+      index === parts.length - 1
+        ? /^>=(?<major>\d+)\.(?<minor>\d+)\.0$/u
+        : /^\^(?<major>\d+)\.(?<minor>\d+)\.0$/u;
+    const groups = pattern.exec(part)?.groups;
+    return groups === undefined
+      ? undefined
+      : ([Number(groups['major']), Number(groups['minor'])] as [number, number]);
+  });
+  return lines.every((line) => line !== undefined) ? lines : undefined;
+};
+
 describe('Node floor: engines, docs, CI and the bin stub agree', SPAWN_BUDGET, () => {
   const floor = enginesFloor('package.json');
-  const match = /^>=(?<major>\d+)\.(?<minor>\d+)$/u.exec(floor);
-  const major = Number(match?.groups?.['major']);
-  const minor = Number(match?.groups?.['minor']);
+  const lines = parseRange(floor) ?? [];
+  const version = ([major, minor]: readonly [number, number]): string =>
+    `${String(major)}.${String(minor)}.0`;
+  // Just below each line's floor (a `.0` floor has no lower minor in its major), and every
+  // major between two lines (such as 23.x).
+  const rejected = lines.flatMap(([major, minor], index): string[] => {
+    const below = minor === 0 ? [] : [version([major, minor - 1])];
+    const nextMajor = lines[index + 1]?.[0] ?? major + 1;
+    const between = Array.from({ length: nextMajor - major - 1 }, (_, offset) =>
+      version([major + 1 + offset, 99]),
+    );
+    return [...below, ...between];
+  });
+  const hint = (found: string): string =>
+    `openapi-mcp requires Node ${floor} (found v${found}). ` +
+    'Install a supported Node version (e.g. "nvm install 24") and re-run.';
 
-  it('states the same `>=MAJOR.MINOR` floor in every package.json', () => {
-    expect(match).not.toBeNull();
+  it('states the same `^MAJOR.MINOR.0 || ... || >=MAJOR.MINOR.0` range in every package.json', () => {
+    expect(lines.length).toBeGreaterThan(0);
     expect(enginesFloor('packages/cli/package.json')).toBe(floor);
     expect(enginesFloor('packages/core/package.json')).toBe(floor);
   });
 
-  it('documents the floor in both READMEs and tests it in the CI matrix', () => {
+  it('documents the range in both READMEs and tests every line floor in the CI matrix', () => {
     expect(repoFile('README.md')).toContain(`Requirements: Node.js \`${floor}\``);
     expect(repoFile('packages/cli/README.md')).toContain(`Requirements: Node.js \`${floor}\``);
-    expect(repoFile('.github/workflows/ci.yml')).toContain(`'${String(major)}.${String(minor)}.0'`);
+    // No other place may state the old floor (e.g. a Development section)
+    for (const file of ['README.md', 'packages/cli/README.md', 'docs/configuration.md']) {
+      expect(repoFile(file)).not.toMatch(/Node(?:\.js)? `>=24\.11`/u);
+    }
+    for (const line of lines) {
+      expect(repoFile('.github/workflows/ci.yml')).toContain(`'${version(line)}'`);
+    }
   });
 
-  it('rejects the last minor below the floor with a one-line hint and exit 1', () => {
-    // A `.0` floor (e.g. >=26.0) has no lower minor in its major; the newest release
-    // below it is then the previous major's, approximated by an x.99 minor.
-    const below =
-      minor === 0 ? `${String(major - 1)}.99.0` : `${String(major)}.${String(minor - 1)}.0`;
+  it('rejects the release below each line floor and a major between lines', () => {
+    // The supported range today is ^22.19.0 || >=24.11.0, so this covers 22.18, 23.x and 24.10.
+    expect(rejected.length).toBeGreaterThan(0);
+    for (const below of rejected) {
+      const result = runStub(bin, asNode(below), ['--version']);
+      expect(result.status).toBe(1);
+      // Nothing on stdout: the CLI (which would print the version) was never loaded.
+      expect(result.stdout).toBe('');
+      expect(result.stderr.trim().split('\n')).toStrictEqual([hint(below)]);
+    }
+  });
+
+  it('rejects a major older than the oldest line too', () => {
+    const below = version([(lines[0]?.[0] ?? 0) - 2, 99]);
     const result = runStub(bin, asNode(below), ['--version']);
-    expect(result.status).toBe(1);
-    // Nothing on stdout: the CLI (which would print the version) was never loaded.
-    expect(result.stdout).toBe('');
-    expect(result.stderr.trim().split('\n')).toStrictEqual([
-      `openapi-mcp requires Node ${floor} (found v${below}). ` +
-        'Install a supported Node version (e.g. "nvm install 24") and re-run.',
-    ]);
-  });
-
-  it('rejects an older major too', () => {
-    const result = runStub(bin, asNode(`${String(major - 2)}.99.0`), ['--version']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(`requires Node ${floor}`);
   });
 
-  it('accepts exactly the floor and runs the CLI', () => {
-    const result = runStub(bin, asNode(`${String(major)}.${String(minor)}.0`), ['--version']);
-    expect(result.stderr).toBe('');
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
+  it('accepts exactly each line floor, and a later major, and runs the CLI', () => {
+    const newest = lines.at(-1) ?? [0, 0];
+    for (const accepted of [...lines.map((line) => version(line)), version([newest[0] + 2, 0])]) {
+      const result = runStub(bin, asNode(accepted), ['--version']);
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/u);
+    }
   });
 });
 

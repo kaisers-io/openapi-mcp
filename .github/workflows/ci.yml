@@ -25,12 +25,13 @@ jobs:
   check:
     timeout-minutes: 20
     strategy:
-      # An empty `node` falls back to .node-version (the dev pin); 24.11.0 is the published engines floor.
+      # An empty `node` falls back to .node-version (the dev pin); 24.11.0 and 22.19.0 are the floors of
+      # the two supported lines in the published engines range (^22.19.0 || >=24.11.0).
       # macOS runs on main only: on a private repository its minutes are billed at ten times the Linux
       # rate, and the platform-specific code paths (fsync, compile cache) rarely change in a PR.
       matrix:
         os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
-        node: ['', '24.11.0']
+        node: ['', '24.11.0', '22.19.0']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

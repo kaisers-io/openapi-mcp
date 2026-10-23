@@ -5,7 +5,7 @@ export default defineConfig({
   entry: { 'openapi-mcp': 'src/index.ts' },
   format: 'esm',
   platform: 'node',
-  target: 'node24',
+  target: 'node22.19',
   minify: true,
   dts: false,
   // The dist/ folder is now several content-hashed chunks (the dynamic imports of the

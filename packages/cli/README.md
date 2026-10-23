@@ -20,9 +20,10 @@ openapi-mcp --version
 openapi-mcp tools --spec https://api.example.com/openapi.json   # preview the tools, no server
 ```
 
-Requirements: Node.js `>=24.11`, macOS or Linux. Windows is not supported natively (the cache relies on POSIX file
-permissions and rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/). Other POSIX systems
-(e.g. FreeBSD) are refused because they are untested, not because they are known to be unsafe.
+Requirements: Node.js `^22.19.0 || >=24.11.0`, macOS or Linux. Use the latest patch release of your Node line: older
+patches miss its security fixes. Windows is not supported natively (the cache relies on POSIX file permissions and
+rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/). Other POSIX systems (e.g. FreeBSD)
+are refused because they are untested, not because they are known to be unsafe.
 
 The first run per user writes Node's compile cache to `~/.kaisers-io/openapi-mcp/compile-cache/`
 and is slower; `NODE_DISABLE_COMPILE_CACHE=1` turns it off.
