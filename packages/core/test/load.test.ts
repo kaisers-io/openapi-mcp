@@ -101,11 +101,25 @@ describe('parseSpecSource on Windows', () => {
 
   it.each([
     ['C:\\specs\\api.json', 'C:\\specs\\api.json'],
-    ['c:\\specs\\api.json', 'c:\\specs\\api.json'],
+    ['c:\\specs\\api.json', 'C:\\specs\\api.json'],
     ['C:/specs/api.json', 'C:\\specs\\api.json'],
     ['D:\\work\\a\\..\\api.json', 'D:\\work\\api.json'],
   ])('treats the drive-letter path %s as a file, not as a URL scheme', (raw, path) => {
     expect(parseSpecSource(raw, win)).toEqual({ kind: 'file', path });
+  });
+
+  it('uppercases the drive letter, so c:\\ and C:\\ name one cache namespace', () => {
+    // The canonical path is hashed into the cache namespace: two spellings of
+    // one file must not split it (an accepted baseline under one, a fresh
+    // trust-on-first-use under the other)
+    const lower = parseSpecSource('c:\\specs\\api.json', win);
+    const upper = parseSpecSource('C:\\specs\\api.json', win);
+    expect(lower).toEqual(upper);
+    // A relative path inherits the cwd's drive, whatever case the cwd has
+    expect(parseSpecSource('api.json', { ...win, cwd: 'd:\\work' })).toEqual({
+      kind: 'file',
+      path: 'D:\\work\\api.json',
+    });
   });
 
   it('treats a UNC path as a file', () => {

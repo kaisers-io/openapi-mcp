@@ -70,7 +70,20 @@ export const parseSpecSource = (
     return { kind: 'url', url };
   }
   // Resolve() also canonicalizes already-absolute paths (drops "..", ".")
-  return { kind: 'file', path: (isWindows ? win32 : posix).resolve(opts.cwd, raw) };
+  if (!isWindows) {
+    return { kind: 'file', path: posix.resolve(opts.cwd, raw) };
+  }
+  // The canonical path is hashed into the cache namespace, and Windows drive
+  // letters are case-insensitive: "c:\x.json" and "C:\x.json" must name one
+  // namespace, not two (one with an accepted baseline, one starting over with
+  // trust-on-first-use). Only the drive letter is folded; UNC paths and the
+  // rest of the path keep their spelling (NTFS can be case-sensitive per
+  // directory, so folding them could merge distinct files).
+  const resolved = win32.resolve(opts.cwd, raw);
+  const path = /^[a-z]:/u.test(resolved)
+    ? `${resolved.charAt(0).toUpperCase()}${resolved.slice(1)}`
+    : resolved;
+  return { kind: 'file', path };
 };
 
 export const hashContent = (text: string): string =>
