@@ -27,10 +27,10 @@ jobs:
     strategy:
       # An empty `node` falls back to .node-version (the dev pin); 24.11.0 and 22.19.0 are the floors of
       # the two supported lines in the published engines range (^22.19.0 || >=24.11.0).
-      # macOS runs on main only: on a private repository its minutes are billed at ten times the Linux
-      # rate, and the platform-specific code paths (fsync, compile cache) rarely change in a PR.
+      # macOS runs on every pull request and on main: the repository is public, so hosted runners
+      # cost nothing, and the platform-specific code paths (fsync, compile cache) are gated per change.
       matrix:
-        os: ${{ fromJSON(github.event_name == 'push' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        os: [ubuntu-latest, macos-latest]
         node: ['', '24.11.0', '22.19.0']
     runs-on: ${{ matrix.os }}
     steps:
@@ -41,15 +41,13 @@ jobs:
         with: { node-version: '${{ matrix.node }}', node-version-file: .node-version, cache: pnpm }
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm check
-  # Windows runs the whole test suite on the dev Node pin. Like macOS it runs on main only, because
-  # Windows minutes are billed at twice the Linux rate and the suite takes about ten minutes there; a PR
-  # that touches platform-specific code (paths, the cache's filesystem adapter, the bin stub, process
-  # handling) opts in with the `ci:windows` label, and the job then runs on that PR's next push.
+  # Windows runs the whole test suite on the dev Node pin, on every pull request and on main, so a
+  # change to platform-specific code (paths, the cache's filesystem adapter, the bin stub, process
+  # handling) is tested on Windows before it merges.
   # It runs `pnpm test`, not `pnpm check`: lint, formatting, types and coverage do not depend on the OS
   # and are already gated by the ubuntu job above, while subprocess coverage would be incomplete here
   # (ChildProcess#kill() terminates a Windows child abruptly, so it writes no V8 coverage).
   windows:
-    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci:windows')
     timeout-minutes: 30
     runs-on: windows-latest
     steps:
@@ -84,9 +82,18 @@ jobs:
         with: { node-version-file: .node-version, cache: pnpm }
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: bash scripts/check-bundle-determinism.sh
+  # The packed tarball is installed globally and driven through the installed bin on every supported
+  # platform: on Windows that path goes through npm's `.cmd` shim, which no other job exercises.
   smoke:
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -99,8 +106,10 @@ jobs:
         # dependencies of its own) — not a registry package outside the lockfile.
         run: | # zizmor: ignore[adhoc-packages]
           set -euo pipefail
-          npm pack ./packages/cli --pack-destination /tmp
-          npm install -g /tmp/kaisers-io-openapi-mcp-*.tgz
+          # A workspace-relative destination: the same spelling works in every runner's bash
+          mkdir -p .smoke
+          npm pack ./packages/cli --pack-destination .smoke
+          npm install -g ./.smoke/kaisers-io-openapi-mcp-*.tgz
           bash scripts/smoke-cli.sh
   # The dependency audit is NOT here: it lives in audit.yml (weekly on main, on demand, and on PRs that
   # change dependencies), so a new advisory cannot turn every open PR red overnight.
@@ -113,7 +122,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
       # `advanced-security: false`: report to the log and fail the job on findings, instead of uploading
-      # SARIF to code scanning (unavailable while the repo is private, and SARIF mode never fails the job).
+      # SARIF to code scanning (SARIF mode never fails the job, so a finding would not block a merge).
       # The action installs zizmor from a hash-pinned wheel lock for the exact version below.
       - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
         with:

@@ -52,16 +52,14 @@ If you changed what ends up in the bundle, also run `pnpm build` and
 `.github/workflows/` holds the gate. On a pull request:
 
 - **`ci` / check**: `pnpm check` on Ubuntu, on the dev pin and on both Node floors (24.11.0 and
-  22.19.0). On `main` the same matrix runs on macOS as well.
-- **`ci` / windows**: `pnpm test` on Windows. It runs on `main`, and on a pull request only when the
-  pull request carries the `ci:windows` label. If you touch paths, the cache's filesystem code,
-  the bin stub or process handling, add that label (or ask for it in the pull request).
+  22.19.0), and the same matrix on macOS.
+- **`ci` / windows**: `pnpm test` on Windows, on every pull request and on `main`.
 - **Coverage floors.** `pnpm check` runs the tests with coverage, including the lines that only run
   inside spawned `openapi-mcp` processes. `vitest.config.ts` sets an aggregate floor, a floor for
   every file, and stricter floors for the cache and the commands.
 - **`ci` / bundle-determinism**: builds twice and requires byte-identical output.
 - **`ci` / smoke**: packs the CLI, installs the tarball globally and runs
-  `scripts/smoke-cli.sh` against the installed bundle.
+  `scripts/smoke-cli.sh` against the installed bundle, on Linux, macOS and Windows.
 - **`ci` / versions**: `pnpm versions --check`. Every version site (the package version, the
   README and `docs/` pins, the `--json doctor` example) must agree, `CHANGELOG.md` must have one
   `## [Unreleased]` heading, and `packages/cli/CHANGELOG.md` must equal `CHANGELOG.md`.

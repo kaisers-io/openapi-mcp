@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile's ACL instead of `0700`/`0600` modes (see
   [docs/security.md](docs/security.md#windows)). The README shows the `cmd /c npx` form for
   MCP hosts that start servers without a shell. Linux and macOS behave exactly as before. A
-  `windows-latest` CI job runs the test suite on main and on PRs labelled `ci:windows`.
+  `windows-latest` CI job runs the test suite on main and on every pull request.
 - **Node.js 22 is supported: `^22.19.0 || >=24.11.0`.** The published packages, the
   bin stub's version guard and the docs now accept Node 22.19+ (22.x is maintenance LTS
   until April 2027) next to 24.11+. 22.19.0 is the bundled undici's own floor; older 22.x
@@ -218,6 +218,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Development
 
+- **Every pull request is tested on Linux, macOS and Windows.** The `check` matrix runs on macOS
+  as well as Ubuntu, the Windows test job runs without an opt-in label, and the smoke test of the
+  packed and globally installed CLI runs on all three platforms, which exercises npm's `.cmd` shim
+  on Windows.
 - **The release workflow refuses more mistakes and needs an approval outside the tagged tree.**
   `verify` refuses a tag whose version is not strictly newer than the version npm serves as
   `latest`, refuses prerelease versions, and stops when the registry lookup fails (only a

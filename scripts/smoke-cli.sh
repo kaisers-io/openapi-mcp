@@ -38,7 +38,8 @@ node -e '
 # chunk missing from the tarball fails here.
 node -e '
   const { spawn } = require("node:child_process");
-  const child = spawn("openapi-mcp", ["serve", "--spec", process.argv[1], "--base-url", "https://api.example.com"]);
+  // On Windows the global bin is an npm `.cmd` shim, which Node only starts through a shell
+  const child = spawn("openapi-mcp", ["serve", "--spec", process.argv[1], "--base-url", "https://api.example.com"], { shell: process.platform === "win32" });
   const timer = setTimeout(() => { console.error("serve smoke FAILED: no initialize answer"); child.kill(); process.exit(1); }, 15000);
   let out = "";
   child.stdout.on("data", (chunk) => {
