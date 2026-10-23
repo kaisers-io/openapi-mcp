@@ -197,6 +197,15 @@
 
 ### Development
 
+- **Security policy, contribution guide and templates for the public repository.**
+  `SECURITY.md` asks for private vulnerability reports through GitHub's advisory form and
+  lists what is in and out of scope; `CONTRIBUTING.md` takes over the README's Development and
+  Benchmarks sections (now naming the post-GC live heap, not peak RSS, as the gated memory
+  metric) and describes what CI runs and what fails review; `CODE_OF_CONDUCT.md`
+  adopts the Contributor Covenant 2.1; issue and pull request templates ask for the details a
+  report needs and the checks a change needs. The npm package now ships this changelog
+  (`packages/cli/CHANGELOG.md`, a byte-identical copy that a test and the release workflow
+  check) and declares `keywords`, `homepage` and `bugs`.
 - **Release checklist: version pins and a Windows smoke test (#158).** Bump every README
   pin (`@kaisers-io/openapi-mcp@<version>`) together with the version:
   `test/readme-pins.test.ts` fails on any pin that differs from `packages/cli/package.json`.

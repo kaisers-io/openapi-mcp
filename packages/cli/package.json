@@ -2,6 +2,22 @@
   "name": "@kaisers-io/openapi-mcp",
   "version": "0.3.1",
   "description": "Turn any OpenAPI spec into a strict, locally running MCP server",
+  "keywords": [
+    "api",
+    "cli",
+    "json-schema",
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "openapi",
+    "openapi3",
+    "rest",
+    "swagger"
+  ],
+  "homepage": "https://github.com/kaisers-io/openapi-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/kaisers-io/openapi-mcp/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -11,6 +27,7 @@
     "openapi-mcp": "bin/openapi-mcp.mjs"
   },
   "files": [
+    "CHANGELOG.md",
     "bin",
     "dist"
   ],
