@@ -221,10 +221,15 @@
   ],
   "overrides": [
     {
-      "files": ["packages/core/**/*.ts", "packages/cli/**/*.ts", "scripts/bench/**/*.ts"],
+      "files": [
+        "packages/core/**/*.ts",
+        "packages/cli/**/*.ts",
+        "scripts/bench/**/*.ts",
+        "scripts/versions/**/*.ts"
+      ],
       "rules": {
         // Configured (not off): both shipped packages (core and cli), and the
-        // benchmark harness that follows their conventions,
+        // benchmark harness and version script that follow their conventions,
         // mandate `type` over `interface` everywhere an object shape is
         // declared (interface survives only where TypeScript technically
         // requires it, each such site carrying its own justifying comment)
@@ -360,11 +365,21 @@
         // them without this list - headers.test.ts and api-options.test.ts
         // each define their own local expectUsageError, filter-pattern.test.ts's
         // agree wraps the glob-vs-oracle expect, and http-pinned-dispatcher.test.ts's
-        // rejectsWithCause wraps the rejects.toMatchObject expect. The rule
+        // rejectsWithCause wraps the rejects.toMatchObject expect, and
+        // scripts/versions/run.test.ts's expectRefusedSet wraps the checks
+        // that a refused version bump left every file untouched. The rule
         // stays live for genuinely assertion-free tests.
         "vitest/expect-expect": [
           "error",
-          { "assertFunctionNames": ["expect", "expectUsageError", "agree", "rejectsWithCause"] }
+          {
+            "assertFunctionNames": [
+              "expect",
+              "expectUsageError",
+              "agree",
+              "rejectsWithCause",
+              "expectRefusedSet"
+            ]
+          }
         ],
         // Off: 185 sites across 25 test files (heaviest:
         // cache-store.test.ts, server-dispatch.test.ts, pipeline.test.ts)

@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
 
 ### BREAKING
 
@@ -197,11 +202,16 @@
 
 ### Development
 
-- **Release checklist: version pins and a Windows smoke test (#158).** Bump every README
-  pin (`@kaisers-io/openapi-mcp@<version>`) together with the version:
-  `test/readme-pins.test.ts` fails on any pin that differs from `packages/cli/package.json`.
-  Then smoke-test the published tarball on Windows with an absolute drive path
-  (`openapi-mcp tools --spec C:\path\to\spec.json`).
+- **A version bump is one command: `pnpm versions --set <version>`.** It writes the version to
+  `packages/cli/package.json`, every `@kaisers-io/openapi-mcp@<version>` pin in the READMEs and
+  `docs/`, and the `--json doctor` example, and turns `## [Unreleased]` into
+  `## [<version>] - <date>` under a fresh `## [Unreleased]`. It refuses a version that is not
+  newer than the current one, and writes nothing if any file cannot be updated. `pnpm versions --check` fails on any site that differs from
+  `packages/cli/package.json`, and on a pin that is not an exact version (`latest`, `^1.2.3`).
+  It runs in a new `versions` CI job and in the release workflow, which also requires a
+  changelog heading for the tagged version. It replaces `test/readme-pins.test.ts` (#158).
+  This changelog now follows Keep a Changelog. The release steps, including the Windows smoke
+  test of the published tarball, are in the README under "Releasing".
 - **The benchmark gate checks retained memory, not peak RSS.** Peak RSS of a `serve` start
   depends on when V8 grows its young generation and collects old space. For the same build,
   flat-500's warm peak alternated between modes about 70 MB apart, which failed the gate on
