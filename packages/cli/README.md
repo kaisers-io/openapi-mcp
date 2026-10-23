@@ -16,11 +16,16 @@ only from environment variables, and never applies a refreshed spec silently.
 
 ```bash
 npm i -g @kaisers-io/openapi-mcp
+openapi-mcp --version
+openapi-mcp tools --spec https://api.example.com/openapi.json   # preview the tools, no server
 ```
 
 Requirements: Node.js `>=24.11`, macOS or Linux. Windows is not supported natively (the cache relies on POSIX file
 permissions and rename semantics); run it inside [WSL](https://learn.microsoft.com/windows/wsl/). Other POSIX systems
 (e.g. FreeBSD) are refused because they are untested, not because they are known to be unsafe.
+
+The first run per user writes Node's compile cache to `~/.kaisers-io/openapi-mcp/compile-cache/`
+and is slower; `NODE_DISABLE_COMPILE_CACHE=1` turns it off.
 
 ## Quick start
 
@@ -41,8 +46,6 @@ Claude Code (`.mcp.json`, expands `${VAR}` — export `SPEC_TOKEN`/`API_TOKEN` f
         "Authorization=SPEC_TOKEN",
         "--header-env",
         "Authorization=API_TOKEN",
-        "--allow",
-        "read*",
         "--cache-key",
         "petstore"
       ],
@@ -64,17 +67,51 @@ args = [
   "--spec", "https://api.example.com/openapi.json",
   "--spec-header-env", "Authorization=SPEC_TOKEN",
   "--header-env", "Authorization=API_TOKEN",
-  "--allow", "read*",
   "--cache-key", "petstore",
 ]
 env_vars = ["SPEC_TOKEN", "API_TOKEN"]
 ```
 
 Host config examples always pin an exact version, never `latest` — this process runs with
-your API credentials on every launch.
+your API credentials on every launch. `--cache-key` is required when the spec fetch is
+authenticated (`--spec-header-env`), unless you pass `--trust-spec-updates`.
 
-Full documentation, security model, and configuration reference:
-https://github.com/kaisers-io/openapi-mcp
+## Defaults
+
+- **Read-only:** with no `--allow`, only `GET`/`HEAD` operations become tools. `--allow`/`--deny`
+  take operationId globs (`list*`), `METHOD /path` globs (`GET /users/**`) and `tag:<glob>`;
+  `--deny` always wins, and any `--allow` replaces the read-only default.
+- **Tool names** are the operationId reduced to `[A-Za-z0-9_-]` (at most 64 characters), or
+  method and path when there is no usable operationId (`get_users_by_id`). Filters match the
+  raw operationId, not the tool name.
+- **Secrets** come only from environment variables (`--header-env Header=ENV`,
+  `--spec-header-env`, `--http-token-env`, `--upstream-oauth-client-*-env`) and are redacted
+  from every output.
+- **Egress:** an address from the spec (its `servers` URL) or from a redirect is refused when
+  private, loopback or cloud metadata; `--allow-private-network` permits the first two.
+- **Spec updates** fetched at runtime wait for `openapi-mcp cache promote` (or
+  `--trust-spec-updates` for specs you own).
+- **Transport:** stdio. `--http` serves Streamable HTTP on `127.0.0.1:3044` and requires
+  `--http-token-env` (32 random bytes, e.g. `openssl rand -base64 32`). `--http-auth oauth`
+  turns it into an OAuth resource server that may bind another `--http-host`.
+- **Trace propagation is on:** a W3C `traceparent` from a call's `_meta` is forwarded
+  upstream; pass `--no-trace-propagation` for APIs you do not operate.
+
+## Options worth knowing
+
+- `--tool-mode discover` (or `auto`, above 64 operations): three tools — `search_operations`,
+  `describe_operation`, `call_operation` — instead of one tool per operation, so `tools/list`
+  stays under 5 KB for large APIs.
+- `--request-timeout` (default `30s`), `--max-concurrency` (default `16`), `--rate-limit`
+  (default `120/1m`), `--max-response-bytes` (default `10MB`).
+- `--retries <n>` (default `0`): retries transient failures; `POST`/`PATCH` only with an
+  `Idempotency-Key` header.
+- `--log json`, `--response-projection` (`_fields`), `--tools-page-size` (only for hosts that
+  follow `nextCursor`), `--strict-filters`, `--upstream-oauth-*` (client credentials).
+- `openapi-mcp cache list|refresh|promote|clear|unlock` manages the spec cache;
+  `openapi-mcp doctor` prints versions and the cache root.
+
+Every flag and its default: `openapi-mcp <command> --help`.
 
 ## License
 

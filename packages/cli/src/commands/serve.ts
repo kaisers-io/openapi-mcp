@@ -19,7 +19,12 @@ const collect = (value: string, previous: string[] | undefined): string[] => [
 // other commands never load or evaluate it. A bundling mistake would surface
 // as a failure of `serve` itself, which the packed-CLI smoke test exercises.
 export const registerServe: CommandRegistrar = (program, ctx, state) => {
-  const command = registerApiOptions(registerSpecOptions(program.command('serve')))
+  const command = registerApiOptions(
+    registerSpecOptions(
+      program.command('serve'),
+      'permit private/loopback addresses for spec fetch redirects, for API requests to a spec-derived origin or redirect, and for the --upstream-oauth-* token URL (never cloud-metadata)',
+    ),
+  )
     .description(
       'start an MCP server (stdio by default) exposing tools generated from an OpenAPI spec',
     )
@@ -33,7 +38,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     )
     .option(
       '--http-host <addr>',
-      'IP address to bind (default 127.0.0.1; any other requires --http-auth oauth)',
+      'IP address to bind; only with --http-auth oauth (static mode always binds 127.0.0.1)',
     )
     .option(
       '--oauth-issuer <url>',

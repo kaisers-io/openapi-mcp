@@ -31,6 +31,31 @@ describe('run', () => {
     expect(lines.join('\n')).toContain('Usage: openapi-mcp');
   });
 
+  // The help text must describe what the flags do in each command: in serve,
+  // --allow-private-network also governs API egress, and --http-host is refused
+  // in static mode for every value (not only for non-loopback ones).
+  it('describes --allow-private-network and --http-host by their real scope', async () => {
+    const helpOf = async (command: string): Promise<string> => {
+      const lines: string[] = [];
+      const code = await run(testContext({ lines }), ['node', 'openapi-mcp', command, '--help']);
+      expect(code).toBe(EXIT.OK);
+      // Commander wraps long descriptions; compare on single spaces
+      return lines.join('\n').replaceAll(/\s+/gu, ' ');
+    };
+    const serve = await helpOf('serve');
+    expect(serve).toContain(
+      '--allow-private-network permit private/loopback addresses for spec fetch redirects, for API requests to a spec-derived origin or redirect, and for the --upstream-oauth-* token URL (never cloud-metadata)',
+    );
+    expect(serve).toContain(
+      '--http-host <addr> IP address to bind; only with --http-auth oauth (static mode always binds 127.0.0.1)',
+    );
+    expect(serve).not.toContain('any other requires --http-auth oauth');
+    const tools = await helpOf('tools');
+    expect(tools).toContain(
+      '--allow-private-network permit private/loopback redirect targets during the spec fetch (never cloud-metadata)',
+    );
+  });
+
   it('treats an unknown command as a usage error on stderr with exit 2', async () => {
     const lines: string[] = [];
     const errLines: string[] = [];

@@ -45,8 +45,9 @@
   refused call (`overloaded`, or over the new `--rate-limit`, default `120/1m`) is a tool
   error whose `_meta` carries `openapi-mcp/error` and `openapi-mcp/retryAfterMs`.
 
-- **New `--request-timeout` for upstream API calls (#68).** `--timeout` now covers only the
-  spec fetch. **Upgrading:** if you raised `--timeout` to make slow API calls work, set
+- **New `--request-timeout` for upstream API calls (#68).** `--timeout` no longer applies to
+  API calls; it covers the spec fetch (and, with `--http-auth oauth`, the metadata and JWKS
+  fetches). **Upgrading:** if you raised `--timeout` to make slow API calls work, set
   `--request-timeout` instead (default `30s`); it is the per-call budget, queue wait included.
 - **HTTP client fixes (#68).** `Accept` is derived from the operation's declared 2xx media
   types (a spec `Accept` header parameter is ignored, per OpenAPI; `--header Accept:`
@@ -144,6 +145,16 @@
   issued; the token request is bounded by `--request-timeout`. An upstream `401` replays the
   request once with a fresh token; that replay is separate from `--retries`. A call whose token
   could not be obtained is logged with the new outcome `token_error`.
+
+### Documentation
+
+- **READMEs match the current CLI.** The host examples no longer pass `--allow "read*"` (an
+  operationId glob that is not "read operations" and matches nothing on many specs); they keep
+  the read-only default. The READMEs now describe tool naming, the egress policy, trace
+  propagation being on by default, the newer serve options, the compile cache and the exit
+  codes, and list the `--header` deny-list as the code enforces it. The npm README no longer
+  links to the source repository. `serve --help` now describes `--allow-private-network` as
+  also covering API requests, and `--http-host` as accepted only with `--http-auth oauth`.
 
 ### Performance
 
