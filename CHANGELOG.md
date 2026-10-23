@@ -28,6 +28,13 @@
 
 ### Changed
 
+- **Node.js 22 is supported: `^22.19.0 || >=24.11.0`.** The published packages, the
+  bin stub's version guard and the docs now accept Node 22.19+ (22.x is maintenance LTS
+  until April 2027) next to 24.11+. 22.19.0 is the bundled undici's own floor; older 22.x
+  releases crash at load. 23.x and 24.0–24.10 stay refused. CI tests both line floors, and
+  the typecheck now uses the Node 22 library and `@types/node` 22, so code that needs a
+  Node-24-only API (such as `Promise.try` or `Error.isError`) fails the typecheck.
+
 - **Request bodies with `minProperties`/`maxProperties` are now a single `body` field (#71).**
   These operations used to be omitted. They are now generated, and the body is not flattened
   into top-level fields, so the property-count constraint can be enforced. The common case
