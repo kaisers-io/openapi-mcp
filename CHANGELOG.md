@@ -197,6 +197,11 @@
 
 ### Development
 
+- **Release checklist: version pins and a Windows smoke test (#158).** Bump every README
+  pin (`@kaisers-io/openapi-mcp@<version>`) together with the version:
+  `test/readme-pins.test.ts` fails on any pin that differs from `packages/cli/package.json`.
+  Then smoke-test the published tarball on Windows with an absolute drive path
+  (`openapi-mcp tools --spec C:\path\to\spec.json`).
 - **The benchmark gate checks retained memory, not peak RSS.** Peak RSS of a `serve` start
   depends on when V8 grows its young generation and collects old space. For the same build,
   flat-500's warm peak alternated between modes about 70 MB apart, which failed the gate on

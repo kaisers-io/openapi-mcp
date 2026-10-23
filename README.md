@@ -148,6 +148,10 @@ env_vars = ["SPEC_TOKEN", "API_TOKEN"]
 
 ### Windows hosts
 
+Native Windows support needs a release that includes it (it is listed under Unreleased in
+[CHANGELOG.md](CHANGELOG.md)); earlier versions refuse to install on Windows. Pin that version
+or a later one in the examples below.
+
 On Windows, `npx` (and a globally installed `openapi-mcp`) is a `.cmd` script, not an
 executable. Hosts that resolve it themselves take the configs above unchanged — Claude
 Desktop's own Windows example uses `"command": "npx"`. A host that starts the command directly,
