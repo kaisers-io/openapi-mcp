@@ -6,20 +6,18 @@
 // Node 14.8) and no `?.`/`??` (Node 14): the hint prints on every Node that can load an `.mjs`
 // at all (12.17+, where ES modules were unflagged). Imports happen only after the guard.
 
-// Platform first: no Node upgrade fixes it. The cache's trust model rests on POSIX semantics
-// that Windows does not provide (0700/0600 modes are not enforced there, and rename() over a
-// file another process holds open fails instead of replacing it), so an unsupported platform
-// stops here, before any of that code loads. Other POSIX systems (FreeBSD, OpenBSD, illumos,
-// AIX, Android) likely provide those semantics but are refused because nothing tests them.
-// PLATFORMS must equal `os` in package.json, which makes npm refuse the install there too;
-// test/bin.test.ts holds the two together.
-const PLATFORMS = ['darwin', 'linux'];
+// Platform first: no Node upgrade fixes it. Only the platforms the CI matrix runs the whole
+// suite on are accepted: Linux, macOS and Windows (where the cache absorbs two measured
+// differences — no directory fsync and no rename() over an open file — see context.ts, and
+// relies on the profile ACL instead of 0700/0600 modes, see docs/security.md). Other systems
+// (FreeBSD, OpenBSD, illumos, AIX, Android) likely work but are refused because nothing tests
+// them. PLATFORMS must equal `os` in package.json, which makes npm refuse the install there
+// too; test/bin.test.ts holds the two together.
+const PLATFORMS = ['darwin', 'linux', 'win32'];
 if (!PLATFORMS.includes(process.platform)) {
   console.error(
-    `openapi-mcp supports macOS and Linux only (found ${process.platform}). ` +
-      (process.platform === 'win32'
-        ? 'On Windows, run it inside WSL.'
-        : 'Other platforms are untested and therefore refused.'),
+    `openapi-mcp supports macOS, Linux and Windows only (found ${process.platform}). ` +
+      'Other platforms are untested and therefore refused.',
   );
   process.exit(1);
 }

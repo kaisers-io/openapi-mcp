@@ -317,6 +317,41 @@ HTTP transport before it reaches a tool, and `--oauth-required-scope` applies to
 server, not per operation: a scope cannot grant some operations behind `call_operation` and
 not others.
 
+## Windows
+
+The spec cache is a trust store: its accepted baseline decides which tools a model gets. On
+Linux and macOS it is private through POSIX modes — every directory `0700`, every file `0600`,
+set explicitly regardless of umask. Windows does not enforce POSIX modes (`chmod` there only
+toggles the read-only attribute; `stat` reports `666` after `chmod 0600`, measured on
+`windows-latest`), so the same calls run but protect nothing. On Windows the cache is private
+through the **access control list it inherits** instead:
+
+- The cache lives under `%USERPROFILE%\.kaisers-io\openapi-mcp\` (`os.homedir()`, which reads
+  `USERPROFILE`). A standard profile directory grants access only to its owner, `SYSTEM` and
+  the `Administrators` group, and new directories inherit that. Another standard user cannot
+  read or plant cache entries there. The Windows CI job checks the inherited ACL of a freshly
+  created cache directory: no `Everyone`, `Users` or `Authenticated Users` entry.
+- `openapi-mcp` does not set an ACL itself. If `USERPROFILE` points somewhere else — a
+  redirected or shared profile, a network drive, a directory whose ACL was widened — keeping
+  `.kaisers-io\openapi-mcp\` private is the operator's responsibility, exactly as it is for a
+  `HOME` on a shared mount on POSIX. Check it with `icacls "%USERPROFILE%\.kaisers-io"`.
+- Administrators and `SYSTEM` can read and change the cache, as root can on POSIX.
+
+Two filesystem differences are handled in code, so the cache keeps its guarantees:
+
+- **No directory fsync.** Windows refuses `fsync` on a directory (`EPERM`; Node implements it as
+  `FlushFileBuffers`, which needs a writable handle a directory cannot have). Each file is still
+  flushed before it is renamed into place, and NTFS journals the rename, so after a crash a
+  cache file is the old or the new version, never a torn one. Only on Windows is `EPERM` read
+  as "no directory barrier"; elsewhere it still fails the write.
+- **No rename over an open file.** Replacing `meta.json` fails with `EPERM` while any process
+  (another `openapi-mcp` reading it, a virus scanner) has it open. The rename is retried with a
+  short backoff for at most 2 seconds, then the write fails closed as before. Linux and macOS
+  make exactly one attempt.
+
+The writer lock (an exclusive hard link) and the stale-lock check (`process.kill(pid, 0)`)
+behave the same on Windows as on POSIX (measured).
+
 ## What `openapi-mcp` defends, and what you still must do
 
 `openapi-mcp` defends: credential exposure (env-only, redacted everywhere), unbounded/hostile
