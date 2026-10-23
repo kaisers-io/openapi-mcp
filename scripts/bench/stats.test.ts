@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { parseSpecText } from '../../packages/core/src/spec/parse.ts';
 import { layeredSpec } from './fixtures.ts';
+import { describedSpec, toYaml } from './yaml-fixture.ts';
 import { compareResults, hasRegression, judge, summarize } from './stats.ts';
 import type { CliResult, FixtureMetrics } from './stats.ts';
 
@@ -17,6 +19,34 @@ describe('summarize', () => {
 
   it('refuses an empty sample', () => {
     expect(() => summarize([])).toThrow('empty');
+  });
+});
+
+describe('memory rules', () => {
+  // The flat-500 failure on a docs-only pull request: the same build, one run
+  // per GC mode
+  const sameBuildRss = { reference: [199.2, 198.6, 199.5], head: [271.4, 267.8, 272.1] };
+
+  it('reports peak RSS without failing the gate on it', () => {
+    const findings = compareResults(
+      result({ warmRssMB: summarize(sameBuildRss.head) }),
+      result({ warmRssMB: summarize(sameBuildRss.reference) }),
+      'base',
+    );
+    expect(findings.find((finding) => finding.metric === 'warmRssMB')?.verdict).toBe('changed');
+    expect(hasRegression(findings)).toBe(false);
+  });
+
+  it('fails on retained memory: the live heap after a full GC', () => {
+    const findings = compareResults(
+      result({ warmLiveHeapMB: summarize([62.1, 62.3, 62.2]) }),
+      result({ warmLiveHeapMB: summarize([47.7, 47.7, 47.8]) }),
+      'base',
+    );
+    expect(findings.find((finding) => finding.metric === 'warmLiveHeapMB')?.verdict).toBe(
+      'regressed',
+    );
+    expect(hasRegression(findings)).toBe(true);
   });
 });
 
@@ -162,5 +192,17 @@ describe('layeredSpec', () => {
   it('is deterministic', () => {
     const opts = { schemas: 20, refsPerSchema: 3, pathCount: 5, layers: 4 };
     expect(JSON.stringify(layeredSpec(opts))).toBe(JSON.stringify(layeredSpec(opts)));
+  });
+});
+
+describe('toYaml', () => {
+  it('writes YAML that the spec parser reads back as the same value', () => {
+    const spec = describedSpec(3);
+    expect(parseSpecText(toYaml(spec))).toStrictEqual(spec);
+    const awkward = {
+      'a: b': ['- x', '#y', '', 0, 1.5, true, null, [], {}],
+      200: { 'k"q': 'v\n', nested: [{ x: 1 }, [2]] },
+    };
+    expect(parseSpecText(toYaml(awkward))).toStrictEqual(awkward);
   });
 });

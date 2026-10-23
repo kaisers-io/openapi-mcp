@@ -6,6 +6,7 @@
 
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { describedSpec, toYaml } from './yaml-fixture.ts';
 
 export type ToolCall = {
   tool: string;
@@ -228,6 +229,16 @@ export const FIXTURES: readonly Fixture[] = [
     spec: jsonSpec(() => layeredSpec({ schemas: 200, refsPerSchema: 2, pathCount: 50, layers: 5 })),
     filterArgs: ['--allow', '**'],
     call: { tool: 'get0', args: { id: '1' }, response: SYNTHETIC_RESPONSE },
+    suite: 'ci',
+  },
+  {
+    // The warm start reads an unchanged file: it reuses the cached, already
+    // validated document instead of parsing the YAML again (#76), so
+    // warmStartupMs vs startupMs shows that saving
+    name: 'yaml-400',
+    description: '400 GET operations without response schemas, as a YAML file',
+    spec: () => Promise.resolve({ text: toYaml(describedSpec(400)), extension: 'yaml' }),
+    filterArgs: [],
     suite: 'ci',
   },
   {

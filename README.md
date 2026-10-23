@@ -253,8 +253,10 @@ See [`docs/security.md`](docs/security.md) for the full threat model.
 
 Specs are cached under `~/.kaisers-io/openapi-mcp/cache/<namespace>/` and re-validated at
 startup once the TTL has expired (`--ttl`, default `1h`), using conditional requests
-(ETag/Last-Modified). A running server does not refresh its tool list; restart it to pick up
-a newer spec.
+(ETag/Last-Modified). A local file is read and hashed on every start; while its bytes match
+the accepted baseline, the cached, already validated document is used instead of parsing the
+file again. A running server does not refresh its tool list; restart it to pick up a newer
+spec.
 
 Refresh is **fail-closed**: the cache holds an accepted baseline and, separately, at most one
 pending candidate. A changed spec fetched at runtime is validated and written as a candidate

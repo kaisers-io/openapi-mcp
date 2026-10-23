@@ -605,7 +605,14 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
   const page =
     opts.paginate === undefined
       ? undefined
-      : pageHinter(opts.paginate, opts.redactor, outcome.headers, outcome.url, outcome.status);
+      : pageHinter(
+          opts.paginate,
+          opts.redactor,
+          outcome.headers,
+          outcome.url,
+          outcome.status,
+          outcome.contentType,
+        );
   const mapped = mapBody(opts, forwarded, page);
   // A text result (no outputSchema) gets the Link-derived hint as its own
   // block; a structured one already carries it in the envelope.

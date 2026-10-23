@@ -74,6 +74,17 @@
   tool's own parameter types, or `null` when no next page is known (not proof that the data
   is exhausted). Its output schema gains an optional `pagination` property.
 
+- **Next-page hints for JSON:API and `deepObject`/delimited query parameters (#145).** A
+  JSON:API response (`application/vnd.api+json`, or a schema declaring `links.next`) now
+  gets `pagination.next` from its body `links.next`, under the same rules as a `Link`
+  header (same origin and path, every parameter maps, the tool's input schema accepts it);
+  a `Link` header still wins when both are sent. Next URLs using `page[number]=2&page[size]=10`,
+  `page[after]=…` or `filter[status]=x` map back onto the tool's `deepObject` parameters
+  (declared keys only), and space- or pipe-delimited array values are split on their
+  delimiter. Before, all of these gave `next: null`. Anything ambiguous (an undeclared or
+  nested key, a repeated key, a name that is both a literal parameter and a `deepObject`
+  key) still gives `null`.
+
 - **Opt-in retries for retry-safe requests (#82).** `--retries <n>` (0–3, default `0`)
   retries 429/502/503/504 and connection errors before any response for GET, HEAD, PUT and
   DELETE (DELETE not after a connection error), and for POST/PATCH only when the operation
@@ -154,3 +165,23 @@
   run per user writes the cache and is slower (`--version` about 191 → 237 ms). MCP hosts
   that start the server in a fresh container or CI job, with no persistent home directory,
   pay that first-run cost on every start. `NODE_DISABLE_COMPILE_CACHE=1` turns the cache off.
+
+- **An unchanged spec is not parsed again (#76).** A local spec file is still read and hashed
+  on every start. While its bytes match the accepted baseline, the server now uses the
+  cached, already validated document instead of parsing and validating the file again. The
+  same applies to a URL that answers `200` with identical bytes. The DigitalOcean spec (1.6 MB
+  YAML) as a local file starts in 508 ms instead of 1,204 ms from the second start on, with
+  131 MB peak RSS instead of 247 MB. The tools are still generated on every start, so every
+  flag takes effect immediately. A validation rule added by a newer release is not applied to
+  an unchanged file until the file changes (or `openapi-mcp cache clear`); before, such a file
+  was served as the last known good baseline with a warning.
+
+### Development
+
+- **The benchmark gate checks retained memory, not peak RSS.** Peak RSS of a `serve` start
+  depends on when V8 grows its young generation and collects old space. For the same build,
+  flat-500's warm peak alternated between modes about 70 MB apart, which failed the gate on
+  a docs-only pull request. The harness now preloads a small probe into every measured
+  process, which reports the heap still in use after a full garbage collection. That value
+  is gated (`liveHeapMB`, `warmLiveHeapMB`); peak RSS is still reported, but no longer fails
+  the gate.
