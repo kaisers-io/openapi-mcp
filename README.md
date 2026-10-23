@@ -408,6 +408,9 @@ globally instead of invoking via `npx`).
 ## Development
 
 Requires Node.js `^22.19.0 || >=24.11.0` (the dev pin in `.node-version` is 24) and pnpm `>=11`.
+Development is supported on Linux and macOS. Windows is a supported runtime for the published
+package, not a development platform: CI runs the test suite there, but the development scripts
+(benchmarks, smoke and release scripts) assume a POSIX shell.
 
 ```bash
 git clone https://github.com/kaisers-io/openapi-mcp.git
