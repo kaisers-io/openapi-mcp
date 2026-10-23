@@ -1,3 +1,4 @@
+import { dirname, sep } from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { HTTP_METHODS, parseFilterPattern, runSpecPipeline } from '../src/index.ts';
@@ -79,7 +80,7 @@ const seededAndLocked = async (
 ): Promise<{ fs: MemoryCacheFs; lockPath: string; metaBefore: string }> => {
   const fs = memoryCacheFs();
   await runSpecPipeline(specUrl, opts, deps(fs, fetcher));
-  const metaPath = [...fs.files.keys()].find((key) => key.endsWith('/meta.json'))!;
+  const metaPath = [...fs.files.keys()].find((key) => key.endsWith(`${sep}meta.json`))!;
   const lockPath = metaPath.replace(/meta\.json$/u, '.lock');
   await fs.createExclusive(
     lockPath,
@@ -165,7 +166,7 @@ describe('a held writer lock and a verified entry (#65)', () => {
       const fetcher = fetcherOf([{ body: remoteSpec('Remote') }]);
       const probe = memoryCacheFs();
       await runSpecPipeline(specUrl, opts, deps(probe, fetcher));
-      const metaPath = [...probe.files.keys()].find((key) => key.endsWith('/meta.json'))!;
+      const metaPath = [...probe.files.keys()].find((key) => key.endsWith(`${sep}meta.json`))!;
       const lockPath = metaPath.replace(/meta\.json$/u, '.lock');
       const fs = memoryCacheFs();
       let slept = 0;
@@ -180,7 +181,7 @@ describe('a held writer lock and a verified entry (#65)', () => {
           }
         },
       };
-      await fs.mkdirSecure(lockPath.replace(/\/\.lock$/u, ''));
+      await fs.mkdirSecure(dirname(lockPath));
       await fs.createExclusive(lockPath, JSON.stringify({ owner: 'busy', acquiredAt: 1000 }));
       return runSpecPipeline(specUrl, { ...opts, timeoutMs }, deps(fs, fetcher));
     };
@@ -194,8 +195,8 @@ describe('a held writer lock and a verified entry (#65)', () => {
     const fetcher = fetcherOf([{ body: remoteSpec('Remote') }]);
     const probe = memoryCacheFs();
     await runSpecPipeline(specUrl, opts, deps(probe, fetcher));
-    const dir = [...probe.files.keys()].find((key) => key.endsWith('/meta.json'))!;
-    await fs.mkdirSecure(dir.replace(/\/meta\.json$/u, ''));
+    const dir = [...probe.files.keys()].find((key) => key.endsWith(`${sep}meta.json`))!;
+    await fs.mkdirSecure(dirname(dir));
     await fs.createExclusive(
       dir.replace(/meta\.json$/u, '.lock'),
       JSON.stringify({ owner: 'other', acquiredAt: 0 }),

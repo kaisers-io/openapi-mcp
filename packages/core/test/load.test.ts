@@ -126,7 +126,11 @@ describe('parseSpecSource on Windows', () => {
     // "C:api.json" is relative to drive C's own current directory, a per-process state this
     // tool does not resolve; it stays a scheme error that hints at the "./" escape
     expect(() => parseSpecSource('C:api.json', win)).toThrow(/\.\//u);
-    for (const raw of ['file:///C:/specs/api.json', 'ftp://example.com/x', 'mailto:x@example.com']) {
+    for (const raw of [
+      'file:///C:/specs/api.json',
+      'ftp://example.com/x',
+      'mailto:x@example.com',
+    ]) {
       expect(() => parseSpecSource(raw, win)).toThrow(/only http: and https:/u);
     }
     expect(parseSpecSource('https://api.example.com/spec.json', win).kind).toBe('url');

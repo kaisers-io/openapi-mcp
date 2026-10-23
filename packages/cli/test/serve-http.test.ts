@@ -576,32 +576,39 @@ describe('serve --http — stateless Streamable HTTP E2E', () => {
     );
   }, 40_000);
 
-  it('graceful SIGINT/SIGTERM exits 0 and completes within the shutdown bound, with a live connection still open from a prior request', async () => {
-    const spawned = await spawnServeHttp();
-    child = spawned.proc;
-    const { port } = spawned;
+  // POSIX only: Windows has no signals to send. There, ChildProcess#kill()
+  // terminates the process abruptly whatever the signal name (Node docs,
+  // subprocess.kill), so no handler can run; the SIGINT a console delivers on
+  // Ctrl+C cannot be raised from a test without sharing the child's console.
+  it.skipIf(process.platform === 'win32')(
+    'graceful SIGINT/SIGTERM exits 0 and completes within the shutdown bound, with a live connection still open from a prior request',
+    async () => {
+      const spawned = await spawnServeHttp();
+      child = spawned.proc;
+      const { port } = spawned;
 
-    // A completed request leaves its keep-alive connection open in the global
-    // fetch agent's pool, so the listener is holding a real client connection
-    // when the signal arrives — the concrete scenario that would keep
-    // http.Server#close() pending without the shutdown handling.
-    const warmup = await postModern(port, 'tools/list', modernBody(nextId(), 'tools/list'));
-    expect(warmup.status).toBe(200);
+      // A completed request leaves its keep-alive connection open in the global
+      // fetch agent's pool, so the listener is holding a real client connection
+      // when the signal arrives — the concrete scenario that would keep
+      // http.Server#close() pending without the shutdown handling.
+      const warmup = await postModern(port, 'tools/list', modernBody(nextId(), 'tools/list'));
+      expect(warmup.status).toBe(200);
 
-    const start = Date.now();
-    child.kill('SIGTERM');
-    const code = await new Promise<number | null>((resolve) => {
-      child?.once('exit', (exitCode) => resolve(exitCode));
-    });
-    expect(code).toBe(0);
-    // The bound MUST be BELOW SHUTDOWN_FORCE_MS (5000ms), not above it: a
-    // graceful shutdown finishes in well under a second (the sub-4s figure is
-    // almost all fixed process-teardown overhead, not shutdown work), whereas
-    // a shutdown that fell through to the bounded closeAllConnections()
-    // fallback would only exit at ~5000ms. A `< 10_000` bound would pass in
-    // BOTH cases, leaving the graceful path unfalsified.
-    expect(Date.now() - start).toBeLessThan(4000);
-  });
+      const start = Date.now();
+      child.kill('SIGTERM');
+      const code = await new Promise<number | null>((resolve) => {
+        child?.once('exit', (exitCode) => resolve(exitCode));
+      });
+      expect(code).toBe(0);
+      // The bound MUST be BELOW SHUTDOWN_FORCE_MS (5000ms), not above it: a
+      // graceful shutdown finishes in well under a second (the sub-4s figure is
+      // almost all fixed process-teardown overhead, not shutdown work), whereas
+      // a shutdown that fell through to the bounded closeAllConnections()
+      // fallback would only exit at ~5000ms. A `< 10_000` bound would pass in
+      // BOTH cases, leaving the graceful path unfalsified.
+      expect(Date.now() - start).toBeLessThan(4000);
+    },
+  );
 
   it('a client that aborts a request mid-flight does not wedge the listener — the next request is served normally', async () => {
     const spawned = await spawnServeHttp();

@@ -1,3 +1,4 @@
+import { sep } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildSnapshot,
@@ -177,7 +178,7 @@ const toolsList = (result: SpecPipelineResult, toolgen: ToolgenOptions = {}): st
 };
 
 const metaPathOf = (fs: MemoryCacheFs): string => {
-  const path = [...fs.files.keys()].find((key) => key.endsWith('/meta.json'));
+  const path = [...fs.files.keys()].find((key) => key.endsWith(`${sep}meta.json`));
   if (path === undefined) {
     throw new Error('no meta.json written');
   }
@@ -276,7 +277,7 @@ describe('an unchanged source reuses the accepted document (#76)', () => {
 
   it('a damaged accepted object still fails closed instead of being reused', async () => {
     const { fs, source } = await primed();
-    const objectKey = [...fs.files.keys()].find((key) => key.includes('/objects/'))!;
+    const objectKey = [...fs.files.keys()].find((key) => key.includes(`${sep}objects${sep}`))!;
     fs.files.set(objectKey, fs.files.get(objectKey)!.replace('Things', 'Thingz'));
     await expect(run(fs, source)).rejects.toThrow(/does not match its recorded content hash/u);
   });
