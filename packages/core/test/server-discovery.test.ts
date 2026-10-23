@@ -131,7 +131,7 @@ const snapshotFor = (
   const built = buildTools(exposed, {
     reservedHeaders: SYSTEM_HEADERS,
     openapiVersion: '3.1',
-    nullableResponseFields: toolgen.nullableResponseFields === true,
+    ...(toolgen.nullableResponseFields === true ? { nullableResponseFields: 'all' as const } : {}),
   });
   return buildSnapshot(built, PIPELINE, toolMode === undefined ? {} : { toolMode });
 };

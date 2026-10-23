@@ -1055,7 +1055,7 @@ describe('mapResponse — null property values under nullableResponseFields (#3)
   const body = '{"id":"1","name":null,"district":null,"logo":null,"tags":["a"]}';
   const derive = (nullableResponseFields: boolean) => {
     const outputSchema = deriveOutputSchema(operation, '3.0', {
-      nullableResponseFields,
+      ...(nullableResponseFields ? { nullableResponseFields: 'all' as const } : {}),
       projection: true,
     });
     return { outputSchema, validator: compileEnvelopeValidator(outputSchema) as EnvelopeValidator };

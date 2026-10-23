@@ -763,6 +763,27 @@ describe('tools command — --nullable-response-fields (#3)', () => {
     const createPet = rows.find((row) => row.name === 'createPet');
     expect(createPet?.outputSchemaAdmitsNullFields).toBeUndefined();
   });
+
+  it('accepts the scopes all and optional (#17)', async () => {
+    for (const scope of ['all', 'optional']) {
+      const rows = await toolsJson(['--nullable-response-fields', scope]);
+      // The listPets items require none of their properties: both scopes widen them
+      expect(rows.find((row) => row.name === 'listPets')).toMatchObject({
+        outputSchemaAdmitsNullFields: true,
+      });
+    }
+  });
+
+  it('rejects an unknown scope with exit 2 (#17)', async () => {
+    const { lines, ctx } = fileCtx();
+    const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'petstore.json'];
+    const code = await run(ctx, [...argv, '--nullable-response-fields=sometimes']);
+    expect(code).toBe(EXIT.USAGE);
+    const { error } = JSON.parse(lines[0]!) as { error: { message: string } };
+    expect(error.message).toBe(
+      '--nullable-response-fields "sometimes" is not one of all, optional',
+    );
+  });
 });
 
 // Issue kaisers-io/openapi-mcp-archive#39: a withheld output schema is reported

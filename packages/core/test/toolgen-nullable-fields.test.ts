@@ -114,3 +114,91 @@ describe('admitNullProperties', () => {
     expect(validate({ union: true })).toBe(false);
   });
 });
+
+// Issue #17: scope `optional` leaves the properties an object requires strict.
+describe('admitNullProperties — optional scope (#17)', () => {
+  const optionalValidatorOf = (schema: Record<string, unknown>): EnvelopeValidator =>
+    compileEnvelopeValidator(
+      admitNullProperties(deepFreeze(schema), 'optional'),
+    ) as EnvelopeValidator;
+
+  const order = {
+    type: 'object',
+    required: ['id', 'customer'],
+    properties: {
+      id: { type: 'string' },
+      note: { type: 'string' },
+      customer: {
+        type: 'object',
+        required: ['name'],
+        properties: { name: { type: 'string' }, email: { type: 'string' } },
+      },
+      items: {
+        type: 'array',
+        items: {
+          type: 'object',
+          required: ['sku'],
+          properties: { sku: { type: 'string' }, gift: { type: 'boolean' } },
+        },
+      },
+    },
+  };
+  const valid = { id: '1', customer: { name: 'a' } };
+
+  it('admits null only where the object does not require the key', () => {
+    const validate = optionalValidatorOf(order);
+    expect(validate(valid)).toBe(true);
+    expect(validate({ ...valid, note: null, items: null })).toBe(true);
+    expect(validate({ ...valid, customer: { name: 'a', email: null } })).toBe(true);
+    expect(validate({ ...valid, items: [{ sku: 'x', gift: null }] })).toBe(true);
+    expect(validate({ ...valid, id: null })).toBe(false);
+    expect(validate({ ...valid, customer: null })).toBe(false);
+    expect(validate({ ...valid, customer: { name: null } })).toBe(false);
+    expect(validate({ ...valid, items: [{ sku: null }] })).toBe(false);
+  });
+
+  it('widens a superset of nothing and a subset of the all scope', () => {
+    const all = compileEnvelopeValidator(
+      admitNullProperties(deepFreeze(order)),
+    ) as EnvelopeValidator;
+    const optional = optionalValidatorOf(order);
+    const samples = [
+      valid,
+      { ...valid, note: null },
+      { ...valid, id: null },
+      { ...valid, customer: { name: null } },
+      { ...valid, id: 1 },
+    ];
+    for (const sample of samples) {
+      if (optional(sample)) {
+        expect(all(sample)).toBe(true);
+      }
+    }
+    expect(all({ ...valid, id: null })).toBe(true);
+  });
+
+  it('keeps one cache per scope', () => {
+    const schema = deepFreeze({
+      type: 'object',
+      required: ['a'],
+      properties: { a: { type: 'string' } },
+    });
+    const optional = admitNullProperties(schema, 'optional');
+    const all = admitNullProperties(schema, 'all');
+    expect(optional).toBe(schema);
+    expect(all).not.toBe(schema);
+    expect(admitNullProperties(schema, 'optional')).toBe(optional);
+    expect(admitNullProperties(schema)).toBe(all);
+  });
+
+  it('treats a key required only by a sibling allOf member as optional', () => {
+    const validate = optionalValidatorOf({
+      allOf: [
+        { type: 'object', properties: { a: { type: 'string' } } },
+        { type: 'object', required: ['a'] },
+      ],
+    });
+    expect(validate({ a: null })).toBe(true);
+    expect(validate({})).toBe(false);
+  });
+});

@@ -27,8 +27,20 @@
 // admitting more inside them would make the outer schema narrower. Response
 // mode emits unions as `anyOf` (inclusive, see unionSchema in schema.ts), so
 // widening a member cannot make a valid instance match two `oneOf` branches.
+//
+// Scope `optional` (issue #17) widens only the properties their own object
+// schema does not list in `required`. For generators that derive `required`
+// from "never null" (springdoc: `@NotNull`, `@NotBlank`,
+// `requiredMode = REQUIRED`), a null in a required property then still
+// fails, while unset optional fields serialized as null pass. A property
+// required only by a sibling `allOf` member counts as optional: the scope
+// errs toward admitting null, never toward a narrower schema than `all`.
 
 type JsonSchemaNode = Record<string, unknown>;
+
+// `all`: every value under `properties`; `optional`: only those not listed in
+// the same schema's `required`.
+export type NullableFieldScope = 'all' | 'optional';
 
 const NULL_TYPE = 'null';
 
@@ -115,15 +127,25 @@ const withNull = (inner: JsonSchemaNode): JsonSchemaNode => {
   return { ...inner, type: [...(Array.isArray(type) ? type : [type]), NULL_TYPE] };
 };
 
-const widenedNodes = new WeakMap<JsonSchemaNode, JsonSchemaNode>();
-const nullAdmittingNodes = new WeakMap<JsonSchemaNode, JsonSchemaNode>();
+// One pair of caches per scope: the same source node widens differently in
+// each.
+const caches: Record<
+  NullableFieldScope,
+  {
+    widened: WeakMap<JsonSchemaNode, JsonSchemaNode>;
+    nullAdmitting: WeakMap<JsonSchemaNode, JsonSchemaNode>;
+  }
+> = {
+  all: { widened: new WeakMap(), nullAdmitting: new WeakMap() },
+  optional: { widened: new WeakMap(), nullAdmitting: new WeakMap() },
+};
 
 // Undefined when nothing changed, so an untouched subtree keeps its identity.
 const mapValues = (
   record: JsonSchemaNode,
-  map: (value: unknown) => unknown,
+  map: (value: unknown, key: string) => unknown,
 ): JsonSchemaNode | undefined => {
-  const entries = Object.entries(record).map(([key, value]) => [key, map(value)] as const);
+  const entries = Object.entries(record).map(([key, value]) => [key, map(value, key)] as const);
   const changed = entries.some(([key, value]) => value !== record[key]);
   return changed ? Object.fromEntries(entries) : undefined;
 };
@@ -138,26 +160,46 @@ const mapItems = (
 };
 
 // One property value: widened inside, then null admitted beside it.
-const admitNull = (schema: unknown): unknown => {
+const admitNull = (schema: unknown, scope: NullableFieldScope): unknown => {
   if (!isRecord(schema)) {
     return schema;
   }
-  const cached = nullAdmittingNodes.get(schema);
+  const cached = caches[scope].nullAdmitting.get(schema);
   if (cached !== undefined) {
     return cached;
   }
-  const inner = admitNullProperties(schema);
+  const inner = admitNullProperties(schema, scope);
   const result = admitsNull(schema) ? inner : withNull(inner);
-  nullAdmittingNodes.set(schema, result);
+  caches[scope].nullAdmitting.set(schema, result);
   return result;
 };
 
-const subschema = (value: unknown): unknown =>
-  isRecord(value) ? admitNullProperties(value) : value;
+// Maps one value of `schema.properties`: under `optional`, a key `schema`
+// requires is widened inside but gains no null beside it; every other key
+// gains null.
+const propertyValue = (
+  schema: JsonSchemaNode,
+  scope: NullableFieldScope,
+): ((value: unknown, name: string) => unknown) => {
+  const { required } = schema;
+  const requiredNames = new Set(
+    scope === 'optional' && Array.isArray(required)
+      ? required.filter((name) => typeof name === 'string')
+      : [],
+  );
+  return (value, name) =>
+    requiredNames.has(name) ? subschema(value, scope) : admitNull(value, scope);
+};
+
+const subschema = (value: unknown, scope: NullableFieldScope): unknown =>
+  isRecord(value) ? admitNullProperties(value, scope) : value;
 
 // The structure-preserving walk: only `properties` values gain null.
-export const admitNullProperties = (schema: JsonSchemaNode): JsonSchemaNode => {
-  const cached = widenedNodes.get(schema);
+export const admitNullProperties = (
+  schema: JsonSchemaNode,
+  scope: NullableFieldScope = 'all',
+): JsonSchemaNode => {
+  const cached = caches[scope].widened.get(schema);
   if (cached !== undefined) {
     return cached;
   }
@@ -170,25 +212,39 @@ export const admitNullProperties = (schema: JsonSchemaNode): JsonSchemaNode => {
   for (const keyword of ['properties', 'patternProperties', '$defs', 'definitions']) {
     const value = schema[keyword];
     if (isRecord(value)) {
-      record(keyword, mapValues(value, keyword === 'properties' ? admitNull : subschema));
+      record(
+        keyword,
+        mapValues(
+          value,
+          keyword === 'properties'
+            ? propertyValue(schema, scope)
+            : (entry: unknown) => subschema(entry, scope),
+        ),
+      );
     }
   }
   for (const keyword of ['items', 'additionalProperties']) {
     const value = schema[keyword];
     if (isRecord(value)) {
-      const mapped = admitNullProperties(value);
+      const mapped = admitNullProperties(value, scope);
       record(keyword, mapped === value ? undefined : mapped);
     } else if (Array.isArray(value)) {
-      record(keyword, mapItems(value, subschema));
+      record(
+        keyword,
+        mapItems(value, (entry) => subschema(entry, scope)),
+      );
     }
   }
   for (const keyword of ['prefixItems', 'allOf', 'anyOf', 'oneOf']) {
     const value = schema[keyword];
     if (Array.isArray(value)) {
-      record(keyword, mapItems(value, subschema));
+      record(
+        keyword,
+        mapItems(value, (entry) => subschema(entry, scope)),
+      );
     }
   }
   const result = Object.keys(changes).length === 0 ? schema : { ...schema, ...changes };
-  widenedNodes.set(schema, result);
+  caches[scope].widened.set(schema, result);
   return result;
 };

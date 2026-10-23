@@ -401,7 +401,7 @@ describe('deriveOutputSchema — nullableResponseFields opt-in (#3)', () => {
     const outputSchema = deriveOutputSchema(
       op(responses),
       '3.0',
-      nullableResponseFields === undefined ? {} : { nullableResponseFields },
+      nullableResponseFields === true ? { nullableResponseFields: 'all' } : {},
     );
     if (outputSchema === undefined) {
       throw new Error('expected an outputSchema');
@@ -510,7 +510,7 @@ describe('deriveOutputSchema — nullableResponseFields opt-in (#3)', () => {
       },
     };
     const off = deriveOutputSchema(op(withSchema(schema)), '3.0');
-    const on = deriveOutputSchema(op(withSchema(schema)), '3.0', { nullableResponseFields: true });
+    const on = deriveOutputSchema(op(withSchema(schema)), '3.0', { nullableResponseFields: 'all' });
     expect(on).toEqual(off);
   });
 
@@ -520,7 +520,7 @@ describe('deriveOutputSchema — nullableResponseFields opt-in (#3)', () => {
       properties: { name: { type: ['string', 'null'] }, free: {} },
     };
     const off = deriveOutputSchema(op(withSchema(schema)), '3.1');
-    const on = deriveOutputSchema(op(withSchema(schema)), '3.1', { nullableResponseFields: true });
+    const on = deriveOutputSchema(op(withSchema(schema)), '3.1', { nullableResponseFields: 'all' });
     expect(on).toEqual(off);
   });
 
@@ -540,7 +540,7 @@ describe('deriveOutputSchema — nullableResponseFields opt-in (#3)', () => {
 
   it('leaves the envelope fields alone', () => {
     const outputSchema = deriveOutputSchema(op(reproResponses()), '3.0', {
-      nullableResponseFields: true,
+      nullableResponseFields: 'all',
       pagination: true,
       projection: true,
     }) as { oneOf: { properties: Record<string, unknown> }[] };
@@ -559,9 +559,7 @@ describe('deriveOutputSchema — nullableResponseFields opt-in (#3)', () => {
   it('is byte-identical to the default when off', () => {
     const responses = reproResponses();
     const omitted = JSON.stringify(deriveOutputSchema(op(responses), '3.0'));
-    const off = JSON.stringify(
-      deriveOutputSchema(op(responses), '3.0', { nullableResponseFields: false }),
-    );
+    const off = JSON.stringify(deriveOutputSchema(op(responses), '3.0', {}));
     expect(off).toBe(omitted);
     expect(omitted).not.toContain('null');
   });
@@ -570,7 +568,7 @@ describe('deriveOutputSchema — nullableResponseFields opt-in (#3)', () => {
     const responses = reproResponses();
     const [plain, widened, plainAgain] = withConvertMemo(() => [
       explainOutputSchema(op(responses), '3.0').outputSchema,
-      explainOutputSchema(op(responses), '3.0', { nullableResponseFields: true }).outputSchema,
+      explainOutputSchema(op(responses), '3.0', { nullableResponseFields: 'all' }).outputSchema,
       explainOutputSchema(op(responses), '3.0').outputSchema,
     ]);
     const dataOf = (schema: unknown): unknown =>
@@ -591,7 +589,7 @@ describe('deriveOutputSchema — nullableResponseFields opt-in (#3)', () => {
       operation: { ...op(shared), path: `/${toolName}` },
     });
     const opts = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.0' as const };
-    const on = buildTools([named('a'), named('b')], { ...opts, nullableResponseFields: true });
+    const on = buildTools([named('a'), named('b')], { ...opts, nullableResponseFields: 'all' });
     const off = buildTools([named('a'), named('b')], opts);
     const dataOf = (schema: unknown): unknown =>
       (schema as { oneOf: { properties: { data: unknown } }[] }).oneOf[0]!.properties.data;

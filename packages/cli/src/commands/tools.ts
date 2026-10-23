@@ -14,6 +14,7 @@ import {
   parseSpecPipelineArgs,
   PATH_DISPLAY_MAX,
   registerSpecOptions,
+  nullableOption,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
 import type { CommandRegistrar } from './registry.ts';
@@ -74,7 +75,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           reservedHeaders: SYSTEM_HEADERS,
           openapiVersion: result.spec.openapiVersion,
           defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
-          nullableResponseFields: cmdOpts.nullableResponseFields === true,
+          ...nullableOption(cmdOpts.nullableResponseFields),
         });
         const allOmitted = [...result.spec.omitted, ...built.omitted];
         const tools: ToolRow[] = built.tools.map(toToolRow);

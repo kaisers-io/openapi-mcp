@@ -231,6 +231,7 @@ export type {
   OutputSchemaOptions,
   LayoutResult,
   NamedOperation,
+  NullableFieldScope,
   OutputSchemaDerivation,
   RequestMapper,
   SchemaMode,

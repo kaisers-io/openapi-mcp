@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--nullable-response-fields optional` (#17).** The flag now takes an optional scope.
+  `optional` admits `null` only for the properties their object does not list in
+  `required`, so a `null` in a required property still fails: for specs whose `required`
+  means "never null", as springdoc derives it from `@NotNull`. The bare flag and `all` keep
+  the 0.4.1 behaviour (every property). The documentation also names a server-side fix for
+  Spring Boot, `spring.jackson.default-property-inclusion=non_null` (#19).
+
 ### Changed
 
 - **Faster `serve` startup for large specs (#6, #7, #8).** Output validators are compiled

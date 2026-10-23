@@ -53,6 +53,7 @@ import {
   deadPatternMessage,
   omissionWarningLines,
   parseSpecPipelineArgs,
+  nullableOption,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
 import type { RunState } from '../main.ts';
@@ -474,7 +475,7 @@ export const runServe = async (
       openapiVersion: result.spec.openapiVersion,
       projection: cmdOpts.responseProjection === true,
       defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
-      nullableResponseFields: cmdOpts.nullableResponseFields === true,
+      ...nullableOption(cmdOpts.nullableResponseFields),
     });
     const snapshot = buildSnapshot(built, result, {
       toolMode: resolveToolMode(requestedToolMode, built.tools.length),

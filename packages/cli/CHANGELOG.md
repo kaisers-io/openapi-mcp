@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--nullable-response-fields optional` (#17).** The flag now takes an optional scope.
+  `optional` admits `null` only for the properties their object does not list in
+  `required`, so a `null` in a required property still fails: for specs whose `required`
+  means "never null", as springdoc derives it from `@NotNull`. The bare flag and `all` keep
+  the 0.4.1 behaviour (every property). The documentation also names a server-side fix for
+  Spring Boot, `spring.jackson.default-property-inclusion=non_null` (#19).
+
 ### Changed
 
 - **Faster `serve` startup for large specs (#6, #7, #8).** Output validators are compiled
@@ -16,10 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup. For the GitHub REST description, time until `initialize` answered dropped from
   about 27 s to about 2 s in `discover` mode (`--allow '**'`) and from about 3.8 s to about
   1.7 s with `--allow tag:repos` (one development machine, warm spec cache). Validation results
-  are unchanged; a single validation can take up to about 1 µs longer. In `discover` mode, an output schema that cannot be compiled no longer stops
-  `serve` at startup: calls to that operation fail with a tool error before anything is sent,
-  and `serve` names the operation once on stderr. `per-operation` mode still compiles every
-  validator at startup.
+  are unchanged; a single validation can take up to about 1 µs longer. In `discover` mode, an
+  output schema that cannot be compiled no longer stops `serve` at startup: calls to that
+  operation fail with a tool error before anything is sent, and `serve` names the operation
+  once on stderr. `per-operation` mode still compiles every validator at startup.
 
 ## [0.4.1] - 2026-10-23
 
