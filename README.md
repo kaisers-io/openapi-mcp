@@ -96,7 +96,7 @@ never appear literally in the committed file:
       "command": "npx",
       "args": [
         "-y",
-        "@kaisers-io/openapi-mcp@0.3.1",
+        "@kaisers-io/openapi-mcp@0.4.0",
         "serve",
         "--spec",
         "https://api.example.com/openapi.json",
@@ -130,7 +130,7 @@ own environment:
 command = "npx"
 args = [
   "-y",
-  "@kaisers-io/openapi-mcp@0.3.1",
+  "@kaisers-io/openapi-mcp@0.4.0",
   "serve",
   "--spec",
   "https://api.example.com/openapi.json",
@@ -148,9 +148,7 @@ env_vars = ["SPEC_TOKEN", "API_TOKEN"]
 
 ### Windows hosts
 
-Native Windows support needs a release that includes it (it is listed under Unreleased in
-[CHANGELOG.md](CHANGELOG.md)); earlier versions refuse to install on Windows. Pin that version
-or a later one in the examples below.
+Native Windows support starts with 0.4.0; earlier versions refuse to install on Windows.
 
 On Windows, `npx` (and a globally installed `openapi-mcp`) is a `.cmd` script, not an
 executable. Hosts that resolve it themselves take the configs above unchanged — Claude
@@ -168,7 +166,7 @@ security release) or just "client closed". Start it through `cmd /c` instead:
         "/c",
         "npx",
         "-y",
-        "@kaisers-io/openapi-mcp@0.3.1",
+        "@kaisers-io/openapi-mcp@0.4.0",
         "serve",
         "--spec",
         "C:\\specs\\petstore.json",
@@ -200,7 +198,7 @@ Run the server once with `--http`, then point either host at it as a remote MCP 
 
 ```bash
 export TOKEN=$(openssl rand -base64 32)
-npx -y @kaisers-io/openapi-mcp@0.3.1 serve --spec https://api.example.com/openapi.json \
+npx -y @kaisers-io/openapi-mcp@0.4.0 serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
 
@@ -403,7 +401,7 @@ option is read.
 ## Upgrading
 
 Host config examples above pin an exact version
-(`npx -y @kaisers-io/openapi-mcp@0.3.1 ...`) — **never `latest`**. This process runs with your
+(`npx -y @kaisers-io/openapi-mcp@0.4.0 ...`) — **never `latest`**. This process runs with your
 API credentials on every launch; letting `npx` silently resolve to whatever was just published
 is a supply-chain risk, not a convenience. To upgrade, bump the pinned version number in your
 host config deliberately (and re-run `npm i -g @kaisers-io/openapi-mcp` if you installed it
