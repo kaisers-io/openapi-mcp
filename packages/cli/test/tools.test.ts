@@ -105,13 +105,13 @@ describe('tools command — file specs', () => {
       ['queryOrders', 'QUERY'],
       ['getOrder', 'GET'],
       ['updateOrder', 'PATCH'],
+      ['searchOrders', 'GET'],
       ['exportOrders', 'GET'],
       ['streamEvents', 'GET'],
       ['getPet', 'GET'],
     ]);
     expect(data.omitted).toEqual([
       { method: 'LINK', path: '/orders', reason: 'additionalOperations are not supported yet' },
-      { method: 'GET', path: '/search', reason: 'querystring parameters are not supported yet' },
     ]);
     expect(JSON.stringify(data.security)).toContain('deviceAuthorization');
   });

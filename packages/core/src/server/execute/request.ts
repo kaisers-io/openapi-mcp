@@ -188,6 +188,41 @@ type QueryPair = {
 
 type QueryMapping = Extract<FieldMapping, { destination: 'query' }>;
 
+// One form-urlencoded component: the serializer of a single `=value` pair
+const formEncode = (raw: string): string => new URLSearchParams([['', raw]]).toString().slice(1);
+
+// OpenAPI 3.2 `in: querystring` with application/x-www-form-urlencoded
+// (issue #33): the object's entries ARE the query string, encoded as a form
+// (WHATWG application/x-www-form-urlencoded, `+` for space), the encoding the
+// media type names. Scalars only, like a form body; an absent or null entry
+// is left out. A lone surrogate fails closed rather than being silently
+// replaced with U+FFFD, as for every other query leaf.
+const serializeQuerystringValue = (
+  wireName: string,
+  value: unknown,
+): { ok: QueryPair[] } | { error: string } => {
+  if (!isPlainObject(value)) {
+    return { error: `querystring parameter "${wireName}" must be an object` };
+  }
+  const pairs: QueryPair[] = [];
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === undefined || entry === null) {
+      continue;
+    }
+    if (!isPrimitive(entry)) {
+      return {
+        error: `querystring parameter "${wireName}" has a value for "${key}" that cannot be form-urlencoded`,
+      };
+    }
+    const text = String(entry);
+    if (!key.isWellFormed() || !text.isWellFormed()) {
+      return { error: `querystring parameter "${wireName}" could not be encoded` };
+    }
+    pairs.push({ key: formEncode(key), value: formEncode(text) });
+  }
+  return { ok: pairs };
+};
+
 type Encoder = (raw: string) => { ok: string } | { error: string };
 
 // The deepObject style (OAS 3.1.1 §4.8.12.4): `name[key]=value` per property, with the
@@ -806,6 +841,13 @@ export const buildRequest = (
       }
       for (const key of introduced) {
         usedQueryKeys.add(key);
+      }
+      queryPairs.push(...result.ok);
+    } else if (mapping.destination === 'querystring') {
+      // The layout never combines it with query parameters (OAS 3.2)
+      const result = serializeQuerystringValue(mapping.wireName, value);
+      if ('error' in result) {
+        return result;
       }
       queryPairs.push(...result.ok);
     } else {

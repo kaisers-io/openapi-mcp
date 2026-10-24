@@ -85,7 +85,7 @@ const buildOperation = (
     return { method: upper, path, reason: 'callbacks are not supported' };
   }
   const opParameters = Array.isArray(op['parameters']) ? op['parameters'] : [];
-  const { parameters, unresolvable, cookie, querystring } = mergeParameters(
+  const { parameters, unresolvable, cookie } = mergeParameters(
     pathParameters,
     opParameters,
     resolve,
@@ -99,9 +99,6 @@ const buildOperation = (
   }
   if (cookie) {
     return { method: upper, path, reason: 'cookie parameters are not supported' };
-  }
-  if (querystring) {
-    return { method: upper, path, reason: 'querystring parameters are not supported yet' };
   }
   const tags = Array.isArray(op['tags'])
     ? op['tags'].filter((tag): tag is string => typeof tag === 'string')
