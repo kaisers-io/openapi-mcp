@@ -462,16 +462,21 @@ const runUpstreamCall = async (
       : headers;
   };
   const operationFacts = { method, pathTemplate: generated.operation.path };
-  const overBudget = (): ToolCallOutcome => {
-    report({ outcome: 'refused', ...operationFacts });
+  // `sentAttempts`: the attempts already sent when an exit follows a 401 (the
+  // replay path), so the report counts them; undefined before any send.
+  const factsAfter = (sentAttempts?: number) =>
+    sentAttempts === undefined ? operationFacts : { ...operationFacts, attempts: sentAttempts };
+  const overBudget = (sentAttempts?: number): ToolCallOutcome => {
+    report({ outcome: 'refused', ...factsAfter(sentAttempts) });
     return isError('the final request exceeds the outbound resource budget');
   };
   const { oauth } = config;
   // A token failure is a tool error naming the env vars to check; its text
   // never carries endpoint-supplied prose (see oauth-client-credentials.ts).
-  // No API request was sent.
-  const tokenError = (error: string): ToolCallOutcome => {
-    report({ outcome: 'token_error', ...operationFacts });
+  // For the first token no API request was sent; for a refresh after a 401
+  // it was, and was not sent again.
+  const tokenError = (error: string, sentAttempts?: number): ToolCallOutcome => {
+    report({ outcome: 'token_error', ...factsAfter(sentAttempts) });
     return isError(`${error} (check the ${oauth?.envVarHint ?? ''} environment variables)`);
   };
   // The call's time budget runs from here: the token request (when one is
@@ -490,7 +495,7 @@ const runUpstreamCall = async (
     sentAttempts?: number,
   ): Promise<{ token: string } | { failed: ToolCallOutcome }> => {
     const refresh = sentAttempts !== undefined;
-    const facts = refresh ? { ...operationFacts, attempts: sentAttempts } : operationFacts;
+    const facts = factsAfter(sentAttempts);
     const result = await waitForToken(
       async () => await tokens.getToken(),
       signal,
@@ -516,7 +521,9 @@ const runUpstreamCall = async (
         ),
       };
     }
-    return 'error' in result ? { failed: tokenError(result.error) } : { token: result.ok };
+    return 'error' in result
+      ? { failed: tokenError(result.error, sentAttempts) }
+      : { token: result.ok };
   };
   const send = async (
     headers: HopHeaders,
@@ -605,7 +612,7 @@ const runUpstreamCall = async (
     }
     const replayHeaders = headersFor(fresh.token);
     if (replayHeaders === undefined) {
-      return withRecoveryKey(overBudget());
+      return withRecoveryKey(overBudget(attempts));
     }
     const replay = await send(replayHeaders, Math.max(allowedRetries - (attempts - 1), 0));
     ({ outcome } = replay);

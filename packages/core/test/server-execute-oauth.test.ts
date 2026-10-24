@@ -605,9 +605,10 @@ describe('createExecutor — OAuth2 token waits honour each caller (#21)', () =>
       },
       invalidate: () => true,
     };
-    const { call } = executorWith(tokens, { statuses: [401], dropFirst: 1, retries: 1 });
+    const { call, reports } = executorWith(tokens, { statuses: [401], dropFirst: 1, retries: 1 });
     const failed = await call('createKeyed');
     expect(JSON.stringify(failed)).toContain('could not obtain an OAuth2 access token');
+    expect(reports).toMatchObject([{ outcome: 'token_error', attempts: 2 }]);
     expect(failed.meta?.['openapi-mcp/idempotencyKey']).toMatch(/^[\da-f-]{36}$/u);
 
     const issued = Promise.withResolvers<TokenResult>();
@@ -638,6 +639,27 @@ describe('createExecutor — OAuth2 token waits honour each caller (#21)', () =>
     );
     expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toMatch(/^[\da-f-]{36}$/u);
     issued.resolve({ ok: 'fresh' });
+  });
+
+  it('counts the sent attempts when the replay headers exceed the budget', async () => {
+    let calls = 0;
+    const tokens: TokenSource = {
+      getToken: () => {
+        calls += 1;
+        return Promise.resolve({ ok: calls === 1 ? 'stale' : 'x'.repeat(20_000) });
+      },
+      invalidate: () => true,
+    };
+    const { call, sent, reports } = executorWith(tokens, {
+      statuses: [401],
+      dropFirst: 1,
+      retries: 1,
+    });
+    const outcome = await call('createKeyed');
+    expect(sent).toHaveLength(2);
+    expect(JSON.stringify(outcome)).toContain('exceeds the outbound resource budget');
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toMatch(/^[\da-f-]{36}$/u);
+    expect(reports).toMatchObject([{ outcome: 'refused', attempts: 2 }]);
   });
 
   it('removes its abort listener from the caller signal when the wait is abandoned', async () => {
