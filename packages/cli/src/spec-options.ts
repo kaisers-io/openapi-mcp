@@ -1,5 +1,6 @@
 import type { Command } from '@commander-js/extra-typings';
 import {
+  applyOutputSchemaOptOut,
   defaultCacheRoot,
   parseCacheKey,
   parseAgeDuration,
@@ -9,17 +10,21 @@ import {
   resolveHeaderEnvMappings,
   sanitizeSpecText,
   usageError,
+  validationError,
 } from '@kaisers-io/openapi-mcp-core';
 import type {
+  BuildToolsResult,
   DeadPattern,
   FilterPattern,
   NullableFieldScope,
   OmittedOperation,
+  OperationRecord,
   ResolvedHeader,
   SpecPipelineDeps,
   SpecPipelineOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
+import { outputSchemaOptOutWarningLines } from './output-schema-opt-out.ts';
 
 const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,
@@ -39,7 +44,9 @@ export const PATTERN_DISPLAY_MAX = 256;
 // worded identically regardless of which command produced it.
 export const deadPatternMessage = (dead: DeadPattern): string => {
   const raw = sanitizeSpecText(dead.raw, PATTERN_DISPLAY_MAX);
-  const base = `--${dead.flag} "${raw}" matches no operation`;
+  // --omit-output-schema acts on the exposed tools only (issue #13)
+  const scope = dead.flag === 'omit-output-schema' ? 'exposed operation' : 'operation';
+  const base = `--${dead.flag} "${raw}" matches no ${scope}`;
   return dead.suggestion === undefined
     ? base
     : `${base}; closest: ${sanitizeSpecText(dead.suggestion, PATTERN_DISPLAY_MAX)}`;
@@ -54,9 +61,37 @@ export const omissionWarningLines = (allOmitted: readonly OmittedOperation[]): r
       `omitted ${omission.method} ${sanitizeSpecText(omission.path, PATH_DISPLAY_MAX)} — ${sanitizeSpecText(omission.reason, PATH_DISPLAY_MAX)}`,
   );
 
+export type OutputSchemaOptOutResult = {
+  built: BuildToolsResult;
+  deadPatterns: readonly DeadPattern[];
+  warnings: readonly string[];
+};
+
+// --omit-output-schema (issue #13) on the generated tools, shared by `tools`
+// and `serve`. Its dead patterns are reported like the filters': a warning,
+// or under --strict-filters an error (exit 3).
+export const withOutputSchemaOptOut = (
+  built: BuildToolsResult,
+  patterns: readonly FilterPattern[],
+  inventory: readonly OperationRecord[],
+  strictFilters: boolean,
+): OutputSchemaOptOutResult => {
+  const optOut = applyOutputSchemaOptOut(built.tools, patterns, inventory);
+  const deadMessages = optOut.deadPatterns.map((dead) => deadPatternMessage(dead));
+  if (strictFilters && deadMessages.length > 0) {
+    throw validationError(deadMessages.join('\n'));
+  }
+  return {
+    built: { ...built, tools: optOut.tools },
+    deadPatterns: optOut.deadPatterns,
+    warnings: [...deadMessages, ...outputSchemaOptOutWarningLines(optOut.tools)],
+  };
+};
+
 export type ParsedFilters = {
   allow: readonly FilterPattern[];
   deny: readonly FilterPattern[];
+  omitOutputSchema: readonly FilterPattern[];
 };
 
 // Patterns parse in the command layer so a syntax error, an over-long
@@ -65,9 +100,11 @@ export type ParsedFilters = {
 export const parseFilters = (
   allowRaw: readonly string[],
   denyRaw: readonly string[],
+  omitOutputSchemaRaw: readonly string[],
 ): ParsedFilters => ({
   allow: parseFilterPatterns(allowRaw),
   deny: parseFilterPatterns(denyRaw),
+  omitOutputSchema: parseFilterPatterns(omitOutputSchemaRaw),
 });
 
 const cacheRootOf = (ctx: CliContext): string | undefined => {
@@ -96,6 +133,7 @@ export type SpecCmdOpts = {
   defaultResponseIsError?: boolean;
   // `true` when the flag is given without a value
   nullableResponseFields?: boolean | string;
+  omitOutputSchema: readonly string[];
 };
 
 // The --spec/--allow/--deny/... flags shared by every command that runs the
@@ -155,6 +193,12 @@ export const registerSpecOptions = (
     .option(
       '--nullable-response-fields [scope]',
       'admit null for object properties in derived output schemas (for specs, e.g. springdoc, that omit "nullable"): every property (all, the default) or only those not listed in "required" (optional)',
+    )
+    .option(
+      '--omit-output-schema <pattern>',
+      'declare no output schema for matching tools, whose responses do not match the spec: results are returned as text without response-schema validation (repeatable, --allow pattern syntax)',
+      collect,
+      [] as readonly string[],
     );
 
 const NULLABLE_FIELD_SCOPES: readonly NullableFieldScope[] = ['all', 'optional'];
@@ -205,7 +249,7 @@ export const parseSpecPipelineArgs = (cmdOpts: SpecCmdOpts, ctx: CliContext): Sp
   // (kaisers-io/openapi-mcp-archive#88)
   const ttlMs = parseAgeDuration(cmdOpts.ttl, '--ttl');
   const cacheKey = cmdOpts.cacheKey === undefined ? undefined : parseCacheKey(cmdOpts.cacheKey);
-  const filters = parseFilters(cmdOpts.allow, cmdOpts.deny);
+  const filters = parseFilters(cmdOpts.allow, cmdOpts.deny, cmdOpts.omitOutputSchema);
   return {
     source: cmdOpts.spec,
     options: {

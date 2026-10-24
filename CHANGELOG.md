@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--omit-output-schema <pattern>` on `serve` and `tools` (#13).** For an API whose
+  responses do not match its own spec, every call to the tool used to fail with "did not match
+  the tool's declared output schema". The matching exposed tools now declare no output schema,
+  so their results are returned as text, as for a tool whose responses cannot be described.
+  The secret scan, size limits and request validation stay. The flag is repeatable and uses
+  the `--allow`/`--deny` pattern syntax; a pattern that matches no exposed tool is a dead
+  pattern (an error under `--strict-filters`). Startup names the affected tools, and `tools`
+  marks them (`[output schema omitted]`, `outputSchemaOptedOut: true`). It is named
+  `--omit-output-schema` rather than `--no-output-schema` because the CLI would read the
+  latter as negating `serve --output-schema`.
 - **Sequential media types (#33).** JSON Lines (`application/jsonl`), NDJSON
   (`application/x-ndjson`), JSON text sequences (`application/json-seq`, RFC 7464) and
   Server-Sent Events (`text/event-stream`) are read as the array of their items, as OpenAPI

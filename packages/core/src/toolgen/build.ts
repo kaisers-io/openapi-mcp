@@ -33,6 +33,11 @@ export type GeneratedTool = {
   // outputSchema, i.e. some response property now also admits null.
   // Surfaced by `tools`.
   outputSchemaAdmitsNullFields?: true;
+  // Set when the operator opted this tool out of its output schema
+  // (--omit-output-schema, issue #13; see applyOutputSchemaOptOut): one was
+  // derived but is not declared, so results are returned as text. Surfaced
+  // by `tools`.
+  outputSchemaOptedOut?: true;
   // Why the tool has no outputSchema, when the agent should know
   // (kaisers-io/openapi-mcp-archive#39: a response `pattern` with nested
   // quantifiers). Also folded into the description.

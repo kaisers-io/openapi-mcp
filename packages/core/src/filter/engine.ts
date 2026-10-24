@@ -20,11 +20,13 @@ const SUGGESTION_MAX_LENGTH = 256;
 // A floor so that short patterns ("gt" for "get") still get a suggestion
 const MIN_SUGGESTION_DISTANCE = 2;
 
+export type DeadPatternFlag = 'allow' | 'deny' | 'omit-output-schema';
+
 export type DeadPattern = {
   raw: string;
   // Which flag supplied the pattern, so the CLI never has to rebuild a
   // raw-string-to-flag map — a pattern given to both flags appears twice
-  flag: 'allow' | 'deny';
+  flag: DeadPatternFlag;
   suggestion?: string | undefined;
 };
 
@@ -200,9 +202,9 @@ const candidateSpace = (
 const suggestionInput = (pattern: FilterPattern): string =>
   pattern.kind === 'tag' ? pattern.glob : pattern.raw;
 
-const deadPatternsFor = (
+export const deadPatternsFor = (
   patterns: readonly FilterPattern[],
-  flag: 'allow' | 'deny',
+  flag: DeadPatternFlag,
   operations: readonly OperationRecord[],
   budget: MatchBudget,
 ): readonly DeadPattern[] =>
@@ -230,7 +232,7 @@ const deadPatternsFor = (
 // `additionalOperations`). Anything else is a misspelling, which stays a
 // usage error as it was when only the standard methods were accepted: a
 // misspelled --deny method would otherwise deny nothing.
-const assertKnownMethods = (
+export const assertKnownMethods = (
   patterns: readonly FilterPattern[],
   records: readonly OperationRecord[],
 ): void => {

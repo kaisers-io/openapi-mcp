@@ -15,6 +15,7 @@ import {
   PATH_DISPLAY_MAX,
   registerSpecOptions,
   nullableOption,
+  withOutputSchemaOptOut,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
 import type { CommandRegistrar } from './registry.ts';
@@ -36,6 +37,8 @@ type ToolRow = {
   // (kaisers-io/openapi-mcp-archive#39: a response pattern with nested
   // quantifiers).
   outputSchemaWithheld?: string;
+  // --omit-output-schema took this tool's output schema (issue #13)
+  outputSchemaOptedOut?: true;
 };
 
 const toToolRow = (generated: GeneratedTool): ToolRow => ({
@@ -54,6 +57,7 @@ const toToolRow = (generated: GeneratedTool): ToolRow => ({
   ...(generated.outputSchemaWithheld === undefined
     ? {}
     : { outputSchemaWithheld: generated.outputSchemaWithheld }),
+  ...(generated.outputSchemaOptedOut === true ? { outputSchemaOptedOut: true as const } : {}),
 });
 
 export const registerTools: CommandRegistrar = (program, ctx, state) => {
@@ -71,12 +75,19 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           // Dead patterns under --strict-filters must exit 3
           throw validationError(deadMessages.join('\n'));
         }
-        const built = buildTools(result.namedOperations, {
+        const generated = buildTools(result.namedOperations, {
           reservedHeaders: SYSTEM_HEADERS,
           openapiVersion: result.spec.openapiVersion,
           defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
           ...nullableOption(cmdOpts.nullableResponseFields),
         });
+        const optOut = withOutputSchemaOptOut(
+          generated,
+          args.filters.omitOutputSchema,
+          result.spec.operations,
+          cmdOpts.strictFilters === true,
+        );
+        const { built } = optOut;
         const allOmitted = [...result.spec.omitted, ...built.omitted];
         const tools: ToolRow[] = built.tools.map(toToolRow);
         // Which credential the exposed operations expect, per referenced
@@ -98,7 +109,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           toolCount: tools.length,
           tools,
           omitted: allOmitted,
-          deadPatterns: result.deadPatterns,
+          deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns],
           security,
         };
         const nameWidth = tools.reduce((width, tool) => Math.max(width, tool.name.length), 4);
@@ -120,7 +131,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
                 tool.outputSchemaAssumesDefaultIsError === true
                   ? ' [output schema assumes default = error]'
                   : ''
-              }`,
+              }${tool.outputSchemaOptedOut === true ? ' [output schema omitted]' : ''}`,
           ),
         ];
         // Omissions, dead patterns, and cache degradation are all non-fatal
@@ -128,7 +139,12 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
         return {
           data,
           humanLines,
-          warnings: [...result.warnings, ...deadMessages, ...omissionWarningLines(allOmitted)],
+          warnings: [
+            ...result.warnings,
+            ...deadMessages,
+            ...omissionWarningLines(allOmitted),
+            ...optOut.warnings,
+          ],
         };
       });
     });

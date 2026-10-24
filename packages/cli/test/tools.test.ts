@@ -855,6 +855,127 @@ describe('tools command — --nullable-response-fields (#3)', () => {
   });
 });
 
+// Issue #13: --omit-output-schema takes the output schema from the matching
+// exposed tools, so a response that does not match the spec is returned as text.
+describe('tools command — --omit-output-schema (#13)', () => {
+  type Row = {
+    name: string;
+    outputSchema: boolean;
+    outputSchemaOptedOut?: true;
+    outputSchemaAdmitsNullFields?: true;
+  };
+  const toolsJson = async (
+    extra: readonly string[],
+  ): Promise<{ code: number; rows: Row[]; warnings: string }> => {
+    const { lines, ctx } = fileCtx();
+    const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'petstore.json'];
+    const code = await run(ctx, [...argv, '--allow', '**', ...extra]);
+    const parsed = JSON.parse(lines[0]!) as { data?: { tools: Row[] }; warnings?: string[] };
+    return { code, rows: parsed.data?.tools ?? [], warnings: (parsed.warnings ?? []).join('\n') };
+  };
+
+  it('without the flag: no tool is marked', async () => {
+    const { rows } = await toolsJson([]);
+    expect(rows.find((row) => row.name === 'listPets')).toMatchObject({ outputSchema: true });
+    for (const row of rows) {
+      expect(row.outputSchemaOptedOut).toBeUndefined();
+    }
+  });
+
+  it('with the flag: the matching tool has no output schema, is marked, and is named on stderr', async () => {
+    const { code, rows, warnings } = await toolsJson([
+      '--omit-output-schema',
+      'GET /pets',
+      '--nullable-response-fields',
+    ]);
+    expect(code).toBe(EXIT.OK);
+    const listPets = rows.find((row) => row.name === 'listPets');
+    expect(listPets).toMatchObject({ outputSchema: false, outputSchemaOptedOut: true });
+    // The schema it widened is gone, so it no longer reports that either
+    expect(listPets?.outputSchemaAdmitsNullFields).toBeUndefined();
+    expect(warnings).toContain(
+      '--omit-output-schema: response-schema validation is off for 1 tool, results are returned as text: listPets',
+    );
+  });
+
+  it('does not mark or name a tool that has no output schema anyway', async () => {
+    const { rows, warnings } = await toolsJson(['--omit-output-schema', 'createPet']);
+    expect(rows.find((row) => row.name === 'createPet')?.outputSchemaOptedOut).toBeUndefined();
+    expect(warnings).not.toContain('response-schema validation is off');
+  });
+
+  it('marks the tool in human output', async () => {
+    const { lines, ctx } = fileCtx();
+    const argv = ['node', 'openapi-mcp', 'tools', '--spec', 'petstore.json'];
+    const code = await run(ctx, [...argv, '--omit-output-schema', 'listPets']);
+    expect(code).toBe(EXIT.OK);
+    expect(lines.join('\n')).toMatch(/listPets .*\[output schema omitted\]/u);
+  });
+
+  it('warns about a pattern that matches no exposed operation, with a suggestion', async () => {
+    const { code, warnings } = await toolsJson(['--omit-output-schema', 'listPet']);
+    expect(code).toBe(EXIT.OK);
+    expect(warnings).toContain(
+      '--omit-output-schema "listPet" matches no exposed operation; closest: listPets',
+    );
+    // An operation the filters exclude is not exposed, so naming it does nothing
+    const denied = await toolsJson(['--deny', 'listPets', '--omit-output-schema', 'listPets']);
+    expect(denied.warnings).toContain(
+      '--omit-output-schema "listPets" matches no exposed operation',
+    );
+  });
+
+  it('turns a dead pattern into exit 3 under --strict-filters', async () => {
+    const { lines, ctx } = fileCtx();
+    const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'petstore.json'];
+    const code = await run(ctx, [...argv, '--strict-filters', '--omit-output-schema', 'nope']);
+    expect(code).toBe(EXIT.VALIDATION);
+    const { error } = JSON.parse(lines[0]!) as { error: { message: string } };
+    expect(error.message).toBe('--omit-output-schema "nope" matches no exposed operation');
+  });
+
+  // Review of #13: an operation toolgen leaves out is no tool to opt out
+  it('counts a pattern that matches only an unrepresentable operation as dead', async () => {
+    const specText = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Omit', version: '1.0.0' },
+      paths: {
+        '/bad': {
+          get: {
+            operationId: 'getBad',
+            parameters: [{ name: 'q', in: 'query', schema: { not: {} } }],
+            responses: { '200': { description: 'ok' } },
+          },
+        },
+      },
+    });
+    const fetcher = (() =>
+      Promise.resolve(new Response(specText))) as unknown as CliContext['fetcher'];
+    const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'https://api.example.com/x'];
+    const lenient = fileCtx({ fetcher });
+    expect(await run(lenient.ctx, [...argv, '--omit-output-schema', 'getBad'])).toBe(EXIT.OK);
+    const envelope = JSON.parse(lenient.lines[0]!) as {
+      data: { deadPatterns: { raw: string; flag: string }[] };
+    };
+    expect(envelope.data.deadPatterns).toEqual([{ raw: 'getBad', flag: 'omit-output-schema' }]);
+    const strict = fileCtx({ fetcher });
+    const code = await run(strict.ctx, [
+      ...argv,
+      '--strict-filters',
+      '--omit-output-schema',
+      'getBad',
+    ]);
+    expect(code).toBe(EXIT.VALIDATION);
+  });
+
+  it('rejects an invalid pattern with exit 2', async () => {
+    for (const pattern of ['FOO /pets', '']) {
+      const { code } = await toolsJson(['--omit-output-schema', pattern]);
+      expect(code).toBe(EXIT.USAGE);
+    }
+  });
+});
+
 // Issue kaisers-io/openapi-mcp-archive#39: a withheld output schema is reported
 // in --json output.
 describe('tools command — withheld output schema (kaisers-io/openapi-mcp-archive#39)', () => {

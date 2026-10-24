@@ -1000,7 +1000,8 @@ describe('serve — upstream client behaviour (stdio subprocess)', () => {
   });
 
   // GET /pets redirects within the same origin (to /pets/), which answers
-  // JSON; GET /slow never answers in time.
+  // JSON; GET /mismatch/pets answers JSON that does not match the spec (a
+  // string id); GET /slow never answers in time.
   const start = async (): Promise<number> => {
     const server = createServer((req, res) => {
       seenAccept.push(req.headers.accept);
@@ -1012,6 +1013,10 @@ describe('serve — upstream client behaviour (stdio subprocess)', () => {
       if (req.url === '/pets/') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify([{ id: 1, name: 'Rex' }]));
+      }
+      if (req.url === '/mismatch/pets') {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify([{ id: 'one', name: 'Rex' }]));
       }
       // Anything else hangs past the request timeout.
     });
@@ -1052,6 +1057,43 @@ describe('serve — upstream client behaviour (stdio subprocess)', () => {
       [{ id: 1, name: 'Rex' }],
     );
     expect(seenAccept).toEqual(['application/json, */*;q=0.1', 'application/json, */*;q=0.1']);
+  }, 15_000);
+
+  // Issue #13: a response that does not match the spec fails the call...
+  it('fails a call whose response does not match the output schema', async () => {
+    const port = await start();
+    const { proc, stdoutLines } = await spawnServe(`http://127.0.0.1:${String(port)}/mismatch`, []);
+    sendModern(proc, 1, 'tools/call', { name: 'listPets', arguments: {} });
+    await waitFor(() => stdoutLines.length > 0, 8000);
+    const response = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(response.result?.['isError']).toBe(true);
+    expect(JSON.stringify(response.result?.['content'])).toContain(
+      "did not match the tool's declared output schema",
+    );
+  }, 15_000);
+
+  // ...unless --omit-output-schema names the tool: then the result is text,
+  // and startup says which tools lost their output schema
+  it('returns that response as text under --omit-output-schema and warns at startup', async () => {
+    const port = await start();
+    const { proc, stdoutLines, stderrLines } = await spawnServe(
+      `http://127.0.0.1:${String(port)}/mismatch`,
+      ['--omit-output-schema', 'GET /pets'],
+    );
+    sendModern(proc, 1, 'tools/list');
+    sendModern(proc, 2, 'tools/call', { name: 'listPets', arguments: {} });
+    await waitFor(() => stdoutLines.length > 1, 8000);
+    const [listed, called] = stdoutLines.map((line) => JSON.parse(line) as JsonRpcMessage);
+    const tools = listed?.result?.['tools'] as { name: string; outputSchema?: unknown }[];
+    expect(tools.find((tool) => tool.name === 'listPets')).not.toHaveProperty('outputSchema');
+    expect(called?.result).toMatchObject({
+      content: [{ type: 'text', text: JSON.stringify([{ id: 'one', name: 'Rex' }]) }],
+      isError: false,
+    });
+    expect(called?.result).not.toHaveProperty('structuredContent');
+    expect(stderrLines).toContain(
+      'openapi-mcp: warning: --omit-output-schema: response-schema validation is off for 1 tool, results are returned as text: listPets',
+    );
   }, 15_000);
 
   it('--request-timeout bounds an upstream call independently of --timeout', async () => {

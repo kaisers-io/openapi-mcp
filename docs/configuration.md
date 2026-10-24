@@ -64,6 +64,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--allow-private-network` | no | permit private/loopback addresses for spec fetch redirects and for API requests to a spec-derived origin or redirect, and the token URL with `--upstream-oauth-*`; with `--http-auth oauth` also the authorization-server metadata and JWKS fetches (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 | `--nullable-response-fields [all\|optional]` | no | admit `null` for object properties in derived output schemas, for specs that omit `nullable`: every property (`all`, also without a value) or only those not listed in `required` (`optional`) (see below) | off |
+| `--omit-output-schema <pattern>` | yes | declare no output schema for the matching exposed tools, for an API whose responses do not match its spec: their results are returned as text, without response-schema validation (`--allow` pattern syntax, see below) | `[]` |
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
@@ -312,6 +313,31 @@ Notes:
     response instead of being sent as `null`; optional properties then validate without the
     flag. This changes the response for every client of the API, and a required key sent as
     `null` still needs `nullable` in the spec, or the flag.
+- `--omit-output-schema <pattern>` is opt-in and repeatable. When an API's responses do not
+  match its own spec in a way `--nullable-response-fields` does not cover (a wrong type, a
+  missing required key, an undocumented property under `additionalProperties: false`), every
+  call to the tool fails with "upstream response for status N did not match the tool's
+  declared output schema". For the tools a pattern matches, no output schema is declared, so
+  the result is returned as text, the same way as for a tool whose responses cannot be
+  described. The MCP specification requires structured results to conform to a declared
+  output schema, so declaring none is the conforming way to stop the check.
+
+  The patterns use the [`--allow`/`--deny` syntax](../README.md#filtering) and match the
+  spec's operationId, method and path, or tags, not the tool name. They act only on the tools
+  the server exposes: a pattern that matches none of them, for example because it names an
+  operation the filters exclude or that is omitted as unsupported, is a dead pattern (a
+  warning, or an error under `--strict-filters`). Startup names the tools that lost their
+  output schema.
+
+  What changes for these tools: no `structuredContent`, no check of status, media type or
+  body against the spec, and a JSON body that does not parse is returned as text. The
+  pagination hint from a `Link` header still arrives as a separate text block, but one from
+  the response body does not. What stays: the secret scan (a result containing a configured
+  secret is still withheld), the size limits, request validation and every network
+  safeguard. It applies to `--tool-mode discover` (`call_operation`) as well, where
+  `describe_operation` shows no output schema for the tool. Prefer fixing the spec, for
+  example with an [OpenAPI Overlay](overlays.md), when you can: that keeps the tool's output
+  validated.
 - Size limits: a spec may document at most 4096 operations (a hard stop before anything is
   cached, whatever the filters), and at most 512 tools may be exposed after `--allow`/`--deny`
   filtering. A larger API can be served by narrowing the exposed set with `--allow`/`--deny`;
@@ -503,6 +529,7 @@ preview it.
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
 | `--nullable-response-fields [all\|optional]` | no | admit `null` for object properties in derived output schemas, for specs that omit `nullable`: every property (`all`, also without a value) or only those not listed in `required` (`optional`) (see below) | off |
+| `--omit-output-schema <pattern>` | yes | declare no output schema for the matching exposed tools, for an API whose responses do not match its spec: their results are returned as text, without response-schema validation (`--allow` pattern syntax, see below) | `[]` |
 
 Example (an operationId glob, so it matches only operationIds that start with `read`):
 
@@ -520,7 +547,9 @@ either scope (JSON only: with the flag this is nearly every tool, so the text ou
 mark it). A tool whose output schema was
 withheld because a response `pattern` has nested quantifiers (see
 [security.md](security.md#response-envelope-and-redacted-errors)) carries
-`outputSchemaWithheld` with the sentence its description starts with.
+`outputSchemaWithheld` with the sentence its description starts with. A tool whose output
+schema `--omit-output-schema` removed ends with `[output schema omitted]` and carries
+`outputSchemaOptedOut: true`.
 
 When the exposed operations declare `security` requirements, `tools` prints one `auth:` line
 per referenced `components.securitySchemes` entry naming the credential it expects and the
