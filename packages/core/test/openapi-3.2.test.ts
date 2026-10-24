@@ -451,9 +451,41 @@ describe('OpenAPI 3.2 (issue #33)', () => {
       ),
       '3.2',
     );
+    const metadataUrl = 'https://auth.example.test/.well-known/oauth-authorization-server';
     expect(spec.securitySchemes).toEqual([
-      { name: 'device', type: 'oauth2', flows: ['deviceAuthorization'] },
+      { name: 'device', type: 'oauth2', flows: ['deviceAuthorization'], metadataUrl },
     ]);
+    // `oauth2MetadataUrl` is shown to the operator, never fetched
+    expect(describeSecurityScheme(spec.securitySchemes![0]!)).toBe(
+      `security scheme "device" (oauth2 deviceAuthorization) — interactive OAuth flows are not supported; pass --header-env Authorization=<ENV> holding "Bearer <token>" with a token obtained elsewhere (authorization server metadata: ${metadataUrl})`,
+    );
+  });
+
+  it('shows the metadata URL next to the client-credentials flags', () => {
+    const spec = normalizeSpec(
+      doc32(
+        { '/a': { get: { responses: okResponses } } },
+        {
+          components: {
+            securitySchemes: {
+              machine: {
+                type: 'oauth2',
+                oauth2MetadataUrl: 'https://auth.example.test/meta\u001B[31m',
+                flows: {
+                  clientCredentials: { tokenUrl: 'https://auth.example.test/token', scopes: {} },
+                },
+              },
+            },
+          },
+        },
+      ),
+      '3.2',
+    );
+    const hint = describeSecurityScheme(spec.securitySchemes![0]!);
+    expect(hint).toContain('pass --upstream-oauth-client-id-env <ENV>');
+    // Spec text: sanitized before it is shown
+    expect(hint).toContain('(authorization server metadata: https://auth.example.test/meta');
+    expect(hint).not.toContain('\u001B');
   });
 
   it('marks a scheme the spec deprecates in the credential hint', () => {

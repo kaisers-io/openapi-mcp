@@ -109,12 +109,8 @@ export type {
   OperationMethod,
   OperationRecord,
 } from './spec/normalize.ts';
-export {
-  describeSecurityScheme,
-  summarizeSecurity,
-  unsatisfiedSecurityWarnings,
-  unsupportedReason,
-} from './spec/security-hints.ts';
+export { describeSecurityScheme, unsupportedReason } from './spec/security-describe.ts';
+export { summarizeSecurity, unsatisfiedSecurityWarnings } from './spec/security-hints.ts';
 export type { ConfiguredCredentials, SchemeUsage } from './spec/security-hints.ts';
 export type {
   ClientCredentialsFlow,
