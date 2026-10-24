@@ -14,6 +14,9 @@ export type HttpMethod = (typeof HTTP_METHODS)[number];
 // OPTIONS and TRACE operations are never exposed
 const NEVER_EXPOSED_METHODS = ['options', 'trace'] as const;
 
+// A method name from `additionalOperations` is spec text, shown in omissions
+const METHOD_NAME_MAX_LENGTH = 32;
+
 const TITLE_MAX_LENGTH = 256;
 
 export type OperationRecord = {
@@ -81,7 +84,7 @@ const buildOperation = (
     return { method: upper, path, reason: 'callbacks are not supported' };
   }
   const opParameters = Array.isArray(op['parameters']) ? op['parameters'] : [];
-  const { parameters, unresolvable, cookie } = mergeParameters(
+  const { parameters, unresolvable, cookie, querystring } = mergeParameters(
     pathParameters,
     opParameters,
     resolve,
@@ -95,6 +98,9 @@ const buildOperation = (
   }
   if (cookie) {
     return { method: upper, path, reason: 'cookie parameters are not supported' };
+  }
+  if (querystring) {
+    return { method: upper, path, reason: 'querystring parameters are not supported yet' };
   }
   const tags = Array.isArray(op['tags'])
     ? op['tags'].filter((tag): tag is string => typeof tag === 'string')
@@ -167,11 +173,26 @@ const buildPathEntries = (
     }
     return [buildOperation(method, path, op, pathParameters, resolve)];
   });
+  // OpenAPI 3.2 operations not mapped to tools yet (issue #33): the QUERY
+  // method and any method under `additionalOperations`
+  const notYetSupported: OmittedOperation[] = [
+    ...(item['query'] === undefined
+      ? []
+      : [{ method: 'QUERY', path, reason: 'QUERY operations are not supported yet' }]),
+    ...Object.keys(isRecord(item['additionalOperations']) ? item['additionalOperations'] : {}).map(
+      (name): OmittedOperation => ({
+        method: sanitizeSpecText(name, METHOD_NAME_MAX_LENGTH),
+        path,
+        reason: 'additionalOperations are not supported yet',
+      }),
+    ),
+  ];
   return {
     operations: perMethod.filter((entry): entry is OperationRecord => !('reason' in entry)),
     omitted: [
       ...neverExposed,
       ...perMethod.filter((entry): entry is OmittedOperation => 'reason' in entry),
+      ...notYetSupported,
     ],
   };
 };

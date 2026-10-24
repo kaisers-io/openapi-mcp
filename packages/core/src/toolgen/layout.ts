@@ -559,6 +559,12 @@ const bodyFields = (
       unrepresentable: `the request body declares ${media.ambiguous} with no deterministic choice`,
     };
   }
+  // A Media Type Object can be a $ref in OpenAPI 3.2. One the dereferencer
+  // left in place is a cycle marker, not a schema-less media type: reading
+  // its absent `schema` as "any JSON" would accept every body (issue #33)
+  if (Object.hasOwn(media.entry, '$ref')) {
+    return { unrepresentable: 'the request body media type is a cyclic $ref' };
+  }
   if (isRecord(media.entry['encoding']) && Object.keys(media.entry['encoding']).length > 0) {
     return { unrepresentable: 'a request body encoding object is not supported' };
   }

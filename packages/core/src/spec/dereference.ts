@@ -117,7 +117,8 @@ export const createDereferencer = (
   options: DereferencerOptions = {},
 ): Dereferencer => {
   const isCyclic = createCycleDetector(document);
-  const applySiblings = options.openapiVersion === '3.1';
+  // 3.1 and later: JSON Schema 2020-12, where keywords next to a $ref apply
+  const applySiblings = options.openapiVersion !== undefined && options.openapiVersion !== '3.0';
   // Imperative on purpose: both counters are running totals shared across
   // every recursive `walk` and every `resolve` call (one budget for the whole
   // expansion, not a per-branch one), incremented as a side effect so the

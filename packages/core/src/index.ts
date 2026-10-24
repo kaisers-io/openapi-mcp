@@ -89,7 +89,7 @@ export type {
 export { MAX_REDIRECTS, fetchSpec, fetchSpecConditional } from './spec/fetch.ts';
 export type { ConditionalFetchResult, FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
 export { parseSpecText } from './spec/parse.ts';
-export { validateOpenApiDocument } from './spec/validate.ts';
+export { openapiVersionOf, validateOpenApiDocument } from './spec/validate.ts';
 export type { OpenapiVersion, ValidatedSpec } from './spec/validate.ts';
 export {
   checkRefs,

@@ -78,6 +78,44 @@ describe('tools command — file specs', () => {
     expect(envelope.data.contentHash).toMatch(/^[0-9a-f]{64}$/u);
   });
 
+  it('serves an OpenAPI 3.2 spec, omitting only what is not supported yet (#33)', async () => {
+    const { lines, ctx } = fileCtx();
+    const code = await run(ctx, [
+      'node',
+      'openapi-mcp',
+      '--json',
+      'tools',
+      '--spec',
+      'shop-3.2.yaml',
+      '--allow',
+      '**',
+    ]);
+    expect(code).toBe(EXIT.OK);
+    const { data } = JSON.parse(lines[0]!) as {
+      data: {
+        openapiVersion: string;
+        tools: { name: string; method: string }[];
+        omitted: { method: string; path: string; reason: string }[];
+        security: { scheme: string; hint: string }[];
+      };
+    };
+    expect(data.openapiVersion).toBe('3.2');
+    expect(data.tools.map((tool) => tool.name)).toEqual([
+      'listOrders',
+      'getOrder',
+      'updateOrder',
+      'exportOrders',
+      'streamEvents',
+      'getPet',
+    ]);
+    expect(data.omitted).toEqual([
+      { method: 'QUERY', path: '/orders', reason: 'QUERY operations are not supported yet' },
+      { method: 'LINK', path: '/orders', reason: 'additionalOperations are not supported yet' },
+      { method: 'GET', path: '/search', reason: 'querystring parameters are not supported yet' },
+    ]);
+    expect(JSON.stringify(data.security)).toContain('deviceAuthorization');
+  });
+
   it('maps an invalid spec to a validation error with exit 3', async () => {
     const { errLines, ctx } = fileCtx({
       readFileText: () => Promise.resolve('{"openapi":"3.1.0"}'),

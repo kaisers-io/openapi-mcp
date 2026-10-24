@@ -142,7 +142,7 @@ const processSpecText = (text: string): ProcessedSpec => {
 // A cached document is already parsed, so this path skips that. It also does
 // NOT re-validate against the meta-schema: these
 // bytes were validated before they were written and readCacheEntry has
-// already checked their sha256 against meta.acceptedContentHash. The 3.0/3.1
+// already checked their sha256 against meta.acceptedContentHash. The 3.0/3.1/3.2
 // discriminator that would otherwise have been the reason to revalidate comes
 // from meta.openapiVersion, which is persisted for exactly this.
 // Entries written before the cache format bump hold the dereferenced document

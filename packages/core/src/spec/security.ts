@@ -17,7 +17,7 @@ export type ClientCredentialsFlow = {
   scopes: readonly string[];
 };
 
-export type SecurityScheme =
+export type SecurityScheme = (
   | { name: string; type: 'apiKey'; in: 'header' | 'query' | 'cookie'; paramName: string }
   | { name: string; type: 'http'; scheme: string }
   | {
@@ -28,7 +28,11 @@ export type SecurityScheme =
     }
   | { name: string; type: 'openIdConnect' | 'mutualTLS' }
   // `reason` is package-authored text; any spec value in it is sanitized.
-  | { name: string; type: 'unsupported'; reason: string };
+  | { name: string; type: 'unsupported'; reason: string }
+) & {
+  // OpenAPI 3.2 `deprecated: true`: the spec discourages new use of the scheme
+  deprecated?: true;
+};
 
 // Scheme name -> required scopes. `{}` makes security optional (OAS:
 // "an empty security requirement ({}) can be included in the array").
@@ -44,9 +48,16 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const show = (text: string): string => sanitizeSpecText(text, DISPLAY_TEXT_MAX);
 
-const OAUTH_FLOWS = ['implicit', 'password', 'clientCredentials', 'authorizationCode'] as const;
+// `deviceAuthorization` is new in OpenAPI 3.2
+const OAUTH_FLOWS = [
+  'implicit',
+  'password',
+  'clientCredentials',
+  'authorizationCode',
+  'deviceAuthorization',
+] as const;
 
-const toScheme = (name: string, raw: Record<string, unknown>): SecurityScheme => {
+const schemeOf = (name: string, raw: Record<string, unknown>): SecurityScheme => {
   const { type } = raw;
   if (type === 'apiKey') {
     const location = raw['in'];
@@ -96,6 +107,11 @@ const toScheme = (name: string, raw: Record<string, unknown>): SecurityScheme =>
         ? `unknown security scheme type "${show(type)}"`
         : 'security scheme without a "type"',
   };
+};
+
+const toScheme = (name: string, raw: Record<string, unknown>): SecurityScheme => {
+  const scheme = schemeOf(name, raw);
+  return raw['deprecated'] === true ? { ...scheme, deprecated: true } : scheme;
 };
 
 export const extractSecuritySchemes = (document: Record<string, unknown>): SecurityScheme[] => {

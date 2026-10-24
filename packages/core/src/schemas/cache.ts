@@ -84,7 +84,7 @@ export type CacheMeta = {
   candidate?: CacheCandidate | undefined;
   title: string;
   specVersion: string;
-  // Info.version is NOT the OpenAPI version: normalizeSpec needs the 3.0/3.1
+  // Info.version is NOT the OpenAPI version: normalizeSpec needs the 3.0/3.1/3.2
   // discriminator, and persisting it is what lets a cache hit skip revalidation
   openapiVersion: OpenapiVersion;
 };
@@ -128,7 +128,7 @@ export const zCacheMeta: z.ZodType<CacheMeta> = z.strictObject({
   specVersion: z.string().max(TEXT_MAX),
   // Exactly the OpenapiVersion union, not a free string: a cache hit does not
   // revalidate, so this value alone decides which normalize rules apply
-  openapiVersion: z.enum(['3.0', '3.1']),
+  openapiVersion: z.enum(['3.0', '3.1', '3.2']),
 });
 
 export const CACHE_TEXT_MAX = TEXT_MAX;

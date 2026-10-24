@@ -96,9 +96,13 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 
 Notes:
 
-- `--spec` accepts OpenAPI 3.0.x and 3.1.x. OpenAPI 3.2 is refused for now: it adds features
-  such as the `QUERY` method and `querystring` parameters that tool generation does not handle
-  yet. Swagger (OpenAPI 2.0) documents are not supported either.
+- `--spec` accepts OpenAPI 3.0.x, 3.1.x and 3.2.x. A 3.2 spec is served like a 3.1 one, but
+  three 3.2 features are not mapped to tools yet: an operation that uses the `QUERY` method,
+  `additionalOperations` or a `querystring` parameter is omitted, and `tools` lists it with
+  the reason. A response in a sequential media type is not parsed as a stream: JSON Lines
+  (`application/jsonl`) is a tool error ("unsupported media type"), and Server-Sent Events
+  (`text/event-stream`) come back as text once the upstream closes the stream within
+  `--request-timeout`. Swagger (OpenAPI 2.0) documents are not supported.
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.
