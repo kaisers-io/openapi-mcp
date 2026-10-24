@@ -20,12 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OpenAPI 3.2 `QUERY` operations (#33).** A 3.2 `query` operation (RFC 10008: a safe,
+  idempotent read with a request body) becomes a read-only tool instead of being omitted. The
+  read-only default exposes it, its annotations are read-only, `--retries` applies, and the
+  body is sent with the `QUERY` method (an omitted optional form body as the empty form, with
+  its `Content-Type`). A `303` redirect is followed as a `GET`; any other
+  redirect is a tool error, because it would repeat the query without its body.
 - **OpenAPI 3.2 (#33).** 3.2.x specs are validated against the official 3.2 schema and served
   like 3.1 ones: JSON Schema 2020-12 dialect, `$ref` siblings, `components.mediaTypes`
   references, and the `deviceAuthorization` OAuth flow in the credential hints. A security
   scheme the spec marks `deprecated` says so in the hint. Operations that use a 3.2 feature not
-  mapped to tools yet (the `QUERY` method, `additionalOperations`, `querystring` parameters)
-  are omitted one by one with a reason, so the rest of the spec is served. A cyclic
+  mapped to tools yet (`additionalOperations`, `querystring` parameters) are omitted one by
+  one with a reason, so the rest of the spec is served. A cyclic
   `components.mediaTypes` reference stays fail-closed: the operation is omitted for a request
   body, and the output schema is withheld for a response. Before, every 3.2
   spec was refused. **Downgrading:** a cache entry for a 3.2 spec cannot be read by 0.4.1 or

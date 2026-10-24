@@ -5,8 +5,8 @@
 `openapi-mcp` is a runtime wrapper — no code generation, no deployment. Point it at an
 OpenAPI 3.0, 3.1 or 3.2 spec (URL or file) and every allowed operation becomes a validated
 [MCP](https://modelcontextprotocol.io) tool for hosts like Claude Code and Codex. It is
-read-only by default (only `GET`/`HEAD` operations, unless you pass `--allow`), reads secrets
-only from environment variables, and never applies a refreshed spec silently.
+read-only by default (only `GET`/`HEAD`/`QUERY` operations, unless you pass `--allow`), reads
+secrets only from environment variables, and never applies a refreshed spec silently.
 
 > **Trust the spec source.** This tool interprets the OpenAPI document you give it at
 > runtime, and that document's text flows into the model's context. A hostile spec is an
@@ -85,9 +85,9 @@ authenticated (`--spec-header-env`), unless you pass `--trust-spec-updates`.
 
 ## Defaults
 
-- **Read-only:** with no `--allow`, only `GET`/`HEAD` operations become tools. `--allow`/`--deny`
-  take operationId globs (`list*`), `METHOD /path` globs (`GET /users/**`) and `tag:<glob>`;
-  `--deny` always wins, and any `--allow` replaces the read-only default.
+- **Read-only:** with no `--allow`, only `GET`/`HEAD`/`QUERY` operations become tools.
+  `--allow`/`--deny` take operationId globs (`list*`), `METHOD /path` globs (`GET /users/**`)
+  and `tag:<glob>`; `--deny` always wins, and any `--allow` replaces the read-only default.
 - **Tool names** are the operationId reduced to `[A-Za-z0-9_-]` (at most 64 characters), or
   method and path when there is no usable operationId (`get_users_by_id`). Filters match the
   raw operationId, not the tool name.

@@ -1,0 +1,151 @@
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { CLI_ENTRY, FIXTURES_DIR, stopChild } from './cli-subprocess.ts';
+import { SUBPROCESS_TEST_TIMEOUT_MS, SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
+
+// Issue #33: an OpenAPI 3.2 QUERY operation end to end. The real CLI over
+// stdio, without --allow (QUERY is safe, so the read-only default exposes
+// it), against a local upstream that records what it receives.
+
+type Received = { method?: string; contentType?: string; body: string };
+
+describe('serve — OpenAPI 3.2 QUERY (issue #33)', () => {
+  let home: string;
+  let upstream: Server;
+  let baseUrl: string;
+  const received: Received[] = [];
+
+  beforeAll(async () => {
+    home = mkdtempSync(join(tmpdir(), 'openapi-mcp-query-'));
+    upstream = createServer((req, res) => {
+      let body = '';
+      req.on('data', (chunk: Buffer) => {
+        body += chunk.toString('utf8');
+      });
+      req.on('end', () => {
+        received.push({
+          ...(req.method === undefined ? {} : { method: req.method }),
+          ...(req.headers['content-type'] === undefined
+            ? {}
+            : { contentType: req.headers['content-type'] }),
+          body,
+        });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify([{ id: 'o1', note: null }]));
+      });
+    });
+    await new Promise<void>((resolve) => {
+      upstream.listen(0, '127.0.0.1', resolve);
+    });
+    baseUrl = `http://127.0.0.1:${String((upstream.address() as AddressInfo).port)}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => {
+      upstream.close(() => resolve());
+    });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it(
+    'exposes a QUERY operation by default and sends its body with the QUERY method',
+    async () => {
+      const child = spawn(
+        process.execPath,
+        [
+          CLI_ENTRY,
+          'serve',
+          '--trust-spec-updates',
+          '--spec',
+          'shop-3.2.yaml',
+          '--base-url',
+          baseUrl,
+          '--header-env',
+          'Authorization=QUERY_TEST_TOKEN',
+        ],
+        {
+          cwd: FIXTURES_DIR,
+          env: {
+            ...process.env,
+            HOME: home,
+            USERPROFILE: home,
+            QUERY_TEST_TOKEN: 'Bearer test-token-not-a-secret',
+          },
+        },
+      );
+      const responses = new Map<number, { result?: Record<string, unknown> }>();
+      let buffer = '';
+      child.stdout.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString('utf8');
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines.filter((entry) => entry !== '')) {
+          const message = JSON.parse(line) as { id?: number; result?: Record<string, unknown> };
+          if (message.id !== undefined) {
+            responses.set(message.id, message);
+          }
+        }
+      });
+      const meta = {
+        'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+        'io.modelcontextprotocol/clientCapabilities': {},
+      };
+      const request = async (id: number, method: string, params: Record<string, unknown>) => {
+        child.stdin.write(
+          `${JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, _meta: meta } })}\n`,
+        );
+        const started = Date.now();
+        while (!responses.has(id) && Date.now() - started < SUBPROCESS_WAIT_MS) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 20);
+          });
+        }
+        return responses.get(id)?.result ?? {};
+      };
+      try {
+        const list = await request(1, 'tools/list', {});
+        const tools = list['tools'] as { name: string; annotations?: Record<string, unknown> }[];
+        const queryTool = tools.find((tool) => tool.name === 'queryOrders');
+        expect(queryTool?.annotations).toMatchObject({ readOnlyHint: true });
+        // The read-only default still hides the PATCH
+        expect(tools.map((tool) => tool.name)).not.toContain('updateOrder');
+
+        const called = await request(2, 'tools/call', {
+          name: 'queryOrders',
+          // An object body's properties are the tool's arguments
+          arguments: { status: 'open', noteContains: 'gift' },
+        });
+        expect(called['isError']).toBe(false);
+        expect(called['structuredContent']).toEqual({
+          status: 200,
+          contentType: 'application/json',
+          data: [{ id: 'o1', note: null }],
+        });
+        expect(received).toEqual([
+          {
+            method: 'QUERY',
+            contentType: 'application/json',
+            body: JSON.stringify({ status: 'open', noteContains: 'gift' }),
+          },
+        ]);
+
+        // The request body schema is enforced before anything is sent
+        const refused = await request(3, 'tools/call', {
+          name: 'queryOrders',
+          arguments: { status: 'lost' },
+        });
+        expect(refused['isError']).toBe(true);
+        expect(received).toHaveLength(1);
+      } finally {
+        await stopChild(child);
+      }
+    },
+    SUBPROCESS_TEST_TIMEOUT_MS,
+  );
+});

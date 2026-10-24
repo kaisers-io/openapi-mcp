@@ -643,6 +643,11 @@ const serializeBody = (
   if (encoding === undefined) {
     return { error: 'the request mapper has an unsupported body content type' };
   }
+  // A QUERY server must reject a request without Content-Type (RFC 10008
+  // §2), so an omitted optional form body is sent as the empty form, which
+  // is a valid representation. Empty JSON or multipart content is not, so
+  // those still send no body (issue #33).
+  const sendsEmptyForm = upperMethod === 'QUERY' && encoding === 'form';
   let payload: unknown;
   if (mapper.bodyMode === 'single') {
     const [entry] = bodyFieldEntries;
@@ -651,10 +656,13 @@ const serializeBody = (
     }
     const [name, mapping] = entry;
     const value = data[name];
-    if (value === undefined) {
-      return mapping.required ? { error: 'missing required request body' } : { ok: {} };
+    if (value === undefined && mapping.required) {
+      return { error: 'missing required request body' };
     }
-    payload = value;
+    if (value === undefined && !sendsEmptyForm) {
+      return { ok: {} };
+    }
+    payload = value ?? {};
   } else {
     const assembled = buildBodyObject(bodyFieldEntries, data);
     if ('error' in assembled) {
@@ -668,7 +676,7 @@ const serializeBody = (
     // an empty form body) with its Content-Type rather than no body at all
     // (kaisers-io/openapi-mcp-archive#40). Presence comes from the mapper,
     // never from populated fields.
-    if (!assembled.anyPresent && mapper.bodyRequired !== true) {
+    if (!assembled.anyPresent && mapper.bodyRequired !== true && !sendsEmptyForm) {
       return { ok: {} };
     }
     payload = assembled.object;

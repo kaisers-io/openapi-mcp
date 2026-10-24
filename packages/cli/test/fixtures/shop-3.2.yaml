@@ -32,12 +32,24 @@ paths:
               $ref: '#/components/mediaTypes/OrderList'
     query:
       operationId: queryOrders
+      summary: Search orders with a structured query
       requestBody:
+        required: true
         content:
           application/json:
-            schema: { type: object }
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [open, closed] }
+                noteContains: { type: string }
+              additionalProperties: false
       responses:
-        '200': { description: ok }
+        '200':
+          description: The matching orders
+          content:
+            application/json:
+              $ref: '#/components/mediaTypes/OrderList'
     additionalOperations:
       LINK:
         operationId: linkOrders

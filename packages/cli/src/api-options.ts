@@ -199,7 +199,7 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     )
     .option(
       '--retries <n>',
-      'retry a transient upstream failure (429/502/503/504, connection error) up to n times (0-3) for GET/HEAD/PUT/DELETE, and for POST/PATCH only with an Idempotency-Key header',
+      'retry a transient upstream failure (429/502/503/504, connection error) up to n times (0-3) for GET/HEAD/QUERY/PUT/DELETE, and for POST/PATCH only with an Idempotency-Key header',
       '0',
     )
     .option(

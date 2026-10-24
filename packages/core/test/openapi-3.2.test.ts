@@ -56,7 +56,7 @@ const build = (document: Record<string, unknown>): BuildToolsResult => {
 };
 
 describe('OpenAPI 3.2 (issue #33)', () => {
-  it('omits QUERY and additionalOperations, keeping the other operations of the path', () => {
+  it('maps QUERY to an operation and omits additionalOperations', () => {
     const document = doc32({
       '/orders': {
         get: { operationId: 'listOrders', responses: okResponses },
@@ -71,9 +71,11 @@ describe('OpenAPI 3.2 (issue #33)', () => {
     // rely on that (a cache hit skips revalidation)
     expect(() => validateOpenApiDocument(document)).toThrow(/schema validation/u);
     const spec = normalizeSpec(document, '3.2');
-    expect(spec.operations.map((operation) => operation.operationId)).toEqual(['listOrders']);
+    expect(spec.operations.map((operation) => [operation.method, operation.operationId])).toEqual([
+      ['get', 'listOrders'],
+      ['query', 'queryOrders'],
+    ]);
     expect(spec.omitted).toEqual([
-      { method: 'QUERY', path: '/orders', reason: 'QUERY operations are not supported yet' },
       { method: 'LINK', path: '/orders', reason: 'additionalOperations are not supported yet' },
       // The method name is spec text: sanitized before it is shown
       {

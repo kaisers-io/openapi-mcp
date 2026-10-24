@@ -25,7 +25,7 @@ Four pillars:
 > context. A hostile or compromised spec is an injection surface: this tool sanitizes and
 > caps what it renders, but it cannot semantically filter hostile prose out of a spec you
 > chose to trust. **Only point it at a spec source you trust.** As a baseline, the server is
-> read-only by default (only `GET`/`HEAD` operations are exposed unless you pass `--allow`),
+> read-only by default (only `GET`/`HEAD`/`QUERY` operations are exposed unless you pass `--allow`),
 > and spec updates fetched at runtime are gated behind an explicit `cache promote` (or
 > `--trust-spec-updates` for specs you own) rather than applied silently — see
 > [Caching & refresh](#caching--refresh) below.
@@ -63,8 +63,8 @@ Preview the tools a spec would generate, without starting a server:
 openapi-mcp tools --spec https://api.example.com/openapi.json
 ```
 
-Then run it as an MCP server over stdio. With no `--allow`, only `GET`/`HEAD` operations are
-exposed:
+Then run it as an MCP server over stdio. With no `--allow`, only `GET`/`HEAD`/`QUERY`
+operations are exposed:
 
 ```bash
 openapi-mcp serve --spec https://api.example.com/openapi.json
@@ -247,7 +247,8 @@ Rules, no exceptions:
 1. `--deny` always wins over `--allow`.
 2. Any `--allow` given replaces the default entirely: only matching, non-denied operations
    are exposed (including write operations present at startup).
-3. No `--allow` given: read-only default — only `GET`/`HEAD` operations (minus denied ones).
+3. No `--allow` given: read-only default — only `GET`/`HEAD` operations, and OpenAPI 3.2
+   `QUERY` operations, a read with a request body (minus denied ones).
 
 Pass `--strict-filters` to turn a dead pattern (one that matches nothing) into a startup
 error instead of a warning — useful once a filter set is stable and you want drift to fail
@@ -373,8 +374,8 @@ Each is off unless a default or "on" is stated; details in
 - `--request-timeout <duration>` (default `30s`): the budget for each upstream call, queue wait
   included. `--timeout` is separate: it bounds the spec fetch and, with `--http-auth oauth`, the
   authorization-server metadata and JWKS fetches.
-- `--retries <n>` (default `0`, at most `3`): retry 429/502/503/504 for `GET`/`HEAD`/`PUT`/
-  `DELETE`, and connection errors before any response for `GET`/`HEAD`/`PUT` (never `DELETE`).
+- `--retries <n>` (default `0`, at most `3`): retry 429/502/503/504 for `GET`/`HEAD`/`QUERY`/
+  `PUT`/`DELETE`, and connection errors before any response for all of them but `DELETE`.
   `POST`/`PATCH` are retried only when the operation declares an `Idempotency-Key` header.
 - Trace propagation is **on** by default: a valid W3C `traceparent`/`tracestate` from a call's
   `_meta` is forwarded upstream. Pass `--no-trace-propagation` for APIs you do not operate.

@@ -1125,6 +1125,38 @@ describe('buildRequest — required empty body (kaisers-io/openapi-mcp-archive#4
     const built = ok(buildRequest(mapper('application/json', true), 'get', '/x', {}, budgets));
     expect(built.body).toBeUndefined();
   });
+
+  // RFC 10008 §2: a QUERY server rejects a request without Content-Type
+  it('sends the empty form with its content type for an omitted optional QUERY body (#33)', () => {
+    const contentType = 'application/x-www-form-urlencoded';
+    const flattened = ok(buildRequest(mapper(contentType, false), 'query', '/x', {}, budgets));
+    expect(flattened.contentType).toBe(contentType);
+    expect(flattened.body?.byteLength).toBe(0);
+    const single: RequestMapper = {
+      bodyMode: 'single',
+      bodyContentType: contentType,
+      fields: { body: { destination: 'body', bodyPath: [], required: false } },
+    };
+    const built = ok(buildRequest(single, 'query', '/x', {}, budgets));
+    expect(built.contentType).toBe(contentType);
+    expect(built.body?.byteLength).toBe(0);
+    // A present body is sent as before
+    const present = ok(
+      buildRequest(mapper(contentType, false), 'query', '/x', { note: 'a b' }, budgets),
+    );
+    expect(new TextDecoder().decode(present.body)).toBe('note=a+b');
+  });
+
+  it('keeps an omitted optional QUERY body absent when the empty content is not valid', () => {
+    const built = ok(buildRequest(mapper('application/json', false), 'query', '/x', {}, budgets));
+    expect(built.body).toBeUndefined();
+    expect(built.contentType).toBeUndefined();
+    // Other methods keep omitting an optional form body
+    const post = ok(
+      buildRequest(mapper('application/x-www-form-urlencoded', false), 'post', '/x', {}, budgets),
+    );
+    expect(post.body).toBeUndefined();
+  });
 });
 
 // Issue kaisers-io/openapi-mcp-archive#71: base64 tool input is decoded to the
