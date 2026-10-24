@@ -1,4 +1,4 @@
-import type { HttpMethod } from '../spec/normalize.ts';
+import type { OperationMethod } from '../spec/normalize.ts';
 
 // SDK-neutral tool annotations (mirrors MCP's ToolAnnotations hint fields).
 // This module never imports the SDK; server/sdk/protocol.ts casts these
@@ -18,9 +18,12 @@ export type ToolAnnotations = {
 // when `readOnlyHint` is false (per the MCP ToolAnnotations JSDoc).
 // PUT/DELETE are destructive AND idempotent (repeating the same call has no
 // additional effect). POST/PATCH are destructive but NOT assumed idempotent.
+// Any other method (OpenAPI 3.2 `additionalOperations`, issue #33) is
+// treated like POST: its semantics are not known here, so it is never
+// assumed read-only or idempotent.
 // `openWorldHint` is always true: every generated tool calls an external
 // HTTP API.
-export const deriveAnnotations = (method: HttpMethod): ToolAnnotations => {
+export const deriveAnnotations = (method: OperationMethod): ToolAnnotations => {
   switch (method) {
     case 'get':
     case 'head':
@@ -31,8 +34,7 @@ export const deriveAnnotations = (method: HttpMethod): ToolAnnotations => {
     case 'delete': {
       return { destructiveHint: true, idempotentHint: true, openWorldHint: true };
     }
-    case 'post':
-    case 'patch': {
+    default: {
       return { destructiveHint: true, openWorldHint: true };
     }
   }

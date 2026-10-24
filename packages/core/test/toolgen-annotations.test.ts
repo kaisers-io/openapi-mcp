@@ -24,8 +24,16 @@ describe('deriveAnnotations — the HTTP-method heuristic', () => {
     }
   });
 
+  // OpenAPI 3.2 additionalOperations (issue #33): unknown semantics, so
+  // treated like POST, never read-only or idempotent
+  it('marks any other method like POST', () => {
+    for (const method of ['LINK', 'PROPFIND', 'SEARCH'] as const) {
+      expect(deriveAnnotations(method)).toEqual({ destructiveHint: true, openWorldHint: true });
+    }
+  });
+
   it('never sets readOnlyHint true for a non-GET/HEAD method', () => {
-    for (const method of ['put', 'post', 'delete', 'patch'] as const) {
+    for (const method of ['put', 'post', 'delete', 'patch', 'LINK'] as const) {
       expect(deriveAnnotations(method).readOnlyHint).toBeUndefined();
     }
   });

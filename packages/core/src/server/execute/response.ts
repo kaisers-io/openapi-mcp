@@ -201,7 +201,7 @@ const PINNED_ERROR_TEXT: Record<PinnedErrorReason, string> = {
   'too-large': 'the upstream response exceeded the maximum response size',
   'redirect-loop': 'the upstream request followed too many redirects',
   'redirect-write-method':
-    'the upstream server redirected a write or QUERY request, which is not followed',
+    'the upstream server redirected a request other than GET or HEAD, which is not followed',
   'redirect-invalid': 'the upstream server sent an invalid redirect',
   network: 'the request to the upstream server failed',
 };

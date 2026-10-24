@@ -13,8 +13,8 @@ import {
 import type { BuildToolsResult, OperationRecord } from '../src/index.ts';
 
 // Issue #33: OpenAPI 3.2 documents are accepted. What tool generation does
-// not map yet (QUERY, additionalOperations, querystring parameters) is
-// omitted per operation with a reason, so the rest of the spec is served.
+// not map is omitted per operation with a reason, so the rest of the spec is
+// served. additionalOperations have their own file.
 
 const okResponses = { '200': { description: 'ok' } };
 
@@ -57,13 +57,13 @@ const build = (document: Record<string, unknown>): BuildToolsResult => {
 };
 
 describe('OpenAPI 3.2 (issue #33)', () => {
-  it('maps QUERY to an operation and omits additionalOperations', () => {
+  it('maps QUERY and additionalOperations to operations', () => {
     const document = doc32({
       '/orders': {
         get: { operationId: 'listOrders', responses: okResponses },
         query: { operationId: 'queryOrders', responses: okResponses },
         additionalOperations: {
-          LINK: { responses: okResponses },
+          LINK: { operationId: 'linkOrders', responses: okResponses },
           'PURGE\u001B[31m': { responses: okResponses },
         },
       },
@@ -75,14 +75,14 @@ describe('OpenAPI 3.2 (issue #33)', () => {
     expect(spec.operations.map((operation) => [operation.method, operation.operationId])).toEqual([
       ['get', 'listOrders'],
       ['query', 'queryOrders'],
+      ['LINK', 'linkOrders'],
     ]);
     expect(spec.omitted).toEqual([
-      { method: 'LINK', path: '/orders', reason: 'additionalOperations are not supported yet' },
       // The method name is spec text: sanitized before it is shown
       {
         method: expect.not.stringContaining('\u001B') as string,
         path: '/orders',
-        reason: 'additionalOperations are not supported yet',
+        reason: 'additionalOperations key is not a valid HTTP method name',
       },
     ]);
   });

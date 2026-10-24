@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { TOOL_NAME_MAX_LENGTH, assignToolNames } from '../src/index.ts';
-import type { HttpMethod, OperationRecord } from '../src/index.ts';
+import type { OperationMethod, OperationRecord } from '../src/index.ts';
 
-const record = (method: HttpMethod, path: string, operationId?: string): OperationRecord => ({
+const record = (method: OperationMethod, path: string, operationId?: string): OperationRecord => ({
   method,
   path,
   ...(operationId === undefined ? {} : { operationId }),
@@ -34,6 +34,18 @@ describe('assignToolNames — bases', () => {
 
   it('falls back to method_path for a missing operationId', () => {
     expect(assignToolNames([record('get', '/users/{id}')])[0]?.toolName).toBe('get_users_by_id');
+  });
+
+  // OpenAPI 3.2 additionalOperations (issue #33): a punctuation-only method
+  // on `/` leaves no letter or digit, and the name must never be empty
+  it('names an operation by its stable hash when method and path leave nothing', () => {
+    const named = assignToolNames([record('!', '/'), record('*', '/'), record('!', '/pets')]);
+    expect(named.map((entry) => entry.toolName)).toEqual([
+      `operation_${suffix('!', '/', 8)}`,
+      `operation_${suffix('*', '/', 8)}`,
+      // A path with a letter still names it, as for any method
+      '_pets',
+    ]);
   });
 
   it('falls back to method_path when the operationId sanitizes to nothing', () => {
@@ -146,8 +158,11 @@ describe('assignToolNames — collisions', () => {
 });
 
 describe('assignToolNames — non-ASCII, mixed segments and the provider charset (issue kaisers-io/openapi-mcp-archive#67)', () => {
-  const nameOf = (method: HttpMethod, path: string, operationId?: string): string | undefined =>
-    assignToolNames([record(method, path, operationId)])[0]?.toolName;
+  const nameOf = (
+    method: OperationMethod,
+    path: string,
+    operationId?: string,
+  ): string | undefined => assignToolNames([record(method, path, operationId)])[0]?.toolName;
 
   it('strips diacritics instead of turning each accented letter into an underscore', () => {
     expect(nameOf('get', '/x', 'Ünïcödé')).toBe('Unicode');
