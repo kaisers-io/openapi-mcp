@@ -9,10 +9,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CLI_ENTRY, FIXTURES_DIR, stopChild } from './cli-subprocess.ts';
 import { SUBPROCESS_TEST_TIMEOUT_MS, SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
-// Issue #33: an OpenAPI 3.2 QUERY operation, a querystring parameter and an
-// additionalOperations method end to end. The real CLI over stdio, against a
-// local upstream that records what it receives. QUERY is safe, so the
-// read-only default exposes it; LINK needs --allow.
+// Issue #33: an OpenAPI 3.2 QUERY operation, a querystring parameter, an
+// additionalOperations method and sequential media types end to end. The
+// real CLI over stdio, against a local upstream that records what it
+// receives. QUERY is safe, so the read-only default exposes it; LINK needs
+// --allow.
 
 type Received = { method?: string; url?: string; contentType?: string; body: string };
 
@@ -38,8 +39,17 @@ describe('serve — OpenAPI 3.2 QUERY, querystring and additionalOperations (iss
             : { contentType: req.headers['content-type'] }),
           body,
         });
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify([{ id: 'o1', note: null }]));
+        // Sequential media types: JSON Lines and Server-Sent Events
+        const sequential: Record<string, readonly [string, string]> = {
+          '/orders/export': ['application/jsonl', '{"id":"o1","note":null}\n{"id":"o2"}\n'],
+          '/events': ['text/event-stream', ': ping\nevent: created\ndata: o1\nid: 1\n\n'],
+        };
+        const [type, payload] = sequential[req.url ?? ''] ?? [
+          'application/json',
+          JSON.stringify([{ id: 'o1', note: null }]),
+        ];
+        res.writeHead(200, { 'content-type': type });
+        res.end(payload);
       });
     });
     await new Promise<void>((resolve) => {
@@ -163,6 +173,33 @@ describe('serve — OpenAPI 3.2 QUERY, querystring and additionalOperations (iss
         });
         expect(searched['isError']).toBe(false);
         expect(received[1]).toEqual({ method: 'GET', url: '/search?text=gift+%26+card', body: '' });
+      } finally {
+        await stopChild(child);
+      }
+    },
+    SUBPROCESS_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'returns a JSON Lines and an event-stream response as the array of their items',
+    async () => {
+      received.length = 0;
+      const { child, request } = serve([]);
+      try {
+        const exported = await request(1, 'tools/call', { name: 'exportOrders', arguments: {} });
+        expect(exported['isError']).toBe(false);
+        expect(exported['structuredContent']).toEqual({
+          status: 200,
+          contentType: 'application/jsonl',
+          data: [{ id: 'o1', note: null }, { id: 'o2' }],
+        });
+        const events = await request(2, 'tools/call', { name: 'streamEvents', arguments: {} });
+        expect(events['isError']).toBe(false);
+        expect(events['structuredContent']).toEqual({
+          status: 200,
+          contentType: 'text/event-stream',
+          data: [{ event: 'created', data: 'o1', id: '1' }],
+        });
       } finally {
         await stopChild(child);
       }

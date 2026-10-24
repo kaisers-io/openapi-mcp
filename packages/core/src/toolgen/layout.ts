@@ -12,6 +12,7 @@ import {
   MULTIPART_FORM_DATA,
   OCTET_STREAM,
   parseMediaType,
+  sequenceKind,
 } from './media-type.ts';
 import { convertSchema, isDangerousKey } from './schema.ts';
 
@@ -626,6 +627,71 @@ const isFlattenableRoot = (root: unknown): root is Record<string, unknown> => {
   return true;
 };
 
+// OpenAPI 3.2 sequential media types (OAS 3.2.1 §4.14.3.1, issue #33): a
+// body of JSON Lines, NDJSON, JSON text sequences or Server-Sent Events is
+// the array of its items, taken as the one `body` argument and serialized
+// item by item (request.ts). Only when no other supported media type is
+// declared, and only one sequential one. `schema` describes the whole array
+// and `itemSchema` each item; both at once cannot be combined into one input
+// schema, so that omits the operation.
+const sequenceBody = (
+  content: Record<string, unknown>,
+  bodyRequired: boolean,
+  version: OpenapiVersion,
+): { ok: BodyResult } | { unrepresentable: string } | undefined => {
+  const keys = Object.keys(content).filter((contentType) => {
+    const essence = parseMediaType(contentType)?.essence;
+    return essence !== undefined && sequenceKind(essence) !== undefined;
+  });
+  const [contentType] = keys;
+  if (version !== '3.2' || contentType === undefined) {
+    return undefined;
+  }
+  if (keys.length > 1) {
+    return {
+      unrepresentable: `the request body declares several sequential media types (${keys.join(', ')}) with no deterministic choice`,
+    };
+  }
+  const entry = content[contentType];
+  if (!isRecord(entry) || Object.hasOwn(entry, '$ref')) {
+    return { unrepresentable: 'the request body media type is a cyclic $ref' };
+  }
+  if (entry['schema'] !== undefined && entry['itemSchema'] !== undefined) {
+    return {
+      unrepresentable:
+        'a sequential request body with both "schema" and "itemSchema" is not supported',
+    };
+  }
+  if (['encoding', 'prefixEncoding', 'itemEncoding'].some((key) => entry[key] !== undefined)) {
+    return { unrepresentable: 'a request body encoding object is not supported' };
+  }
+  const root =
+    entry['itemSchema'] === undefined
+      ? (entry['schema'] ?? { type: 'array' })
+      : { type: 'array', items: entry['itemSchema'] };
+  const converted = convertSchema(root, version, 0);
+  if (!('ok' in converted)) {
+    return { unrepresentable: `request body: ${converted.unrepresentable}` };
+  }
+  return {
+    ok: {
+      fields: [
+        {
+          preferred: 'body',
+          name: 'body',
+          location: 'body',
+          schema: converted.ok,
+          required: bodyRequired,
+          mapping: { destination: 'body', bodyPath: [], required: bodyRequired },
+        },
+      ],
+      mode: 'single',
+      contentType,
+      ...(bodyRequired ? { required: true as const } : {}),
+    },
+  };
+};
+
 const bodyFields = (
   requestBody: Record<string, unknown> | undefined,
   version: OpenapiVersion = '3.1',
@@ -635,6 +701,13 @@ const bodyFields = (
   }
   const content = isRecord(requestBody['content']) ? requestBody['content'] : undefined;
   const media = content === undefined ? undefined : selectMedia(content);
+  const sequence =
+    media === undefined && content !== undefined
+      ? sequenceBody(content, requestBody['required'] === true, version)
+      : undefined;
+  if (sequence !== undefined) {
+    return sequence;
+  }
   if (media === undefined) {
     return {
       unrepresentable:

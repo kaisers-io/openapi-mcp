@@ -8,8 +8,11 @@ import {
   MULTIPART_FORM_DATA,
   OCTET_STREAM,
   parseMediaType,
+  sequenceKind,
 } from '../../toolgen/media-type.ts';
+import type { SequenceKind } from '../../toolgen/media-type.ts';
 import { isDangerousKey } from '../../toolgen/schema.ts';
+import { sequenceBody } from './sequence-body.ts';
 import type { FieldMapping, RequestMapper } from '../../toolgen/layout.ts';
 
 // Outbound resource budgets the caller enforces on the request THIS module
@@ -579,10 +582,14 @@ type SerializedBody = {
 
 const bodyEncoding = (
   contentType: string,
-): 'json' | 'form' | 'binary' | 'multipart' | undefined => {
+): 'json' | 'form' | 'binary' | 'multipart' | SequenceKind | undefined => {
   const essence = parseMediaType(contentType)?.essence;
   if (essence !== undefined && isJsonEssence(essence)) {
     return 'json';
+  }
+  const sequence = essence === undefined ? undefined : sequenceKind(essence);
+  if (sequence !== undefined) {
+    return sequence;
   }
   if (essence === OCTET_STREAM) {
     return 'binary';
@@ -750,6 +757,13 @@ const serializeBody = (
       return decoded;
     }
     return { ok: { body: decoded.ok, contentType } };
+  }
+  if (encoding === 'json-lines' || encoding === 'json-seq' || encoding === 'event-stream') {
+    const encoded = sequenceBody(payload, encoding);
+    if ('error' in encoded) {
+      return encoded;
+    }
+    return { ok: { body: encoded.ok, contentType } };
   }
   if (encoding === 'json') {
     const encoded = jsonBody(payload);

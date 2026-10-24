@@ -8,7 +8,7 @@ import { DISPLAY_TEXT_MAX, sanitizeSpecText } from './sanitize.ts';
 // built — a credential still only ever comes from an operator-configured
 // env var — so every malformed shape degrades to "no information", never to
 // a startup failure. The operator-facing hints and warnings built on top
-// of this live in security-hints.ts.
+// of this live in security-describe.ts and security-hints.ts.
 
 export type ClientCredentialsFlow = {
   // Raw spec text: a URL (possibly relative to the server URL, OAS §4.7) that
@@ -25,6 +25,10 @@ export type SecurityScheme = (
       type: 'oauth2';
       flows: readonly string[];
       clientCredentials?: ClientCredentialsFlow;
+      // OpenAPI 3.2 `oauth2MetadataUrl`: where the authorization server
+      // metadata (RFC 8414) is. Raw spec text, shown to the operator only:
+      // the flows already name every endpoint, so it is never fetched.
+      metadataUrl?: string;
     }
   | { name: string; type: 'openIdConnect' | 'mutualTLS' }
   // `reason` is package-authored text; any spec value in it is sanitized.
@@ -84,6 +88,9 @@ const schemeOf = (name: string, raw: Record<string, unknown>): SecurityScheme =>
   if (type === 'oauth2') {
     const flows = isRecord(raw['flows']) ? raw['flows'] : {};
     const declared = OAUTH_FLOWS.filter((flow) => isRecord(flows[flow]));
+    const metadata = raw['oauth2MetadataUrl'];
+    const metadataUrl =
+      typeof metadata === 'string' && metadata !== '' ? { metadataUrl: metadata } : {};
     const cc = flows['clientCredentials'];
     if (isRecord(cc) && typeof cc['tokenUrl'] === 'string' && cc['tokenUrl'] !== '') {
       const scopes = isRecord(cc['scopes']) ? Object.keys(cc['scopes']).slice(0, MAX_SCOPES) : [];
@@ -92,9 +99,15 @@ const schemeOf = (name: string, raw: Record<string, unknown>): SecurityScheme =>
         type,
         flows: declared,
         clientCredentials: { tokenUrl: cc['tokenUrl'], scopes },
+        ...metadataUrl,
       };
     }
-    return { name, type, flows: declared.filter((flow) => flow !== 'clientCredentials') };
+    return {
+      name,
+      type,
+      flows: declared.filter((flow) => flow !== 'clientCredentials'),
+      ...metadataUrl,
+    };
   }
   if (type === 'openIdConnect' || type === 'mutualTLS') {
     return { name, type };

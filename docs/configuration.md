@@ -114,10 +114,17 @@ Notes:
   destructive, `--retries` never repeats it, and a redirect other than `303` is a tool error.
   Name it in a filter like any method (`--allow "LINK /orders/*"`). A method that is not upper
   case, `CONNECT`, `TRACK`, or a name that has its own Path Item field (such as `GET`) omits the
-  operation. A response in a sequential media type is not parsed as a stream: JSON Lines
-  (`application/jsonl`) is a tool error ("unsupported media type"), and Server-Sent Events
-  (`text/event-stream`) come back as text once the upstream closes the stream within
-  `--request-timeout`. Swagger (OpenAPI 2.0) documents are not supported.
+  operation. A sequential media type (JSON Lines `application/jsonl`, NDJSON
+  `application/x-ndjson`, JSON text sequences `application/json-seq`, Server-Sent Events
+  `text/event-stream`) is read as the array of its items once the upstream has sent the whole
+  body within `--request-timeout`; it is not streamed. In a 3.2 spec, `itemSchema` validates
+  each item and `schema` the whole array, so the tool returns structured data; an event is
+  `{data, event?, id?, retry?}` as OAS 3.2.1 §4.14.4 describes it. A request body in one of these
+  types becomes one array argument, `body`, written in the media type's framing. In a 3.0 or 3.1
+  spec, which defines no such mapping, such a response comes back as text and such a request
+  body omits the operation. An oauth2 scheme's `oauth2MetadataUrl` is shown in the credential
+  hint; it is never fetched, because the flows already name the token endpoint. Swagger
+  (OpenAPI 2.0) documents are not supported.
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.

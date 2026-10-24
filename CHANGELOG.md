@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Sequential media types (#33).** JSON Lines (`application/jsonl`), NDJSON
+  (`application/x-ndjson`), JSON text sequences (`application/json-seq`, RFC 7464) and
+  Server-Sent Events (`text/event-stream`) are read as the array of their items, as OpenAPI
+  3.2 defines it. In a 3.2 spec, a response becomes structured data validated by `itemSchema`
+  per item and `schema` for the whole array, and a request body in one of these types becomes
+  one array argument written in the media type's framing. In 3.0 and 3.1 specs, such a
+  response is returned as text; before, a JSON Lines response was a tool error ("unsupported
+  media type"). A malformed sequence fails closed, and a secret escaped inside an item is
+  found like in a JSON body.
+- **OpenAPI 3.2 `oauth2MetadataUrl` (#33).** The credential hint of an oauth2 scheme shows
+  the authorization server metadata URL (RFC 8414). It is never fetched: the flows already
+  name the token endpoint, and fetching it would add a request to a spec-chosen URL.
 - **OpenAPI 3.2 `additionalOperations` (#33).** An operation for another HTTP method, such as
   `LINK` or `COPY`, becomes a tool instead of being omitted, and its request is sent with the
   method exactly as declared. Its semantics are unknown, so it is treated like `POST`: the
