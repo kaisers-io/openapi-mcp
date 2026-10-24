@@ -96,17 +96,19 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 
 Notes:
 
-- `--spec` accepts OpenAPI 3.0.x, 3.1.x and 3.2.x. A 3.2 spec is served like a 3.1 one.
-  A 3.2 `QUERY` operation (RFC 10008: a safe, idempotent read with a request body) becomes a
-  read-only tool: the read-only default exposes it, `--retries` applies, and its body is
-  sent with the `QUERY` method. A redirect is followed only as `303` (then as a `GET`, as RFC
-  10008 §2.5 allows); any other redirect would repeat the query without its body, so it is
-  a tool error, as for a write. Two 3.2 features are not mapped to tools yet: an operation
-  that uses `additionalOperations` or a `querystring` parameter is omitted, and `tools`
-  lists it with the reason. A response in a sequential media type is not parsed as a stream:
-  JSON Lines (`application/jsonl`) is a tool error ("unsupported media type"), and
-  Server-Sent Events (`text/event-stream`) come back as text once the upstream closes the
-  stream within `--request-timeout`. Swagger (OpenAPI 2.0) documents are not supported.
+- `--spec` accepts OpenAPI 3.0.x, 3.1.x and 3.2.x. A 3.2 spec is served like a 3.1 one. A 3.2
+  `QUERY` operation (RFC 10008: a safe, idempotent read with a request body) becomes a read-only
+  tool: the read-only default exposes it, `--retries` applies, and its body is sent with the
+  `QUERY` method. An omitted optional form-urlencoded body is sent as the empty form with its
+  `Content-Type`, because a QUERY server must reject a request without one. A redirect is
+  followed only as `303` (then as a `GET`, as RFC 10008 §2.5 allows); any other redirect would
+  repeat the query without its body, so it is a tool error, as for a write. Two 3.2 features are
+  not mapped to tools yet: an operation that uses `additionalOperations` or a `querystring`
+  parameter is omitted, and `tools` lists it with the reason. A response in a sequential media
+  type is not parsed as a stream: JSON Lines (`application/jsonl`) is a tool error ("unsupported
+  media type"), and Server-Sent Events (`text/event-stream`) come back as text once the upstream
+  closes the stream within `--request-timeout`. Swagger (OpenAPI 2.0) documents are not
+  supported.
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.
