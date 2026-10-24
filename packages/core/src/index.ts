@@ -202,7 +202,9 @@ export type {
   MatchBudget,
 } from './filter/pattern.ts';
 export { applyFilters, closestMatch, matchesOperation } from './filter/engine.ts';
-export type { DeadPattern, FilterDecision } from './filter/engine.ts';
+export type { DeadPattern, DeadPatternFlag, FilterDecision } from './filter/engine.ts';
+export { applyOutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
+export type { OutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
 export {
   assignToolNames,
   buildLayout,

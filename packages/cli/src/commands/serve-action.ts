@@ -54,6 +54,7 @@ import {
   omissionWarningLines,
   parseSpecPipelineArgs,
   nullableOption,
+  withOutputSchemaOptOut,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
 import type { RunState } from '../main.ts';
@@ -484,14 +485,23 @@ export const runServe = async (
     // operator auth header (--header/--header-env) — SYSTEM_HEADERS alone
     // would let it reappear as a caller-settable input, silently colliding
     // with the credential the executor injects.
-    const built = buildTools(result.namedOperations, {
+    const generated = buildTools(result.namedOperations, {
       reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
       openapiVersion: result.spec.openapiVersion,
       projection: cmdOpts.responseProjection === true,
       defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
       ...nullableOption(cmdOpts.nullableResponseFields),
     });
-    const snapshot = buildSnapshot(built, result, {
+    const optOut = withOutputSchemaOptOut(
+      generated,
+      args.filters.omitOutputSchema,
+      result.spec,
+      cmdOpts.strictFilters === true,
+    );
+    const { built } = optOut;
+    // The status tool counts the --omit-output-schema dead patterns too
+    const pipeline = { ...result, deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns] };
+    const snapshot = buildSnapshot(built, pipeline, {
       toolMode: resolveToolMode(requestedToolMode, built.tools.length),
       compactOutputSchemas,
     });
@@ -682,6 +692,7 @@ export const runServe = async (
       ...result.warnings,
       ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
       ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
+      ...optOut.warnings,
       // Exposed operations whose `security` requirement no configured
       // header satisfies would only ever 401 — say so, with the flag that
       // fixes it, before the first call instead of after it.
