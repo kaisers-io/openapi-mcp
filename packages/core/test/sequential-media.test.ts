@@ -71,6 +71,20 @@ describe('parseSequence — reading a sequential response body', () => {
     ]);
   });
 
+  // HTML §9.2.6: what is pending at the end is discarded. A single final
+  // line end closes a line, not the event (review of #38)
+  it('dispatches an event only when a blank line closes it', () => {
+    expect(parseSequence('data: x\n', 'event-stream')).toEqual([]);
+    expect(parseSequence('data: x\r\n', 'event-stream')).toEqual([]);
+    expect(parseSequence('data: x\r', 'event-stream')).toEqual([]);
+    expect(parseSequence('data: x\n: comment\n', 'event-stream')).toEqual([]);
+    expect(parseSequence('data: first\n\ndata: unfinished\n', 'event-stream')).toEqual([
+      { data: 'first' },
+    ]);
+    expect(parseSequence('data: x\n\n', 'event-stream')).toEqual([{ data: 'x' }]);
+    expect(parseSequence('data: x\r\n\r\n', 'event-stream')).toEqual([{ data: 'x' }]);
+  });
+
   it('follows the event stream rules for line ends, fields and dispatch', () => {
     const stream =
       '\uFEFFdata:a\r\rdata\rid: x\u0000y\rretry: 1.5\rid: 7\r\r: only a comment\r\rdata: tail';
@@ -176,6 +190,42 @@ describe('mapResponse — a sequential response', () => {
     expect(invalid.content[0]?.text).toContain("did not match the tool's declared output schema");
   });
 
+  // RFC 7464 §2.2 allows zero records; the empty array is validated like any
+  // other, so `minItems` still applies (review of #38)
+  it('returns an empty sequence as the empty array, validated by the branch', () => {
+    for (const contentType of ['application/jsonl', 'application/json-seq', 'text/event-stream']) {
+      expect(structured(contentType, '').structuredContent).toEqual({
+        status: 200,
+        contentType,
+        data: [],
+      });
+    }
+    const atLeastOne = deriveOutputSchema(
+      operation({ 'application/jsonl': { schema: { type: 'array', minItems: 1 } } }),
+      '3.2',
+    )!;
+    const empty = mapResponse({
+      outcome: outcome('application/jsonl', ''),
+      outputSchema: atLeastOne,
+      validator: compileEnvelopeValidator(atLeastOne),
+      redactor: createRedactor([]),
+      maxTextBytes: 4096,
+    });
+    expect(empty.content[0]?.text).toContain("did not match the tool's declared output schema");
+    // An empty JSON body is still no envelope
+    const json = deriveOutputSchema(operation({ 'application/json': { schema: order } }), '3.2')!;
+    const emptyJson = mapResponse({
+      outcome: outcome('application/json', ''),
+      outputSchema: json,
+      validator: compileEnvelopeValidator(json),
+      redactor: createRedactor([]),
+      maxTextBytes: 4096,
+    });
+    expect(emptyJson.content[0]?.text).toBe(
+      'upstream response for status 200 had no body to validate',
+    );
+  });
+
   it('fails closed on a malformed sequence and on a secret in an item', () => {
     const broken = structured('application/json-seq', '\u001E{"id":"o1"}');
     expect(broken.content[0]?.text).toBe(
@@ -200,6 +250,26 @@ describe('mapResponse — a sequential response', () => {
       maxTextBytes: 4096,
     });
     expect(text).toMatchObject({ isError: false, content: [{ text: '{"id":"o1"}\n' }] });
+    // Malformed fails closed here too, as on the structured path (review of #38)
+    for (const [contentType, body] of [
+      ['application/jsonl', '{"value":"ok"}\nnot-json\n'],
+      ['application/x-ndjson', '{"value":'],
+      ['application/json-seq', '\u001E{"value":"ok"}'],
+    ] as const) {
+      const malformed = mapResponse({
+        outcome: outcome(contentType, body),
+        outputSchema: undefined,
+        validator: undefined,
+        redactor: createRedactor([]),
+        maxTextBytes: 4096,
+      });
+      expect(malformed).toMatchObject({
+        isError: true,
+        content: [
+          { text: 'upstream response for status 200 was not a valid sequence of its media type' },
+        ],
+      });
+    }
     // An escaped secret inside an item is found in the parsed items
     const secret = 'sk/live/not-a-real-secret';
     const leaked = mapResponse({

@@ -73,15 +73,19 @@ type ServerSentEvent = { data: string; event?: string; id?: string; retry?: numb
 // `data` lines join with LF; unknown fields are ignored; `retry` counts only
 // when it is all ASCII digits, as an integer; an `id` containing NULL is
 // ignored; a block without data dispatches nothing; an event not closed by
-// a blank line before the end is discarded. Each item carries the fields its
-// own block set, as in the spec's JSON Lines equivalent (§4.14.6.3), so the
-// stream-level last event ID is not repeated on later events.
+// a blank line before the end is discarded, also when the body ends in a
+// single line end. Each item carries the fields its own block set, as in the
+// spec's JSON Lines equivalent (§4.14.6.3), so the stream-level last event ID
+// is not repeated on later events.
 const parseEventStream = (text: string): ServerSentEvent[] => {
   const events: ServerSentEvent[] = [];
   let data: string[] = [];
   let fields: Omit<ServerSentEvent, 'data'> = {};
   const body = text.startsWith('\uFEFF') ? text.slice(1) : text;
-  for (const line of body.split(/\r\n|\r|\n/u)) {
+  // The last piece follows the last line end: an unterminated line, or ''
+  // when the body ends in a line end. Neither is a blank line, so it never
+  // dispatches; what is still pending at the end is discarded.
+  for (const line of body.split(/\r\n|\r|\n/u).slice(0, -1)) {
     if (line === '') {
       if (data.length > 0) {
         events.push({ data: data.join('\n'), ...fields });

@@ -434,7 +434,14 @@ const mapNoSchemaSuccess = (
   // body is then returned as text (issue #33)
   if (sequence === 'json-lines' || sequence === 'json-seq') {
     const items = parseSequence(decoded.ok, sequence);
-    if (items !== undefined && scanSafely(redactor, items)) {
+    // Malformed fails closed, as on the structured path: never a success
+    if (items === undefined) {
+      return textOutcome(
+        `upstream response for status ${status} was not a valid sequence of its media type`,
+        true,
+      );
+    }
+    if (scanSafely(redactor, items)) {
       return withheldSuccess();
     }
   }
@@ -654,9 +661,15 @@ const mapBody = (
       ? mapNoSchemaSuccess(status, contentType, bodyBytes, opts.redactor, opts.maxTextBytes)
       : mapNoSchemaProjection(bodyBytes, opts.fields, opts.redactor, opts.maxTextBytes);
   }
-  if (bodyBytes.byteLength === 0) {
+  const essence = mediaEssence(contentType);
+  if (
+    bodyBytes.byteLength === 0 &&
+    (essence === undefined || sequenceKind(essence) === undefined)
+  ) {
     // No body means no way to form a valid {status,contentType,data}
-    // envelope for a tool that declared one.
+    // envelope for a tool that declared one. An empty sequence is the empty
+    // array of its items (RFC 7464 §2.2 allows zero records), which the
+    // branch's `data` schema still validates.
     return textOutcome(`upstream response for status ${status} had no body to validate`, true);
   }
   if (opts.outputSchema === undefined) {
