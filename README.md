@@ -3,8 +3,8 @@
 **Turn any OpenAPI spec into a strict, locally running MCP server.**
 
 `openapi-mcp` is a runtime wrapper, not a code generator: there is no codegen step, no
-deployment, no per-API project scaffolding. Point it at an OpenAPI 3.0/3.1 spec (a URL or a
-local file) and every allowed operation becomes a validated [MCP](https://modelcontextprotocol.io)
+deployment, no per-API project scaffolding. Point it at an OpenAPI 3.0, 3.1 or 3.2 spec (a URL
+or a local file) and every allowed operation becomes a validated [MCP](https://modelcontextprotocol.io)
 tool that hosts like Claude Code and Codex can call directly.
 
 Four pillars:

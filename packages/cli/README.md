@@ -3,7 +3,7 @@
 **Turn any OpenAPI spec into a strict, locally running MCP server.**
 
 `openapi-mcp` is a runtime wrapper — no code generation, no deployment. Point it at an
-OpenAPI 3.0/3.1 spec (URL or file) and every allowed operation becomes a validated
+OpenAPI 3.0, 3.1 or 3.2 spec (URL or file) and every allowed operation becomes a validated
 [MCP](https://modelcontextprotocol.io) tool for hosts like Claude Code and Codex. It is
 read-only by default (only `GET`/`HEAD` operations, unless you pass `--allow`), reads secrets
 only from environment variables, and never applies a refreshed spec silently.

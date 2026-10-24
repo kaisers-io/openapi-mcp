@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OpenAPI 3.2 (#33).** 3.2.x specs are validated against the official 3.2 schema and served
+  like 3.1 ones: JSON Schema 2020-12 dialect, `$ref` siblings, `components.mediaTypes`
+  references, and the `deviceAuthorization` OAuth flow in the credential hints. Operations
+  that use a 3.2 feature not mapped to tools yet (the `QUERY` method, `additionalOperations`,
+  `querystring` parameters) are omitted one by one with a reason, so the rest of the spec is
+  served. Before, every 3.2 spec was refused.
 - **Guide: correcting a spec with an OpenAPI Overlay (#26).** `docs/overlays.md` shows how to
   fix one detail of a spec you cannot change, such as a property the API returns as `null`
   or an unhelpful operation description, with an Overlay 1.2 document applied by vacuum
@@ -52,9 +58,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Clearer errors for unsupported spec versions (#11).** An OpenAPI 3.2 spec is now named as
-  not supported yet instead of failing with the generic version error. A YAML Swagger 2.0 spec
-  that writes its version unquoted (`swagger: 2.0`) now gets the Swagger error too.
+- **Clearer error for Swagger 2.0 specs (#11).** A YAML Swagger 2.0 spec that writes its
+  version unquoted (`swagger: 2.0`) now gets the Swagger error instead of the generic version
+  error.
 - **Faster `serve` startup for large specs (#6, #7, #8).** Output validators are compiled
   without Ajv's code-optimization pass, which only shrinks the generated code and took most of
   the compile time; operations with identical output schemas now share one validator; and in

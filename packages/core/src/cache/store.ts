@@ -11,6 +11,7 @@ import {
 import type { CacheMeta } from '../schemas/cache.ts';
 import { hashBytes, hashContent } from '../spec/load.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
+import { openapiVersionOf } from '../spec/validate.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import type { CacheFs } from './fs.ts';
 import { LOCK_STALE_MS, tryWithNamespaceLock, withNamespaceLock } from './lock.ts';
@@ -655,7 +656,7 @@ export const corruptEntryError = (reason: string): Error =>
     `${reason} — the accepted baseline is the durable record of what you approved, so it is not silently refetched; run "openapi-mcp cache clear" to reset this entry deliberately`,
   );
 
-// The single place the 3.0/3.1 discriminator is derived from a document's own
+// The single place the 3.0/3.1/3.2 discriminator is derived from a document's own
 // "openapi" field. Used by BOTH the read path (verify rather than trust
 // mutable metadata) and promotion, but it is defined HERE because
 // writeAccepted below is its first caller. Reading one field is not
@@ -664,15 +665,7 @@ export const declaredOpenapiVersion = (
   document: Record<string, unknown>,
 ): OpenapiVersion | undefined => {
   const declared = document['openapi'];
-  if (typeof declared === 'string') {
-    if (declared.startsWith('3.0.')) {
-      return '3.0';
-    }
-    if (declared.startsWith('3.1.')) {
-      return '3.1';
-    }
-  }
-  return undefined;
+  return typeof declared === 'string' ? openapiVersionOf(declared) : undefined;
 };
 
 const parseJsonObject = (text: string): Record<string, unknown> | undefined => {

@@ -44,7 +44,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const show = (text: string): string => sanitizeSpecText(text, DISPLAY_TEXT_MAX);
 
-const OAUTH_FLOWS = ['implicit', 'password', 'clientCredentials', 'authorizationCode'] as const;
+// `deviceAuthorization` is new in OpenAPI 3.2
+const OAUTH_FLOWS = [
+  'implicit',
+  'password',
+  'clientCredentials',
+  'authorizationCode',
+  'deviceAuthorization',
+] as const;
 
 const toScheme = (name: string, raw: Record<string, unknown>): SecurityScheme => {
   const { type } = raw;

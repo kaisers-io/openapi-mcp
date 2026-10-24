@@ -52,17 +52,22 @@ const overrideKey = (entry: Entry): string =>
 // path level also when the operation overrides one of them), so buildLayout's
 // case-insensitive check still rejects them fail-closed. Matching uses the
 // RESOLVED name/in, so a `{ $ref }` parameter overrides and is overridden
-// like an inline one. `cookie` says whether any merged parameter is a cookie
-// parameter (normalize.ts omits such operations).
+// like an inline one. `cookie` and `querystring` say whether any merged
+// parameter is in that location (normalize.ts omits such operations).
 export const mergeParameters = (
   pathLevel: readonly unknown[],
   opLevel: readonly unknown[],
   resolve: Resolve,
-): { parameters: Record<string, unknown>[]; unresolvable: boolean; cookie: boolean } => {
+): {
+  parameters: Record<string, unknown>[];
+  unresolvable: boolean;
+  cookie: boolean;
+  querystring: boolean;
+} => {
   const pathParams = levelParameters(pathLevel, resolve);
   const opParams = levelParameters(opLevel, resolve);
   if (pathParams === undefined || opParams === undefined) {
-    return { parameters: [], unresolvable: true, cookie: false };
+    return { parameters: [], unresolvable: true, cookie: false, querystring: false };
   }
   const overrides = new Map<string, Entry>();
   for (const entry of opParams.values()) {
@@ -91,5 +96,7 @@ export const mergeParameters = (
     parameters: merged.map((entry) => entry.written),
     unresolvable: false,
     cookie: merged.some((entry) => entry.in === 'cookie'),
+    // OpenAPI 3.2: the whole query string as one parameter
+    querystring: merged.some((entry) => entry.in === 'querystring'),
   };
 };

@@ -159,12 +159,13 @@ describe('zCacheMeta', () => {
     ).toBe(true);
   });
 
-  it('accepts either OpenAPI version discriminator', () => {
+  it('accepts every OpenAPI version discriminator', () => {
     expect(zCacheMeta.safeParse({ ...validMeta(), openapiVersion: '3.0' }).success).toBe(true);
     expect(zCacheMeta.safeParse({ ...validMeta(), openapiVersion: '3.1' }).success).toBe(true);
+    expect(zCacheMeta.safeParse({ ...validMeta(), openapiVersion: '3.2' }).success).toBe(true);
   });
 
-  it.each(['3.0.3', '3.1.0', '3.2', '3', '', 1, undefined])(
+  it.each(['3.0.3', '3.1.0', '3.2.0', '3.3', '3', '', 1, undefined])(
     'rejects the unusable openapiVersion %j',
     (openapiVersion) => {
       // A cache hit skips revalidation, so this field is the only source of

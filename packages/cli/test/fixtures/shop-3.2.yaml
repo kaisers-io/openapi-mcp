@@ -1,0 +1,162 @@
+openapi: 3.2.0
+$self: https://shop.example.test/openapi.yaml
+info:
+  title: Shop 3.2
+  version: 1.0.0
+servers:
+  - url: https://shop.example.test/api
+    name: production
+tags:
+  - name: orders
+    summary: Orders
+  - name: order-items
+    parent: orders
+    kind: nav
+paths:
+  /orders:
+    get:
+      operationId: listOrders
+      tags: [orders]
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, closed] }
+          examples:
+            open: { dataValue: open, serializedValue: status=open }
+      responses:
+        '200':
+          summary: The orders
+          description: The orders
+          content:
+            application/json:
+              $ref: '#/components/mediaTypes/OrderList'
+    query:
+      operationId: queryOrders
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200': { description: ok }
+    additionalOperations:
+      LINK:
+        operationId: linkOrders
+        responses:
+          '204': { description: linked }
+  /orders/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getOrder
+      responses:
+        '200':
+          description: The order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+    patch:
+      operationId: updateOrder
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Order' }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /search:
+    get:
+      operationId: searchOrders
+      parameters:
+        - name: q
+          in: querystring
+          content:
+            application/x-www-form-urlencoded:
+              schema:
+                type: object
+                properties:
+                  text: { type: string }
+      responses:
+        '200': { description: ok }
+  /orders/export:
+    get:
+      operationId: exportOrders
+      responses:
+        '200':
+          description: One order per line
+          content:
+            application/jsonl:
+              itemSchema: { $ref: '#/components/schemas/Order' }
+  /events:
+    get:
+      operationId: streamEvents
+      responses:
+        '200':
+          description: Order events
+          content:
+            text/event-stream:
+              itemSchema:
+                type: object
+                properties:
+                  event: { type: string }
+                  data: { type: string }
+  /pets/{id}:
+    get:
+      operationId: getPet
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: A pet
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Cat'
+                  - $ref: '#/components/schemas/Dog'
+                discriminator:
+                  propertyName: kind
+                  defaultMapping: '#/components/schemas/Cat'
+components:
+  mediaTypes:
+    OrderList:
+      schema:
+        type: array
+        items: { $ref: '#/components/schemas/Order' }
+  schemas:
+    Order:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        note: { type: [string, 'null'] }
+      xml:
+        nodeType: element
+    Cat:
+      type: object
+      properties:
+        kind: { type: string }
+        meows: { type: boolean }
+    Dog:
+      type: object
+      properties:
+        kind: { type: string }
+        barks: { type: boolean }
+  securitySchemes:
+    device:
+      type: oauth2
+      oauth2MetadataUrl: https://auth.example.test/.well-known/oauth-authorization-server
+      flows:
+        deviceAuthorization:
+          deviceAuthorizationUrl: https://auth.example.test/device
+          tokenUrl: https://auth.example.test/token
+          scopes: { orders: read orders }
+    legacyKey:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      deprecated: true
+security:
+  - device: [orders]

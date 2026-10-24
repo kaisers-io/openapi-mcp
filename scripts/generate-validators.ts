@@ -12,7 +12,7 @@ import {
   generateValidator,
 } from '../packages/core/src/spec/generate-validators.ts';
 
-for (const version of ['3.0', '3.1'] as const) {
+for (const version of ['3.0', '3.1', '3.2'] as const) {
   await writeFile(
     new URL(`../packages/core/src/spec/generated/${GENERATED_FILES[version]}`, import.meta.url),
     generateValidator(version),
