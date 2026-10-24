@@ -22,7 +22,8 @@ import type { PinnedOutcome } from '../../http/pinned-dispatcher.ts';
 
 export const MAX_RETRIES = 3;
 const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 502, 503, 504]);
-const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'PUT', 'DELETE']);
+// QUERY is safe and idempotent (RFC 10008 §2)
+const IDEMPOTENT_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'PUT', 'DELETE', 'QUERY']);
 const BASE_DELAY_MS = 250;
 const MAX_DELAY_MS = 5000;
 

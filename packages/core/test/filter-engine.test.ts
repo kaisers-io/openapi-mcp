@@ -171,6 +171,22 @@ describe('applyFilters — precedence', () => {
     expect(exposedIds(decision)).toEqual(['listPets', 'readPetById', 'headPets']);
   });
 
+  it('rule 3: the default also exposes QUERY, a safe method (OpenAPI 3.2, RFC 10008)', () => {
+    const decision = applyFilters(
+      named([
+        record('query', '/pets/search', 'searchPets'),
+        record('post', '/pets/search', 'createSearch'),
+      ]),
+      [],
+      [],
+    );
+    expect(exposedIds(decision)).toEqual(['searchPets']);
+    // An explicit method pattern names it like any other method
+    expect(
+      matchesOperation(parseFilterPattern('QUERY /pets/*'), record('query', '/pets/search')),
+    ).toBe(true);
+  });
+
   it('rule 3: denied read operations are removed from the default', () => {
     const decision = applyFilters(named(fixture), [], patterns('read*'));
     expect(exposedIds(decision)).toEqual(['listPets', 'headPets']);

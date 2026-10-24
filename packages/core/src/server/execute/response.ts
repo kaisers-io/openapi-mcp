@@ -200,7 +200,8 @@ const PINNED_ERROR_TEXT: Record<PinnedErrorReason, string> = {
   egress: 'the request target is not allowed by the egress policy',
   'too-large': 'the upstream response exceeded the maximum response size',
   'redirect-loop': 'the upstream request followed too many redirects',
-  'redirect-write-method': 'the upstream server redirected a write request, which is not followed',
+  'redirect-write-method':
+    'the upstream server redirected a write or QUERY request, which is not followed',
   'redirect-invalid': 'the upstream server sent an invalid redirect',
   network: 'the request to the upstream server failed',
 };

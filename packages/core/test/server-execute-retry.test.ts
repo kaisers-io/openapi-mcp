@@ -11,7 +11,7 @@ const busy: PinnedOutcome = {
 };
 
 describe('isRetryableMethod', () => {
-  it.each(['GET', 'HEAD', 'PUT', 'DELETE'])('%s is retry-safe', (method) => {
+  it.each(['GET', 'HEAD', 'PUT', 'DELETE', 'QUERY'])('%s is retry-safe', (method) => {
     expect(isRetryableMethod(method, false)).toBe(true);
   });
 

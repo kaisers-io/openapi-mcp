@@ -93,13 +93,13 @@ export const SEARCH_INPUT_SCHEMA = z.strictObject({
     .max(SEARCH_QUERY_MAX_LENGTH)
     .optional()
     .describe(
-      'Keywords matched against operation names, HTTP paths, tags, parameter names, summaries and descriptions. Omit to list operations by name.',
+      'Keywords matched against operation names, paths, tags, parameter names, summaries and descriptions. Omit to list operations by name.',
     ),
   tags: z
     .array(z.string().min(1).max(SEARCH_TAG_MAX_LENGTH))
     .max(SEARCH_TAGS_MAX_COUNT)
     .optional()
-    .describe('Only operations carrying at least one of these tags (case-insensitive).'),
+    .describe('Only operations with at least one of these tags (case-insensitive).'),
   method: z.enum(UPPER_METHODS).optional().describe('Only operations with this HTTP method.'),
   limit: z
     .int()

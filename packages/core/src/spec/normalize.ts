@@ -8,7 +8,8 @@ import type { SecurityRequirement, SecurityScheme } from './security.ts';
 import { extractServerUrl } from './server-url.ts';
 import type { OpenapiVersion } from './validate.ts';
 
-export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head'] as const;
+// `query` (OpenAPI 3.2, RFC 10008) last, so specs without it keep their order
+export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head', 'query'] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
 
 // OPTIONS and TRACE operations are never exposed
@@ -173,20 +174,15 @@ const buildPathEntries = (
     }
     return [buildOperation(method, path, op, pathParameters, resolve)];
   });
-  // OpenAPI 3.2 operations not mapped to tools yet (issue #33): the QUERY
-  // method and any method under `additionalOperations`
-  const notYetSupported: OmittedOperation[] = [
-    ...(item['query'] === undefined
-      ? []
-      : [{ method: 'QUERY', path, reason: 'QUERY operations are not supported yet' }]),
-    ...Object.keys(isRecord(item['additionalOperations']) ? item['additionalOperations'] : {}).map(
-      (name): OmittedOperation => ({
-        method: sanitizeSpecText(name, METHOD_NAME_MAX_LENGTH),
-        path,
-        reason: 'additionalOperations are not supported yet',
-      }),
-    ),
-  ];
+  // OpenAPI 3.2 methods under `additionalOperations` are not mapped to
+  // tools yet (issue #33)
+  const notYetSupported = Object.keys(
+    isRecord(item['additionalOperations']) ? item['additionalOperations'] : {},
+  ).map((name): OmittedOperation => ({
+    method: sanitizeSpecText(name, METHOD_NAME_MAX_LENGTH),
+    path,
+    reason: 'additionalOperations are not supported yet',
+  }));
   return {
     operations: perMethod.filter((entry): entry is OperationRecord => !('reason' in entry)),
     omitted: [

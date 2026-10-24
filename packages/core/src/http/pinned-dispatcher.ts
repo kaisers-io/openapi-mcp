@@ -241,6 +241,10 @@ export const MAX_REDIRECTS = 5;
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+// A QUERY carries its query in the body, which is sent on the first hop
+// only: following a 301/302/307/308 would repeat it without its content.
+// RFC 10008 §2.5 lets a client resend it; this one refuses, as for a write.
+const BODY_KEEPING_METHODS = new Set([...WRITE_METHODS, 'QUERY']);
 const GET_HEAD_METHODS = new Set(['GET', 'HEAD']);
 
 // The cloud-metadata hostname set is imported from egress.ts (single source
@@ -572,7 +576,7 @@ export const pinnedRequest = async (
         if (response.status === 303 && method !== 'HEAD') {
           seeOther ||= method !== 'GET';
           method = 'GET';
-        } else if (WRITE_METHODS.has(method)) {
+        } else if (BODY_KEEPING_METHODS.has(method)) {
           return { kind: 'error', reason: 'redirect-write-method' };
         }
         const location = response.headers.get('location');

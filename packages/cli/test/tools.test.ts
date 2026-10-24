@@ -100,16 +100,16 @@ describe('tools command — file specs', () => {
       };
     };
     expect(data.openapiVersion).toBe('3.2');
-    expect(data.tools.map((tool) => tool.name)).toEqual([
-      'listOrders',
-      'getOrder',
-      'updateOrder',
-      'exportOrders',
-      'streamEvents',
-      'getPet',
+    expect(data.tools.map((tool) => [tool.name, tool.method])).toEqual([
+      ['listOrders', 'GET'],
+      ['queryOrders', 'QUERY'],
+      ['getOrder', 'GET'],
+      ['updateOrder', 'PATCH'],
+      ['exportOrders', 'GET'],
+      ['streamEvents', 'GET'],
+      ['getPet', 'GET'],
     ]);
     expect(data.omitted).toEqual([
-      { method: 'QUERY', path: '/orders', reason: 'QUERY operations are not supported yet' },
       { method: 'LINK', path: '/orders', reason: 'additionalOperations are not supported yet' },
       { method: 'GET', path: '/search', reason: 'querystring parameters are not supported yet' },
     ]);

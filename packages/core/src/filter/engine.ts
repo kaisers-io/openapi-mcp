@@ -4,8 +4,9 @@ import type { NamedOperation } from '../toolgen/naming.ts';
 import { FILTER_WORK_BUDGET_EXCEEDED_MESSAGE, createMatchBudget, globMatches } from './pattern.ts';
 import type { FilterPattern, MatchBudget } from './pattern.ts';
 
-// With no --allow, only these methods are exposed
-const READ_ONLY_METHODS = new Set(['get', 'head']);
+// With no --allow, only these methods are exposed. QUERY (OpenAPI 3.2) is
+// safe by definition (RFC 10008 §2): a read with a request body.
+const READ_ONLY_METHODS = new Set(['get', 'head', 'query']);
 
 // Suggestions are advisory: a pattern or candidate longer than this is skipped
 // rather than paid for, which bounds the O(n*m) matrix at 65k cells

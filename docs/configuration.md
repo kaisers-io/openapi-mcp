@@ -96,10 +96,14 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 
 Notes:
 
-- `--spec` accepts OpenAPI 3.0.x, 3.1.x and 3.2.x. A 3.2 spec is served like a 3.1 one, but
-  three 3.2 features are not mapped to tools yet: an operation that uses the `QUERY` method,
-  `additionalOperations` or a `querystring` parameter is omitted, and `tools` lists it with
-  the reason. A response in a sequential media type is not parsed as a stream: JSON Lines
+- `--spec` accepts OpenAPI 3.0.x, 3.1.x and 3.2.x. A 3.2 spec is served like a 3.1 one.
+  A 3.2 `QUERY` operation (RFC 10008: a safe, idempotent read with a request body) becomes a
+  read-only tool: the read-only default exposes it, `--retries` applies, and its body is
+  sent with the `QUERY` method. A redirect is followed only as `303` (then as a `GET`, as RFC
+  10008 §2.5 allows); any other redirect would repeat the query without its body, so it is
+  a tool error, as for a write. Two 3.2 features are not mapped to tools yet: an operation
+  that uses `additionalOperations` or a `querystring` parameter is omitted, and `tools`
+  lists it with the reason. A response in a sequential media type is not parsed as a stream: JSON Lines
   (`application/jsonl`) is a tool error ("unsupported media type"), and Server-Sent Events
   (`text/event-stream`) come back as text once the upstream closes the stream within
   `--request-timeout`. Swagger (OpenAPI 2.0) documents are not supported.
@@ -177,7 +181,7 @@ Notes:
   text-only result gets only the `Link` hint. A hint the tool's own input schema would reject
   becomes `null`. The hint never contains a raw URL.
 - Retries (`--retries`, off by default): a failed upstream call is retried only for
-  `GET`, `HEAD`, `PUT` and `DELETE` requests. A `POST` or `PATCH` is retried only when its
+  `GET`, `HEAD`, `QUERY`, `PUT` and `DELETE` requests. A `POST` or `PATCH` is retried only when its
   operation declares an `Idempotency-Key` header. The server then sends one key, the
   caller's value or a generated UUID, on every attempt, and returns it as
   `_meta["openapi-mcp/idempotencyKey"]`: if the call still fails, repeat it with that key so
@@ -411,7 +415,7 @@ neither searchable nor callable (`call_operation` reports it as an unknown opera
 What `discover` costs: a model typically needs a search and a describe before each new
 operation, so a task takes more tool calls. And because one `call_operation` tool stands for
 every exposed operation, it carries the least safe annotations among them — `readOnlyHint:
-true` only when every exposed operation is a `GET`/`HEAD` (the read-only default),
+true` only when every exposed operation is a `GET`/`HEAD`/`QUERY` (the read-only default),
 otherwise `destructiveHint: true` when any is. A host that asks for approval per tool, or
 decides it from annotations, sees one approval surface for all operations: approving
 `call_operation` once approves every exposed operation, writes included. `serve` warns at
