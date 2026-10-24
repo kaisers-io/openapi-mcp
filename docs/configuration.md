@@ -98,17 +98,7 @@ Notes:
 
 - `--spec` accepts OpenAPI 3.0.x and 3.1.x. OpenAPI 3.2 is refused for now: it adds features
   such as the `QUERY` method and `querystring` parameters that tool generation does not handle
-  yet. A Swagger (OpenAPI 2.0) spec, as springfox publishes it, must be converted to 3.0 first,
-  for example with [swagger2openapi](https://github.com/Mermade/oas-kit):
-
-  ```sh
-  npx swagger2openapi@7.0.8 swagger.json -o openapi.json
-  openapi-mcp tools --spec openapi.json --allow '**'
-  ```
-
-  Review the converted spec like any other: `tools` lists what it would serve, and `serve`
-  validates it as usual. The Swagger Petstore (`https://petstore.swagger.io/v2/swagger.json`)
-  converts this way into a spec with all 20 operations served.
+  yet. Swagger (OpenAPI 2.0) documents are not supported either.
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.

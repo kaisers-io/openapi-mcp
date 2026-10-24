@@ -44,8 +44,9 @@ What it does and does not check:
 - It accepts any `overlay: 1.x` version. Declare `overlay: 1.2.0` and use only 1.2 features.
 
 The output keeps the input's JSON formatting (2-space indentation, key order except for keys
-an action removes and sets again), so a plain `diff` shows only the changed lines. It does not end the file with a newline. YAML input is
-re-indented, so compare YAML with `diff -w`.
+an action removes and sets again), so a plain `diff` shows only the changed lines, plus the
+last line: vacuum does not end the file with a newline. YAML input is re-indented, so compare
+YAML with `diff -w`.
 
 ## Recipes
 
@@ -127,7 +128,8 @@ compare your output with them.
 
 1. **Exit code.** Anything but 0 means the overlay did not apply as written: delete the output
    and fix the overlay.
-2. **Diff.** Only the lines you meant to change may differ:
+2. **Diff.** Only the lines you meant to change may differ, besides the missing newline at
+   the end:
 
    ```sh
    diff -u shop-3.1.json shop-3.1.nullable-note.json

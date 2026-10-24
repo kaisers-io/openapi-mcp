@@ -52,7 +52,15 @@ describe('validateOpenApiDocument', () => {
   it('rejects swagger 2.0 documents with a targeted message', () => {
     expect(() =>
       validateOpenApiDocument({ swagger: '2.0', info: { title: 'T', version: '1' }, paths: {} }),
-    ).toThrow(/OpenAPI 2.0 \(swagger\).*convert the spec to OpenAPI 3\.0 first/u);
+    ).toThrow(
+      'OpenAPI 2.0 (swagger) documents are not supported — provide an OpenAPI 3.0 or 3.1 spec',
+    );
+  });
+
+  it('recognizes a YAML swagger version written without quotes (#11)', () => {
+    const document = parseSpecText('swagger: 2.0\ninfo: {title: T, version: "1"}\npaths: {}\n');
+    expect(document['swagger']).toBe(2);
+    expect(() => validateOpenApiDocument(document)).toThrow(/OpenAPI 2\.0 \(swagger\)/u);
   });
 
   it.each(['3.2.0', '3.2.1'])('names OpenAPI 3.2 as not supported yet for %s (#11)', (version) => {

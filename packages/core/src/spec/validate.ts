@@ -45,9 +45,11 @@ const formatAjvErrors = (errors: readonly AjvErrorLike[]): string => {
 };
 
 export const validateOpenApiDocument = (document: Record<string, unknown>): ValidatedSpec => {
-  if (typeof document['swagger'] === 'string') {
+  // Any `swagger` field marks a 2.0 document: unquoted in YAML (`swagger: 2.0`)
+  // the version parses as a number. The value is never echoed.
+  if (document['swagger'] !== undefined) {
     throw validationError(
-      'OpenAPI 2.0 (swagger) documents are not supported — convert the spec to OpenAPI 3.0 first (for example with swagger2openapi) or provide an OpenAPI 3.0 or 3.1 spec',
+      'OpenAPI 2.0 (swagger) documents are not supported — provide an OpenAPI 3.0 or 3.1 spec',
     );
   }
   const declared = document['openapi'];

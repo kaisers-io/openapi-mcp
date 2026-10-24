@@ -53,9 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Clearer errors for unsupported spec versions (#11).** An OpenAPI 3.2 spec is now named as
-  not supported yet instead of failing with the generic version error, and the Swagger 2.0
-  error says to convert the spec to OpenAPI 3.0 first. `docs/configuration.md` shows the
-  conversion with swagger2openapi.
+  not supported yet instead of failing with the generic version error. A YAML Swagger 2.0 spec
+  that writes its version unquoted (`swagger: 2.0`) now gets the Swagger error too.
 - **Faster `serve` startup for large specs (#6, #7, #8).** Output validators are compiled
   without Ajv's code-optimization pass, which only shrinks the generated code and took most of
   the compile time; operations with identical output schemas now share one validator; and in
