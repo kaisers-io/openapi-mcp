@@ -45,12 +45,21 @@ const formatAjvErrors = (errors: readonly AjvErrorLike[]): string => {
 };
 
 export const validateOpenApiDocument = (document: Record<string, unknown>): ValidatedSpec => {
-  if (typeof document['swagger'] === 'string') {
+  // Any `swagger` field marks a 2.0 document: unquoted in YAML (`swagger: 2.0`)
+  // the version parses as a number. The value is never echoed.
+  if (document['swagger'] !== undefined) {
     throw validationError(
       'OpenAPI 2.0 (swagger) documents are not supported — provide an OpenAPI 3.0 or 3.1 spec',
     );
   }
   const declared = document['openapi'];
+  if (typeof declared === 'string' && declared.startsWith('3.2.')) {
+    // OpenAPI 3.2 adds features (the QUERY method, `in: querystring`
+    // parameters, ...) that tool generation does not handle yet (issue #11)
+    throw validationError(
+      `OpenAPI 3.2 documents are not supported yet (the spec declares "${sanitizeSpecText(declared, DECLARED_VERSION_MAX)}") — provide an OpenAPI 3.0 or 3.1 spec`,
+    );
+  }
   if (
     typeof declared !== 'string' ||
     !(declared.startsWith('3.0.') || declared.startsWith('3.1.'))

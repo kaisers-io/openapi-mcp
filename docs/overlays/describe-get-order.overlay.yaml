@@ -1,0 +1,9 @@
+overlay: 1.2.0
+info:
+  title: Shop — clearer getOrder description
+  version: 1.0.0
+actions:
+  - target: $.paths['/orders/{id}'].get
+    description: Replace the one-word description the model sees for getOrder.
+    update:
+      description: Get one order by its ID. `note` is the customer's free-text note.

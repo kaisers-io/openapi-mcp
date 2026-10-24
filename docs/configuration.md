@@ -96,6 +96,9 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 
 Notes:
 
+- `--spec` accepts OpenAPI 3.0.x and 3.1.x. OpenAPI 3.2 is refused for now: it adds features
+  such as the `QUERY` method and `querystring` parameters that tool generation does not handle
+  yet. Swagger (OpenAPI 2.0) documents are not supported either.
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.
@@ -260,6 +263,9 @@ Notes:
   REQUIRED)`, so a `null` there still fails, while unset optional fields sent as `null` pass.
   Choose `all` (the default, also given as the bare flag) when the server sends `null` for
   required keys too. A key required only in another `allOf` member counts as optional.
+
+  To admit `null` for one property only, or to fix anything else in a spec you cannot
+  change, correct the spec with an OpenAPI Overlay instead: see [overlays](overlays.md).
 
   Not widened: `required` itself (a required key must still be present), array items (a
   `null` element is still refused), `additionalProperties` values, the root `data` value,

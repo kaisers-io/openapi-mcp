@@ -1,0 +1,8 @@
+overlay: 1.2.0
+info:
+  title: Shop — Order.note can be null (OpenAPI 3.0)
+  version: 1.0.0
+actions:
+  - target: $.components.schemas.Order.properties.note
+    update:
+      nullable: true

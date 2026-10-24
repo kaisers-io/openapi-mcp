@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guide: correcting a spec with an OpenAPI Overlay (#26).** `docs/overlays.md` shows how to
+  fix one detail of a spec you cannot change, such as a property the API returns as `null`
+  or an unhelpful operation description, with an Overlay 1.2 document applied by vacuum
+  0.35.1. It covers OpenAPI 3.0 and 3.1, the pitfalls (empty and too broad targets, action
+  order) and how to check the result before serving it. The example files in
+  `docs/overlays/` are tested against the real CLI.
 - **`serve --output-schema defs` (#9).** Shows each output schema with its repeated
   subschemas once under `$defs`, referenced with a local `$ref`, instead of written out in
   full every time. For the GitHub REST description (`--allow tag:repos`) `tools/list` shrinks
@@ -46,6 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Clearer errors for unsupported spec versions (#11).** An OpenAPI 3.2 spec is now named as
+  not supported yet instead of failing with the generic version error. A YAML Swagger 2.0 spec
+  that writes its version unquoted (`swagger: 2.0`) now gets the Swagger error too.
 - **Faster `serve` startup for large specs (#6, #7, #8).** Output validators are compiled
   without Ajv's code-optimization pass, which only shrinks the generated code and took most of
   the compile time; operations with identical output schemas now share one validator; and in
