@@ -9,13 +9,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CLI_ENTRY, FIXTURES_DIR, stopChild } from './cli-subprocess.ts';
 import { SUBPROCESS_TEST_TIMEOUT_MS, SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
-// Issue #33: an OpenAPI 3.2 QUERY operation end to end. The real CLI over
-// stdio, without --allow (QUERY is safe, so the read-only default exposes
-// it), against a local upstream that records what it receives.
+// Issue #33: an OpenAPI 3.2 QUERY operation and a querystring parameter end
+// to end. The real CLI over stdio, without --allow (QUERY is safe, so the
+// read-only default exposes it), against a local upstream that records what
+// it receives.
 
-type Received = { method?: string; contentType?: string; body: string };
+type Received = { method?: string; url?: string; contentType?: string; body: string };
 
-describe('serve — OpenAPI 3.2 QUERY (issue #33)', () => {
+describe('serve — OpenAPI 3.2 QUERY and querystring (issue #33)', () => {
   let home: string;
   let upstream: Server;
   let baseUrl: string;
@@ -31,6 +32,7 @@ describe('serve — OpenAPI 3.2 QUERY (issue #33)', () => {
       req.on('end', () => {
         received.push({
           ...(req.method === undefined ? {} : { method: req.method }),
+          ...(req.url === undefined ? {} : { url: req.url }),
           ...(req.headers['content-type'] === undefined
             ? {}
             : { contentType: req.headers['content-type'] }),
@@ -130,6 +132,7 @@ describe('serve — OpenAPI 3.2 QUERY (issue #33)', () => {
         expect(received).toEqual([
           {
             method: 'QUERY',
+            url: '/orders',
             contentType: 'application/json',
             body: JSON.stringify({ status: 'open', noteContains: 'gift' }),
           },
@@ -142,6 +145,14 @@ describe('serve — OpenAPI 3.2 QUERY (issue #33)', () => {
         });
         expect(refused['isError']).toBe(true);
         expect(received).toHaveLength(1);
+
+        // A 3.2 querystring parameter becomes the whole query string
+        const searched = await request(4, 'tools/call', {
+          name: 'searchOrders',
+          arguments: { q: { text: 'gift & card' } },
+        });
+        expect(searched['isError']).toBe(false);
+        expect(received[1]).toEqual({ method: 'GET', url: '/search?text=gift+%26+card', body: '' });
       } finally {
         await stopChild(child);
       }

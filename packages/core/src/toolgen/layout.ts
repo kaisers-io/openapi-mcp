@@ -34,6 +34,9 @@ export type FieldMapping =
       explode: boolean;
       required: boolean;
     }
+  // OpenAPI 3.2 `in: querystring`: the whole query string, from an object
+  // of scalars encoded as application/x-www-form-urlencoded (issue #33)
+  | { destination: 'querystring'; wireName: string; required: boolean }
   | {
       destination: 'body';
       bodyPath: readonly string[];
@@ -163,6 +166,63 @@ const QUERY_STYLES: ReadonlySet<unknown> = new Set([
   'pipeDelimited',
 ]);
 
+// OpenAPI 3.2 `in: querystring` (issue #33): the parameter IS the query
+// string, defined by `content` with exactly one media type. Only
+// application/x-www-form-urlencoded over an object of scalars is mapped (the
+// form body's shape); any other media type, a `schema`/`style`, or a `query`
+// parameter next to it (forbidden by OAS 3.2) omits the operation.
+const querystringField = (
+  param: Record<string, unknown>,
+  parameters: readonly Record<string, unknown>[],
+  version: OpenapiVersion,
+): { ok: Field } | { unrepresentable: string } => {
+  const name = String(param['name']);
+  if (parameters.some((other) => other['in'] === 'query')) {
+    return {
+      unrepresentable: `querystring parameter "${name}" is combined with query parameters`,
+    };
+  }
+  const content = isRecord(param['content']) ? param['content'] : {};
+  const [contentType, ...others] = Object.keys(content);
+  const media = contentType === undefined ? undefined : content[contentType];
+  if (
+    others.length > 0 ||
+    contentType === undefined ||
+    parseMediaType(contentType)?.essence !== FORM_URLENCODED ||
+    !isRecord(media) ||
+    Object.hasOwn(media, '$ref')
+  ) {
+    return {
+      unrepresentable: `querystring parameter "${name}" needs exactly one application/x-www-form-urlencoded content`,
+    };
+  }
+  const root = media['schema'];
+  if (!isRecord(root) || !isScalarObjectSchema(root)) {
+    return {
+      unrepresentable: `querystring parameter "${name}" must be an object of scalar values`,
+    };
+  }
+  const converted = convertSchema(root, version);
+  if (!('ok' in converted)) {
+    return { unrepresentable: `querystring parameter "${name}": ${converted.unrepresentable}` };
+  }
+  const required = param['required'] === true;
+  const schema =
+    typeof param['description'] === 'string'
+      ? converted.ok.describe(sanitizeSpecText(param['description'], SPEC_BUDGETS.maxTextLength))
+      : converted.ok;
+  return {
+    ok: {
+      preferred: name,
+      name,
+      location: 'query',
+      schema,
+      required,
+      mapping: { destination: 'querystring', wireName: name, required },
+    },
+  };
+};
+
 export const paramFields = (
   operation: OperationRecord,
   reservedHeaders: ReadonlySet<string>,
@@ -183,6 +243,14 @@ export const paramFields = (
   for (const param of operation.parameters) {
     const { name } = param;
     const location = param['in'];
+    if (location === 'querystring') {
+      const field = querystringField(param, operation.parameters, version);
+      if ('unrepresentable' in field) {
+        return field;
+      }
+      fields.push(field.ok);
+      continue;
+    }
     if (
       typeof name !== 'string' ||
       (location !== 'path' && location !== 'query' && location !== 'header')

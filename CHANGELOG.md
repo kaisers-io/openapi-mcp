@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **OpenAPI 3.2 `querystring` parameters (#33).** A parameter `in: querystring` whose
+  `content` is `application/x-www-form-urlencoded` over an object of scalar values becomes one
+  tool argument, and its entries are form-encoded into the query string. Other media types or
+  shapes, and a `querystring` next to `query` parameters, still omit the operation with a
+  reason.
 - **OpenAPI 3.2 `QUERY` operations (#33).** A 3.2 `query` operation (RFC 10008: a safe,
   idempotent read with a request body) becomes a read-only tool instead of being omitted. The
   read-only default exposes it, its annotations are read-only, `--retries` applies, and the
@@ -30,8 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   like 3.1 ones: JSON Schema 2020-12 dialect, `$ref` siblings, `components.mediaTypes`
   references, and the `deviceAuthorization` OAuth flow in the credential hints. A security
   scheme the spec marks `deprecated` says so in the hint. Operations that use a 3.2 feature not
-  mapped to tools yet (`additionalOperations`, `querystring` parameters) are omitted one by
-  one with a reason, so the rest of the spec is served. A cyclic
+  mapped to tools yet (`additionalOperations`) are omitted one by one with a reason, so the rest of the spec is served. A cyclic
   `components.mediaTypes` reference stays fail-closed: the operation is omitted for a request
   body, and the output schema is withheld for a response. Before, every 3.2
   spec was refused. **Downgrading:** a cache entry for a 3.2 spec cannot be read by 0.4.1 or

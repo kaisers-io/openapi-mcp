@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   assignToolNames,
+  buildRequest,
   buildTools,
   createDereferencer,
   declaredOpenapiVersion,
@@ -96,24 +97,138 @@ describe('OpenAPI 3.2 (issue #33)', () => {
     expect(validateOpenApiDocument(document).version).toBe('3.2');
   });
 
-  it('omits an operation with a querystring parameter, also one inherited from the path', () => {
-    const querystring = {
+  describe('querystring parameters', () => {
+    const budgets = { maxUrlLength: 8192, maxHeaderBytes: 16_384, maxBodyBytes: 65_536 };
+    const formFilter = (schema: Record<string, unknown>): Record<string, unknown> => ({
       name: 'filter',
       in: 'querystring',
-      content: { 'application/x-www-form-urlencoded': { schema: { type: 'object' } } },
-    };
-    const document = doc32({
-      '/search': { get: { parameters: [querystring], responses: okResponses } },
-      '/inherited': { parameters: [querystring], get: { responses: okResponses } },
-      '/plain': { get: { operationId: 'plain', responses: okResponses } },
+      content: { 'application/x-www-form-urlencoded': { schema } },
     });
-    expect(validateOpenApiDocument(document).version).toBe('3.2');
-    const spec = normalizeSpec(document, '3.2');
-    expect(spec.operations.map((operation) => operation.path)).toEqual(['/plain']);
-    expect(spec.omitted).toEqual([
-      { method: 'GET', path: '/search', reason: 'querystring parameters are not supported yet' },
-      { method: 'GET', path: '/inherited', reason: 'querystring parameters are not supported yet' },
-    ]);
+    const filterSchema = {
+      type: 'object',
+      required: ['status'],
+      properties: {
+        status: { type: 'string', enum: ['open', 'closed'] },
+        text: { type: 'string' },
+        limit: { type: 'integer' },
+        urgent: { type: 'boolean' },
+      },
+    };
+
+    it('maps a form querystring to one argument and encodes it as the query string', () => {
+      const built = build(
+        doc32({
+          '/search': {
+            get: {
+              operationId: 'search',
+              parameters: [{ ...formFilter(filterSchema), required: true }],
+              responses: okResponses,
+            },
+          },
+          // Inherited from the path item, as for any parameter
+          '/inherited': {
+            parameters: [formFilter(filterSchema)],
+            get: { operationId: 'inherited', responses: okResponses },
+          },
+        }),
+      );
+      expect(built.omitted).toEqual([]);
+      const [search, inherited] = built.tools;
+      expect(search?.inputSchema.safeParse({}).success).toBe(false);
+      expect(search?.inputSchema.safeParse({ filter: { status: 'lost' } }).success).toBe(false);
+      expect(inherited?.inputSchema.safeParse({}).success).toBe(true);
+      // Input schemas are closed: an undeclared key is refused
+      expect(search?.inputSchema.safeParse({ filter: { status: 'open', x: 1 } }).success).toBe(
+        false,
+      );
+      const filter = { status: 'open', text: 'a b&c=d#e', limit: 5, urgent: true };
+      expect(search?.inputSchema.safeParse({ filter }).success).toBe(true);
+      const request = buildRequest(search!.mapper, 'get', '/search', { filter }, budgets);
+      expect(request).toMatchObject({
+        ok: { query: 'status=open&text=a+b%26c%3Dd%23e&limit=5&urgent=true' },
+      });
+      expect(buildRequest(inherited!.mapper, 'get', '/inherited', {}, budgets)).toMatchObject({
+        ok: { query: '' },
+      });
+    });
+
+    it.each([
+      [
+        'another media type',
+        { name: 'q', in: 'querystring', content: { 'application/json': { schema: filterSchema } } },
+        'needs exactly one application/x-www-form-urlencoded content',
+      ],
+      [
+        'a nested property',
+        formFilter({ type: 'object', properties: { range: { type: 'object' } } }),
+        'must be an object of scalar values',
+      ],
+      ['a non-object schema', formFilter({ type: 'string' }), 'must be an object of scalar values'],
+    ])('omits an operation whose querystring uses %s', (_label, parameter, reason) => {
+      const built = build(
+        doc32({ '/q': { get: { parameters: [parameter], responses: okResponses } } }),
+      );
+      expect(built.tools).toEqual([]);
+      expect(built.omitted).toEqual([
+        expect.objectContaining({ reason: expect.stringContaining(reason) as string }),
+      ]);
+    });
+
+    it('omits an operation that combines a querystring with query parameters', () => {
+      // Forbidden by OAS 3.2; a cached document is not revalidated, so the
+      // layout does not rely on the meta-schema for it
+      const spec = normalizeSpec(
+        doc32({
+          '/q': {
+            get: {
+              parameters: [
+                formFilter(filterSchema),
+                { name: 'page', in: 'query', schema: { type: 'integer' } },
+              ],
+              responses: okResponses,
+            },
+          },
+        }),
+        '3.2',
+      );
+      const built = buildTools(assignToolNames(spec.operations), {
+        reservedHeaders: SYSTEM_HEADERS,
+        openapiVersion: '3.2',
+      });
+      expect(built.omitted).toEqual([
+        expect.objectContaining({
+          reason: expect.stringContaining('combined with query parameters') as string,
+        }),
+      ]);
+    });
+
+    it('fails closed at call time on a nested value or an unencodable string', () => {
+      const built = build(
+        doc32({
+          '/q': {
+            get: {
+              operationId: 'q',
+              parameters: [formFilter({ type: 'object', additionalProperties: true })],
+              responses: okResponses,
+            },
+          },
+        }),
+      );
+      const [tool] = built.tools;
+      const call = (filter: unknown) =>
+        buildRequest(tool!.mapper, 'get', '/q', { filter }, budgets);
+      expect(call({ a: { b: 1 } })).toMatchObject({
+        error: expect.stringContaining('cannot be form-urlencoded') as string,
+      });
+      expect(call({ a: String.fromCodePoint(0xd8_00) })).toMatchObject({
+        error: expect.stringContaining('could not be encoded') as string,
+      });
+      // A null entry is left out, like an absent one
+      expect(call({ a: null, b: 'x' })).toMatchObject({ ok: { query: 'b=x' } });
+      expect(call('a=b')).toMatchObject({
+        error: expect.stringContaining('must be an object') as string,
+      });
+    });
   });
 
   it('builds tools like 3.1: $ref siblings apply and a components.mediaTypes $ref resolves', () => {
