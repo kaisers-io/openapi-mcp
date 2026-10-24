@@ -47,10 +47,17 @@ const formatAjvErrors = (errors: readonly AjvErrorLike[]): string => {
 export const validateOpenApiDocument = (document: Record<string, unknown>): ValidatedSpec => {
   if (typeof document['swagger'] === 'string') {
     throw validationError(
-      'OpenAPI 2.0 (swagger) documents are not supported — provide an OpenAPI 3.0 or 3.1 spec',
+      'OpenAPI 2.0 (swagger) documents are not supported — convert the spec to OpenAPI 3.0 first (for example with swagger2openapi) or provide an OpenAPI 3.0 or 3.1 spec',
     );
   }
   const declared = document['openapi'];
+  if (typeof declared === 'string' && declared.startsWith('3.2.')) {
+    // OpenAPI 3.2 adds features (the QUERY method, `in: querystring`
+    // parameters, ...) that tool generation does not handle yet (issue #11)
+    throw validationError(
+      `OpenAPI 3.2 documents are not supported yet (the spec declares "${sanitizeSpecText(declared, DECLARED_VERSION_MAX)}") — provide an OpenAPI 3.0 or 3.1 spec`,
+    );
+  }
   if (
     typeof declared !== 'string' ||
     !(declared.startsWith('3.0.') || declared.startsWith('3.1.'))

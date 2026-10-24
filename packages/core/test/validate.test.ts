@@ -52,10 +52,35 @@ describe('validateOpenApiDocument', () => {
   it('rejects swagger 2.0 documents with a targeted message', () => {
     expect(() =>
       validateOpenApiDocument({ swagger: '2.0', info: { title: 'T', version: '1' }, paths: {} }),
-    ).toThrow(/OpenAPI 2.0 \(swagger\)/u);
+    ).toThrow(/OpenAPI 2.0 \(swagger\).*convert the spec to OpenAPI 3\.0 first/u);
   });
 
-  it.each(['4.0.0', '3.2.0', '2.0', 'three'])(
+  it.each(['3.2.0', '3.2.1'])('names OpenAPI 3.2 as not supported yet for %s (#11)', (version) => {
+    expect(() =>
+      validateOpenApiDocument({ openapi: version, info: { title: 'T', version: '1' }, paths: {} }),
+    ).toThrow(
+      `OpenAPI 3.2 documents are not supported yet (the spec declares "${version}") — provide an OpenAPI 3.0 or 3.1 spec`,
+    );
+  });
+
+  it('sanitizes and caps a declared 3.2 version before echoing it', () => {
+    const doc = {
+      openapi: `3.2.\u001B]0;X\u0007${'y'.repeat(500)}`,
+      info: { title: 'T' },
+      paths: {},
+    };
+    try {
+      validateOpenApiDocument(doc);
+      expect.unreachable('expected a validation error');
+    } catch (error) {
+      const { message } = error as OpenapiMcpError;
+      expect(message).not.toContain('\u001B');
+      expect(message).not.toContain('\u0007');
+      expect(message).not.toContain('y'.repeat(40));
+    }
+  });
+
+  it.each(['4.0.0', '3.20.0', '2.0', 'three'])(
     'rejects unsupported openapi version %s',
     (version) => {
       expect(() =>
