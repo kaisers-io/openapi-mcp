@@ -935,11 +935,17 @@ const pathPlaceholders = (path: string): { names: Set<string> } | { malformed: t
 // either truncate/inject the real query string or introduce a spec-baked
 // query the caller never asked for, and a static `#` would smuggle a fragment
 // into what should be plain path text. Malformed percent-encoding fails closed
-// too.
+// too. A control character is refused as well, raw or encoded (issue #40):
+// URL parsing removes tab and newline, so `.<TAB>.` would become a `..`
+// segment and route the request to another operation.
+// oxlint-disable-next-line no-control-regex -- matching control characters is the point
+const CONTROL_CHARACTER_RE = /[\u0000-\u001F\u007F]/u;
 const isDangerousStaticSegment = (segment: string): boolean => {
   try {
     const decoded = decodeURIComponent(segment);
     return (
+      CONTROL_CHARACTER_RE.test(segment) ||
+      CONTROL_CHARACTER_RE.test(decoded) ||
       decoded === '.' ||
       decoded === '..' ||
       decoded.includes('/') ||

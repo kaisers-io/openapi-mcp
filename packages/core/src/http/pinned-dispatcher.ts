@@ -162,7 +162,14 @@ export type PinnedErrorReason =
   | 'redirect-loop'
   | 'redirect-write-method'
   | 'redirect-invalid'
-  | 'network';
+  | 'network'
+  | HopRefusal;
+
+// A hop the caller's route authorization refuses (issue #40): hop 0 resolves
+// to an operation other than the tool's own, or a redirect target is not an
+// exposed operation of the API, or leaves the API without the operator's
+// opt-in. Never retried: the same request resolves the same way.
+export type HopRefusal = 'route-refused' | 'redirect-refused' | 'redirect-offsite';
 
 export type PinnedResponse = {
   kind: 'response';
@@ -215,6 +222,11 @@ export type PinnedRequestOptions = {
   // to refuse the hop as egress, or undefined to allow it. Used where the
   // caller's own URL rules (e.g. https-only) must also bind redirects.
   checkHop?: (url: URL) => string | undefined;
+  // Route authorization, applied to EVERY hop after the egress checks, with
+  // the method that hop is sent with (a 303 turns it into GET): returns why
+  // the hop is refused, or undefined to send it. Kept apart from checkHop so
+  // a refused route is never reported as an egress refusal.
+  authorizeHop?: (url: URL, method: string, hop: number) => HopRefusal | undefined;
 };
 
 // Typed via undici's own fetch, never Node's global fetch (dual-package
@@ -510,6 +522,10 @@ export const pinnedRequest = async (
     const sync = validateHopUrlSync(url, policy) ?? opts.checkHop?.(url);
     if (sync !== undefined) {
       return { kind: 'error', reason: 'egress', detail: sync };
+    }
+    const refusal = opts.authorizeHop?.(url, method, hop);
+    if (refusal !== undefined) {
+      return { kind: 'error', reason: refusal };
     }
     // A pooled Agent is shared with other calls: it is never closed or
     // destroyed here — an exceptional path aborts only this request (via

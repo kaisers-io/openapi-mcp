@@ -6,7 +6,7 @@ import { conflictError } from '../errors.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
 import { HTTP_METHODS } from './normalize.ts';
 import type { OmittedOperation } from './normalize.ts';
-import { resolveShallow } from './refs.ts';
+import { resolvePathItem } from './path-item.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 
 // While a changed spec waits as a candidate, the accepted baseline keeps
@@ -46,22 +46,18 @@ export const operationKeysOf = (document: Record<string, unknown>): ReadonlySet<
   }
   for (const [path, written] of Object.entries(paths)) {
     // The cache holds the SOURCE document (kaisers-io/openapi-mcp-archive#89),
-    // so a path item may still be a `{ $ref }` to a shared one. Following it is
-    // what keeps every method under it from reading as removed. The candidate's
-    // refs were checked before it was written; one that still does not resolve
-    // (or loops) leaves the path without keys, i.e. withheld, the fail-closed
-    // direction.
-    let item: unknown;
-    try {
-      item = resolveShallow(document, written);
-    } catch {
-      continue;
-    }
-    if (typeof item !== 'object' || item === null) {
+    // so a path item may still be a `{ $ref }` to a shared one. Following it,
+    // and keeping the fields declared next to it (issue #40), is what keeps
+    // every method under it from reading as removed. An operation declared on
+    // both sides is present, even though normalize omits it for the conflict.
+    // A `$ref` that does not resolve (or loops) contributes no keys, i.e.
+    // withheld, the fail-closed direction.
+    const { item } = resolvePathItem(document, written);
+    if (item === undefined) {
       continue;
     }
     for (const method of HTTP_METHODS) {
-      const operation = (item as Record<string, unknown>)[method];
+      const operation = item[method];
       if (typeof operation === 'object' && operation !== null) {
         keys.add(operationKey(method, path));
       }
@@ -69,7 +65,7 @@ export const operationKeysOf = (document: Record<string, unknown>): ReadonlySet<
     // OpenAPI 3.2 `additionalOperations` (issue #33). Methods are case
     // sensitive and only upper-case ones are served, so another spelling
     // never keeps a served operation from being withheld.
-    const additional = (item as Record<string, unknown>)['additionalOperations'];
+    const additional = item['additionalOperations'];
     if (typeof additional === 'object' && additional !== null) {
       for (const [method, operation] of Object.entries(additional)) {
         if (

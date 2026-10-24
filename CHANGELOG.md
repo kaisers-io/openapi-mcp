@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### BREAKING
 
+- **Redirects are authorized like the request itself (#40).** A redirect that leaves the API
+  base URL (another origin, or outside the base path) is no longer followed unless `serve`
+  runs with the new `--allow-offsite-redirects`. A redirect to a path on the API that matches
+  no operation of the spec is not followed either. A client that relied on such redirects,
+  for example a download link to a storage host, needs the flag.
+
 - **`describe_operation` leaves out the `outputSchema` by default (#9).** Output schemas are
   most of an operation's definition (79% of the `per-operation` `tools/list` for the GitHub
   REST description), and calling an operation needs only its `inputSchema`; the server still
@@ -19,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now ask for it.
 
 ### Added
+
+- **`--allow-offsite-redirects` on `serve` (#40)** follows a redirect off the API base URL.
+  The egress policy still applies, and a later hop back onto the API is authorized again.
 
 - **`--omit-output-schema <pattern>` on `serve` and `tools` (#13).** For an API whose
   responses do not match its own spec, every call to the tool used to fail with "did not match
@@ -124,6 +133,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once on stderr. `per-operation` mode still compiles every validator at startup.
 
 ### Fixed
+
+- **An exposed tool could reach an operation the filters exclude (#40).** The request was
+  built from the tool's own path template, but its arguments or an upstream redirect could
+  turn it into another operation: `getItem` with `id: "export"` sent `GET /items/export`
+  under `--deny "GET /items/export"`, and an allowed `GET /safe` followed a `302` to an
+  excluded `GET /denied`. Every hop is now resolved against every operation of the spec
+  before it is sent. Hop 0 must be the tool's own operation, and a redirect must reach an
+  exposed one; otherwise the call fails without retrying. A method-level deny such as
+  `--deny "DELETE /**"` was not affected.
+- **Operations declared next to a Path Item `$ref` were lost (#40).** `/orders: {$ref: ...,
+  post: ...}` kept only the referenced operations, without any report. Fields from both
+  sides are now merged; an operation, `parameters` or `servers` declared on both sides omits
+  the affected operations with a reason, and so does a `$ref` chain that is too deep or does
+  not resolve. A pending candidate no longer reads such operations as removed.
+- **A spec path with a control character could route a request elsewhere (#40).** URL
+  parsing drops tab and newline, so a static segment `.<TAB>.` became `..`. Such operations
+  are now omitted with a reason.
 
 - **`_fields` on a sequential response of a tool without an output schema.** The body was
   parsed as one JSON value, so a JSON Lines or NDJSON body with several records failed with

@@ -1485,3 +1485,69 @@ describe('pinnedRequest — same-origin redirects and 303 See Other', () => {
     }
   });
 });
+
+// Issue #40: route authorization runs before every hop, with the method that
+// hop is sent with, and a refused hop is never fetched.
+describe('pinnedRequest — authorizeHop', () => {
+  it('sees each hop with its method, a 303 after POST as GET', async () => {
+    const server = await startFlexServer((req, res) => {
+      if (req.url === '/create') {
+        res.writeHead(303, { location: '/result' });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+    try {
+      const seen: string[] = [];
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/create`),
+        buildOpts({
+          method: 'POST',
+          body: new TextEncoder().encode('{}'),
+          authorizeHop: (url, method, hop) => {
+            seen.push(`${String(hop)} ${method} ${url.pathname}`);
+          },
+        }),
+        buildDeps(),
+      );
+      expect(outcome).toMatchObject({ kind: 'response', status: 200 });
+      expect(seen).toEqual(['0 POST /create', '1 GET /result']);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('refuses a hop before it is fetched and reports the refusal, not egress', async () => {
+    const server = await startFlexServer((req, res) => {
+      if (req.url === '/safe') {
+        res.writeHead(302, { location: '/denied' });
+        res.end();
+        return;
+      }
+      res.writeHead(200);
+      res.end('should never be hit');
+    });
+    try {
+      const refuseDenied = (url: URL): 'redirect-refused' | undefined =>
+        url.pathname === '/denied' ? 'redirect-refused' : undefined;
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/safe`),
+        buildOpts({ authorizeHop: refuseDenied }),
+        buildDeps(),
+      );
+      expect(outcome).toEqual({ kind: 'error', reason: 'redirect-refused' });
+      expect(server.requests.map((req) => req.url)).toEqual(['/safe']);
+      const first = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/denied`),
+        buildOpts({ authorizeHop: () => 'route-refused' }),
+        buildDeps(),
+      );
+      expect(first).toEqual({ kind: 'error', reason: 'route-refused' });
+      expect(server.requests.map((req) => req.url)).toEqual(['/safe']);
+    } finally {
+      await server.close();
+    }
+  });
+});

@@ -63,6 +63,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       'offer an optional _fields argument (JSON Pointers) on JSON tools, so a call returns only the selected fields; adds about a third to tools/list',
     )
     .option(
+      '--allow-offsite-redirects',
+      'follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply',
+    )
+    .option(
       '--tools-page-size <n>',
       'page tools/list with n tools per page (only for MCP hosts that follow nextCursor); default: all tools in one response',
     )

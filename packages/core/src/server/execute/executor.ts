@@ -21,6 +21,9 @@ import type { SnapshotTool } from '../types.ts';
 import { deriveAccept } from './accept.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
+import { hopAuthorizer } from './hop-authorizer.ts';
+import { routeKey } from './route-table.ts';
+import type { RouteTable } from './route-table.ts';
 import { mapResponse } from './response.ts';
 import type { EnvelopeValidator, EnvelopeValidators } from './response.ts';
 import type { PageInput } from './forwarded-headers.ts';
@@ -51,6 +54,13 @@ export type ExecutorConfig = {
   baseUrl: string;
   // True iff from --base-url.
   baseTrusted: boolean;
+  // Every operation of the spec with its exposure decision (issue #40): each
+  // hop of a request must resolve to an exposed operation, hop 0 to the
+  // tool's own. Absent only for callers that build tools without a spec
+  // inventory; `serve` always sets it.
+  routes?: RouteTable;
+  // --allow-offsite-redirects: follow a redirect off the API base URL
+  allowOffsiteRedirects?: boolean;
   allowPrivateNetwork: boolean;
   allowInsecureHttp: boolean;
   secretHeaders: { name: string; value: string; envVar: string }[];
@@ -123,6 +133,9 @@ const PINNED_OUTCOME: Readonly<Record<PinnedErrorReason, CallOutcomeKind>> = {
   'redirect-loop': 'response_error',
   'redirect-write-method': 'response_error',
   'redirect-invalid': 'response_error',
+  'route-refused': 'refused',
+  'redirect-refused': 'response_error',
+  'redirect-offsite': 'response_error',
 };
 
 const classifyUpstream = (outcome: PinnedOutcome, mapped: ToolCallOutcome): CallOutcomeKind => {
@@ -429,6 +442,15 @@ const runUpstreamCall = async (
   if (finalUrl.origin !== base.origin || !withinBasePath(finalUrl.pathname, base.pathname)) {
     return isError('the final request URL escaped the configured base URL');
   }
+  const authorizeHop =
+    config.routes === undefined
+      ? undefined
+      : hopAuthorizer(
+          config.routes,
+          base,
+          routeKey(method, generated.operation.path),
+          config.allowOffsiteRedirects === true,
+        );
   const accept = deriveAccept(generated.operation.responses);
   const retries = Math.min(config.retries ?? 0, MAX_RETRIES);
   const idempotencyKeyField = Object.values(generated.mapper.fields).some(
@@ -534,6 +556,7 @@ const runUpstreamCall = async (
       headers,
       ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
       baseTrusted: config.baseTrusted,
+      ...(authorizeHop === undefined ? {} : { authorizeHop }),
       allowPrivateNetwork: config.allowPrivateNetwork,
       timeoutMs,
       maxResponseBytes: config.maxResponseBytes,
