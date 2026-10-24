@@ -288,4 +288,14 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
     expect(await exitOf(proc)).toBe(2);
     expect(stderr).toContain('--tool-mode "dynamic" is not one of per-operation, discover, auto');
   });
+
+  it('rejects an unknown --output-schema as a usage error before any spec work (#9)', async () => {
+    const proc = await spawnServe(['--spec', 'does-not-exist.json', '--output-schema', 'off']);
+    let stderr = '';
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+    });
+    expect(await exitOf(proc)).toBe(2);
+    expect(stderr).toContain('--output-schema "off" is not one of inline, defs');
+  });
 });

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`serve --output-schema defs` (#9).** Shows each output schema with its repeated
+  subschemas once under `$defs`, referenced with a local `$ref`, instead of written out in
+  full every time. For the GitHub REST description (`--allow tag:repos`) `tools/list` shrinks
+  by 22%. Validation is unchanged: both forms accept exactly the same values, and the
+  envelope branches stay inline. In `discover` mode it applies to `describe_operation`, computed
+  on demand, so startup does not grow. The default stays `inline`, since a host that does not
+  resolve local `$ref`s would see an incomplete schema.
 - **`--nullable-response-fields optional` (#17).** The flag now takes an optional scope.
   `optional` admits `null` only for the properties their object does not list in
   `required`, so a `null` in a required property still fails: for specs whose `required`

@@ -11,6 +11,7 @@ import {
   createMetaExecutor,
   createRedactor,
   discoverApprovalWarning,
+  mapResponse,
   parseFilterPattern,
   resolveToolMode,
   SYSTEM_HEADERS,
@@ -121,7 +122,11 @@ const PIPELINE = {
 const snapshotFor = (
   toolMode: ToolMode | undefined,
   filters: { allow?: string[]; deny?: string[] } = {},
-  toolgen: { operations?: readonly NamedOperation[]; nullableResponseFields?: boolean } = {},
+  toolgen: {
+    operations?: readonly NamedOperation[];
+    nullableResponseFields?: boolean;
+    compactOutputSchemas?: boolean;
+  } = {},
 ): ServerSnapshot => {
   const { exposed } = applyFilters(
     toolgen.operations ?? OPERATIONS,
@@ -133,7 +138,10 @@ const snapshotFor = (
     openapiVersion: '3.1',
     ...(toolgen.nullableResponseFields === true ? { nullableResponseFields: 'all' as const } : {}),
   });
-  return buildSnapshot(built, PIPELINE, toolMode === undefined ? {} : { toolMode });
+  return buildSnapshot(built, PIPELINE, {
+    ...(toolMode === undefined ? {} : { toolMode }),
+    ...(toolgen.compactOutputSchemas === true ? { compactOutputSchemas: true } : {}),
+  });
 };
 
 type TestLimiter = { consume: (nowMs: number) => boolean; retryAfterMs: (nowMs: number) => number };
@@ -295,6 +303,84 @@ describe('dispatcher — discover mode', () => {
       expect(outcome.structuredContent).toEqual(perOperation.toolsByName[name]?.wireTool);
       expect(JSON.parse(textOf(outcome))).toEqual(outcome.structuredContent);
     }
+  });
+
+  // Issue #9: --output-schema defs
+  describe('compact output schemas', () => {
+    const address = {
+      type: 'object',
+      properties: {
+        street: { type: 'string', description: 'Street and number' },
+        city: { type: 'string', description: 'City name' },
+      },
+      required: ['street', 'city'],
+    };
+    const getCustomer = op('getCustomer', {
+      method: 'get',
+      path: '/customers/{id}',
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      responses: {
+        '200': {
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: { billing: address, shipping: address },
+                required: ['billing'],
+              },
+            },
+          },
+        },
+      },
+    });
+    const toolgen = { operations: [getCustomer], compactOutputSchemas: true };
+
+    it('lists the compact form under per-operation, and leaves the default unchanged', () => {
+      const compact = snapshotFor('per-operation', {}, toolgen);
+      const inline = snapshotFor('per-operation', {}, { operations: [getCustomer] });
+      const compactSchema = compact.toolsByName['getCustomer']?.wireTool.outputSchema;
+      const inlineSchema = inline.toolsByName['getCustomer']?.wireTool.outputSchema;
+      expect(compactSchema?.['$defs']).toBeDefined();
+      expect(inlineSchema?.['$defs']).toBeUndefined();
+      expect(JSON.stringify(compactSchema).length).toBeLessThan(
+        JSON.stringify(inlineSchema).length,
+      );
+    });
+
+    it('validates and maps a response against the compact form', () => {
+      const compact = snapshotFor('per-operation', {}, toolgen);
+      const outputSchema = compact.toolsByName['getCustomer']?.wireTool.outputSchema;
+      const body = JSON.stringify({ billing: { street: 'Main 1', city: 'X' } });
+      const mapped = mapResponse({
+        outcome: {
+          kind: 'response',
+          status: 200,
+          contentType: 'application/json',
+          headers: {},
+          bodyBytes: new TextEncoder().encode(body),
+          url: 'https://api.example.test/customers/1',
+        },
+        validator: compileEnvelopeValidator(outputSchema),
+        outputSchema,
+        redactor: createRedactor([]),
+        maxTextBytes: 8192,
+      });
+      expect(mapped.isError).toBe(false);
+      expect(mapped.structuredContent).toMatchObject({ status: 200, data: JSON.parse(body) });
+    });
+
+    it('computes the compact form on demand in describe_operation under discover', async () => {
+      const snapshot = snapshotFor('discover', {}, toolgen);
+      // The operation itself keeps the inline form the executor validates with
+      expect(
+        snapshot.operationsByName['getCustomer']?.wireTool.outputSchema?.['$defs'],
+      ).toBeUndefined();
+      const outcome = outcomeOf(
+        await dispatcherFor(snapshot).call(call('describe_operation', { name: 'getCustomer' })),
+      );
+      const described = outcome.structuredContent as { outputSchema?: Record<string, unknown> };
+      expect(described.outputSchema?.['$defs']).toBeDefined();
+    });
   });
 
   it('describe_operation reports a name outside the exposed set as an unknown operation', async () => {

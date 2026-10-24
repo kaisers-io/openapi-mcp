@@ -70,6 +70,11 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       '--tool-mode <mode>',
       `per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above ${String(AUTO_DISCOVER_THRESHOLD)} operations)`,
       'per-operation',
+    )
+    .option(
+      '--output-schema <form>',
+      'how output schemas are shown to the host: inline (every subschema written out) or defs (repeated subschemas once under "$defs", referenced with "$ref"); validation is the same either way',
+      'inline',
     );
   // `.option()` chained onto a Command whose Opts type already carries
   // SpecCmdOpts's own index signature does not narrow any further through

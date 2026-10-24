@@ -13,6 +13,7 @@ import {
 } from './discovery-schemas.ts';
 import type { DescribeInput } from './discovery-schemas.ts';
 import type { SnapshotTool, ToolMode, WireTool } from './types.ts';
+import { presentedOutputSchema } from './wire-tools.ts';
 
 // Discovery tool mode (issue kaisers-io/openapi-mcp-archive#38): instead of one
 // MCP tool per operation, tools/list carries three package-authored tools that
@@ -160,12 +161,19 @@ export const lookupOperation = (
 export const describeOperation = (
   operationsByName: Readonly<Record<string, SnapshotTool | undefined>>,
   data: unknown,
+  compactOutputSchemas = false,
 ): ToolCallOutcome => {
   const { name } = data as DescribeInput;
   const tool = lookupOperation(operationsByName, name);
   if (tool === undefined) {
     return unknownOperationOutcome(name);
   }
-  const payload: Record<string, unknown> = { ...tool.wireTool };
+  const { outputSchema } = tool.wireTool;
+  const payload: Record<string, unknown> = {
+    ...tool.wireTool,
+    ...(outputSchema === undefined
+      ? {}
+      : { outputSchema: presentedOutputSchema(outputSchema, compactOutputSchemas) }),
+  };
   return structuredOutcome(JSON.stringify(payload), payload);
 };

@@ -220,6 +220,7 @@ export type ServeCmdOpts = SpecCmdOpts &
     toolsPageSize?: string;
     responseProjection?: boolean;
     toolMode: string;
+    outputSchema: string;
   };
 
 type HttpAuthConfig =
@@ -338,6 +339,18 @@ const parseToolMode = (raw: string): RequestedToolMode => {
   return mode;
 };
 
+const OUTPUT_SCHEMA_FORMS = ['inline', 'defs'] as const;
+
+// --output-schema (issue #9), validated like --tool-mode: `defs` shows output
+// schemas in their compact `$defs` form.
+const parseOutputSchemaForm = (raw: string): boolean => {
+  const form = OUTPUT_SCHEMA_FORMS.find((candidate) => candidate === raw);
+  if (form === undefined) {
+    throw usageError(`--output-schema "${raw}" is not one of ${OUTPUT_SCHEMA_FORMS.join(', ')}`);
+  }
+  return form === 'defs';
+};
+
 // The registered `serve` command: resolveHttpConfig reads per-option provenance
 // from it (getOptionValueSource).
 type ServeCommand = Pick<Command<[], ServeCmdOpts>, 'getOptionValueSource'>;
@@ -442,6 +455,7 @@ export const runServe = async (
     // the httpConfig check just above.
     const apiConfig = resolveApiConfig(cmdOpts, ctx);
     const requestedToolMode = parseToolMode(cmdOpts.toolMode);
+    const compactOutputSchemas = parseOutputSchemaForm(cmdOpts.outputSchema);
     const args = parseSpecPipelineArgs(cmdOpts, ctx);
     // The exposed-set budget follows the tool mode: one tool per operation
     // keeps the 512-tool budget; discover (and auto, which only ever picks
@@ -479,6 +493,7 @@ export const runServe = async (
     });
     const snapshot = buildSnapshot(built, result, {
       toolMode: resolveToolMode(requestedToolMode, built.tools.length),
+      compactOutputSchemas,
     });
 
     // Resolve + validate the API base URL: --base-url (trusted, address

@@ -91,6 +91,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--oauth-required-scope <scope>` | yes | scope every access token must grant; advertised as `scopes_supported` | `[]` |
 | `--tool-mode <mode>` | no | `per-operation`, `discover` or `auto` — see [Tool modes](#tool-modes) | `per-operation` |
 | `--response-projection` | no | offer an optional `_fields` argument (JSON Pointers) on tools with a JSON response | off |
+| `--output-schema <form>` | no | how output schemas are shown to the host: `inline` or `defs` (repeated subschemas once under `$defs`) — see [Output schema form](#output-schema-form) | `inline` |
 | `--tools-page-size <n>` | no | page `tools/list` with `n` tools per page (1–512); only for MCP hosts that follow `nextCursor` | off (all tools in one response) |
 
 Notes:
@@ -418,6 +419,27 @@ Measured `tools/list` sizes (2026-07-28 stdio response, tokens ≈ bytes / 4):
 | 400 generated `GET` operations | 400 | 273,824 bytes (~68k tokens) | 4,349 bytes (~1.1k tokens) |
 | DigitalOcean (read-only default) | 146 | 120,745 bytes (~30k tokens) | 4,349 bytes |
 | DigitalOcean (`--allow '**'`) | 265 | 355,878 bytes (~89k tokens) | 4,396 bytes |
+
+### Output schema form
+
+Output schemas are derived from the dereferenced spec, so a component schema used in several
+places is written out in full each time, and output schemas make up most of `tools/list`.
+With `--output-schema defs`, each tool's output schema lists a repeated subschema once under
+its own `$defs` and refers to it with a local `$ref` elsewhere; nothing is shared between
+tools, so every schema still stands alone. The envelope branches and their `status` and
+`contentType` stay inline. Validation is unchanged: the two forms accept exactly the same
+values, so a response passes or fails the same way whichever form the server compiles. In
+`per-operation` mode the form applies to `tools/list`; in `discover` mode to the output
+schemas `describe_operation` returns, computed when an operation is first described, so
+startup does not pay for it.
+
+MCP requires JSON Schema 2020-12, which includes local `$ref`/`$defs`, but a host that does
+not resolve them would see an incomplete schema. That is why the default stays `inline`.
+
+Measured for the GitHub REST description with `--allow tag:repos` (201 tools): the whole
+`tools/list` stdio response shrinks from 1,977,625 to 1,541,314 bytes (−22%), its output
+schemas by 28%. How much a spec gains depends on how often its schemas repeat inside one
+response.
 
 ## `tools`
 
