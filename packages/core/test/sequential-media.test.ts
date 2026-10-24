@@ -73,7 +73,7 @@ describe('parseSequence — reading a sequential response body', () => {
 
   it('follows the event stream rules for line ends, fields and dispatch', () => {
     const stream =
-      '﻿data:a\r\rdata\rid: x\u0000y\rretry: 1.5\rid: 7\r\r: only a comment\r\rdata: tail';
+      '\uFEFFdata:a\r\rdata\rid: x\u0000y\rretry: 1.5\rid: 7\r\r: only a comment\r\rdata: tail';
     expect(parseSequence(stream, 'event-stream')).toEqual([
       // No space after the colon: the value is taken as is
       { data: 'a' },

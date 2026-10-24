@@ -80,7 +80,7 @@ const parseEventStream = (text: string): ServerSentEvent[] => {
   const events: ServerSentEvent[] = [];
   let data: string[] = [];
   let fields: Omit<ServerSentEvent, 'data'> = {};
-  const body = text.startsWith('﻿') ? text.slice(1) : text;
+  const body = text.startsWith('\uFEFF') ? text.slice(1) : text;
   for (const line of body.split(/\r\n|\r|\n/u)) {
     if (line === '') {
       if (data.length > 0) {
