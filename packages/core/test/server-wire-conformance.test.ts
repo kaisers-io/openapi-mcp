@@ -669,7 +669,7 @@ describe('2026-07-28 wire conformance — discover tool mode (issue kaisers-io/o
     const perOperationBytes = Buffer.byteLength(perOperation.text, 'utf8');
     const discoverBytes = Buffer.byteLength(discover.text, 'utf8');
     expect(discoverBytes).toBeLessThan(5 * 1024);
-    // Measured: 273,824 vs 4,349 bytes (about 68k vs 1.1k tokens at 4 bytes
+    // Measured: 292,377 vs 5,116 bytes (about 73k vs 1.3k tokens at 4 bytes
     // per token). The bound below leaves room for wording changes.
     expect(perOperationBytes).toBeGreaterThan(50 * discoverBytes);
     // Every listed tool is object-rooted on the wire (MCP requires it).

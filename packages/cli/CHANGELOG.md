@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### BREAKING
+
+- **`describe_operation` leaves out the `outputSchema` by default (#9).** Output schemas are
+  most of an operation's definition (79% of the `per-operation` `tools/list` for the GitHub
+  REST description), and calling an operation needs only its `inputSchema`; the server still
+  validates every result against the output schema. A describe result without it carries
+  `outputSchemaOmitted: true`. Pass `include_output_schema: true` to get it. Operations that
+  accept `_fields` (`--response-projection`) still return it by default, because their field
+  paths come from it. A client that relied on `outputSchema` in every describe result must
+  now ask for it.
+
 ### Added
 
 - **`serve --output-schema defs` (#9).** Shows each output schema with its repeated

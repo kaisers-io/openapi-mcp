@@ -294,15 +294,50 @@ describe('dispatcher — discover mode', () => {
     expect(consume).not.toHaveBeenCalled();
   });
 
-  it('describe_operation returns exactly the wire tool the per-operation mode lists', async () => {
+  it('describe_operation returns the listed wire tool, its output schema only when asked (#9)', async () => {
     const perOperation = snapshotFor('per-operation', { allow: ['**'] });
     const dispatcher = dispatcherFor(snapshotFor('discover', { allow: ['**'] }));
     for (const name of ['listThings', 'createThingItem', 'deleteThing']) {
-      const outcome = outcomeOf(await dispatcher.call(call('describe_operation', { name })));
-      expect(outcome.isError).toBe(false);
-      expect(outcome.structuredContent).toEqual(perOperation.toolsByName[name]?.wireTool);
-      expect(JSON.parse(textOf(outcome))).toEqual(outcome.structuredContent);
+      const listed = perOperation.toolsByName[name]?.wireTool;
+      const full = outcomeOf(
+        await dispatcher.call(call('describe_operation', { name, include_output_schema: true })),
+      );
+      expect(full.isError).toBe(false);
+      expect(full.structuredContent).toEqual(listed);
+      expect(JSON.parse(textOf(full))).toEqual(full.structuredContent);
+      const { outputSchema, ...withoutOutput } = listed ?? {};
+      const brief = outcomeOf(await dispatcher.call(call('describe_operation', { name })));
+      expect(brief.structuredContent).toEqual(
+        outputSchema === undefined ? listed : { ...withoutOutput, outputSchemaOmitted: true },
+      );
     }
+    // ListThings has an output schema; the 204 operations have none
+    const brief = outcomeOf(
+      await dispatcher.call(call('describe_operation', { name: 'listThings' })),
+    );
+    expect(brief.structuredContent).toMatchObject({ outputSchemaOmitted: true });
+    expect(brief.structuredContent).not.toHaveProperty('outputSchema');
+  });
+
+  it('describe_operation keeps the output schema of an operation that accepts _fields (#9)', async () => {
+    const { exposed } = applyFilters(OPERATIONS, [parseFilterPattern('**')], []);
+    const built = buildTools(exposed, {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+      projection: true,
+    });
+    const dispatcher = dispatcherFor(buildSnapshot(built, PIPELINE, { toolMode: 'discover' }));
+    const byDefault = outcomeOf(
+      await dispatcher.call(call('describe_operation', { name: 'listThings' })),
+    );
+    expect(byDefault.structuredContent).toHaveProperty('outputSchema');
+    const declined = outcomeOf(
+      await dispatcher.call(
+        call('describe_operation', { name: 'listThings', include_output_schema: false }),
+      ),
+    );
+    expect(declined.structuredContent).toMatchObject({ outputSchemaOmitted: true });
+    expect(declined.structuredContent).not.toHaveProperty('outputSchema');
   });
 
   // Issue #9: --output-schema defs
@@ -376,7 +411,9 @@ describe('dispatcher — discover mode', () => {
         snapshot.operationsByName['getCustomer']?.wireTool.outputSchema?.['$defs'],
       ).toBeUndefined();
       const outcome = outcomeOf(
-        await dispatcherFor(snapshot).call(call('describe_operation', { name: 'getCustomer' })),
+        await dispatcherFor(snapshot).call(
+          call('describe_operation', { name: 'getCustomer', include_output_schema: true }),
+        ),
       );
       const described = outcome.structuredContent as { outputSchema?: Record<string, unknown> };
       expect(described.outputSchema?.['$defs']).toBeDefined();

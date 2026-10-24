@@ -25,6 +25,8 @@ const OPERATION_NAME_DESCRIPTION = 'An operation name returned by search_operati
 
 export const DESCRIBE_INPUT_SCHEMA = z.strictObject({
   name: z.string().min(1).max(OPERATION_NAME_MAX_LENGTH).describe(OPERATION_NAME_DESCRIPTION),
+  // Described in the tool description, to keep tools/list small (issue #9)
+  include_output_schema: z.boolean().optional(),
 });
 
 // `arguments` is deliberately `unknown` here: it is validated exactly once,

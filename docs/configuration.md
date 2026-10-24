@@ -379,8 +379,14 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
     ("names" | "summary") }` ranks the exposed operations by keyword (operation name, path,
     tags, parameter names, summary, description). Local and deterministic: no embeddings, no
     network. The query is capped at 500 characters and 32 distinct terms.
-  - `describe_operation` `{ name }` returns the operation's definition exactly as
-    `per-operation` would list it.
+  - `describe_operation` `{ name, include_output_schema? }` returns the operation's
+    definition as `per-operation` would list it, without its `outputSchema` by default:
+    output schemas are most of a definition, and calling an operation needs only its
+    `inputSchema`. An omitted one is marked `outputSchemaOmitted: true`;
+    `include_output_schema: true` returns it. Operations that accept `_fields`
+    (`--response-projection`) return it unless `include_output_schema` is `false`, because
+    their field paths come from it. The server validates every result against the output
+    schema either way.
   - `call_operation` `{ name, arguments }` calls it. `arguments` is validated by that
     operation's own schema, with the same error messages, rate limit, redaction and upstream
     request as a direct call. Omit `arguments` for an operation without inputs; `null` is
@@ -412,13 +418,13 @@ stderr. Measured on a development machine with a warm spec cache, for the GitHub
 description (1,241 operations exposed with `--allow '**'`): about 2 s until `initialize` answers in
 `discover` mode.
 
-Measured `tools/list` sizes (2026-07-28 stdio response, tokens ≈ bytes / 4):
+Measured `tools/list` sizes (2026-10-24, whole stdio response line, tokens ≈ bytes / 4):
 
 | Spec | Exposed | `per-operation` | `discover` |
 |---|---|---|---|
-| 400 generated `GET` operations | 400 | 273,824 bytes (~68k tokens) | 4,349 bytes (~1.1k tokens) |
-| DigitalOcean (read-only default) | 146 | 120,745 bytes (~30k tokens) | 4,349 bytes |
-| DigitalOcean (`--allow '**'`) | 265 | 355,878 bytes (~89k tokens) | 4,396 bytes |
+| 400 generated `GET` operations | 400 | 334,616 bytes (~84k tokens) | 4,955 bytes (~1.2k tokens) |
+| DigitalOcean (read-only default) | 146 | 127,186 bytes (~32k tokens) | 4,955 bytes |
+| DigitalOcean (`--allow '**'`) | 265 | 355,045 bytes (~89k tokens) | 5,002 bytes |
 
 ### Output schema form
 
