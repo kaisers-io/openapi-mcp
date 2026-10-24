@@ -103,10 +103,10 @@ Notes:
   10008 §2.5 allows); any other redirect would repeat the query without its body, so it is
   a tool error, as for a write. Two 3.2 features are not mapped to tools yet: an operation
   that uses `additionalOperations` or a `querystring` parameter is omitted, and `tools`
-  lists it with the reason. A response in a sequential media type is not parsed as a stream: JSON Lines
-  (`application/jsonl`) is a tool error ("unsupported media type"), and Server-Sent Events
-  (`text/event-stream`) come back as text once the upstream closes the stream within
-  `--request-timeout`. Swagger (OpenAPI 2.0) documents are not supported.
+  lists it with the reason. A response in a sequential media type is not parsed as a stream:
+  JSON Lines (`application/jsonl`) is a tool error ("unsupported media type"), and
+  Server-Sent Events (`text/event-stream`) come back as text once the upstream closes the
+  stream within `--request-timeout`. Swagger (OpenAPI 2.0) documents are not supported.
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.

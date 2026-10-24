@@ -15,10 +15,11 @@ export type ToolAnnotations = {
 // Our own HTTP-method heuristic — the spec defines no method->annotation
 // mapping. GET/HEAD and QUERY (safe by RFC 10008 §2) are read-only, so
 // `idempotentHint` is omitted rather than set true: it is meaningful only
-// when `readOnlyHint` is false (per the MCP ToolAnnotations JSDoc). PUT/DELETE are destructive AND idempotent (repeating
-// the same call has no additional effect). POST/PATCH are destructive but NOT
-// assumed idempotent. `openWorldHint` is always true: every generated tool
-// calls an external HTTP API.
+// when `readOnlyHint` is false (per the MCP ToolAnnotations JSDoc).
+// PUT/DELETE are destructive AND idempotent (repeating the same call has no
+// additional effect). POST/PATCH are destructive but NOT assumed idempotent.
+// `openWorldHint` is always true: every generated tool calls an external
+// HTTP API.
 export const deriveAnnotations = (method: HttpMethod): ToolAnnotations => {
   switch (method) {
     case 'get':
