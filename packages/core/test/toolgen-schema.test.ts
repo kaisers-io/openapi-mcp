@@ -1426,6 +1426,27 @@ describe('convertSchema — oneOf/anyOf with a redundant sibling type (#20)', ()
     expect('unrepresentable' in convertSchema({ ...pair(), nullable: true }, '3.0')).toBe(true);
   });
 
+  it('still omits a branch that admits null with 3.0 nullable, directly or nested', () => {
+    // The sibling type rejects null; moving it beside a `nullable` would admit it
+    const variants: Record<string, unknown>[] = [
+      { type: 'string', oneOf: [{ nullable: true, enum: ['a'] }, { enum: ['b'] }] },
+      {
+        type: 'object',
+        anyOf: [
+          { nullable: true, properties: { a: { type: 'string' } } },
+          { properties: { b: { type: 'string' } } },
+        ],
+      },
+      {
+        type: 'string',
+        oneOf: [{ oneOf: [{ nullable: true, enum: ['a'] }, { enum: ['c'] }] }, { enum: ['b'] }],
+      },
+    ];
+    for (const variant of variants) {
+      expect('unrepresentable' in convertSchema(variant, '3.0')).toBe(true);
+    }
+  });
+
   it('omits the union when the moved type contradicts a branch', () => {
     const result = convertSchema({
       type: 'object',

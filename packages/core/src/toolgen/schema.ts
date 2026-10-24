@@ -325,8 +325,10 @@ const conflictingCombination = (
 // intersection is the branch with `type: T`, and the sibling moves into the
 // branches. A branch `T` contradicts (an enum of strings under `type:
 // 'object'`) then fails its own conflict check, so nothing is widened. Any
-// other shape (a type array, a 3.0 `nullable` sibling, a branch of another
-// type) keeps the conflict, and the operation stays omitted.
+// other shape (a type array, a branch of another type, or a 3.0 `nullable`
+// on the node or on a branch, which would admit the null the sibling type
+// rejects) keeps the conflict, and the operation stays omitted. A nested
+// union is checked the same way when its branch is converted.
 // One typed copy per branch and type, so the conversion memo, which is keyed
 // by node identity, still converts a shared branch once.
 const typedBranches = new WeakMap<Record<string, unknown>, Map<string, Record<string, unknown>>>();
@@ -362,7 +364,10 @@ const typeMovedIntoBranches = (
   if (
     !Array.isArray(branches) ||
     !branches.every(
-      (branch) => isRecord(branch) && (branch['type'] === undefined || branch['type'] === type),
+      (branch) =>
+        isRecord(branch) &&
+        branch['nullable'] === undefined &&
+        (branch['type'] === undefined || branch['type'] === type),
     )
   ) {
     return undefined;
