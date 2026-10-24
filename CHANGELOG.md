@@ -26,8 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so their results are returned as text, as for a tool whose responses cannot be described.
   The secret scan, size limits and request validation stay. The flag is repeatable and uses
   the `--allow`/`--deny` pattern syntax; a pattern that matches no exposed tool is a dead
-  pattern (an error under `--strict-filters`). Startup names the affected tools, and `tools`
-  marks them (`[output schema omitted]`, `outputSchemaOptedOut: true`). It is named
+  pattern (an error under `--strict-filters`); when it names an operation that is filtered
+  out or omitted, the warning says so instead of suggesting another tool. A pattern that
+  matches only tools without an output schema gets a warning that it changes nothing.
+  Startup names the affected tools, and `tools` marks them (`[output schema omitted]`,
+  `outputSchemaOptedOut: true`). It is named
   `--omit-output-schema` rather than `--no-output-schema` because the CLI would read the
   latter as negating `serve --output-schema`.
 - **Sequential media types (#33).** JSON Lines (`application/jsonl`), NDJSON
@@ -121,6 +124,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once on stderr. `per-operation` mode still compiles every validator at startup.
 
 ### Fixed
+
+- **`_fields` on a sequential response of a tool without an output schema.** The body was
+  parsed as one JSON value, so a JSON Lines or NDJSON body with several records failed with
+  "projection requires a JSON response", and a single record was projected as an object
+  (`{"/*/id":null}` instead of `[1]`). It is now read as the array of its items, as on the
+  structured path, and a malformed sequence fails closed. This affected 3.0 and 3.1 specs
+  that declare a sequential response next to a JSON one, and tools opted out with
+  `--omit-output-schema`.
 
 - **A call waiting for an OAuth2 access token now honours its own cancellation and deadline
   (#21).** Before, a call cancelled while the shared token request was still running kept

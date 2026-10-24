@@ -69,7 +69,16 @@ const OPERATIONS: readonly NamedOperation[] = [
 ];
 
 const patterns = (...raw: string[]) => raw.map((pattern) => parseFilterPattern(pattern));
-const inventory = OPERATIONS.map(({ operation }) => operation);
+// The cookie operation stands for one normalization omitted: only its method
+// and path are kept
+const spec = {
+  operations: OPERATIONS.map(({ operation }) => operation),
+  omitted: [
+    { method: 'GET', path: '/items/{id}/cookie', reason: 'cookie parameter' },
+    { method: 'SEARCH', path: '/items', reason: 'servers override' },
+    { method: 'link', path: '/items', reason: 'not upper case' },
+  ],
+};
 
 const generate = (
   operations: readonly NamedOperation[],
@@ -83,7 +92,7 @@ const generate = (
   }).tools;
 
 const optOut = (omit: readonly string[], tools = generate(OPERATIONS)) =>
-  applyOutputSchemaOptOut(tools, patterns(...omit), inventory);
+  applyOutputSchemaOptOut(tools, patterns(...omit), spec);
 
 const build = (omit: readonly string[], extra: { nullable?: boolean; defaultIsError?: boolean }) =>
   optOut(omit, generate(OPERATIONS, extra)).tools;
@@ -122,6 +131,37 @@ describe('applyOutputSchemaOptOut — selection', () => {
     expect(optOut(['getCharge'], filtered).deadPatterns).toMatchObject([{ raw: 'getCharge' }]);
   });
 
+  // Review of #13: a closest match would point at an unrelated tool here
+  // (getItem for getCharge), while the reason is that it is not exposed
+  it('says a dead pattern names an operation that is not exposed, without a suggestion', () => {
+    const filtered = generate(OPERATIONS.filter(({ toolName }) => toolName !== 'getItem'));
+    expect(optOut(['getItem'], filtered).deadPatterns).toEqual([
+      { raw: 'getItem', flag: 'omit-output-schema', notExposed: true },
+    ]);
+    // An operation normalization omitted is known by method and path only
+    expect(optOut(['GET /items/*/cookie']).deadPatterns).toEqual([
+      { raw: 'GET /items/*/cookie', flag: 'omit-output-schema', notExposed: true },
+    ]);
+    // Also for a method only an omitted OpenAPI 3.2 operation declares
+    expect(optOut(['SEARCH /items']).deadPatterns).toEqual([
+      { raw: 'SEARCH /items', flag: 'omit-output-schema', notExposed: true },
+    ]);
+    // A pattern naming nothing in the spec keeps its suggestion
+    expect(optOut(['listItem'], filtered).deadPatterns).toEqual([
+      { raw: 'listItem', flag: 'omit-output-schema', suggestion: 'listItems' },
+    ]);
+  });
+
+  // Review of #13: such a pattern changes nothing, which should not be silent
+  it('reports a pattern that matches only tools without an output schema', () => {
+    expect(optOut(['deleteItem', 'getCharge', 'getItem']).ineffectivePatterns).toEqual([
+      'deleteItem',
+      'getCharge',
+    ]);
+    // One matched tool with a schema is enough to make it effective
+    expect(optOut(['tag:items', '*Item']).ineffectivePatterns).toEqual([]);
+  });
+
   // Review of #13: matching before toolgen counted an operation that never
   // becomes a tool, so --strict-filters let such a pattern through
   it('reports a pattern dead when it matches only an operation toolgen omits', () => {
@@ -132,11 +172,13 @@ describe('applyOutputSchemaOptOut — selection', () => {
 
   it('rejects a method that is neither standard nor declared by the spec', () => {
     expect(() => optOut(['FOO /items'])).toThrow(/names FOO, which is not a standard method/u);
+    // `link` was omitted as not upper case, so it declares no LINK method
+    expect(() => optOut(['LINK /items'])).toThrow(/names LINK, which is not a standard method/u);
   });
 
   it('returns the tools unchanged without patterns', () => {
     const tools = generate(OPERATIONS);
-    expect(optOut([], tools)).toEqual({ tools, deadPatterns: [] });
+    expect(optOut([], tools)).toEqual({ tools, deadPatterns: [], ineffectivePatterns: [] });
   });
 });
 
@@ -213,6 +255,87 @@ describe('mapResponse for an opted-out tool', () => {
     expect(long.isError).toBe(false);
     expect(encoder.encode(long.content[0]?.text).byteLength).toBeLessThanOrEqual(64 + 64);
     expect(long.content[0]?.text).not.toContain('x'.repeat(200));
+  });
+});
+
+// Review of #13: without an output schema, `_fields` must still read a
+// sequential body as the array of its items, as the structured path does
+describe('_fields on a sequential response without an output schema', () => {
+  const idItem = { type: 'object', properties: { id: { type: 'integer' } } };
+  const mixed = (version: '3.1' | '3.2'): GeneratedTool => {
+    const ndjson = version === '3.2' ? { itemSchema: idItem } : { schema: idItem };
+    const [tool] = buildTools(
+      [
+        op('getMixed', {
+          method: 'get',
+          path: '/mixed',
+          responses: {
+            '200': { description: 'ok', content: { 'application/x-ndjson': ndjson } },
+            '202': { description: 'ok', content: { 'application/json': { schema: idItem } } },
+          },
+        }),
+      ],
+      { reservedHeaders: SYSTEM_HEADERS, openapiVersion: version, projection: true },
+    ).tools;
+    if (tool?.projection !== true) {
+      throw new Error('expected a projectable tool');
+    }
+    return tool;
+  };
+  const project = (tool: GeneratedTool, contentType: string, body: string): ToolCallOutcome =>
+    mapResponse({
+      outcome: {
+        kind: 'response',
+        status: 200,
+        contentType,
+        bodyBytes: encoder.encode(body),
+        headers: {},
+        url: 'https://api.example.test/mixed',
+      },
+      outputSchema: tool.outputSchema,
+      validator: compileEnvelopeValidator(tool.outputSchema),
+      redactor: createRedactor([]),
+      maxTextBytes: 4096,
+      fields: ['/*/id'],
+    });
+  const textOf = (outcome: ToolCallOutcome): string => outcome.content[0]?.text ?? '';
+
+  it('projects the items of an opted-out 3.2 tool as the structured path does', () => {
+    const strict = mixed('3.2');
+    const [optedOut] = applyOutputSchemaOptOut([strict], patterns('getMixed'), {
+      operations: [strict.operation],
+      omitted: [],
+    }).tools;
+    expect(optedOut?.outputSchema).toBeUndefined();
+    const ndjson = 'application/x-ndjson';
+    for (const [body, ids] of [
+      ['{"id":1}\n{"id":2}\n', [1, 2]],
+      ['{"id":1}\n', [1]],
+    ] as const) {
+      expect(project(strict, ndjson, body).structuredContent).toMatchObject({
+        projection: { '/*/id': ids },
+      });
+      const outcome = project(optedOut!, ndjson, body);
+      expect(outcome.isError).toBe(false);
+      expect(JSON.parse(textOf(outcome))).toEqual({ '/*/id': ids });
+    }
+  });
+
+  // The same path serves a 3.1 tool, which never had an output schema here
+  it('projects the items of a 3.1 tool without an output schema', () => {
+    const tool = mixed('3.1');
+    expect(tool.outputSchema).toBeUndefined();
+    const outcome = project(tool, 'application/x-ndjson', '{"id":1}\n');
+    expect(JSON.parse(textOf(outcome))).toEqual({ '/*/id': [1] });
+  });
+
+  it('fails closed on a malformed sequence, and still projects plain JSON', () => {
+    const tool = mixed('3.1');
+    const malformed = project(tool, 'application/x-ndjson', '{"id":1}\n{"id":');
+    expect(malformed.isError).toBe(true);
+    expect(textOf(malformed)).toContain('was not a valid sequence of its media type');
+    const json = project(tool, 'application/json', '[{"id":3}]');
+    expect(JSON.parse(textOf(json))).toEqual({ '/*/id': [3] });
   });
 });
 

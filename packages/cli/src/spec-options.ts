@@ -16,9 +16,9 @@ import type {
   BuildToolsResult,
   DeadPattern,
   FilterPattern,
+  NormalizedSpec,
   NullableFieldScope,
   OmittedOperation,
-  OperationRecord,
   ResolvedHeader,
   SpecPipelineDeps,
   SpecPipelineOptions,
@@ -47,6 +47,9 @@ export const deadPatternMessage = (dead: DeadPattern): string => {
   // --omit-output-schema acts on the exposed tools only (issue #13)
   const scope = dead.flag === 'omit-output-schema' ? 'exposed operation' : 'operation';
   const base = `--${dead.flag} "${raw}" matches no ${scope}`;
+  if (dead.notExposed === true) {
+    return `${base}; it names only operations that are filtered out or omitted`;
+  }
   return dead.suggestion === undefined
     ? base
     : `${base}; closest: ${sanitizeSpecText(dead.suggestion, PATTERN_DISPLAY_MAX)}`;
@@ -73,10 +76,10 @@ export type OutputSchemaOptOutResult = {
 export const withOutputSchemaOptOut = (
   built: BuildToolsResult,
   patterns: readonly FilterPattern[],
-  inventory: readonly OperationRecord[],
+  spec: Pick<NormalizedSpec, 'operations' | 'omitted'>,
   strictFilters: boolean,
 ): OutputSchemaOptOutResult => {
-  const optOut = applyOutputSchemaOptOut(built.tools, patterns, inventory);
+  const optOut = applyOutputSchemaOptOut(built.tools, patterns, spec);
   const deadMessages = optOut.deadPatterns.map((dead) => deadPatternMessage(dead));
   if (strictFilters && deadMessages.length > 0) {
     throw validationError(deadMessages.join('\n'));
@@ -84,7 +87,14 @@ export const withOutputSchemaOptOut = (
   return {
     built: { ...built, tools: optOut.tools },
     deadPatterns: optOut.deadPatterns,
-    warnings: [...deadMessages, ...outputSchemaOptOutWarningLines(optOut.tools)],
+    warnings: [
+      ...deadMessages,
+      ...optOut.ineffectivePatterns.map(
+        (raw) =>
+          `--omit-output-schema "${sanitizeSpecText(raw, PATTERN_DISPLAY_MAX)}" matches only tools without an output schema, so it changes nothing`,
+      ),
+      ...outputSchemaOptOutWarningLines(optOut.tools),
+    ],
   };
 };
 

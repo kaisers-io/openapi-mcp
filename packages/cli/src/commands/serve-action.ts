@@ -495,7 +495,7 @@ export const runServe = async (
     const optOut = withOutputSchemaOptOut(
       generated,
       args.filters.omitOutputSchema,
-      result.spec.operations,
+      result.spec,
       cmdOpts.strictFilters === true,
     );
     const { built } = optOut;

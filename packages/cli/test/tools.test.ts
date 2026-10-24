@@ -902,6 +902,10 @@ describe('tools command — --omit-output-schema (#13)', () => {
     const { rows, warnings } = await toolsJson(['--omit-output-schema', 'createPet']);
     expect(rows.find((row) => row.name === 'createPet')?.outputSchemaOptedOut).toBeUndefined();
     expect(warnings).not.toContain('response-schema validation is off');
+    // It is not dead, but it changes nothing, and says so (review of #13)
+    expect(warnings).toContain(
+      '--omit-output-schema "createPet" matches only tools without an output schema, so it changes nothing',
+    );
   });
 
   it('marks the tool in human output', async () => {
@@ -921,7 +925,7 @@ describe('tools command — --omit-output-schema (#13)', () => {
     // An operation the filters exclude is not exposed, so naming it does nothing
     const denied = await toolsJson(['--deny', 'listPets', '--omit-output-schema', 'listPets']);
     expect(denied.warnings).toContain(
-      '--omit-output-schema "listPets" matches no exposed operation',
+      '--omit-output-schema "listPets" matches no exposed operation; it names only operations that are filtered out or omitted',
     );
   });
 
@@ -957,7 +961,9 @@ describe('tools command — --omit-output-schema (#13)', () => {
     const envelope = JSON.parse(lenient.lines[0]!) as {
       data: { deadPatterns: { raw: string; flag: string }[] };
     };
-    expect(envelope.data.deadPatterns).toEqual([{ raw: 'getBad', flag: 'omit-output-schema' }]);
+    expect(envelope.data.deadPatterns).toEqual([
+      { raw: 'getBad', flag: 'omit-output-schema', notExposed: true },
+    ]);
     const strict = fileCtx({ fetcher });
     const code = await run(strict.ctx, [
       ...argv,
@@ -966,6 +972,36 @@ describe('tools command — --omit-output-schema (#13)', () => {
       'getBad',
     ]);
     expect(code).toBe(EXIT.VALIDATION);
+  });
+
+  // Review of #13: normalization keeps only method and path of an operation
+  // it omits, so a METHOD /path pattern can still be told it is not exposed
+  it('says a METHOD /path pattern names an operation omitted while loading the spec', async () => {
+    const specText = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Omit', version: '1.0.0' },
+      paths: {
+        '/item': {
+          get: {
+            operationId: 'getItem',
+            servers: [{ url: 'https://other.example.test' }],
+            responses: { '200': { description: 'ok' } },
+          },
+        },
+        '/items': { get: { operationId: 'getItems', responses: { '200': { description: 'ok' } } } },
+      },
+    });
+    const fetcher = (() =>
+      Promise.resolve(new Response(specText))) as unknown as CliContext['fetcher'];
+    const { lines, ctx } = fileCtx({ fetcher });
+    const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'https://api.example.com/x'];
+    expect(await run(ctx, [...argv, '--omit-output-schema', 'GET /item'])).toBe(EXIT.OK);
+    const envelope = JSON.parse(lines[0]!) as {
+      data: { deadPatterns: { raw: string; flag: string; notExposed?: true }[] };
+    };
+    expect(envelope.data.deadPatterns).toEqual([
+      { raw: 'GET /item', flag: 'omit-output-schema', notExposed: true },
+    ]);
   });
 
   it('rejects an invalid pattern with exit 2', async () => {

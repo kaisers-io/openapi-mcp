@@ -508,24 +508,48 @@ const projectEnvelope = (
   return structuredOutcome(truncateUtf8(JSON.stringify(projected), maxTextBytes), projected);
 };
 
+const projectedText = (
+  projection: unknown,
+  redactor: Redactor,
+  maxTextBytes: number,
+): ToolCallOutcome => {
+  if (scanSafely(redactor, projection)) {
+    return withheldSuccess();
+  }
+  return textOutcome(truncateUtf8(JSON.stringify(projection), maxTextBytes), false);
+};
+
 // `_fields` on a tool WITHOUT an outputSchema: a JSON body is projected
-// before the text cap; anything else cannot be projected.
+// before the text cap; anything else cannot be projected. A sequential body
+// is the array of its items, as on the structured path (review of #13: an
+// NDJSON body was parsed as one JSON value).
 const mapNoSchemaProjection = (
+  status: number,
+  contentType: string | undefined,
   bodyBytes: Uint8Array,
   fields: readonly string[],
   redactor: Redactor,
   maxTextBytes: number,
 ): ToolCallOutcome => {
   const decoded = decodeUtf8(bodyBytes);
+  const essence = mediaEssence(contentType);
+  const sequence = essence === undefined ? undefined : sequenceKind(essence);
+  if (sequence !== undefined && !('error' in decoded)) {
+    const items = parseSequence(decoded.ok, sequence);
+    // Malformed fails closed, as on the structured path
+    if (items === undefined) {
+      return textOutcome(
+        `upstream response for status ${status} was not a valid sequence of its media type`,
+        true,
+      );
+    }
+    return projectedText(project(items, fields), redactor, maxTextBytes);
+  }
   const parsed = 'error' in decoded ? { ok: false as const } : tryParseJson(decoded.ok);
   if (!parsed.ok) {
     return textOutcome('tool execution failed: projection requires a JSON response', true);
   }
-  const projection = project(parsed.value, fields);
-  if (scanSafely(redactor, projection)) {
-    return withheldSuccess();
-  }
-  return textOutcome(truncateUtf8(JSON.stringify(projection), maxTextBytes), false);
+  return projectedText(project(parsed.value, fields), redactor, maxTextBytes);
 };
 
 // The mapSchemaSuccess helper takes one options object (the caller's MapResponseOptions
@@ -659,7 +683,14 @@ const mapBody = (
   if (opts.validator === undefined) {
     return opts.fields === undefined
       ? mapNoSchemaSuccess(status, contentType, bodyBytes, opts.redactor, opts.maxTextBytes)
-      : mapNoSchemaProjection(bodyBytes, opts.fields, opts.redactor, opts.maxTextBytes);
+      : mapNoSchemaProjection(
+          status,
+          contentType,
+          bodyBytes,
+          opts.fields,
+          opts.redactor,
+          opts.maxTextBytes,
+        );
   }
   const essence = mediaEssence(contentType);
   if (

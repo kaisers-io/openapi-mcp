@@ -28,6 +28,9 @@ export type DeadPattern = {
   // raw-string-to-flag map — a pattern given to both flags appears twice
   flag: DeadPatternFlag;
   suggestion?: string | undefined;
+  // --omit-output-schema only: the pattern names an operation of the spec
+  // that is not exposed (filtered out or omitted), so no suggestion is given
+  notExposed?: true;
 };
 
 export type FilterDecision = {
@@ -234,7 +237,7 @@ export const deadPatternsFor = (
 // misspelled --deny method would otherwise deny nothing.
 export const assertKnownMethods = (
   patterns: readonly FilterPattern[],
-  records: readonly OperationRecord[],
+  records: readonly { method: string }[],
 ): void => {
   const declared = new Set(records.map((op) => op.method.toUpperCase()));
   const unknown = patterns.find(

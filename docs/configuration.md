@@ -245,7 +245,9 @@ Notes:
   response then accepts an optional `_fields` argument. It takes up to 32 RFC 6901 JSON
   Pointers (at most 256 characters and 32 segments each), and `*` maps over an array, e.g.
   `["/items/*/id", "/next_cursor"]`. Only the selected values come back, under `projection`,
-  keyed by pointer. A missing path yields `null`. The full response is still validated
+  keyed by pointer. A missing path yields `null`. A sequential body (JSON Lines, NDJSON,
+  JSON text sequences, Server-Sent Events) is the array of its items, with or without an
+  output schema. The full response is still validated
   against the tool's output schema first, and only the selected values are checked for
   secrets. The grammar is explained once, in the server instructions; each tool's schema
   carries only a one-line description, and its output schema gains one `projection`
@@ -322,12 +324,16 @@ Notes:
   described. The MCP specification requires structured results to conform to a declared
   output schema, so declaring none is the conforming way to stop the check.
 
-  The patterns use the [`--allow`/`--deny` syntax](../README.md#filtering) and match the
-  spec's operationId, method and path, or tags, not the tool name. They act only on the tools
-  the server exposes: a pattern that matches none of them, for example because it names an
-  operation the filters exclude or that is omitted as unsupported, is a dead pattern (a
-  warning, or an error under `--strict-filters`). Startup names the tools that lost their
-  output schema.
+  The patterns use the [`--allow`/`--deny` syntax](../README.md#filtering) and match the spec's
+  operationId, method and path, or tags, not the tool name. They act only on the tools the server
+  exposes: a pattern that matches none of them, for example because it names an operation the
+  filters exclude or that is omitted as unsupported, is a dead pattern (a warning, or an error under
+  `--strict-filters`). For such an operation the warning says it is not exposed, rather than
+  suggesting a similar tool. An operation omitted while the spec is loaded (a cookie parameter,
+  callbacks, a per-operation `servers` override) keeps only its method and path, so only a
+  `METHOD /path` pattern is recognized as naming it. A pattern that matches only tools without an
+  output schema (for example operations with a `default` response, see above) changes nothing;
+  a warning says so, but it is not an error. Startup names the tools that lost their output schema.
 
   What changes for these tools: no `structuredContent`, no check of status, media type or
   body against the spec, and a JSON body that does not parse is returned as text. The
