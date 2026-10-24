@@ -38,6 +38,23 @@ export const parseMediaType = (value: string): MediaType | undefined => {
 const JSON_ESSENCE_RE = /^application\/(?:[\w.+-]+\+)?json$/u;
 export const isJsonEssence = (essence: string): boolean => JSON_ESSENCE_RE.test(essence);
 
+// Sequential media types (OAS 3.2.1 §4.14.3.1): a repeating structure with
+// no envelope, mapped to the JSON data model as an array of its items. JSON
+// Lines, NDJSON and JSON text sequences (RFC 7464, with the `+json-seq`
+// suffix of RFC 8091) repeat JSON values; Server-Sent Events repeat events.
+// multipart/mixed is not mapped.
+const JSON_SEQUENCE_RE = /^application\/(?:jsonl|x-ndjson|json-seq|[\w.+-]+\+json-seq)$/u;
+export type SequenceKind = 'json-lines' | 'json-seq' | 'event-stream';
+export const sequenceKind = (essence: string): SequenceKind | undefined => {
+  if (essence === 'text/event-stream') {
+    return 'event-stream';
+  }
+  if (!JSON_SEQUENCE_RE.test(essence)) {
+    return undefined;
+  }
+  return essence.endsWith('json-seq') ? 'json-seq' : 'json-lines';
+};
+
 export const FORM_URLENCODED = 'application/x-www-form-urlencoded';
 
 export const OCTET_STREAM = 'application/octet-stream';

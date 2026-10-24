@@ -1,15 +1,14 @@
-import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import { factorRepeatedSubschemas } from './compact-schema.ts';
 import { admitNullProperties } from './nullable-fields.ts';
 import type { NullableFieldScope } from './nullable-fields.ts';
 import { PAGINATION_SCHEMA } from './pagination.ts';
-import { convertSchema, memoizedJsonSchema, UNSAFE_PATTERN_REASON } from './schema.ts';
+import { isSequenceContentType, responseDataSchema, sequenceDataSchema } from './output-data.ts';
 
-// Re-exported so build.ts reads the option type from the module it already
-// depends on
+// Re-exported so build.ts reads these from the module it already depends on
 export type { NullableFieldScope } from './nullable-fields.ts';
+export { OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN } from './output-data.ts';
 
 export type JsonSchemaRecord = Record<string, unknown>;
 
@@ -104,25 +103,6 @@ const PROJECTION_BRANCH: JsonSchemaRecord = {
   required: ['status', 'contentType', 'projection'],
 };
 
-// Isolates the one throwing step (z.toJSONSchema) behind an Option-shaped
-// result so the caller never needs a `let` to survive the try/catch.
-const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
-  try {
-    return z.toJSONSchema(schema);
-  } catch {
-    // Defensive: our schemas are representable (proven upstream); fail
-    // closed rather than emit a nonconforming outputSchema.
-    return undefined;
-  }
-};
-
-// Why an operation has no output schema, when that is worth telling the
-// agent. Only the kaisers-io/openapi-mcp-archive#39 regex policy is reported:
-// the other omissions (no JSON success, a `default` response, ...) are ordinary
-// and need no explanation.
-export const OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN =
-  'No output schema: a response regex "pattern" has nested quantifiers (unbounded matching cost), so results are returned as text only.';
-
 export type OutputSchemaDerivation = {
   outputSchema?: JsonSchemaRecord;
   // Set when nullableResponseFields changed at least one `data` schema.
@@ -192,7 +172,11 @@ export const explainOutputSchema = (
       return {};
     }
     const contentKeys = Object.keys(content);
-    const jsonKeys = contentKeys.filter((type) => isJsonContentType(type));
+    // From OpenAPI 3.2 on, a sequential media type is an array of its items
+    // (OAS 3.2.1 §4.14.3.1, issue #33); 3.0 and 3.1 define no such mapping
+    const jsonKeys = contentKeys.filter(
+      (type) => isJsonContentType(type) || (version === '3.2' && isSequenceContentType(type)),
+    );
     // Exactly one JSON media type, and no OTHER (non-JSON) sibling — a 200
     // documenting both application/json and text/plain cannot be uniformly
     // represented, since either could actually be returned. The
@@ -217,21 +201,13 @@ export const explainOutputSchema = (
     if (!isRecord(entry) || Object.hasOwn(entry, '$ref')) {
       return {};
     }
-    // Response mode: undeclared fields stay allowed unless the spec says
-    // `additionalProperties: false`, and writeOnly properties are optional —
-    // see SchemaMode in schema.ts.
-    const converted = convertSchema(entry['schema'] ?? {}, version, 0, 'response');
-    if (!('ok' in converted)) {
-      return converted.unrepresentable.includes(UNSAFE_PATTERN_REASON)
-        ? { withheld: OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN }
-        : {};
+    const derived = isSequenceContentType(contentType)
+      ? sequenceDataSchema(entry, version)
+      : responseDataSchema(entry['schema'] ?? {}, version);
+    if (!('ok' in derived)) {
+      return derived.withheld === undefined ? {} : { withheld: derived.withheld };
     }
-    // The same response schema (one shared node, one memoized Zod schema) is
-    // emitted once per build, not once per operation that returns it
-    const strictData = memoizedJsonSchema(converted.ok, toDataSchema);
-    if (strictData === undefined) {
-      return {};
-    }
+    const strictData = derived.ok;
     // The root value is never widened: only object properties are
     const dataSchema =
       options.nullableResponseFields === undefined

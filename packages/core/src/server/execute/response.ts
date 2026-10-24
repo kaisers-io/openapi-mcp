@@ -2,7 +2,6 @@ import Ajv2020Module from 'ajv/dist/2020.js';
 import type { Options, ValidateFunction } from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
 import type { PinnedErrorReason, PinnedOutcome } from '../../http/pinned-dispatcher.ts';
-import { isJsonEssence } from '../../toolgen/media-type.ts';
 import {
   project,
   PROJECTION_HINT_STRUCTURED,
@@ -17,6 +16,13 @@ import {
   upstreamRetryAfterMs,
 } from './forwarded-headers.ts';
 import type { PageHint, PageInput } from './forwarded-headers.ts';
+import {
+  isJsonEssence,
+  isTextEssence,
+  mediaEssence,
+  parseSequence,
+  sequenceKind,
+} from './response-media.ts';
 import { markSecretScanned, structuredOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
 import { withheldSuccess } from '../withheld.ts';
@@ -229,17 +235,6 @@ const decodeUtf8 = (bytes: Uint8Array): { ok: string } | { error: true } => {
   }
 };
 
-const mediaEssence = (contentType: string | undefined): string | undefined => {
-  if (contentType === undefined) {
-    return undefined;
-  }
-  const [essence] = contentType.split(';');
-  const trimmed = essence === undefined ? '' : essence.trim().toLowerCase();
-  return trimmed === '' ? undefined : trimmed;
-};
-
-const isTextEssence = (essence: string): boolean => essence.startsWith('text/');
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -391,7 +386,13 @@ const mapNoSchemaSuccess = (
     return textOutcome('', false);
   }
   const essence = mediaEssence(contentType);
-  if (essence !== undefined && !isJsonEssence(essence) && !isTextEssence(essence)) {
+  const sequence = essence === undefined ? undefined : sequenceKind(essence);
+  if (
+    essence !== undefined &&
+    !isJsonEssence(essence) &&
+    !isTextEssence(essence) &&
+    sequence === undefined
+  ) {
     // `essence` is upstream-controlled (the raw Content-Type header) — a
     // hostile upstream can echo a registered secret through it, so it must
     // be redacted, not merely sanitize-truncated, before it reaches this
@@ -425,6 +426,15 @@ const mapNoSchemaSuccess = (
     if (attempt.ok && scanSafely(redactor, attempt.value)) {
       // Never emit a body that contains the secret in escaped form: no
       // string-redacted fallback here, a generic isError with no body.
+      return withheldSuccess();
+    }
+  }
+  // A sequence of JSON values (JSON Lines, NDJSON, JSON text sequences)
+  // escapes like JSON, so its parsed items are scanned the same way, and the
+  // body is then returned as text (issue #33)
+  if (sequence === 'json-lines' || sequence === 'json-seq') {
+    const items = parseSequence(decoded.ok, sequence);
+    if (items !== undefined && scanSafely(redactor, items)) {
       return withheldSuccess();
     }
   }
@@ -564,7 +574,17 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   if ('error' in decoded) {
     return textOutcome('upstream response body was not valid UTF-8 text', true);
   }
-  const parseAttempt = tryParseJson(decoded.ok);
+  // A sequential media type (OpenAPI 3.2, issue #33) is read as the array
+  // of its items, which the branch's `data` schema describes
+  const sequence = sequenceKind(branch.contentType.toLowerCase());
+  const items = sequence === undefined ? undefined : parseSequence(decoded.ok, sequence);
+  if (sequence !== undefined && items === undefined) {
+    return textOutcome(
+      `upstream response for status ${status} was not a valid ${branch.contentType} sequence`,
+      true,
+    );
+  }
+  const parseAttempt = items === undefined ? tryParseJson(decoded.ok) : { ok: true, value: items };
   if (!parseAttempt.ok) {
     return textOutcome(`upstream response for status ${status} was not valid JSON`, true);
   }
