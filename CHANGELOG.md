@@ -23,8 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OpenAPI 3.2 `querystring` parameters (#33).** A parameter `in: querystring` whose
   `content` is `application/x-www-form-urlencoded` over an object of scalar values becomes one
   tool argument, and its entries are form-encoded into the query string. Other media types or
-  shapes, a second `querystring` (one on the path item and one on the operation), and a
-  `querystring` next to `query` parameters still omit the operation with a reason.
+  shapes, an Encoding Object, a second `querystring` (for example one on the path item and one
+  on the operation), and a `querystring` next to `query` parameters still omit the operation
+  with a reason.
 - **OpenAPI 3.2 `QUERY` operations (#33).** A 3.2 `query` operation (RFC 10008: a safe,
   idempotent read with a request body) becomes a read-only tool instead of being omitted. The
   read-only default exposes it, its annotations are read-only, `--retries` applies, and the

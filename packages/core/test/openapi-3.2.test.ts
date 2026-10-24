@@ -164,6 +164,20 @@ describe('OpenAPI 3.2 (issue #33)', () => {
         'must be an object of scalar values',
       ],
       ['a non-object schema', formFilter({ type: 'string' }), 'must be an object of scalar values'],
+      [
+        'an Encoding Object',
+        {
+          name: 'q',
+          in: 'querystring',
+          content: {
+            'application/x-www-form-urlencoded': {
+              schema: filterSchema,
+              encoding: { text: { contentType: 'application/json' } },
+            },
+          },
+        },
+        'declares an encoding, which is not supported',
+      ],
     ])('omits an operation whose querystring uses %s', (_label, parameter, reason) => {
       const built = build(
         doc32({ '/q': { get: { parameters: [parameter], responses: okResponses } } }),
@@ -219,6 +233,56 @@ describe('OpenAPI 3.2 (issue #33)', () => {
           reason: expect.stringContaining('is not the only one') as string,
         }),
       ]);
+    });
+
+    it('omits an operation with two querystring references at one level', () => {
+      const document = doc32(
+        {
+          '/two': {
+            get: {
+              parameters: [
+                { $ref: '#/components/parameters/A' },
+                { $ref: '#/components/parameters/B' },
+              ],
+              responses: okResponses,
+            },
+          },
+        },
+        {
+          components: {
+            parameters: {
+              A: { ...formFilter(filterSchema), name: 'a' },
+              B: { ...formFilter(filterSchema), name: 'b' },
+            },
+          },
+        },
+      );
+      const built = build(document);
+      expect(built.tools).toEqual([]);
+      expect(built.omitted).toEqual([
+        expect.objectContaining({
+          reason: expect.stringContaining('is not the only one') as string,
+        }),
+      ]);
+    });
+
+    it('keeps one querystring when the operation overrides the path item one by name', () => {
+      const built = build(
+        doc32({
+          '/over': {
+            parameters: [formFilter({ type: 'object', properties: { old: { type: 'string' } } })],
+            get: {
+              operationId: 'over',
+              parameters: [formFilter(filterSchema)],
+              responses: okResponses,
+            },
+          },
+        }),
+      );
+      expect(built.omitted).toEqual([]);
+      expect(built.tools[0]?.inputSchema.safeParse({ filter: { status: 'open' } }).success).toBe(
+        true,
+      );
     });
 
     it('fails closed at call time on a nested value or an unencodable string', () => {

@@ -201,6 +201,20 @@ const querystringField = (
       unrepresentable: `querystring parameter "${name}" needs exactly one application/x-www-form-urlencoded content`,
     };
   }
+  // An Encoding Object changes how a value is serialized (e.g. a JSON string
+  // in quotes); not implemented, so omitted rather than silently dropped, as
+  // for a request body (OAS 3.2 adds prefixEncoding and itemEncoding)
+  if (
+    ['encoding', 'prefixEncoding', 'itemEncoding'].some(
+      (key) =>
+        (isRecord(media[key]) && Object.keys(media[key]).length > 0) ||
+        (Array.isArray(media[key]) && media[key].length > 0),
+    )
+  ) {
+    return {
+      unrepresentable: `querystring parameter "${name}" declares an encoding, which is not supported`,
+    };
+  }
   const root = media['schema'];
   if (!isRecord(root) || !isScalarObjectSchema(root)) {
     return {
