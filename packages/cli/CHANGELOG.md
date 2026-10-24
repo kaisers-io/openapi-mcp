@@ -46,8 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#21).** Before, a call cancelled while the shared token request was still running kept
   its concurrency slot until the token arrived, and the wait for a first or refreshed token
   could outlast the call's `--request-timeout`. Now each waiting call ends at once when it is
-  cancelled or its budget runs out, frees its slot and sends nothing, while the token request
-  keeps serving the other callers. A `401` replay is no longer sent once the budget is spent.
+  cancelled or its budget runs out, frees its slot and sends nothing more, while the token
+  request keeps serving the other callers. A `401` replay is no longer sent once the budget
+  is spent. Every exit after a sent request keeps the idempotency key in the result, and its
+  text says the request was not sent again rather than that nothing was sent; a refresh
+  token error after a `401` also keeps the key now.
 
 ## [0.4.1] - 2026-10-23
 

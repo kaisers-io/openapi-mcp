@@ -54,6 +54,28 @@ const ops: NamedOperation[] = [
       responses: { '204': { description: 'none' } },
     },
   },
+  {
+    // A POST with an Idempotency-Key header: retry-safe with --retries
+    toolName: 'createKeyed',
+    operation: {
+      method: 'post',
+      path: '/keyed',
+      tags: [],
+      deprecated: false,
+      parameters: [
+        { name: 'Idempotency-Key', in: 'header', required: false, schema: { type: 'string' } },
+      ],
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: { type: 'object', properties: { name: { type: 'string' } } },
+          },
+        },
+      },
+      responses: { '204': { description: 'none' } },
+    },
+  },
 ];
 
 const snapshot = buildSnapshot(
@@ -345,6 +367,9 @@ describe('createExecutor — OAuth2 token waits honour each caller (#21)', () =>
       timeoutSignal?: (ms: number) => AbortSignal;
       now?: () => number;
       onFetch?: () => void;
+      retries?: number;
+      // How many first attempts lose the connection before any response
+      dropFirst?: number;
     } = {},
   ) => {
     const sent: string[] = [];
@@ -353,7 +378,10 @@ describe('createExecutor — OAuth2 token waits honour each caller (#21)', () =>
       const headers = (init?.headers ?? {}) as Record<string, string>;
       sent.push(headers['authorization'] ?? '');
       options.onFetch?.();
-      const status = options.statuses?.[sent.length - 1] ?? 204;
+      if (sent.length <= (options.dropFirst ?? 0)) {
+        return Promise.reject(new Error('socket hang up'));
+      }
+      const status = options.statuses?.[sent.length - 1 - (options.dropFirst ?? 0)] ?? 204;
       return Promise.resolve(new Response(status === 204 ? null : 'denied', { status }));
     };
     const executor = createExecutor(
@@ -370,6 +398,7 @@ describe('createExecutor — OAuth2 token waits honour each caller (#21)', () =>
         maxResponseBytes: 65_536,
         outboundBudgets: { maxUrlLength: 8192, maxHeaderBytes: 16_384, maxBodyBytes: 65_536 },
         maxConcurrent: options.maxConcurrent ?? 4,
+        ...(options.retries === undefined ? {} : { retries: options.retries }),
         validators: new Map(
           snapshot.tools.map((entry) => [
             entry.name,
@@ -392,7 +421,7 @@ describe('createExecutor — OAuth2 token waits honour each caller (#21)', () =>
       },
     );
     const call = (name: string, signal = new AbortController().signal) =>
-      executor(tool(name), name === 'create' ? { name: 'x' } : {}, signal, undefined, (entry) => {
+      executor(tool(name), name === 'ping' ? {} : { name: 'x' }, signal, undefined, (entry) => {
         reports.push(entry);
       });
     return { call, sent, reports };
@@ -464,7 +493,9 @@ describe('createExecutor — OAuth2 token waits honour each caller (#21)', () =>
       timeoutSignal: (ms) => AbortSignal.timeout(ms),
     });
     const outcome = await call('ping');
-    expect(JSON.stringify(outcome)).toContain('timed out waiting for an OAuth2 access token');
+    expect(JSON.stringify(outcome)).toContain(
+      'timed out waiting for a fresh OAuth2 access token; the request was not sent again',
+    );
     expect(sent).toEqual(['Bearer stale']);
     issued.resolve({ ok: 'fresh' });
   });
@@ -499,10 +530,114 @@ describe('createExecutor — OAuth2 token waits honour each caller (#21)', () =>
     });
     const outcome = await call('create');
     expect(JSON.stringify(outcome)).toContain(
-      'the call timed out before the request could be sent again with a fresh OAuth2 access token; it was not applied',
+      'the call timed out before the request could be sent again with a fresh OAuth2 access token',
     );
     expect(sent).toEqual(['Bearer oauth-access-token-1']);
     expect(reports).toMatchObject([{ outcome: 'timeout', method: 'POST' }]);
+  });
+
+  // Review of #28: an ambiguous attempt before the 401 may have been applied,
+  // so the exits after a sent request keep the idempotency key and never
+  // claim that nothing was sent.
+  it('keeps the idempotency key when the refresh after a retried 401 times out', async () => {
+    let calls = 0;
+    const issued = Promise.withResolvers<TokenResult>();
+    const tokens: TokenSource = {
+      getToken: () => {
+        calls += 1;
+        return calls === 1 ? Promise.resolve({ ok: 'stale' }) : issued.promise;
+      },
+      invalidate: () => true,
+    };
+    const { call, sent, reports } = executorWith(tokens, {
+      statuses: [401],
+      dropFirst: 1,
+      retries: 1,
+      timeoutMs: 40,
+      timeoutSignal: (ms) => AbortSignal.timeout(ms),
+    });
+    const outcome = await call('createKeyed');
+    // The first attempt lost its connection (it may have been applied), the
+    // retry got the 401
+    expect(sent).toEqual(['Bearer stale', 'Bearer stale']);
+    const text = JSON.stringify(outcome);
+    expect(text).toContain(
+      'timed out waiting for a fresh OAuth2 access token; the request was not sent again',
+    );
+    expect(text).not.toContain('no API request was sent');
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toMatch(/^[\da-f-]{36}$/u);
+    expect(reports).toMatchObject([{ outcome: 'timeout', attempts: 2 }]);
+    issued.resolve({ ok: 'fresh' });
+  });
+
+  it('keeps the idempotency key when the budget is spent before the replay', async () => {
+    let clock = 0;
+    const tokens = fakeTokens();
+    const { call, sent, reports } = executorWith(tokens.source, {
+      statuses: [401],
+      dropFirst: 1,
+      retries: 1,
+      timeoutMs: 1000,
+      now: () => clock,
+      onFetch: () => {
+        clock += 500;
+      },
+    });
+    const outcome = await call('createKeyed');
+    expect(sent).toHaveLength(2);
+    const text = JSON.stringify(outcome);
+    expect(text).toContain(
+      'the call timed out before the request could be sent again with a fresh OAuth2 access token',
+    );
+    expect(text).not.toContain('not applied');
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toMatch(/^[\da-f-]{36}$/u);
+    expect(reports).toMatchObject([{ outcome: 'timeout', attempts: 2 }]);
+  });
+
+  it('keeps the idempotency key when the refresh after a 401 is cancelled or fails', async () => {
+    let calls = 0;
+    const tokens: TokenSource = {
+      getToken: () => {
+        calls += 1;
+        return Promise.resolve(
+          calls === 1 ? { ok: 'stale' } : { error: 'could not obtain an OAuth2 access token' },
+        );
+      },
+      invalidate: () => true,
+    };
+    const { call } = executorWith(tokens, { statuses: [401], dropFirst: 1, retries: 1 });
+    const failed = await call('createKeyed');
+    expect(JSON.stringify(failed)).toContain('could not obtain an OAuth2 access token');
+    expect(failed.meta?.['openapi-mcp/idempotencyKey']).toMatch(/^[\da-f-]{36}$/u);
+
+    const issued = Promise.withResolvers<TokenResult>();
+    let pendingCalls = 0;
+    const pending: TokenSource = {
+      getToken: () => {
+        pendingCalls += 1;
+        return pendingCalls === 1 ? Promise.resolve({ ok: 'stale' }) : issued.promise;
+      },
+      invalidate: () => true,
+    };
+    const cancelled = new AbortController();
+    const second = executorWith(pending, { statuses: [401], dropFirst: 1, retries: 1 });
+    const running = second.call('createKeyed', cancelled.signal);
+    // Wait until both attempts are out and the refresh is pending
+    while (second.sent.length < 2) {
+      await new Promise((resolve) => {
+        setImmediate(resolve);
+      });
+    }
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    cancelled.abort();
+    const outcome = await running;
+    expect(JSON.stringify(outcome)).toContain(
+      'the request was cancelled while waiting for a fresh OAuth2 access token; it was not sent again',
+    );
+    expect(outcome.meta?.['openapi-mcp/idempotencyKey']).toMatch(/^[\da-f-]{36}$/u);
+    issued.resolve({ ok: 'fresh' });
   });
 
   it('removes its abort listener from the caller signal when the wait is abandoned', async () => {

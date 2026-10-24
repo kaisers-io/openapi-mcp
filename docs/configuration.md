@@ -307,8 +307,11 @@ and sends it as `Authorization: Bearer <token>` on every API request.
   The token request is bounded by `--request-timeout`; when a call has to wait for a token,
   that wait counts against the call's own `--request-timeout` budget. A call that is
   cancelled or runs out of time while it waits ends at once, with `cancelled` or `timeout`,
-  and sends nothing; the token request keeps running for the other calls waiting on it. No
-  request, a `401` replay included, is sent once the call's budget is spent.
+  and sends nothing more; the token request keeps running for the other calls waiting on it.
+  No request, a `401` replay included, is sent once the call's budget is spent. When the call
+  ends this way after a `401`, its request was already sent, possibly more than once with
+  `--retries`; for an operation with an `Idempotency-Key` header the result therefore still
+  carries `_meta["openapi-mcp/idempotencyKey"]` for a repeat.
 - An upstream `401` discards the token, fetches a new one and replays the request exactly
   once (a 401 means the request was not authorized, so this applies to writes too). A second
   `401` is returned as usual. Within 30 s of such a replacement, a further `401` keeps the

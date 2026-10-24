@@ -479,24 +479,41 @@ const runUpstreamCall = async (
   const upstreamStarted = retryDeps.now();
   const budgetLeftMs = (): number => Math.floor(timeoutMs - (retryDeps.now() - upstreamStarted));
   const remainingMs = (): number => Math.max(budgetLeftMs(), 1);
-  // A token for this call, or the tool error that ends it: a cancelled or
-  // expired wait sends nothing.
+  // A token for this call, or the tool error that ends it. A cancelled or
+  // expired wait sends nothing more. For the first token nothing was sent
+  // at all; for a refresh after a 401 the request WAS sent before (with
+  // --retries possibly more than once, an earlier attempt may have been
+  // applied), so the text only says it was not sent again.
   const tokenFor = async (
     tokens: NonNullable<ExecutorConfig['oauth']>['tokens'],
+    // Undefined for the first token; for a refresh, the attempts already sent
+    sentAttempts?: number,
   ): Promise<{ token: string } | { failed: ToolCallOutcome }> => {
+    const refresh = sentAttempts !== undefined;
+    const facts = refresh ? { ...operationFacts, attempts: sentAttempts } : operationFacts;
     const result = await waitForToken(
       async () => await tokens.getToken(),
       signal,
       transport.timeoutSignal(remainingMs()),
     );
     if (result === 'cancelled') {
-      report({ outcome: 'cancelled', ...operationFacts });
-      return { failed: isError('the request was cancelled') };
+      report({ outcome: 'cancelled', ...facts });
+      return {
+        failed: isError(
+          refresh
+            ? 'the request was cancelled while waiting for a fresh OAuth2 access token; it was not sent again'
+            : 'the request was cancelled',
+        ),
+      };
     }
     if (result === 'timeout') {
-      report({ outcome: 'timeout', ...operationFacts });
+      report({ outcome: 'timeout', ...facts });
       return {
-        failed: isError('timed out waiting for an OAuth2 access token; no API request was sent'),
+        failed: isError(
+          refresh
+            ? 'timed out waiting for a fresh OAuth2 access token; the request was not sent again'
+            : 'timed out waiting for an OAuth2 access token; no API request was sent',
+        ),
       };
     }
     return 'error' in result ? { failed: tokenError(result.error) } : { token: result.ok };
@@ -542,6 +559,13 @@ const runUpstreamCall = async (
   }
   const idempotencyKey =
     generatedKey === undefined ? undefined : firstHeaders.sameOriginHeaders['idempotency-key'];
+  // The key the write was sent with, so a caller whose call still failed
+  // (e.g. a timeout after a retry) can repeat it with the SAME key and let
+  // the upstream deduplicate, instead of a fresh call getting a new key.
+  const withRecoveryKey = (result: ToolCallOutcome): ToolCallOutcome =>
+    idempotencyKey === undefined
+      ? result
+      : { ...result, meta: { ...result.meta, 'openapi-mcp/idempotencyKey': idempotencyKey } };
   const allowedRetries = isRetryableMethod(method, idempotencyKeyField) ? retries : 0;
   const sent = await send(firstHeaders, allowedRetries);
   let { outcome, attempts } = sent;
@@ -561,22 +585,27 @@ const runUpstreamCall = async (
     outcome.status === 401 &&
     oauth.tokens.invalidate(first.token)
   ) {
-    const fresh = await tokenFor(oauth.tokens);
+    // Every exit from here on follows at least one sent attempt. The 401
+    // itself had no effect, but with --retries an earlier attempt may have
+    // failed ambiguously and still been applied, so each exit keeps the
+    // idempotency key a repeated call needs (see the end of this function).
+    const fresh = await tokenFor(oauth.tokens, attempts);
     if ('failed' in fresh) {
-      return fresh.failed;
+      return withRecoveryKey(fresh.failed);
     }
     // A spent budget sends no replay: the clamp in remainingMs would
-    // otherwise still grant it a millisecond. The 401 had no effect, so
-    // nothing was applied.
+    // otherwise still grant it a millisecond.
     if (budgetLeftMs() <= 0) {
-      report({ outcome: 'timeout', ...operationFacts });
-      return isError(
-        'the call timed out before the request could be sent again with a fresh OAuth2 access token; it was not applied',
+      report({ outcome: 'timeout', ...operationFacts, attempts });
+      return withRecoveryKey(
+        isError(
+          'the call timed out before the request could be sent again with a fresh OAuth2 access token',
+        ),
       );
     }
     const replayHeaders = headersFor(fresh.token);
     if (replayHeaders === undefined) {
-      return overBudget();
+      return withRecoveryKey(overBudget());
     }
     const replay = await send(replayHeaders, Math.max(allowedRetries - (attempts - 1), 0));
     ({ outcome } = replay);
@@ -631,12 +660,7 @@ const runUpstreamCall = async (
       ? { status: outcome.status, responseBytes: outcome.bodyBytes.byteLength }
       : {}),
   });
-  // The key the write was sent with, so a caller whose call still failed
-  // (e.g. a timeout after a retry) can repeat it with the SAME key and let
-  // the upstream deduplicate, instead of a fresh call getting a new key.
-  return idempotencyKey === undefined
-    ? mapped
-    : { ...mapped, meta: { ...mapped.meta, 'openapi-mcp/idempotencyKey': idempotencyKey } };
+  return withRecoveryKey(mapped);
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {
