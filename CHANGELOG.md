@@ -7,8 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### BREAKING
+
+- **`describe_operation` leaves out the `outputSchema` by default (#9).** Output schemas are
+  most of an operation's definition (79% of the `per-operation` `tools/list` for the GitHub
+  REST description), and calling an operation needs only its `inputSchema`; the server still
+  validates every result against the output schema. A describe result without it carries
+  `outputSchemaOmitted: true`. Pass `include_output_schema: true` to get it. Operations that
+  accept `_fields` (`--response-projection`) still return it by default, because their field
+  paths come from it. A client that relied on `outputSchema` in every describe result must
+  now ask for it.
+
 ### Added
 
+- **`serve --output-schema defs` (#9).** Shows each output schema with its repeated
+  subschemas once under `$defs`, referenced with a local `$ref`, instead of written out in
+  full every time. For the GitHub REST description (`--allow tag:repos`) `tools/list` shrinks
+  by 22%. Validation is unchanged: both forms accept exactly the same values, and the
+  envelope branches stay inline. In `discover` mode it applies to `describe_operation`, computed
+  on demand, so startup does not grow. The default stays `inline`, since a host that does not
+  resolve local `$ref`s would see an incomplete schema.
 - **`--nullable-response-fields optional` (#17).** The flag now takes an optional scope.
   `optional` admits `null` only for the properties their object does not list in
   `required`, so a `null` in a required property still fails: for specs whose `required`

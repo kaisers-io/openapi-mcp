@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { GeneratedTool } from '../toolgen/build.ts';
+import { compactOutputSchema } from '../toolgen/output-schema.ts';
 import type { SnapshotTool, WireTool } from './types.ts';
 
 // The wire shape of listed tools: the status tool's definition and the
@@ -113,4 +114,25 @@ export const byToolName = (first: SnapshotTool, second: SnapshotTool): number =>
     return 0;
   }
   return first.name < second.name ? -1 : 1;
+};
+
+// The outputSchema a host is shown (tools/list, describe_operation): under
+// --output-schema defs (issue #9) its repeated subschemas once under `$defs`,
+// computed once per schema object. Under per-operation the executor compiles
+// this form too (it validates the listed wire tool); under discover it keeps
+// the inline one. Both accept exactly the same values.
+const compacted = new WeakMap<Record<string, unknown>, Record<string, unknown>>();
+export const presentedOutputSchema = (
+  outputSchema: Record<string, unknown>,
+  compact: boolean,
+): Record<string, unknown> => {
+  if (!compact) {
+    return outputSchema;
+  }
+  let presented = compacted.get(outputSchema);
+  if (presented === undefined) {
+    presented = compactOutputSchema(outputSchema);
+    compacted.set(outputSchema, presented);
+  }
+  return presented;
 };

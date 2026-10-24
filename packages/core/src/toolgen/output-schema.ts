@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
+import { factorRepeatedSubschemas } from './compact-schema.ts';
 import { admitNullProperties } from './nullable-fields.ts';
 import type { NullableFieldScope } from './nullable-fields.ts';
 import { PAGINATION_SCHEMA } from './pagination.ts';
@@ -128,6 +129,34 @@ export type OutputSchemaDerivation = {
   admitsNullFields?: true;
   // Agent-facing sentence explaining a withheld output schema (see above).
   withheld?: string;
+};
+
+// --output-schema defs (issue #9): a derived output schema with its repeated
+// subschemas once under `$defs`, for what a host is shown (tools/list,
+// describe_operation). It accepts exactly the same values as the inline form,
+// so validation results do not depend on which one a validator is compiled
+// from. The branches and their `status`/`contentType`
+// schemas stay inline: the executor reads those consts off the schema itself
+// (see branchesOf in server/execute/response.ts).
+export const compactOutputSchema = (outputSchema: JsonSchemaRecord): JsonSchemaRecord => {
+  const pinned = new Set<JsonSchemaRecord>();
+  const { oneOf } = outputSchema;
+  for (const branch of Array.isArray(oneOf) ? (oneOf as unknown[]) : []) {
+    if (branch === null || typeof branch !== 'object') {
+      continue;
+    }
+    pinned.add(branch as JsonSchemaRecord);
+    const { properties } = branch as JsonSchemaRecord;
+    if (properties !== null && typeof properties === 'object') {
+      for (const key of ['status', 'contentType']) {
+        const value = (properties as JsonSchemaRecord)[key];
+        if (value !== null && typeof value === 'object') {
+          pinned.add(value as JsonSchemaRecord);
+        }
+      }
+    }
+  }
+  return factorRepeatedSubschemas(outputSchema, pinned);
 };
 
 export const explainOutputSchema = (

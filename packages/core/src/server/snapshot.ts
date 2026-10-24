@@ -10,6 +10,7 @@ import {
   META_TOOL_NAME,
   metaWireTool,
   OMITTED_REASONS_CAP,
+  presentedOutputSchema,
   titleOf,
 } from './wire-tools.ts';
 import { buildDiscoveryTools } from './discovery.ts';
@@ -36,14 +37,16 @@ const sanitizeOmission = (omission: OmittedOperation): OmittedOperation => ({
   reason: sanitizeSpecText(omission.reason, PATH_DISPLAY_MAX),
 });
 
-const wireToolOf = (generated: GeneratedTool): WireTool => {
+const wireToolOf = (generated: GeneratedTool, compact: boolean): WireTool => {
   const title = titleOf(generated);
   return {
     name: generated.toolName,
     ...(title === undefined ? {} : { title }),
     description: generated.description,
     inputSchema: generated.wireSchema,
-    ...(generated.outputSchema === undefined ? {} : { outputSchema: generated.outputSchema }),
+    ...(generated.outputSchema === undefined
+      ? {}
+      : { outputSchema: presentedOutputSchema(generated.outputSchema, compact) }),
     annotations: generated.annotations,
   };
 };
@@ -159,6 +162,11 @@ const indexByName = (tools: readonly SnapshotTool[]): Record<string, SnapshotToo
 export type SnapshotOptions = {
   // Omitted means `per-operation`, whose snapshot is unchanged by this option.
   toolMode?: ToolMode;
+  // --output-schema defs (issue #9): show output schemas in their compact
+  // `$defs` form. Under `per-operation` the listed tools carry it; under
+  // `discover` describe_operation computes it on demand, so startup does not
+  // pay for operations nobody describes.
+  compactOutputSchemas?: boolean;
 };
 
 export const buildSnapshot = (
@@ -167,10 +175,11 @@ export const buildSnapshot = (
   options: SnapshotOptions = {},
 ): ServerSnapshot => {
   const toolMode = options.toolMode ?? 'per-operation';
+  const compact = options.compactOutputSchemas === true;
   const upstreamTools: SnapshotTool[] = built.tools.map((generated) => ({
     kind: 'upstream',
     name: generated.toolName,
-    wireTool: wireToolOf(generated),
+    wireTool: wireToolOf(generated, compact && toolMode === 'per-operation'),
     inputSchema: generated.inputSchema,
     generated,
   }));
@@ -225,6 +234,7 @@ export const buildSnapshot = (
   };
   return deepFreeze({
     toolMode,
+    ...(compact ? { compactOutputSchemas: true as const } : {}),
     tools: all,
     toolsByName,
     operations: upstreamTools,

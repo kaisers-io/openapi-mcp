@@ -437,8 +437,16 @@ describe('createProtocolSession — discover tool mode (issue kaisers-io/openapi
     expect(described.structuredContent).toMatchObject({
       name: 'createThingWithOutput',
       inputSchema: { type: 'object' },
-      outputSchema: { type: 'object' },
+      outputSchemaOmitted: true,
     });
+    expect(described.structuredContent).not.toHaveProperty('outputSchema');
+    // The client validates both forms against describe_operation's own outputSchema (#9)
+    const withOutput = await client.callTool({
+      name: 'describe_operation',
+      arguments: { name: 'createThingWithOutput', include_output_schema: true },
+    });
+    expect(withOutput.isError).not.toBe(true);
+    expect(withOutput.structuredContent).toMatchObject({ outputSchema: { type: 'object' } });
 
     const called = await client.callTool({
       name: 'call_operation',

@@ -12,6 +12,7 @@ export { deriveAnnotations } from './annotations.ts';
 export type { ToolAnnotations } from './annotations.ts';
 export { composeDescription } from './description.ts';
 export {
+  compactOutputSchema,
   DEFAULT_RESPONSE_IS_ERROR_FLAG,
   deriveOutputSchema,
   explainOutputSchema,

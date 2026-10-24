@@ -13,6 +13,7 @@ import {
 } from './discovery-schemas.ts';
 import type { DescribeInput } from './discovery-schemas.ts';
 import type { SnapshotTool, ToolMode, WireTool } from './types.ts';
+import { presentedOutputSchema } from './wire-tools.ts';
 
 // Discovery tool mode (issue kaisers-io/openapi-mcp-archive#38): instead of one
 // MCP tool per operation, tools/list carries three package-authored tools that
@@ -126,7 +127,7 @@ export const buildDiscoveryTools = (operations: readonly SnapshotTool[]): Snapsh
   }),
   discoveryTool(DESCRIBE_TOOL_NAME, 'describe', DESCRIBE_INPUT_SCHEMA, {
     description:
-      "Return one operation's full definition: its description, inputSchema (the shape of call_operation's `arguments`), outputSchema and annotations.",
+      "Return one operation's definition: description, inputSchema (the shape of call_operation's `arguments`), annotations and, if include_output_schema is true or it accepts `_fields`, outputSchema.",
     inputSchema: z.toJSONSchema(DESCRIBE_INPUT_SCHEMA),
     outputSchema: DESCRIBE_OUTPUT_SCHEMA,
     annotations: { readOnlyHint: true, openWorldHint: false },
@@ -154,18 +155,31 @@ export const lookupOperation = (
 ): SnapshotTool | undefined =>
   Object.hasOwn(operationsByName, name) ? operationsByName[name] : undefined;
 
-// Returns exactly the wire tool the per-operation mode lists for this
-// operation: the same sanitized description, schemas and annotations.
+// Returns the wire tool the per-operation mode lists for this operation (the
+// same sanitized description, schemas and annotations), with its
+// outputSchema only when asked for (see below).
 // `data` was already validated against DESCRIBE_INPUT_SCHEMA.
 export const describeOperation = (
   operationsByName: Readonly<Record<string, SnapshotTool | undefined>>,
   data: unknown,
+  compactOutputSchemas = false,
 ): ToolCallOutcome => {
-  const { name } = data as DescribeInput;
+  const { name, include_output_schema: requested } = data as DescribeInput;
   const tool = lookupOperation(operationsByName, name);
   if (tool === undefined) {
     return unknownOperationOutcome(name);
   }
-  const payload: Record<string, unknown> = { ...tool.wireTool };
+  // Output schemas are most of the definitions (79% of the per-operation
+  // tools/list for the GitHub REST description), and calling needs only the
+  // inputSchema: the server validates the result either way (issue #9). An operation that accepts
+  // `_fields` keeps it by default, since its field paths come from it.
+  const { outputSchema, ...definition } = tool.wireTool;
+  const include = requested ?? tool.generated?.projection === true;
+  let payload: Record<string, unknown> = definition;
+  if (outputSchema !== undefined) {
+    payload = include
+      ? { ...definition, outputSchema: presentedOutputSchema(outputSchema, compactOutputSchemas) }
+      : { ...definition, outputSchemaOmitted: true };
+  }
   return structuredOutcome(JSON.stringify(payload), payload);
 };

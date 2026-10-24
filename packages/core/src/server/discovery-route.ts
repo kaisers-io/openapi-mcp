@@ -53,7 +53,13 @@ export const runDiscoveryTool = (
         : Promise.resolve(searchOperations(deps.snapshot.searchIndex, data));
     }
     case 'describe': {
-      return Promise.resolve(describeOperation(deps.snapshot.operationsByName, data));
+      return Promise.resolve(
+        describeOperation(
+          deps.snapshot.operationsByName,
+          data,
+          deps.snapshot.compactOutputSchemas === true,
+        ),
+      );
     }
     case 'call': {
       return callOperation(deps, data, request);
