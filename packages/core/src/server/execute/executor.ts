@@ -22,7 +22,7 @@ import { deriveAccept } from './accept.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
 import { mapResponse } from './response.ts';
-import type { EnvelopeValidator } from './response.ts';
+import type { EnvelopeValidator, EnvelopeValidators } from './response.ts';
 import type { PageInput } from './forwarded-headers.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
 import { PROJECTION_FIELD } from '../../toolgen/projection.ts';
@@ -72,9 +72,10 @@ export type ExecutorConfig = {
   // traceparent/tracestate headers, same-origin hops only. Off unless set
   // (serve turns it on; --no-trace-propagation turns it off).
   propagateTraceContext?: boolean;
-  // By tool name; compiled eagerly once at server startup — this module only
-  // looks the map up per call.
-  validators: ReadonlyMap<string, EnvelopeValidator | undefined>;
+  // By tool name: a Map compiled at server startup, or
+  // lazyEnvelopeValidators, which compiles on a tool's first call. This
+  // module only looks a tool up per call, before anything is sent.
+  validators: EnvelopeValidators;
   // OAuth2 client-credentials (--upstream-oauth-*): every call carries
   // `Authorization: Bearer <token>` from this source, and an upstream 401
   // invalidates the token and replays the request ONCE with a fresh one.
@@ -280,6 +281,43 @@ const overFinalBudget = (
 // socket keeps the process alive.
 export type UpstreamExecutor = ToolExecutor & { close: () => Promise<void> };
 
+// One caller's wait for an OAuth2 token, raced against that caller's
+// cancellation and the rest of its time budget (issue #21). The token request
+// is shared by every waiting caller and bounded by its own timeout, so it is
+// never aborted here: an abandoned wait only stops listening, and the token
+// still reaches the callers that keep waiting. A caller that is already
+// cancelled or out of time asks for no token at all. Promise.race subscribes
+// to the request, so a request that settles (or fails) after its waiter left
+// never goes unhandled.
+const waitForToken = async <Result>(
+  request: () => Promise<Result>,
+  signal: AbortSignal,
+  deadline: AbortSignal,
+): Promise<Result | 'cancelled' | 'timeout'> => {
+  if (signal.aborted) {
+    return 'cancelled';
+  }
+  if (deadline.aborted) {
+    return 'timeout';
+  }
+  const pending = request();
+  const stopped = Promise.withResolvers<'cancelled' | 'timeout'>();
+  const onCancel = (): void => {
+    stopped.resolve('cancelled');
+  };
+  const onDeadline = (): void => {
+    stopped.resolve('timeout');
+  };
+  signal.addEventListener('abort', onCancel, { once: true });
+  deadline.addEventListener('abort', onDeadline, { once: true });
+  try {
+    return await Promise.race([pending, stopped.promise]);
+  } finally {
+    signal.removeEventListener('abort', onCancel);
+    deadline.removeEventListener('abort', onDeadline);
+  }
+};
+
 const runUpstreamCall = async (
   config: ExecutorConfig,
   transport: PinnedDeps,
@@ -309,7 +347,19 @@ const runUpstreamCall = async (
     report({ outcome: 'internal_error' });
     return isError('no response validator is registered for this tool');
   }
-  const validator = config.validators.get(tool.name);
+  // A validator compiled on demand can fail here. That happens before the
+  // request is built, so a refused schema never follows a sent write. The
+  // cause is the operator's to read (lazyEnvelopeValidators reports it);
+  // the caller gets fixed text.
+  let validator: EnvelopeValidator | undefined;
+  try {
+    validator = config.validators.get(tool.name);
+  } catch {
+    report({ outcome: 'internal_error' });
+    return isError(
+      "this tool's output schema could not be compiled, so its response cannot be validated; the request was not sent",
+    );
+  }
   // Imperative on purpose (security-module rule: no control-flow
   // restructuring / helper extraction across a guard boundary here):
   // `new URL` can throw synchronously on a malformed string, and the catch
@@ -412,23 +462,69 @@ const runUpstreamCall = async (
       : headers;
   };
   const operationFacts = { method, pathTemplate: generated.operation.path };
-  const overBudget = (): ToolCallOutcome => {
-    report({ outcome: 'refused', ...operationFacts });
+  // `sentAttempts`: the attempts already sent when an exit follows a 401 (the
+  // replay path), so the report counts them; undefined before any send.
+  const factsAfter = (sentAttempts?: number) =>
+    sentAttempts === undefined ? operationFacts : { ...operationFacts, attempts: sentAttempts };
+  const overBudget = (sentAttempts?: number): ToolCallOutcome => {
+    report({ outcome: 'refused', ...factsAfter(sentAttempts) });
     return isError('the final request exceeds the outbound resource budget');
   };
   const { oauth } = config;
   // A token failure is a tool error naming the env vars to check; its text
   // never carries endpoint-supplied prose (see oauth-client-credentials.ts).
-  // No API request was sent.
-  const tokenError = (error: string): ToolCallOutcome => {
-    report({ outcome: 'token_error', ...operationFacts });
+  // For the first token no API request was sent; for a refresh after a 401
+  // it was, and was not sent again.
+  const tokenError = (error: string, sentAttempts?: number): ToolCallOutcome => {
+    report({ outcome: 'token_error', ...factsAfter(sentAttempts) });
     return isError(`${error} (check the ${oauth?.envVarHint ?? ''} environment variables)`);
   };
   // The call's time budget runs from here: the token request (when one is
   // needed) and every upstream attempt share it.
   const upstreamStarted = retryDeps.now();
-  const remainingMs = (): number =>
-    Math.max(Math.floor(timeoutMs - (retryDeps.now() - upstreamStarted)), 1);
+  const budgetLeftMs = (): number => Math.floor(timeoutMs - (retryDeps.now() - upstreamStarted));
+  const remainingMs = (): number => Math.max(budgetLeftMs(), 1);
+  // A token for this call, or the tool error that ends it. A cancelled or
+  // expired wait sends nothing more. For the first token nothing was sent
+  // at all; for a refresh after a 401 the request WAS sent before (with
+  // --retries possibly more than once, an earlier attempt may have been
+  // applied), so the text only says it was not sent again.
+  const tokenFor = async (
+    tokens: NonNullable<ExecutorConfig['oauth']>['tokens'],
+    // Undefined for the first token; for a refresh, the attempts already sent
+    sentAttempts?: number,
+  ): Promise<{ token: string } | { failed: ToolCallOutcome }> => {
+    const refresh = sentAttempts !== undefined;
+    const facts = factsAfter(sentAttempts);
+    const result = await waitForToken(
+      async () => await tokens.getToken(),
+      signal,
+      transport.timeoutSignal(remainingMs()),
+    );
+    if (result === 'cancelled') {
+      report({ outcome: 'cancelled', ...facts });
+      return {
+        failed: isError(
+          refresh
+            ? 'the request was cancelled while waiting for a fresh OAuth2 access token; it was not sent again'
+            : 'the request was cancelled',
+        ),
+      };
+    }
+    if (result === 'timeout') {
+      report({ outcome: 'timeout', ...facts });
+      return {
+        failed: isError(
+          refresh
+            ? 'timed out waiting for a fresh OAuth2 access token; the request was not sent again'
+            : 'timed out waiting for an OAuth2 access token; no API request was sent',
+        ),
+      };
+    }
+    return 'error' in result
+      ? { failed: tokenError(result.error, sentAttempts) }
+      : { token: result.ok };
+  };
   const send = async (
     headers: HopHeaders,
     retriesLeft: number,
@@ -455,16 +551,28 @@ const runUpstreamCall = async (
       retryDeps,
     );
   };
-  const first = oauth === undefined ? undefined : await oauth.tokens.getToken();
-  if (first !== undefined && 'error' in first) {
-    return tokenError(first.error);
+  const first = oauth === undefined ? undefined : await tokenFor(oauth.tokens);
+  if (first !== undefined && 'failed' in first) {
+    return first.failed;
   }
-  const firstHeaders = headersFor(first?.ok);
+  const firstHeaders = headersFor(first?.token);
   if (firstHeaders === undefined) {
     return overBudget();
   }
+  // A token that arrived just as the budget ran out
+  if (budgetLeftMs() <= 0) {
+    report({ outcome: 'timeout', ...operationFacts });
+    return isError('the call timed out before the request was sent');
+  }
   const idempotencyKey =
     generatedKey === undefined ? undefined : firstHeaders.sameOriginHeaders['idempotency-key'];
+  // The key the write was sent with, so a caller whose call still failed
+  // (e.g. a timeout after a retry) can repeat it with the SAME key and let
+  // the upstream deduplicate, instead of a fresh call getting a new key.
+  const withRecoveryKey = (result: ToolCallOutcome): ToolCallOutcome =>
+    idempotencyKey === undefined
+      ? result
+      : { ...result, meta: { ...result.meta, 'openapi-mcp/idempotencyKey': idempotencyKey } };
   const allowedRetries = isRetryableMethod(method, idempotencyKeyField) ? retries : 0;
   const sent = await send(firstHeaders, allowedRetries);
   let { outcome, attempts } = sent;
@@ -482,15 +590,29 @@ const runUpstreamCall = async (
     first !== undefined &&
     outcome.kind === 'response' &&
     outcome.status === 401 &&
-    oauth.tokens.invalidate(first.ok)
+    oauth.tokens.invalidate(first.token)
   ) {
-    const fresh = await oauth.tokens.getToken();
-    if ('error' in fresh) {
-      return tokenError(fresh.error);
+    // Every exit from here on follows at least one sent attempt. The 401
+    // itself had no effect, but with --retries an earlier attempt may have
+    // failed ambiguously and still been applied, so each exit keeps the
+    // idempotency key a repeated call needs (see the end of this function).
+    const fresh = await tokenFor(oauth.tokens, attempts);
+    if ('failed' in fresh) {
+      return withRecoveryKey(fresh.failed);
     }
-    const replayHeaders = headersFor(fresh.ok);
+    // A spent budget sends no replay: the clamp in remainingMs would
+    // otherwise still grant it a millisecond.
+    if (budgetLeftMs() <= 0) {
+      report({ outcome: 'timeout', ...operationFacts, attempts });
+      return withRecoveryKey(
+        isError(
+          'the call timed out before the request could be sent again with a fresh OAuth2 access token',
+        ),
+      );
+    }
+    const replayHeaders = headersFor(fresh.token);
     if (replayHeaders === undefined) {
-      return overBudget();
+      return withRecoveryKey(overBudget(attempts));
     }
     const replay = await send(replayHeaders, Math.max(allowedRetries - (attempts - 1), 0));
     ({ outcome } = replay);
@@ -545,12 +667,7 @@ const runUpstreamCall = async (
       ? { status: outcome.status, responseBytes: outcome.bodyBytes.byteLength }
       : {}),
   });
-  // The key the write was sent with, so a caller whose call still failed
-  // (e.g. a timeout after a retry) can repeat it with the SAME key and let
-  // the upstream deduplicate, instead of a fresh call getting a new key.
-  return idempotencyKey === undefined
-    ? mapped
-    : { ...mapped, meta: { ...mapped.meta, 'openapi-mcp/idempotencyKey': idempotencyKey } };
+  return withRecoveryKey(mapped);
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {

@@ -8,7 +8,7 @@ import { buildLayout } from './layout.ts';
 import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
 import { explainOutputSchema } from './output-schema.ts';
-import type { JsonSchemaRecord } from './output-schema.ts';
+import type { JsonSchemaRecord, NullableFieldScope } from './output-schema.ts';
 import { detectPagination } from './pagination.ts';
 import type { PaginationPlan } from './pagination.ts';
 import { withConvertMemo } from './schema.ts';
@@ -105,7 +105,7 @@ const buildToolEntry = (
   reservedHeaders: ReadonlySet<string>,
   openapiVersion: OpenapiVersion,
   defaultResponseIsError: boolean,
-  nullableResponseFields: boolean,
+  nullableResponseFields: NullableFieldScope | undefined,
   projection: boolean,
 ): GeneratedTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
@@ -127,7 +127,7 @@ const buildToolEntry = (
     openapiVersion,
     {
       defaultResponseIsError,
-      nullableResponseFields,
+      ...(nullableResponseFields === undefined ? {} : { nullableResponseFields }),
       pagination: pagination !== undefined,
       projection: layout.ok.projection,
     },
@@ -165,10 +165,11 @@ export const buildTools = (
     reservedHeaders: ReadonlySet<string>;
     openapiVersion: OpenapiVersion;
     defaultResponseIsError?: boolean;
-    // Admit null for every object property in derived output schemas
-    // (serve/tools --nullable-response-fields, issue #3). Off by default:
-    // without it the output schemas are exactly the strict ones.
-    nullableResponseFields?: boolean;
+    // Admit null for object properties in derived output schemas (serve/tools
+    // --nullable-response-fields, issues #3 and #17): every property
+    // (`all`) or those not listed in `required` (`optional`). Off by
+    // default: without it the output schemas are exactly the strict ones.
+    nullableResponseFields?: NullableFieldScope;
     // Offer the optional `_fields` argument on JSON tools (serve
     // --response-projection). Off by default: it grows tools/list by about
     // a third, paid in every session.
@@ -194,7 +195,7 @@ export const buildTools = (
         reservedHeaders,
         opts.openapiVersion,
         opts.defaultResponseIsError === true,
-        opts.nullableResponseFields === true,
+        opts.nullableResponseFields,
         opts.projection === true,
       ),
     ),

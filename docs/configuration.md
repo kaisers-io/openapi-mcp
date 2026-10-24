@@ -63,7 +63,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback addresses for spec fetch redirects and for API requests to a spec-derived origin or redirect, and the token URL with `--upstream-oauth-*`; with `--http-auth oauth` also the authorization-server metadata and JWKS fetches (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
-| `--nullable-response-fields` | no | admit `null` for every object property in derived output schemas, for specs that omit `nullable` (see below) | off |
+| `--nullable-response-fields [all\|optional]` | no | admit `null` for object properties in derived output schemas, for specs that omit `nullable`: every property (`all`, also without a value) or only those not listed in `required` (`optional`) (see below) | off |
 | `--base-url <url>` | no | override the spec-derived base URL for API requests | `servers[0]` from spec |
 | `--header-env <Header=ENV>` | yes | API auth header, value read from env (secret) | `[]` |
 | `--header <Header:value>` | yes | static, non-secret API header | `[]` |
@@ -253,6 +253,13 @@ Notes:
   That includes properties listed in `required`, because these generators use "required"
   for "the key is always serialized", not "never null".
 
+  `--nullable-response-fields optional` admits `null` only for the properties their object
+  does not list in `required`. Choose it when the spec's `required` does mean "never null":
+  springdoc derives `required` from `@NotNull`, `@NotBlank` and `@Schema(requiredMode =
+  REQUIRED)`, so a `null` there still fails, while unset optional fields sent as `null` pass.
+  Choose `all` (the default, also given as the bare flag) when the server sends `null` for
+  required keys too. A key required only in another `allOf` member counts as optional.
+
   Not widened: `required` itself (a required key must still be present), array items (a
   `null` element is still refused), `additionalProperties` values, the root `data` value,
   request and input schemas, and the envelope fields (`status`, `contentType`, `headers`,
@@ -263,10 +270,15 @@ Notes:
   It applies to `--tool-mode discover` (`call_operation`) as well. `tools --json` marks each
   widened tool with `outputSchemaAdmitsNullFields: true`.
 
-  Prefer fixing the spec at its source when you can (in springdoc, annotate the fields with
-  `@Schema(nullable = true)`, or `types = {"string", "null"}` for OpenAPI 3.1): that keeps
-  the null check strict for the fields that are never null. Without the flag, no output
-  schema is widened.
+  Prefer fixing it at the source when you can: that keeps the null check strict for the
+  fields that are never null. Without the flag, no output schema is widened.
+  - In the spec: in springdoc, annotate the fields with `@Schema(nullable = true)`, or
+    `types = {"string", "null"}` for OpenAPI 3.1.
+  - In the server, if you control it: with Spring Boot, set
+    `spring.jackson.default-property-inclusion=non_null`, so unset fields are left out of the
+    response instead of being sent as `null`; optional properties then validate without the
+    flag. This changes the response for every client of the API, and a required key sent as
+    `null` still needs `nullable` in the spec, or the flag.
 - Size limits: a spec may document at most 4096 operations (a hard stop before anything is
   cached, whatever the filters), and at most 512 tools may be exposed after `--allow`/`--deny`
   filtering. A larger API can be served by narrowing the exposed set with `--allow`/`--deny`;
@@ -293,7 +305,13 @@ and sends it as `Authorization: Bearer <token>` on every API request.
   Concurrent calls share one token request. A failed token request is answered from memory for
   5 s, so an authorization-server outage costs it one request per 5 s, not one per tool call.
   The token request is bounded by `--request-timeout`; when a call has to wait for a token,
-  that wait counts against the call's own `--request-timeout` budget.
+  that wait counts against the call's own `--request-timeout` budget. A call that is
+  cancelled or runs out of time while it waits ends at once, with `cancelled` or `timeout`,
+  and sends nothing more; the token request keeps running for the other calls waiting on it.
+  No request, a `401` replay included, is sent once the call's budget is spent. When the call
+  ends this way after a `401`, its request was already sent, possibly more than once with
+  `--retries`; for an operation with an `Idempotency-Key` header the result therefore still
+  carries `_meta["openapi-mcp/idempotencyKey"]` for a repeat.
 - An upstream `401` discards the token, fetches a new one and replays the request exactly
   once (a 401 means the request was not authorized, so this applies to writes too). A second
   `401` is returned as usual. Within 30 s of such a replacement, a further `401` keeps the
@@ -383,10 +401,15 @@ decides it from annotations, sees one approval surface for all operations: appro
 startup when `discover` exposes any non-read-only operation; narrow the set with
 `--allow`/`--deny` if that matters (see [security](security.md#discovery-tool-mode)).
 
-Startup cost: `serve` compiles one output validator per exposed operation before it answers,
-so start-up time grows with the number of exposed operations. Measured on a development
-machine with a warm spec cache: about 3.5 s until `tools/list` answers for 2,000 exposed
-operations.
+Startup cost: in `per-operation` mode, `serve` compiles one output validator per exposed
+operation before it answers `initialize`, so an output schema the validator cannot compile
+stops `serve` at startup. Operations with identical output schemas share one validator. In
+`discover` mode, which can expose thousands of operations, an operation's validator is
+compiled on its first call instead, before the request is sent: an output schema that cannot
+be compiled then fails that operation's calls with a tool error, and `serve` names it once on
+stderr. Measured on a development machine with a warm spec cache, for the GitHub REST
+description (1,241 operations exposed with `--allow '**'`): about 2 s until `initialize` answers in
+`discover` mode.
 
 Measured `tools/list` sizes (2026-07-28 stdio response, tokens ≈ bytes / 4):
 
@@ -419,7 +442,7 @@ preview it.
 | `--trust-spec-updates` | no | auto-accept refreshed specs instead of gating them | off |
 | `--allow-private-network` | no | permit private/loopback redirect targets during the spec fetch (never cloud-metadata) | off |
 | `--default-response-is-error` | no | derive output schemas for operations that declare a `default` response, assuming it covers errors only (see below) | off |
-| `--nullable-response-fields` | no | admit `null` for every object property in derived output schemas, for specs that omit `nullable` (see below) | off |
+| `--nullable-response-fields [all\|optional]` | no | admit `null` for object properties in derived output schemas, for specs that omit `nullable`: every property (`all`, also without a value) or only those not listed in `required` (`optional`) (see below) | off |
 
 Example (an operationId glob, so it matches only operationIds that start with `read`):
 
@@ -432,8 +455,9 @@ Output: one line per tool. A tool whose output schema exists only because of
 global `--json` flag each tool is an object; besides `name`, `method`, `path`, `summary` and
 `deprecated` it carries `outputSchema` (`true`/`false`, JSON only) and, for the tools the text
 marker flags, `outputSchemaAssumesDefaultIsError: true`. With `--nullable-response-fields`,
-a tool whose output schema it widened carries `outputSchemaAdmitsNullFields: true` (JSON only:
-with the flag this is nearly every tool, so the text output does not mark it). A tool whose output schema was
+a tool whose output schema it widened carries `outputSchemaAdmitsNullFields: true`, under
+either scope (JSON only: with the flag this is nearly every tool, so the text output does not
+mark it). A tool whose output schema was
 withheld because a response `pattern` has nested quantifiers (see
 [security.md](security.md#response-envelope-and-redacted-errors)) carries
 `outputSchemaWithheld` with the sentence its description starts with.

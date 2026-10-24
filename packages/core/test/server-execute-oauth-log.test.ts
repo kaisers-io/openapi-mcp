@@ -49,7 +49,7 @@ const snapshot = buildSnapshot(
   },
 );
 
-type Endpoint = (authorization: string | undefined, index: number) => Response;
+type Endpoint = (authorization: string | undefined, index: number) => Response | Promise<Response>;
 
 const harness = (token: Endpoint, api: Endpoint) => {
   let tokenCalls = 0;
@@ -125,8 +125,8 @@ const harness = (token: Endpoint, api: Endpoint) => {
       lines.push(formatCallLog(record, redactor, new Date(0)));
     },
   });
-  const call = async (name: string) =>
-    await dispatcher.call({ name, arguments: {}, signal: new AbortController().signal });
+  const call = async (name: string, signal = new AbortController().signal) =>
+    await dispatcher.call({ name, arguments: {}, signal });
   return { call, records, lines, counts: () => ({ tokenCalls, apiCalls }) };
 };
 
@@ -181,5 +181,33 @@ describe('upstream OAuth2 credentials never reach call records, logs or results'
     expectNoCredential(JSON.stringify(outputs));
     expectNoCredential(JSON.stringify(run.records));
     expectNoCredential(run.lines.join('\n'));
+  });
+});
+
+// Issue #21, end to end with the real token source: a caller cancelled while
+// the shared token request is still running settles at once and sends
+// nothing, and the request still serves the caller that keeps waiting.
+describe('OAuth2 token wait — cancellation with the real token source (#21)', () => {
+  it('settles the cancelled caller before the token arrives; one token request serves the rest', async () => {
+    const tokenResponse = Promise.withResolvers<Response>();
+    const { call, counts, records } = harness(
+      () => tokenResponse.promise,
+      () => new Response('ok', { status: 200, headers: { 'content-type': 'text/plain' } }),
+    );
+    const cancelled = new AbortController();
+    const first = call('getThing', cancelled.signal);
+    const second = call('getThing');
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    cancelled.abort();
+    const output = await first;
+    expect(JSON.stringify(output)).toContain('the request was cancelled');
+    expect(records.map((record) => record.outcome)).toEqual(['cancelled']);
+    expect(counts()).toEqual({ tokenCalls: 1, apiCalls: 0 });
+    tokenResponse.resolve(issue(undefined, 1));
+    await second;
+    expect(records.map((record) => record.outcome)).toEqual(['cancelled', 'ok']);
+    expect(counts()).toEqual({ tokenCalls: 1, apiCalls: 1 });
   });
 });

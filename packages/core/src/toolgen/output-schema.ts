@@ -2,8 +2,13 @@ import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import { admitNullProperties } from './nullable-fields.ts';
+import type { NullableFieldScope } from './nullable-fields.ts';
 import { PAGINATION_SCHEMA } from './pagination.ts';
 import { convertSchema, memoizedJsonSchema, UNSAFE_PATTERN_REASON } from './schema.ts';
+
+// Re-exported so build.ts reads the option type from the module it already
+// depends on
+export type { NullableFieldScope } from './nullable-fields.ts';
 
 export type JsonSchemaRecord = Record<string, unknown>;
 
@@ -80,8 +85,10 @@ export type OutputSchemaOptions = {
   // also admits null (issue #3; see admitNullProperties). For specs whose
   // generator omits `nullable` while the server serializes unset fields as
   // null: OAS 3.0.3 §4.7.24.1 defaults `nullable` to false, so the strict
-  // schema rejects such a response even though the data is usable.
-  nullableResponseFields?: boolean;
+  // schema rejects such a response even though the data is usable. Scope
+  // `optional` leaves properties their object lists in `required` strict
+  // (issue #17).
+  nullableResponseFields?: NullableFieldScope;
 };
 
 // Minimal on purpose: the projected values come from `data` that already
@@ -195,7 +202,9 @@ export const explainOutputSchema = (
     }
     // The root value is never widened: only object properties are
     const dataSchema =
-      options.nullableResponseFields === true ? admitNullProperties(strictData) : strictData;
+      options.nullableResponseFields === undefined
+        ? strictData
+        : admitNullProperties(strictData, options.nullableResponseFields);
     widened.push(dataSchema !== strictData);
     branches.push({
       type: 'object',

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--nullable-response-fields optional` (#17).** The flag now takes an optional scope.
+  `optional` admits `null` only for the properties their object does not list in
+  `required`, so a `null` in a required property still fails: for specs whose `required`
+  means "never null", as springdoc derives it from `@NotNull`. The bare flag and `all` keep
+  the 0.4.1 behaviour (every property). The documentation also names a server-side fix for
+  Spring Boot, `spring.jackson.default-property-inclusion=non_null` (#19).
+- **Two more schema shapes convert instead of omitting the operation (#20).** A
+  `oneOf`/`anyOf` with a sibling `type` is accepted when every branch declares that type or
+  none: the type then applies to each branch, as JSON Schema defines it. An `anyOf` whose
+  branches only list `required` keys beside the object's `properties` ("send at least one of
+  these") is enforced on the tool input and advertised unchanged. With the GitHub REST
+  description, 16 of the 28 operations omitted before are now served, among them the
+  rulesets, Actions policies, the Dependabot, code scanning and secret scanning alert
+  updates, and requesting pull request reviewers. Shapes that cannot be represented exactly stay omitted: a branch of
+  another type, a `nullable` or non-object root, a key that is not a declared property, or a
+  `readOnly`/`writeOnly` key.
+
+### Changed
+
+- **Faster `serve` startup for large specs (#6, #7, #8).** Output validators are compiled
+  without Ajv's code-optimization pass, which only shrinks the generated code and took most of
+  the compile time; operations with identical output schemas now share one validator; and in
+  `--tool-mode discover` an operation's validator is compiled on its first call instead of at
+  startup. For the GitHub REST description, time until `initialize` answered dropped from
+  about 27 s to about 2 s in `discover` mode (`--allow '**'`) and from about 3.8 s to about
+  1.7 s with `--allow tag:repos` (one development machine, warm spec cache). Validation results
+  are unchanged; a single validation can take up to about 1 µs longer. In `discover` mode, an
+  output schema that cannot be compiled no longer stops `serve` at startup: calls to that
+  operation fail with a tool error before anything is sent, and `serve` names the operation
+  once on stderr. `per-operation` mode still compiles every validator at startup.
+
+### Fixed
+
+- **A call waiting for an OAuth2 access token now honours its own cancellation and deadline
+  (#21).** Before, a call cancelled while the shared token request was still running kept
+  its concurrency slot until the token arrived, and the wait for a first or refreshed token
+  could outlast the call's `--request-timeout`. Now each waiting call ends at once when it is
+  cancelled or its budget runs out, frees its slot and sends nothing more, while the token
+  request keeps serving the other callers. A `401` replay is no longer sent once the budget
+  is spent. Every exit after a sent request keeps the idempotency key in the result, and its
+  text says the request was not sent again rather than that nothing was sent; a refresh
+  token error after a `401` also keeps the key now.
+
 ## [0.4.1] - 2026-10-23
 
 ### Added

@@ -7,6 +7,7 @@ import {
   createEnvelopeCompiler,
   createRedactor,
   deriveOutputSchema,
+  lazyEnvelopeValidators,
   mapResponse,
   TRUNCATION_MARKER,
 } from '../src/index.ts';
@@ -194,6 +195,83 @@ describe('createEnvelopeCompiler — one compiler context per snapshot (issue ka
     expect(byName(wrap({ id: 1 }))).toBe(false);
     // An id defined only in another tool's schema does not leak through
     expect(() => compile(envelope({ $ref: 'https://x.test/Pet' }))).toThrow(/resolve/u);
+  });
+});
+
+describe('createEnvelopeCompiler — identical schemas (issue #7)', () => {
+  const schema = (): Record<string, unknown> => sampleOutputSchema();
+  const ok = { status: 200, contentType: 'application/json', data: { id: 1 } };
+  const bad = { status: 200, contentType: 'application/json', data: { id: 'x' } };
+
+  it('gives equal schema objects validators that each validate on their own', () => {
+    const compile = createEnvelopeCompiler();
+    const first = compile(schema()) as EnvelopeValidator;
+    const second = compile(schema()) as EnvelopeValidator;
+    // Interleaved calls: a shared compiled function keeps no result between them
+    expect(first(ok)).toBe(true);
+    expect(second(bad)).toBe(false);
+    expect(first(ok)).toBe(true);
+    expect(second(ok)).toBe(true);
+    expect(first(bad)).toBe(false);
+  });
+
+  it('keeps schemas that differ only in a nested keyword apart', () => {
+    const withId = (type: string): Record<string, unknown> =>
+      JSON.parse(
+        JSON.stringify(sampleOutputSchema()).replace(
+          '"id":{"type":"number"}',
+          `"id":{"type":"${type}"}`,
+        ),
+      ) as Record<string, unknown>;
+    const compile = createEnvelopeCompiler();
+    const asNumber = compile(withId('number')) as EnvelopeValidator;
+    const asString = compile(withId('string')) as EnvelopeValidator;
+    expect(asNumber(ok)).toBe(true);
+    expect(asNumber(bad)).toBe(false);
+    expect(asString(ok)).toBe(false);
+    expect(asString(bad)).toBe(true);
+  });
+});
+
+describe('lazyEnvelopeValidators (issue #8)', () => {
+  const ok = { status: 200, contentType: 'application/json', data: { id: 1 } };
+  const broken = { type: 'object', oneOf: 'not-an-array' };
+
+  it('registers every tool, compiles on first use and keeps the result', () => {
+    const validators = lazyEnvelopeValidators(
+      createEnvelopeCompiler(),
+      new Map<string, Record<string, unknown> | undefined>([
+        ['withSchema', sampleOutputSchema()],
+        ['withoutSchema', undefined],
+      ]),
+    );
+    expect(validators.has('withSchema')).toBe(true);
+    expect(validators.has('withoutSchema')).toBe(true);
+    expect(validators.has('unknown')).toBe(false);
+    const validate = validators.get('withSchema') as EnvelopeValidator;
+    expect(validate(ok)).toBe(true);
+    expect(validators.get('withSchema')).toBe(validate);
+    expect(validators.get('withoutSchema')).toBeUndefined();
+  });
+
+  it('compiles nothing up front, and reports a schema Ajv refuses once, on its first use', () => {
+    const failures: string[] = [];
+    const validators = lazyEnvelopeValidators(
+      createEnvelopeCompiler(),
+      new Map<string, Record<string, unknown> | undefined>([
+        ['broken', broken],
+        ['fine', sampleOutputSchema()],
+      ]),
+      (toolName) => {
+        failures.push(toolName);
+      },
+    );
+    expect(failures).toEqual([]);
+    expect((validators.get('fine') as EnvelopeValidator)(ok)).toBe(true);
+    expect(failures).toEqual([]);
+    expect(() => validators.get('broken')).toThrow();
+    expect(() => validators.get('broken')).toThrow();
+    expect(failures).toEqual(['broken']);
   });
 });
 
@@ -977,7 +1055,7 @@ describe('mapResponse — null property values under nullableResponseFields (#3)
   const body = '{"id":"1","name":null,"district":null,"logo":null,"tags":["a"]}';
   const derive = (nullableResponseFields: boolean) => {
     const outputSchema = deriveOutputSchema(operation, '3.0', {
-      nullableResponseFields,
+      ...(nullableResponseFields ? { nullableResponseFields: 'all' as const } : {}),
       projection: true,
     });
     return { outputSchema, validator: compileEnvelopeValidator(outputSchema) as EnvelopeValidator };

@@ -8,10 +8,12 @@ import {
   parseHeaderEnvMapping,
   resolveHeaderEnvMappings,
   sanitizeSpecText,
+  usageError,
 } from '@kaisers-io/openapi-mcp-core';
 import type {
   DeadPattern,
   FilterPattern,
+  NullableFieldScope,
   OmittedOperation,
   ResolvedHeader,
   SpecPipelineDeps,
@@ -92,7 +94,8 @@ export type SpecCmdOpts = {
   trustSpecUpdates?: boolean;
   allowPrivateNetwork?: boolean;
   defaultResponseIsError?: boolean;
-  nullableResponseFields?: boolean;
+  // `true` when the flag is given without a value
+  nullableResponseFields?: boolean | string;
 };
 
 // The --spec/--allow/--deny/... flags shared by every command that runs the
@@ -150,9 +153,39 @@ export const registerSpecOptions = (
       'derive output schemas for operations with a "default" response, assuming it covers errors only (an undocumented 2xx then fails)',
     )
     .option(
-      '--nullable-response-fields',
-      'admit null for every object property in derived output schemas (for specs, e.g. springdoc, that omit "nullable")',
+      '--nullable-response-fields [scope]',
+      'admit null for object properties in derived output schemas (for specs, e.g. springdoc, that omit "nullable"): every property (all, the default) or only those not listed in "required" (optional)',
     );
+
+const NULLABLE_FIELD_SCOPES: readonly NullableFieldScope[] = ['all', 'optional'];
+
+// --nullable-response-fields: absent is off, bare is `all` (its meaning
+// before the scope existed), otherwise the named scope (issue #17).
+const parseNullableResponseFields = (
+  raw: boolean | string | undefined,
+): NullableFieldScope | undefined => {
+  if (raw === undefined || raw === false) {
+    return undefined;
+  }
+  if (raw === true) {
+    return 'all';
+  }
+  const scope = NULLABLE_FIELD_SCOPES.find((candidate) => candidate === raw);
+  if (scope === undefined) {
+    throw usageError(
+      `--nullable-response-fields "${raw}" is not one of ${NULLABLE_FIELD_SCOPES.join(', ')}`,
+    );
+  }
+  return scope;
+};
+
+// The buildTools option for the parsed flag, absent when it is off.
+export const nullableOption = (
+  raw: boolean | string | undefined,
+): { nullableResponseFields?: NullableFieldScope } => {
+  const scope = parseNullableResponseFields(raw);
+  return scope === undefined ? {} : { nullableResponseFields: scope };
+};
 
 export type SpecPipelineArgs = {
   source: string;
