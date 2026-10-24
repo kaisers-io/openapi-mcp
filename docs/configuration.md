@@ -114,8 +114,7 @@ Notes:
   destructive, `--retries` never repeats it, and a redirect other than `303` is a tool error.
   Name it in a filter like any method (`--allow "LINK /orders/*"`). A method that is not upper
   case, `CONNECT`, `TRACK`, or a name that has its own Path Item field (such as `GET`) omits the
-  operation. A
-  response in a sequential media type is not parsed as a stream: JSON Lines
+  operation. A response in a sequential media type is not parsed as a stream: JSON Lines
   (`application/jsonl`) is a tool error ("unsupported media type"), and Server-Sent Events
   (`text/event-stream`) come back as text once the upstream closes the stream within
   `--request-timeout`. Swagger (OpenAPI 2.0) documents are not supported.

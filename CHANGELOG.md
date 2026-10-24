@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   may name it; a non-standard method that no operation declares is still a startup error, so a
   misspelled method does not silently match nothing. A method that is not upper case,
   `CONNECT`, `TRACK`, or a name that has its own Path Item field is omitted with a reason.
+  Without an operationId, a punctuation-only method on a path without letters (`! /`) is named
+  `operation_<hash>`, so its tool name is never empty.
 - **OpenAPI 3.2 `querystring` parameters (#33).** A parameter `in: querystring` whose
   `content` is `application/x-www-form-urlencoded` over an object of scalar values becomes one
   tool argument, and its entries are form-encoded into the query string. Other media types or

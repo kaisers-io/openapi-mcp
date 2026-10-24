@@ -2,6 +2,7 @@ import { Response } from 'undici';
 import { describe, expect, it, vi } from 'vitest';
 import {
   applyFilters,
+  assignToolNames,
   AUTO_DISCOVER_THRESHOLD,
   buildSnapshot,
   buildTools,
@@ -691,6 +692,37 @@ describe('call_operation — captured upstream request', () => {
       'x-client': 'openapi-mcp',
     });
     expect(JSON.parse(captured[0]?.body ?? '')).toEqual({ name: 'widget', count: 3 });
+  });
+
+  // OpenAPI 3.2 additionalOperations (issue #33): a punctuation-only method
+  // on `/` without an operationId once got an empty name, which
+  // search_operations returned but describe_operation and call_operation
+  // refused. Its generated name must work through all three.
+  it('finds, describes and calls an operation whose method and path leave no name', async () => {
+    const operations = assignToolNames([
+      {
+        method: '!',
+        path: '/',
+        tags: [],
+        deprecated: false,
+        parameters: [],
+        responses: { '200': { description: 'ok' } },
+      },
+    ]);
+    const snapshot = snapshotFor('discover', { allow: ['! /'] }, { operations });
+    const dispatcher = dispatcherFor(snapshot);
+    const found = outcomeOf(await dispatcher.call(call('search_operations', {})));
+    const [result] = (found.structuredContent as { results: { name: string }[] }).results;
+    expect(result?.name).toMatch(/^operation_[0-9a-f]{8}$/u);
+    const name = result?.name ?? '';
+    const described = outcomeOf(await dispatcher.call(call('describe_operation', { name })));
+    expect(described.isError).toBe(false);
+    const { captured, outcome } = await capture(snapshot, {
+      name: 'call_operation',
+      arguments: { name },
+    });
+    expect(outcome.isError).toBe(false);
+    expect(captured).toMatchObject([{ method: '!', url: 'https://api.example.test/v1/' }]);
   });
 
   // Issue #3: call_operation validates with the same (widened) output schema

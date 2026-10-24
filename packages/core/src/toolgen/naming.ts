@@ -91,6 +91,14 @@ const hashSuffix = (operation: OperationRecord, length: number): string =>
 const withSuffix = (base: string, suffix: string): string =>
   `${base.slice(0, TOOL_NAME_MAX_LENGTH - suffix.length)}${suffix}`;
 
+// Method and path, or, when they leave no letter or digit, the stable hash.
+// An OpenAPI 3.2 additional method may be punctuation only (`!`, `*`), and
+// the path may be `/`.
+const fallbackName = (operation: OperationRecord): string => {
+  const name = methodPathName(operation.method, operation.path);
+  return name === '' ? `operation${hashSuffix(operation, 8)}` : name;
+};
+
 export type NamedOperation = {
   operation: OperationRecord;
   toolName: string;
@@ -107,7 +115,7 @@ export const assignToolNames = (
 ): readonly NamedOperation[] => {
   const entries = operations.map((operation) => {
     const fromId = operation.operationId === undefined ? '' : sanitizeName(operation.operationId);
-    const base = fromId === '' ? methodPathName(operation.method, operation.path) : fromId;
+    const base = fromId === '' ? fallbackName(operation) : fromId;
     // An operationId that already IS a valid tool name, used unchanged
     const verbatim = fromId !== '' && fromId === operation.operationId;
     return { operation, base, verbatim, toolName: base };
