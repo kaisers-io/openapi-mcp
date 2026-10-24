@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -83,7 +83,9 @@ describe('docs/overlays.md (issue #26)', () => {
       RECIPES.flatMap((recipe) => [recipe.input, recipe.overlay, recipe.output]),
     );
     expect(files).toEqual([...named].toSorted());
-    const commands = [...guide.matchAll(/^\s*(?:npx|diff|openapi-mcp) .+$/gmu)].map((m) => m[0]);
+    const commands = [
+      ...guide.matchAll(/^\s*(?:npx|diff|openapi-mcp|HOME="\$REVIEW_HOME" openapi-mcp) .+$/gmu),
+    ].map((m) => m[0]);
     const mentioned = commands.flatMap(
       (command) => command.match(/[\w.-]+\.(?:json|yaml)/gu) ?? [],
     );
@@ -135,20 +137,61 @@ describe('openapi-mcp on the corrected specs (issue #26)', () => {
 
   const env = (): NodeJS.ProcessEnv => ({ ...process.env, HOME: home, USERPROFILE: home });
 
-  const inventory = (spec: string): unknown => {
+  // `openapi-mcp --json tools` with the default cache policy, its cache under `cacheHome`
+  const tools = (spec: string, cacheHome: string): Record<string, unknown> => {
     const result = spawnSync(
       process.execPath,
-      [CLI_ENTRY, '--json', 'tools', '--spec', spec, '--allow', '**', '--trust-spec-updates'],
-      { cwd: OVERLAYS_DIR, env: env(), encoding: 'utf8' },
+      [CLI_ENTRY, '--json', 'tools', '--spec', spec, '--allow', '**'],
+      {
+        cwd: OVERLAYS_DIR,
+        env: { ...process.env, HOME: cacheHome, USERPROFILE: cacheHome },
+        encoding: 'utf8',
+      },
     );
     expect(result.status).toBe(0);
-    const { data } = JSON.parse(result.stdout) as { data: Record<string, unknown> };
-    const { source: _source, contentHash: _hash, cacheStatus: _status, ...rest } = data;
-    return rest;
+    return (JSON.parse(result.stdout) as { data: Record<string, unknown> }).data;
+  };
+
+  // Step 3 of the guide: each file reviewed with a throwaway cache
+  const reviewed = (spec: string): unknown => {
+    const reviewHome = mkdtempSync(join(tmpdir(), 'openapi-mcp-overlays-review-'));
+    try {
+      const { source: _source, contentHash: _hash, ...rest } = tools(spec, reviewHome);
+      return rest;
+    } finally {
+      rmSync(reviewHome, { recursive: true, force: true });
+    }
   };
 
   it.each(RECIPES)('$output exposes the same inventory as $input', ({ input, output }) => {
-    expect(inventory(output)).toEqual(inventory(input));
+    expect(reviewed(output)).toEqual(reviewed(input));
+  });
+
+  // "Serving the corrected spec": a regenerated file at an accepted path stays
+  // a candidate, so only a throwaway cache shows the new version.
+  it('keeps listing the accepted version of a regenerated file until it is promoted', () => {
+    const work = mkdtempSync(join(tmpdir(), 'openapi-mcp-overlays-regen-'));
+    try {
+      const corrected = join(work, 'corrected.json');
+      writeFileSync(corrected, readFileSync(join(OVERLAYS_DIR, 'shop-3.1.json')));
+      const first = tools(corrected, home);
+      expect(first['cacheStatus']).toBe('accepted-first');
+      writeFileSync(corrected, readFileSync(join(OVERLAYS_DIR, 'shop-3.1.nullable-note.json')));
+      const again = tools(corrected, home);
+      expect(again['cacheStatus']).toBe('candidate');
+      expect(again['contentHash']).toBe(first['contentHash']);
+      expect(again['candidateContentHash']).toEqual(expect.any(String));
+      const reviewHome = join(work, 'review-home');
+      const fresh = tools(corrected, reviewHome);
+      expect(fresh['cacheStatus']).toBe('accepted-first');
+      expect(fresh['contentHash']).not.toBe(first['contentHash']);
+      expect(fresh['contentHash']).toBe(
+        tools(join(OVERLAYS_DIR, 'shop-3.1.nullable-note.json'), reviewHome)['contentHash'],
+      );
+      expect(again['candidateContentHash']).not.toBe(fresh['contentHash']);
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
   });
 
   // Calls getOrder, whose response carries `note: null`, and createOrder with

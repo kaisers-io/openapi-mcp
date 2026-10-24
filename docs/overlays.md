@@ -139,28 +139,37 @@ compare your output with them.
    schema, a security requirement, a server URL or another property means the target was
    too broad.
 3. **Inventory.** The corrected spec must expose the same operations, with the same
-   authentication hints, as the original:
+   authentication hints, as the original. Run `tools` with a throwaway cache: against your
+   real cache, `tools` would accept a new file unreviewed, or, for a file it accepted
+   before, keep listing that older version (see below). `openapi-mcp` keeps its cache under
+   the home directory, so a temporary `HOME` gives it an empty one (on Windows, set
+   `USERPROFILE` instead):
 
    ```sh
-   openapi-mcp --json tools --spec shop-3.1.json --allow '**'
-   openapi-mcp --json tools --spec shop-3.1.nullable-note.json --allow '**'
+   REVIEW_HOME="$(mktemp -d)"
+   HOME="$REVIEW_HOME" openapi-mcp --json tools --spec shop-3.1.json --allow '**'
+   HOME="$REVIEW_HOME" openapi-mcp --json tools --spec shop-3.1.nullable-note.json --allow '**'
    ```
 
-   Apart from `source`, `contentHash` and `cacheStatus`, both outputs must be the same.
+   Apart from `source` and `contentHash`, both outputs must be the same. Delete
+   `$REVIEW_HOME` afterwards.
 4. **Validation.** `tools` and `serve` validate the corrected spec as strictly as any other;
    an overlay cannot switch that off.
 
 ## Serving the corrected spec
 
 Point `--spec` at the corrected file and keep the original and the overlay under version
-control next to it, so the change stays reviewable. Record where each came from: the
-`contentHash` that `openapi-mcp --json tools` prints is the SHA-256 of the corrected file, and
-`sha256sum` gives the same for the original and the overlay.
+control next to it, so the change stays reviewable. Record where each came from with
+`sha256sum` of the original, the overlay and the corrected file. In the throwaway-cache run
+of step 3, `contentHash` is the same SHA-256 of the corrected file.
 
-`openapi-mcp` treats the corrected file like any spec source. When you regenerate it and the
-content changes, `serve` keeps using the accepted version and stores the new one as a
-candidate (unless you pass `--trust-spec-updates`). Review the new file as above, then accept
-it with the candidate hash that `openapi-mcp cache list` shows:
+`openapi-mcp` treats the corrected file like any spec source: the first `serve` or `tools`
+run accepts it. When you regenerate it and the content changes, both keep using the accepted
+version and store the new one as a candidate (unless you pass `--trust-spec-updates`). Until
+it is promoted, `tools` still lists the accepted inventory, and its `contentHash` is the
+accepted file's SHA-256; `candidateContentHash` names the pending version in the cache, not a
+file checksum. Review the new file with steps 1 to 3, throwaway cache included, then accept it
+with the candidate hash that `openapi-mcp cache list` shows:
 
 ```sh
 openapi-mcp cache list
