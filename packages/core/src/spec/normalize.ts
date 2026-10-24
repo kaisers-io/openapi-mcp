@@ -15,13 +15,31 @@ export type HttpMethod = (typeof HTTP_METHODS)[number];
 // OPTIONS and TRACE operations are never exposed
 const NEVER_EXPOSED_METHODS = ['options', 'trace'] as const;
 
+// A method from OpenAPI 3.2 `additionalOperations` (issue #33), sent exactly
+// as declared. Only upper-case names are mapped, so every place that shows,
+// filters or sends `method.toUpperCase()` sees the declared name unchanged.
+export type AdditionalMethod = Uppercase<string>;
+export type OperationMethod = HttpMethod | AdditionalMethod;
+
+// Methods `additionalOperations` may not declare: those with their own Path
+// Item field (OAS 3.2.1 §4.9.1), and the never-exposed ones. CONNECT opens a
+// tunnel and TRACK echoes the request like TRACE; fetch refuses all three.
+const RESERVED_ADDITIONAL_METHODS: ReadonlySet<string> = new Set([
+  ...HTTP_METHODS.map((method) => method.toUpperCase()),
+  ...NEVER_EXPOSED_METHODS.map((method) => method.toUpperCase()),
+]);
+const NEVER_EXPOSED_ADDITIONAL_METHODS: ReadonlySet<string> = new Set(['CONNECT', 'TRACK']);
+
+// RFC 9110 §9.1: a method is a token (1*tchar)
+const METHOD_TOKEN_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
+
 // A method name from `additionalOperations` is spec text, shown in omissions
 const METHOD_NAME_MAX_LENGTH = 32;
 
 const TITLE_MAX_LENGTH = 256;
 
 export type OperationRecord = {
-  method: HttpMethod;
+  method: OperationMethod;
   path: string;
   operationId?: string;
   tags: readonly string[];
@@ -71,7 +89,7 @@ export type NormalizedSpec = {
 // stay raw until the pipeline dereferences exposed operations.
 
 const buildOperation = (
-  method: HttpMethod,
+  method: OperationMethod,
   path: string,
   op: Record<string, unknown>,
   pathParameters: readonly unknown[],
@@ -129,11 +147,36 @@ const buildOperation = (
   };
 };
 
+// Why an `additionalOperations` key is not mapped, or undefined when it is.
+// The official meta-schema checks the token and the fixed-field names, but a
+// cached document is not revalidated, so both are checked here as well.
+const additionalMethodProblem = (name: string): string | undefined => {
+  if (!METHOD_TOKEN_RE.test(name)) {
+    return 'additionalOperations key is not a valid HTTP method name';
+  }
+  // Every registered method is far shorter (IANA HTTP Method Registry)
+  if (name.length > METHOD_NAME_MAX_LENGTH) {
+    return `additionalOperations method names longer than ${METHOD_NAME_MAX_LENGTH} characters are not supported`;
+  }
+  const upper = name.toUpperCase();
+  if (NEVER_EXPOSED_ADDITIONAL_METHODS.has(upper)) {
+    return `${upper} operations are never exposed`;
+  }
+  if (name !== upper) {
+    return 'additionalOperations methods that are not upper case are not supported';
+  }
+  if (RESERVED_ADDITIONAL_METHODS.has(upper)) {
+    return `${upper} must be declared by its own Path Item field, not in additionalOperations`;
+  }
+  return undefined;
+};
+
 // Per-path slice of what normalizeSpec's old nested loop did in one iteration
 // of its outer `for (const [path, item] of ...)`: everything this returns for
 // a single path, in the SAME internal order (never-exposed omissions first,
 // then one entry per HTTP_METHODS method, in HTTP_METHODS order) as the
-// original push sequence for that path.
+// original push sequence for that path. `additionalOperations` follow in
+// declaration order, so a spec without them keeps its order.
 const buildPathEntries = (
   path: string,
   item: unknown,
@@ -171,21 +214,27 @@ const buildPathEntries = (
     }
     return [buildOperation(method, path, op, pathParameters, resolve)];
   });
-  // OpenAPI 3.2 methods under `additionalOperations` are not mapped to
-  // tools yet (issue #33)
-  const notYetSupported = Object.keys(
+  const additional = Object.entries(
     isRecord(item['additionalOperations']) ? item['additionalOperations'] : {},
-  ).map((name): OmittedOperation => ({
-    method: sanitizeSpecText(name, METHOD_NAME_MAX_LENGTH),
-    path,
-    reason: 'additionalOperations are not supported yet',
-  }));
+  ).map(([name, op]): OperationRecord | OmittedOperation => {
+    const reason = additionalMethodProblem(name);
+    if (reason !== undefined) {
+      return { method: sanitizeSpecText(name, METHOD_NAME_MAX_LENGTH), path, reason };
+    }
+    if (!isRecord(op)) {
+      return { method: name, path, reason: 'operation is not an object' };
+    }
+    if (pathHasServers) {
+      return { method: name, path, reason: 'path-level servers overrides are not supported' };
+    }
+    return buildOperation(name as AdditionalMethod, path, op, pathParameters, resolve);
+  });
+  const entries = [...perMethod, ...additional];
   return {
-    operations: perMethod.filter((entry): entry is OperationRecord => !('reason' in entry)),
+    operations: entries.filter((entry): entry is OperationRecord => !('reason' in entry)),
     omitted: [
       ...neverExposed,
-      ...perMethod.filter((entry): entry is OmittedOperation => 'reason' in entry),
-      ...notYetSupported,
+      ...entries.filter((entry): entry is OmittedOperation => 'reason' in entry),
     ],
   };
 };

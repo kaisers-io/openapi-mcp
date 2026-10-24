@@ -22,6 +22,13 @@ describe('isRetryableMethod', () => {
     expect(isRetryableMethod('PATCH', true)).toBe(true);
     expect(isRetryableMethod('OPTIONS', true)).toBe(false);
   });
+
+  // OpenAPI 3.2 additionalOperations (issue #33): the semantics of another
+  // method are unknown, so it is never retried, even with an Idempotency-Key
+  it('never retries another method', () => {
+    expect(isRetryableMethod('LINK', false)).toBe(false);
+    expect(isRetryableMethod('LINK', true)).toBe(false);
+  });
 });
 
 describe('withRetries', () => {

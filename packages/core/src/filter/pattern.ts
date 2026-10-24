@@ -1,6 +1,6 @@
 import { usageError, validationError } from '../errors.ts';
 import { HTTP_METHODS } from '../spec/normalize.ts';
-import type { HttpMethod } from '../spec/normalize.ts';
+import type { OperationMethod } from '../spec/normalize.ts';
 
 // Patterns are operator input from argv, not spec content, but they are still
 // bounded: the cap keeps the token programme short and the Levenshtein
@@ -25,11 +25,12 @@ export const FILTER_PATTERN_MAX_COUNT = 128;
 
 const TAG_PREFIX = 'tag:';
 
-// Derived from HTTP_METHODS rather than typed as string: adding or removing an
-// exposable method in normalize.ts becomes a compile error here, not drift.
-// HTTP_METHODS already excludes OPTIONS and TRACE, which are never exposed in
-// v1, so those spellings are rejected for free.
-export type FilterMethod = Uppercase<HttpMethod>;
+// The upper-case form of an exposable method: one of HTTP_METHODS, or a
+// method an OpenAPI 3.2 spec declares under `additionalOperations` (issue
+// #33). The parser cannot know the latter, so applyFilters (engine.ts)
+// rejects a pattern whose method is neither standard nor declared by an
+// operation: a misspelled method stays a startup error.
+export type FilterMethod = Uppercase<OperationMethod>;
 
 // The compiled programme travels with the pattern, so a pattern is compiled
 // exactly once at parse time rather than once per candidate string
@@ -44,12 +45,22 @@ export type FilterPattern =
     }
   | { kind: 'tag'; glob: string; raw: string; compiled: CompiledGlob };
 
-const EXPOSABLE_METHODS: readonly FilterMethod[] = HTTP_METHODS.map(
-  (method) => method.toUpperCase() as FilterMethod,
+export const STANDARD_FILTER_METHODS: ReadonlySet<string> = new Set(
+  HTTP_METHODS.map((method) => method.toUpperCase()),
 );
-const EXPOSABLE_METHOD_SET = new Set<string>(EXPOSABLE_METHODS);
 
-const isFilterMethod = (value: string): value is FilterMethod => EXPOSABLE_METHOD_SET.has(value);
+// RFC 9110 §9.1 token in upper case. OPTIONS, TRACE, CONNECT and TRACK are
+// never exposed, so a pattern naming one is rejected rather than left dead.
+const FILTER_METHOD_RE = /^[!#$%&'*+\-.^_`|~0-9A-Z]+$/u;
+const NEVER_EXPOSED_FILTER_METHODS: ReadonlySet<string> = new Set([
+  'OPTIONS',
+  'TRACE',
+  'CONNECT',
+  'TRACK',
+]);
+
+const isFilterMethod = (value: string): value is FilterMethod =>
+  FILTER_METHOD_RE.test(value) && !NEVER_EXPOSED_FILTER_METHODS.has(value);
 
 // The token programme. A pattern lowers to literal code points plus two
 // wildcard kinds, and matching is a state-set simulation over it — there is no
@@ -313,7 +324,7 @@ export const parseFilterPattern = (raw: string): FilterPattern => {
     if (!isFilterMethod(method)) {
       // The raw value is never echoed: it is operator input of unknown shape
       throw usageError(
-        `a "<METHOD> <path>" filter pattern must start with one of ${EXPOSABLE_METHODS.join(', ')}`,
+        `a "<METHOD> <path>" filter pattern must start with an upper-case HTTP method: one of ${[...STANDARD_FILTER_METHODS].join(', ')}, or one the spec declares under additionalOperations`,
       );
     }
     if (!glob.startsWith('/')) {

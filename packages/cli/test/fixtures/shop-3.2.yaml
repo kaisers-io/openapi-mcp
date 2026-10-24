@@ -53,6 +53,16 @@ paths:
     additionalOperations:
       LINK:
         operationId: linkOrders
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [target]
+                properties:
+                  target: { type: string }
+                additionalProperties: false
         responses:
           '204': { description: linked }
   /orders/{id}:

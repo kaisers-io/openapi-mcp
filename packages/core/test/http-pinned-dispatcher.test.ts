@@ -514,7 +514,7 @@ describe('pinnedRequest', () => {
     }
   });
 
-  it.each(['POST', 'PUT', 'PATCH', 'DELETE', 'QUERY'])(
+  it.each(['POST', 'PUT', 'PATCH', 'DELETE', 'QUERY', 'LINK', 'PURGE'])(
     'rejects a redirect on a %s with redirect-write-method — never a second request',
     async (method) => {
       const target = await startFlexServer((_req, res) => {
@@ -1400,7 +1400,7 @@ describe('pinnedRequest — same-origin redirects and 303 See Other', () => {
     }
   });
 
-  it.each(['POST', 'PUT', 'PATCH', 'DELETE', 'QUERY'])(
+  it.each(['POST', 'PUT', 'PATCH', 'DELETE', 'QUERY', 'LINK', 'PURGE'])(
     'follows a 303 after %s as a GET with no body and no content-type',
     async (method) => {
       const server = await startFlexServer((req, res) => {

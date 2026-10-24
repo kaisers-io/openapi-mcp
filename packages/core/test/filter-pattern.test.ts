@@ -92,15 +92,31 @@ describe('parseFilterPattern — rejections', () => {
     expect(() => parseFilterPattern('tag:')).toThrow(/needs a tag glob/u);
   });
 
-  it('rejects an unknown method in the methodPath form', () => {
+  it('rejects a method that is not an HTTP token in the methodPath form', () => {
     try {
-      parseFilterPattern('FETCH /users');
+      parseFilterPattern('GE(T /users');
       expect.unreachable('expected a usage error');
     } catch (error) {
       const typed = error as OpenapiMcpError;
       expect(typed.code).toBe('usage');
       expect(typed.message).toContain('GET');
     }
+  });
+
+  // OpenAPI 3.2 `additionalOperations` (issue #33): the parser cannot know
+  // which methods the spec declares, so applyFilters checks that instead
+  it('accepts any other upper-case method token', () => {
+    expect(parseFilterPattern('LINK /users/*')).toMatchObject({
+      kind: 'methodPath',
+      method: 'LINK',
+      glob: '/users/*',
+    });
+    expect(parseFilterPattern('VERSION-CONTROL /x')).toMatchObject({ method: 'VERSION-CONTROL' });
+  });
+
+  it('rejects CONNECT and TRACK, which are never exposed', () => {
+    expect(() => parseFilterPattern('CONNECT /users')).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPattern('TRACK /users')).toThrow(OpenapiMcpError);
   });
 
   it('rejects a lowercase method — the language is case-sensitive', () => {
@@ -128,7 +144,9 @@ describe('parseFilterPattern — rejections', () => {
     // An operationId containing a space is unreachable by design: silently
     // parsing "list pets!" as an operationId would surface later as a dead
     // pattern instead of as the usage error it is
-    expect(() => parseFilterPattern('list pets!')).toThrow(/must start with one of/u);
+    expect(() => parseFilterPattern('list pets!')).toThrow(
+      /must start with an upper-case HTTP method/u,
+    );
   });
 
   it('rejects an over-long pattern', () => {
@@ -190,7 +208,7 @@ describe('parseFilterPatterns — the list bound', () => {
       glob: '/users/**',
       raw: 'GET /users/**',
     });
-    expect(() => parseFilterPatterns(['listPets', 'FETCH /users'])).toThrow(OpenapiMcpError);
+    expect(() => parseFilterPatterns(['listPets', 'fetch /users'])).toThrow(OpenapiMcpError);
     expect(() => parseFilterPatterns(['**a'.repeat(11)])).toThrow(/at most 10 wildcards/u);
   });
 });
