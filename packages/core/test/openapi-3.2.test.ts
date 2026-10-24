@@ -202,6 +202,25 @@ describe('OpenAPI 3.2 (issue #33)', () => {
       ]);
     });
 
+    it('omits an operation with a second querystring inherited from the path item', () => {
+      // OAS 3.2 allows one per operation; the meta-schema checks each
+      // parameters array on its own, so this document validates
+      const document = doc32({
+        '/two': {
+          parameters: [{ ...formFilter(filterSchema), name: 'a' }],
+          get: { parameters: [{ ...formFilter(filterSchema), name: 'b' }], responses: okResponses },
+        },
+      });
+      expect(validateOpenApiDocument(document).version).toBe('3.2');
+      const built = build(document);
+      expect(built.tools).toEqual([]);
+      expect(built.omitted).toEqual([
+        expect.objectContaining({
+          reason: expect.stringContaining('is not the only one') as string,
+        }),
+      ]);
+    });
+
     it('fails closed at call time on a nested value or an unencodable string', () => {
       const built = build(
         doc32({

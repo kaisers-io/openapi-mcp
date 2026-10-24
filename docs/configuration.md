@@ -105,13 +105,14 @@ Notes:
   repeat the query without its body, so it is a tool error, as for a write. A 3.2 `querystring`
   parameter (the whole query string as one parameter) becomes one argument when its `content` is
   `application/x-www-form-urlencoded` over an object of scalar values: the object's entries are
-  form-encoded into the query string (`+` for a space). Any other media type or shape, or a
-  `querystring` next to `query` parameters, omits the operation. `additionalOperations` are not
-  mapped to tools yet: such an operation is omitted, and `tools` lists it with the reason. A
-  response in a sequential media type is not parsed as a stream: JSON Lines
-  (`application/jsonl`) is a tool error ("unsupported media type"), and Server-Sent Events
-  (`text/event-stream`) come back as text once the upstream closes the stream within
-  `--request-timeout`. Swagger (OpenAPI 2.0) documents are not supported.
+  form-encoded into the query string (`+` for a space). Any other media type or shape, a second
+  `querystring` (one on the path item, one on the operation), or a `querystring` next to `query`
+  parameters omits the operation. `additionalOperations` are not mapped to tools yet: such an
+  operation is omitted, and `tools` lists it with the reason. A response in a sequential media
+  type is not parsed as a stream: JSON Lines (`application/jsonl`) is a tool error ("unsupported
+  media type"), and Server-Sent Events (`text/event-stream`) come back as text once the upstream
+  closes the stream within `--request-timeout`. Swagger (OpenAPI 2.0) documents are not
+  supported.
 - `--header` uses `Header:value` (**colon**). `--header-env` and `--spec-header-env` use
   `Header=ENV` (**equals**) — the right-hand side is an environment variable *name*, not a
   literal value.

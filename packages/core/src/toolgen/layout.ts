@@ -182,6 +182,11 @@ const querystringField = (
       unrepresentable: `querystring parameter "${name}" is combined with query parameters`,
     };
   }
+  // At most one per operation (OAS 3.2), counting the path item's: the meta-schema checks
+  // each parameters array on its own, so one inherited plus one declared passes it
+  if (parameters.filter((other) => other['in'] === 'querystring').length > 1) {
+    return { unrepresentable: `querystring parameter "${name}" is not the only one` };
+  }
   const content = isRecord(param['content']) ? param['content'] : {};
   const [contentType, ...others] = Object.keys(content);
   const media = contentType === undefined ? undefined : content[contentType];

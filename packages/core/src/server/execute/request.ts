@@ -188,15 +188,15 @@ type QueryPair = {
 
 type QueryMapping = Extract<FieldMapping, { destination: 'query' }>;
 
+// One form-urlencoded component: the serializer of a single `=value` pair
+const formEncode = (raw: string): string => new URLSearchParams([['', raw]]).toString().slice(1);
+
 // OpenAPI 3.2 `in: querystring` with application/x-www-form-urlencoded
 // (issue #33): the object's entries ARE the query string, encoded as a form
 // (WHATWG application/x-www-form-urlencoded, `+` for space), the encoding the
 // media type names. Scalars only, like a form body; an absent or null entry
 // is left out. A lone surrogate fails closed rather than being silently
 // replaced with U+FFFD, as for every other query leaf.
-// One form-urlencoded component: the serializer of a single `=value` pair
-const formEncode = (raw: string): string => new URLSearchParams([['', raw]]).toString().slice(1);
-
 const serializeQuerystringValue = (
   wireName: string,
   value: unknown,
