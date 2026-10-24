@@ -9,14 +9,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CLI_ENTRY, FIXTURES_DIR, stopChild } from './cli-subprocess.ts';
 import { SUBPROCESS_TEST_TIMEOUT_MS, SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
-// Issue #33: an OpenAPI 3.2 QUERY operation and a querystring parameter end
-// to end. The real CLI over stdio, without --allow (QUERY is safe, so the
-// read-only default exposes it), against a local upstream that records what
-// it receives.
+// Issue #33: an OpenAPI 3.2 QUERY operation, a querystring parameter and an
+// additionalOperations method end to end. The real CLI over stdio, against a
+// local upstream that records what it receives. QUERY is safe, so the
+// read-only default exposes it; LINK needs --allow.
 
 type Received = { method?: string; url?: string; contentType?: string; body: string };
 
-describe('serve — OpenAPI 3.2 QUERY and querystring (issue #33)', () => {
+describe('serve — OpenAPI 3.2 QUERY, querystring and additionalOperations (issue #33)', () => {
   let home: string;
   let upstream: Server;
   let baseUrl: string;
@@ -55,68 +55,78 @@ describe('serve — OpenAPI 3.2 QUERY and querystring (issue #33)', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
+  // The real CLI over stdio with the given extra arguments; `request` sends
+  // one JSON-RPC request and waits for its result
+  const serve = (extraArgs: readonly string[]) => {
+    const child = spawn(
+      process.execPath,
+      [
+        CLI_ENTRY,
+        'serve',
+        '--trust-spec-updates',
+        '--spec',
+        'shop-3.2.yaml',
+        '--base-url',
+        baseUrl,
+        '--header-env',
+        'Authorization=QUERY_TEST_TOKEN',
+        ...extraArgs,
+      ],
+      {
+        cwd: FIXTURES_DIR,
+        env: {
+          ...process.env,
+          HOME: home,
+          USERPROFILE: home,
+          QUERY_TEST_TOKEN: 'Bearer test-token-not-a-secret',
+        },
+      },
+    );
+    const responses = new Map<number, { result?: Record<string, unknown> }>();
+    let buffer = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      buffer += chunk.toString('utf8');
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines.filter((entry) => entry !== '')) {
+        const message = JSON.parse(line) as { id?: number; result?: Record<string, unknown> };
+        if (message.id !== undefined) {
+          responses.set(message.id, message);
+        }
+      }
+    });
+    const meta = {
+      'io.modelcontextprotocol/protocolVersion': '2026-07-28',
+      'io.modelcontextprotocol/clientCapabilities': {},
+    };
+    const request = async (id: number, method: string, params: Record<string, unknown>) => {
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, _meta: meta } })}\n`,
+      );
+      const started = Date.now();
+      while (!responses.has(id) && Date.now() - started < SUBPROCESS_WAIT_MS) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 20);
+        });
+      }
+      return responses.get(id)?.result ?? {};
+    };
+    return { child, request };
+  };
+
   it(
     'exposes a QUERY operation by default and sends its body with the QUERY method',
     async () => {
-      const child = spawn(
-        process.execPath,
-        [
-          CLI_ENTRY,
-          'serve',
-          '--trust-spec-updates',
-          '--spec',
-          'shop-3.2.yaml',
-          '--base-url',
-          baseUrl,
-          '--header-env',
-          'Authorization=QUERY_TEST_TOKEN',
-        ],
-        {
-          cwd: FIXTURES_DIR,
-          env: {
-            ...process.env,
-            HOME: home,
-            USERPROFILE: home,
-            QUERY_TEST_TOKEN: 'Bearer test-token-not-a-secret',
-          },
-        },
-      );
-      const responses = new Map<number, { result?: Record<string, unknown> }>();
-      let buffer = '';
-      child.stdout.on('data', (chunk: Buffer) => {
-        buffer += chunk.toString('utf8');
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines.filter((entry) => entry !== '')) {
-          const message = JSON.parse(line) as { id?: number; result?: Record<string, unknown> };
-          if (message.id !== undefined) {
-            responses.set(message.id, message);
-          }
-        }
-      });
-      const meta = {
-        'io.modelcontextprotocol/protocolVersion': '2026-07-28',
-        'io.modelcontextprotocol/clientCapabilities': {},
-      };
-      const request = async (id: number, method: string, params: Record<string, unknown>) => {
-        child.stdin.write(
-          `${JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, _meta: meta } })}\n`,
-        );
-        const started = Date.now();
-        while (!responses.has(id) && Date.now() - started < SUBPROCESS_WAIT_MS) {
-          await new Promise<void>((resolve) => {
-            setTimeout(resolve, 20);
-          });
-        }
-        return responses.get(id)?.result ?? {};
-      };
+      received.length = 0;
+      const { child, request } = serve([]);
       try {
         const list = await request(1, 'tools/list', {});
         const tools = list['tools'] as { name: string; annotations?: Record<string, unknown> }[];
         const queryTool = tools.find((tool) => tool.name === 'queryOrders');
         expect(queryTool?.annotations).toMatchObject({ readOnlyHint: true });
-        // The read-only default still hides the PATCH
+        // The read-only default still hides the PATCH and the LINK
         expect(tools.map((tool) => tool.name)).not.toContain('updateOrder');
+        expect(tools.map((tool) => tool.name)).not.toContain('linkOrders');
 
         const called = await request(2, 'tools/call', {
           name: 'queryOrders',
@@ -153,6 +163,40 @@ describe('serve — OpenAPI 3.2 QUERY and querystring (issue #33)', () => {
         });
         expect(searched['isError']).toBe(false);
         expect(received[1]).toEqual({ method: 'GET', url: '/search?text=gift+%26+card', body: '' });
+      } finally {
+        await stopChild(child);
+      }
+    },
+    SUBPROCESS_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'exposes an additionalOperations method when allowed and sends it as declared',
+    async () => {
+      received.length = 0;
+      const { child, request } = serve(['--allow', 'LINK /orders']);
+      try {
+        const list = await request(1, 'tools/list', {});
+        const tools = list['tools'] as { name: string; annotations?: Record<string, unknown> }[];
+        expect(tools.map((tool) => tool.name)).toEqual(['openapi_mcp_status', 'linkOrders']);
+        expect(tools.find((tool) => tool.name === 'linkOrders')?.annotations).toEqual({
+          destructiveHint: true,
+          openWorldHint: true,
+        });
+
+        const linked = await request(2, 'tools/call', {
+          name: 'linkOrders',
+          arguments: { target: '/orders/o2' },
+        });
+        expect(linked['isError']).toBe(false);
+        expect(received).toEqual([
+          {
+            method: 'LINK',
+            url: '/orders',
+            contentType: 'application/json',
+            body: JSON.stringify({ target: '/orders/o2' }),
+          },
+        ]);
       } finally {
         await stopChild(child);
       }

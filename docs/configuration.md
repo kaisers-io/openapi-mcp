@@ -107,8 +107,14 @@ Notes:
   `application/x-www-form-urlencoded` over an object of scalar values: the object's entries are
   form-encoded into the query string (`+` for a space). Any other media type or shape, an
   Encoding Object, a second `querystring` (one on the path item, one on the operation), or a
-  `querystring` next to `query` parameters omits the operation. `additionalOperations` are not
-  mapped to tools yet: such an operation is omitted, and `tools` lists it with the reason. A
+  `querystring` next to `query` parameters omits the operation. An operation under
+  `additionalOperations` (another HTTP method, such as `LINK` or `COPY`) becomes a tool whose
+  request is sent with the method exactly as declared. Its semantics are unknown, so it is
+  treated like `POST`: the read-only default does not expose it, its annotations are
+  destructive, `--retries` never repeats it, and a redirect other than `303` is a tool error.
+  Name it in a filter like any method (`--allow "LINK /orders/*"`). A method that is not upper
+  case, `CONNECT`, `TRACK`, or a name that has its own Path Item field (such as `GET`) omits the
+  operation. A
   response in a sequential media type is not parsed as a stream: JSON Lines
   (`application/jsonl`) is a tool error ("unsupported media type"), and Server-Sent Events
   (`text/event-stream`) come back as text once the upstream closes the stream within

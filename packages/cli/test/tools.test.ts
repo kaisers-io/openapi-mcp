@@ -78,7 +78,7 @@ describe('tools command — file specs', () => {
     expect(envelope.data.contentHash).toMatch(/^[0-9a-f]{64}$/u);
   });
 
-  it('serves an OpenAPI 3.2 spec, omitting only what is not supported yet (#33)', async () => {
+  it('serves an OpenAPI 3.2 spec, additionalOperations included (#33)', async () => {
     const { lines, ctx } = fileCtx();
     const code = await run(ctx, [
       'node',
@@ -103,6 +103,7 @@ describe('tools command — file specs', () => {
     expect(data.tools.map((tool) => [tool.name, tool.method])).toEqual([
       ['listOrders', 'GET'],
       ['queryOrders', 'QUERY'],
+      ['linkOrders', 'LINK'],
       ['getOrder', 'GET'],
       ['updateOrder', 'PATCH'],
       ['searchOrders', 'GET'],
@@ -110,10 +111,40 @@ describe('tools command — file specs', () => {
       ['streamEvents', 'GET'],
       ['getPet', 'GET'],
     ]);
-    expect(data.omitted).toEqual([
-      { method: 'LINK', path: '/orders', reason: 'additionalOperations are not supported yet' },
-    ]);
+    expect(data.omitted).toEqual([]);
     expect(JSON.stringify(data.security)).toContain('deviceAuthorization');
+  });
+
+  // OpenAPI 3.2 additionalOperations (#33): a pattern may name a method the
+  // spec declares; any other non-standard method is still a usage error
+  it('filters an additionalOperations method by name and rejects an undeclared one', async () => {
+    const allowed = fileCtx();
+    const okCode = await run(allowed.ctx, [
+      'node',
+      'openapi-mcp',
+      '--json',
+      'tools',
+      '--spec',
+      'shop-3.2.yaml',
+      '--allow',
+      'LINK /orders',
+    ]);
+    expect(okCode).toBe(EXIT.OK);
+    const { data } = JSON.parse(allowed.lines[0]!) as { data: { tools: { name: string }[] } };
+    expect(data.tools.map((tool) => tool.name)).toEqual(['linkOrders']);
+
+    const misspelled = fileCtx();
+    const badCode = await run(misspelled.ctx, [
+      'node',
+      'openapi-mcp',
+      'tools',
+      '--spec',
+      'shop-3.2.yaml',
+      '--deny',
+      'LNIK /orders',
+    ]);
+    expect(badCode).toBe(EXIT.USAGE);
+    expect(misspelled.errLines.join('\n')).toContain('names LNIK');
   });
 
   it('maps an invalid spec to a validation error with exit 3', async () => {

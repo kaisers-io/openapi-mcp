@@ -9,10 +9,15 @@ import {
   parseFilterPattern,
   SPEC_BUDGETS,
 } from '../src/index.ts';
-import type { FilterPattern, HttpMethod, NamedOperation, OperationRecord } from '../src/index.ts';
+import type {
+  FilterPattern,
+  NamedOperation,
+  OperationMethod,
+  OperationRecord,
+} from '../src/index.ts';
 
 const record = (
-  method: HttpMethod,
+  method: OperationMethod,
   path: string,
   operationId?: string,
   tags: readonly string[] = [],
@@ -185,6 +190,49 @@ describe('applyFilters — precedence', () => {
     expect(
       matchesOperation(parseFilterPattern('QUERY /pets/*'), record('query', '/pets/search')),
     ).toBe(true);
+  });
+
+  // OpenAPI 3.2 additionalOperations (issue #33)
+  describe('an additional method', () => {
+    const extra = named([
+      record('get', '/pets', 'listPets'),
+      record('LINK', '/pets/{petId}', 'linkPet'),
+      record('LINK', '/owners/{ownerId}'),
+    ]);
+
+    it('is not exposed by the read-only default', () => {
+      const decision = applyFilters(extra, [], []);
+      expect(exposedIds(decision)).toEqual(['listPets']);
+    });
+
+    it('is selected and denied by a "<METHOD> <path>" pattern like any method', () => {
+      const allowed = applyFilters(extra, patterns('LINK /pets/*'), []);
+      expect(exposedIds(allowed)).toEqual(['linkPet']);
+      const allow = patterns('LINK /**', 'GET /**');
+      const deny = patterns('LINK /owners/**');
+      expect(exposedIds(applyFilters(extra, allow, deny))).toEqual(['listPets', 'linkPet']);
+    });
+
+    it('rejects a method no operation declares, so a misspelling stays a usage error', () => {
+      for (const raw of ['LNIK /pets/*', 'UNLINK /pets/*']) {
+        const deny = patterns(raw);
+        expect(() => applyFilters(extra, [], deny)).toThrow(
+          expect.objectContaining({ code: 'usage' }) as Error,
+        );
+      }
+      const standard = named(fixture);
+      const allow = patterns('LINK /**');
+      expect(() => applyFilters(standard, allow, [])).toThrow(
+        /names LINK, which is not a standard method and no operation in the spec declares/u,
+      );
+    });
+
+    it('keeps a standard method that matches nothing a dead pattern, not an error', () => {
+      const decision = applyFilters(extra, patterns('PATCH /pets/*'), []);
+      expect(decision.deadPatterns).toEqual([
+        expect.objectContaining({ raw: 'PATCH /pets/*', flag: 'allow' }),
+      ]);
+    });
   });
 
   it('rule 3: denied read operations are removed from the default', () => {
@@ -368,7 +416,7 @@ describe('applyFilters — aggregate work budget', () => {
     // every pattern, plus the dead-pattern pass. Measured: 28,858,075 steps
     // (14.4% of the cap) at 4096 operations, about 0.2-0.7 s; 3,960,757 at 512.
     const resources = ['users', 'repos', 'orders', 'invoices', 'customers', 'payments'];
-    const methods: readonly HttpMethod[] = ['get', 'put', 'post', 'delete', 'patch'];
+    const methods: readonly OperationMethod[] = ['get', 'put', 'post', 'delete', 'patch'];
     const operations = Array.from({ length: SPEC_BUDGETS.maxOperationCount }, (_, index) => {
       const resource = resources[index % resources.length] ?? 'users';
       const method = methods[index % methods.length] ?? 'get';

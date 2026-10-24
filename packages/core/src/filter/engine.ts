@@ -1,7 +1,12 @@
-import { validationError } from '../errors.ts';
+import { usageError, validationError } from '../errors.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
-import { FILTER_WORK_BUDGET_EXCEEDED_MESSAGE, createMatchBudget, globMatches } from './pattern.ts';
+import {
+  FILTER_WORK_BUDGET_EXCEEDED_MESSAGE,
+  STANDARD_FILTER_METHODS,
+  createMatchBudget,
+  globMatches,
+} from './pattern.ts';
 import type { FilterPattern, MatchBudget } from './pattern.ts';
 
 // With no --allow, only these methods are exposed. QUERY (OpenAPI 3.2) is
@@ -45,7 +50,8 @@ export const matchesOperation = (
     return op.tags.some((tag) => globMatches(pattern.compiled, tag, budget));
   }
   if (pattern.kind === 'methodPath') {
-    // Normalize stores the method lowercase; the pattern carries it uppercase.
+    // Normalize stores a standard method lowercase and an additional one as
+    // declared (upper case); the pattern carries it uppercase.
     // The method is an equality test, never a glob — and checking it FIRST means
     // a method mismatch costs no matcher steps at all.
     return (
@@ -219,6 +225,29 @@ const deadPatternsFor = (
 // Scoping it per match would bound nothing: the reachable cost is the aggregate
 // over patterns x operations x candidate lengths, which is what measured 22.5 s
 // at the maximum admitted dimensions even with a non-backtracking matcher.
+// A "<METHOD> <path>" pattern may name a method outside HTTP_METHODS only
+// when an operation of this spec declares it (OpenAPI 3.2
+// `additionalOperations`). Anything else is a misspelling, which stays a
+// usage error as it was when only the standard methods were accepted: a
+// misspelled --deny method would otherwise deny nothing.
+const assertKnownMethods = (
+  patterns: readonly FilterPattern[],
+  records: readonly OperationRecord[],
+): void => {
+  const declared = new Set(records.map((op) => op.method.toUpperCase()));
+  const unknown = patterns.find(
+    (pattern) =>
+      pattern.kind === 'methodPath' &&
+      !STANDARD_FILTER_METHODS.has(pattern.method) &&
+      !declared.has(pattern.method),
+  );
+  if (unknown?.kind === 'methodPath') {
+    throw usageError(
+      `a "<METHOD> <path>" filter pattern names ${unknown.method}, which is not a standard method and no operation in the spec declares`,
+    );
+  }
+};
+
 export const applyFilters = (
   operations: readonly NamedOperation[],
   allow: readonly FilterPattern[],
@@ -226,6 +255,7 @@ export const applyFilters = (
   budget: MatchBudget = createMatchBudget(),
 ): FilterDecision => {
   const records = operations.map((entry) => entry.operation);
+  assertKnownMethods([...allow, ...deny], records);
   const exposed = operations.filter(({ operation }) => {
     // Rule 1: --deny always wins over --allow, no exceptions
     if (deny.some((pattern) => matchesOperation(pattern, operation, budget))) {

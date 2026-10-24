@@ -102,9 +102,11 @@ export {
 export type { Dereferencer, DereferencerOptions } from './spec/dereference.ts';
 export { HTTP_METHODS, normalizeSpec } from './spec/normalize.ts';
 export type {
+  AdditionalMethod,
   HttpMethod,
   NormalizedSpec,
   OmittedOperation,
+  OperationMethod,
   OperationRecord,
 } from './spec/normalize.ts';
 export {

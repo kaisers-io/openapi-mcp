@@ -66,6 +66,21 @@ export const operationKeysOf = (document: Record<string, unknown>): ReadonlySet<
         keys.add(operationKey(method, path));
       }
     }
+    // OpenAPI 3.2 `additionalOperations` (issue #33). Methods are case
+    // sensitive and only upper-case ones are served, so another spelling
+    // never keeps a served operation from being withheld.
+    const additional = (item as Record<string, unknown>)['additionalOperations'];
+    if (typeof additional === 'object' && additional !== null) {
+      for (const [method, operation] of Object.entries(additional)) {
+        if (
+          method === method.toUpperCase() &&
+          typeof operation === 'object' &&
+          operation !== null
+        ) {
+          keys.add(operationKey(method, path));
+        }
+      }
+    }
   }
   return keys;
 };

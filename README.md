@@ -239,7 +239,9 @@ Tool exposure is controlled with repeatable `--allow`/`--deny` patterns, matched
 three forms (case-sensitive, `*` for a single path segment, `**` for a deep match):
 
 - `readPets`, `read*` — operationId.
-- `GET /users/**` — `METHOD /path` (one space between method and path).
+- `GET /users/**` — `METHOD /path` (one space between method and path). The method is
+  upper case: a standard one, or one the spec declares under OpenAPI 3.2 `additionalOperations`
+  (such as `LINK`); any other method is a startup error.
 - `tag:admin*` — OpenAPI tags.
 
 Rules, no exceptions:
