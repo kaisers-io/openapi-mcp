@@ -274,6 +274,9 @@ Notes:
   Choose `all` (the default, also given as the bare flag) when the server sends `null` for
   required keys too. A key required only in another `allOf` member counts as optional.
 
+  To admit `null` for one property only, or to fix anything else in a spec you cannot
+  change, correct the spec with an OpenAPI Overlay instead: see [overlays](overlays.md).
+
   Not widened: `required` itself (a required key must still be present), array items (a
   `null` element is still refused), `additionalProperties` values, the root `data` value,
   request and input schemas, and the envelope fields (`status`, `contentType`, `headers`,

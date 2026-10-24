@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Guide: correcting a spec with an OpenAPI Overlay (#26).** `docs/overlays.md` shows how to
+  fix one detail of a spec you cannot change, such as a property the API returns as `null`
+  or an unhelpful operation description, with an Overlay 1.2 document applied by vacuum
+  0.35.1. It covers OpenAPI 3.0 and 3.1, the pitfalls (empty and too broad targets, action
+  order) and how to check the result before serving it. The example files in
+  `docs/overlays/` are tested against the real CLI.
 - **`serve --output-schema defs` (#9).** Shows each output schema with its repeated
   subschemas once under `$defs`, referenced with a local `$ref`, instead of written out in
   full every time. For the GitHub REST description (`--allow tag:repos`) `tools/list` shrinks

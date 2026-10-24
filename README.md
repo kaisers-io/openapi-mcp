@@ -417,6 +417,8 @@ benchmark gate are in [CONTRIBUTING.md](CONTRIBUTING.md). Report security proble
 
 - [`docs/configuration.md`](docs/configuration.md) — every flag, grouped by command, with its
   meaning, default, and an example.
+- [`docs/overlays.md`](docs/overlays.md) — correcting one detail of a spec you cannot change
+  with an OpenAPI Overlay, step by step and checked.
 - [`docs/security.md`](docs/security.md) — the threat model: untrusted spec text, the egress
   trust boundary, credential hygiene, and HTTP-mode authentication.
 
