@@ -4,6 +4,7 @@ import {
   buildTools,
   createDereferencer,
   declaredOpenapiVersion,
+  describeSecurityScheme,
   normalizeSpec,
   SYSTEM_HEADERS,
   validateOpenApiDocument,
@@ -192,6 +193,32 @@ describe('OpenAPI 3.2 (issue #33)', () => {
     expect(spec.securitySchemes).toEqual([
       { name: 'device', type: 'oauth2', flows: ['deviceAuthorization'] },
     ]);
+  });
+
+  it('marks a scheme the spec deprecates in the credential hint', () => {
+    const spec = normalizeSpec(
+      doc32(
+        { '/a': { get: { responses: okResponses } } },
+        {
+          components: {
+            securitySchemes: {
+              old: { type: 'apiKey', in: 'header', name: 'X-Key', deprecated: true },
+              current: { type: 'apiKey', in: 'header', name: 'X-Token' },
+            },
+          },
+        },
+      ),
+      '3.2',
+    );
+    const [old, current] = spec.securitySchemes ?? [];
+    expect(old).toMatchObject({ name: 'old', deprecated: true });
+    expect(current).not.toHaveProperty('deprecated');
+    expect(old === undefined ? '' : describeSecurityScheme(old)).toContain(
+      '(apiKey in header "X-Key", deprecated)',
+    );
+    expect(current === undefined ? '' : describeSecurityScheme(current)).not.toContain(
+      'deprecated',
+    );
   });
 
   it.each([

@@ -166,7 +166,8 @@ export const describeSecurityScheme = (scheme: SecurityScheme): string => {
   if (scheme.type === 'unsupported') {
     return `${label} — not supported: ${reason ?? 'malformed security scheme'}`;
   }
-  return `${label} (${schemeKind(scheme)}) — ${reason ?? supplyHint(scheme)}`;
+  const deprecated = scheme.deprecated === true ? ', deprecated' : '';
+  return `${label} (${schemeKind(scheme)}${deprecated}) — ${reason ?? supplyHint(scheme)}`;
 };
 
 // The operation fields this module reads; OperationRecord satisfies it.

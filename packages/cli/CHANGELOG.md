@@ -22,10 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **OpenAPI 3.2 (#33).** 3.2.x specs are validated against the official 3.2 schema and served
   like 3.1 ones: JSON Schema 2020-12 dialect, `$ref` siblings, `components.mediaTypes`
-  references, and the `deviceAuthorization` OAuth flow in the credential hints. Operations
-  that use a 3.2 feature not mapped to tools yet (the `QUERY` method, `additionalOperations`,
-  `querystring` parameters) are omitted one by one with a reason, so the rest of the spec is
-  served. Before, every 3.2 spec was refused.
+  references, and the `deviceAuthorization` OAuth flow in the credential hints. A security
+  scheme the spec marks `deprecated` says so in the hint. Operations that use a 3.2 feature not
+  mapped to tools yet (the `QUERY` method, `additionalOperations`, `querystring` parameters)
+  are omitted one by one with a reason, so the rest of the spec is served. Before, every 3.2
+  spec was refused. **Downgrading:** a cache entry for a 3.2 spec cannot be read by 0.4.1 or
+  earlier, which reports it as unusable; run `openapi-mcp cache clear` for that entry first.
 - **Guide: correcting a spec with an OpenAPI Overlay (#26).** `docs/overlays.md` shows how to
   fix one detail of a spec you cannot change, such as a property the API returns as `null`
   or an unhelpful operation description, with an Overlay 1.2 document applied by vacuum
