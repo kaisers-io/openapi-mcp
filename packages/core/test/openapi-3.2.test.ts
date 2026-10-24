@@ -165,6 +165,67 @@ describe('OpenAPI 3.2 (issue #33)', () => {
     });
   });
 
+  it.each([
+    ['a self-referencing', { Loop: { $ref: '#/components/mediaTypes/Loop' } }],
+    [
+      'a mutually referencing',
+      {
+        Loop: { $ref: '#/components/mediaTypes/Other' },
+        Other: { $ref: '#/components/mediaTypes/Loop' },
+      },
+    ],
+  ])(
+    'keeps %s components.mediaTypes $ref fail-closed in request and response',
+    (_label, mediaTypes) => {
+      const loop = { 'application/json': { $ref: '#/components/mediaTypes/Loop' } };
+      const document = doc32(
+        {
+          '/a': {
+            post: {
+              operationId: 'postA',
+              requestBody: { required: true, content: loop },
+              responses: { '200': { description: 'ok', content: loop } },
+            },
+          },
+          '/b': {
+            get: {
+              operationId: 'getB',
+              responses: { '200': { description: 'ok', content: loop } },
+            },
+          },
+        },
+        { components: { mediaTypes } },
+      );
+      const built = build(document);
+      expect(built.omitted).toEqual([
+        expect.objectContaining({
+          method: 'POST',
+          path: '/a',
+          reason: expect.stringContaining('the request body media type is a cyclic $ref') as string,
+        }),
+      ]);
+      expect(built.tools.map((tool) => tool.toolName)).toEqual(['getB']);
+      // No output schema rather than "any JSON"
+      expect(built.tools[0]?.outputSchema).toBeUndefined();
+    },
+  );
+
+  it('still accepts a schema-less media type as any JSON body', () => {
+    const built = build(
+      doc32({
+        '/a': {
+          post: {
+            operationId: 'postA',
+            requestBody: { required: true, content: { 'application/json': {} } },
+            responses: okResponses,
+          },
+        },
+      }),
+    );
+    expect(built.omitted).toEqual([]);
+    expect(built.tools[0]?.inputSchema.safeParse({ body: { anything: true } }).success).toBe(true);
+  });
+
   it('lists the 3.2 device authorization flow among an oauth2 scheme flows', () => {
     const spec = normalizeSpec(
       doc32(

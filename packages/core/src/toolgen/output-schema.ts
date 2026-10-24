@@ -211,7 +211,10 @@ export const explainOutputSchema = (
       return {};
     }
     const entry = content[contentType];
-    if (!isRecord(entry)) {
+    // An unresolved (cyclic) Media Type $ref, possible from OpenAPI 3.2 on, is
+    // no schema-less media type: withhold the output schema, as for a cyclic
+    // response $ref, instead of advertising any JSON (issue #33)
+    if (!isRecord(entry) || Object.hasOwn(entry, '$ref')) {
       return {};
     }
     // Response mode: undeclared fields stay allowed unless the spec says

@@ -25,7 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   references, and the `deviceAuthorization` OAuth flow in the credential hints. A security
   scheme the spec marks `deprecated` says so in the hint. Operations that use a 3.2 feature not
   mapped to tools yet (the `QUERY` method, `additionalOperations`, `querystring` parameters)
-  are omitted one by one with a reason, so the rest of the spec is served. Before, every 3.2
+  are omitted one by one with a reason, so the rest of the spec is served. A cyclic
+  `components.mediaTypes` reference stays fail-closed: the operation is omitted for a request
+  body, and the output schema is withheld for a response. Before, every 3.2
   spec was refused. **Downgrading:** a cache entry for a 3.2 spec cannot be read by 0.4.1 or
   earlier, which reports it as unusable; run `openapi-mcp cache clear` for that entry first.
 - **Guide: correcting a spec with an OpenAPI Overlay (#26).** `docs/overlays.md` shows how to
