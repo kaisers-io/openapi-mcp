@@ -47,7 +47,7 @@ const opts = {
   trustSpecUpdates: false,
   cacheRoot: '/cache',
   nowMs: 10_000,
-  allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
+  allow: HTTP_METHODS.map((method) => parseFilterPattern(`route:${method.toUpperCase()} /**`)),
 };
 
 // A spec body, 304 (not modified), or 'fail' (the fetch rejects).

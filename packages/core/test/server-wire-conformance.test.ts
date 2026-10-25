@@ -277,7 +277,7 @@ const pipelineOpts = {
   timeoutMs: 30_000,
   cwd: '/nonexistent',
   allowPrivateNetwork: false,
-  allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
+  allow: HTTP_METHODS.map((method) => parseFilterPattern(`route:${method.toUpperCase()} /**`)),
   deny: [],
   ttlMs: 3_600_000,
   trustSpecUpdates: false,

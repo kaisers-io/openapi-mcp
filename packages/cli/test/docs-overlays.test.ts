@@ -141,7 +141,7 @@ describe('openapi-mcp on the corrected specs (issue #26)', () => {
   const tools = (spec: string, cacheHome: string): Record<string, unknown> => {
     const result = spawnSync(
       process.execPath,
-      [CLI_ENTRY, '--json', 'tools', '--spec', spec, '--allow', '**'],
+      [CLI_ENTRY, '--json', 'tools', '--spec', spec, '--allow', 'path:/**'],
       {
         cwd: OVERLAYS_DIR,
         env: { ...process.env, HOME: cacheHome, USERPROFILE: cacheHome },
@@ -206,7 +206,7 @@ describe('openapi-mcp on the corrected specs (issue #26)', () => {
         '--spec',
         spec,
         '--allow',
-        '**',
+        'path:/**',
         '--base-url',
         baseUrl,
       ],

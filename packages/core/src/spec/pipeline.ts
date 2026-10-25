@@ -11,6 +11,7 @@ import { CACHE_META_SCHEMA_VERSION } from '../schemas/cache.ts';
 import { usageError, validationError } from '../errors.ts';
 import { applyFilters } from '../filter/apply.ts';
 import type { NotExposedOperation } from '../filter/apply.ts';
+import type { CaseCollision } from '../filter/case-collisions.ts';
 import type { DeadPattern } from '../filter/engine.ts';
 import type { FilterPattern } from '../filter/pattern.ts';
 import type { DnsLookup } from '../http/egress.ts';
@@ -84,6 +85,8 @@ export type SpecPipelineResult = {
   // The operations --allow, --deny or the read-only default leave out, each
   // with its decision (issue #41)
   filteredOut: readonly NotExposedOperation[];
+  // --allow/--deny patterns that match values differing only by case (#42)
+  caseCollisions: readonly CaseCollision[];
   // Set when this run could not record its revalidation because another
   // process holds the cache entry's writer lock
   // (kaisers-io/openapi-mcp-archive#65): "held" while a live writer is busy,
@@ -617,6 +620,7 @@ const finish = (
     namedOperations: exposed,
     withheldOperations: withholding.withheld,
     filteredOut: filtered.filteredOut,
+    caseCollisions: filtered.caseCollisions,
     contentHash: input.contentHash,
     ...(candidateContentHash === undefined ? {} : { candidateContentHash }),
     displaySource: input.displaySource,

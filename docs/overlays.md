@@ -147,8 +147,8 @@ compare your output with them.
 
    ```sh
    REVIEW_HOME="$(mktemp -d)"
-   HOME="$REVIEW_HOME" openapi-mcp --json tools --spec shop-3.1.json --allow '**'
-   HOME="$REVIEW_HOME" openapi-mcp --json tools --spec shop-3.1.nullable-note.json --allow '**'
+   HOME="$REVIEW_HOME" openapi-mcp --json tools --spec shop-3.1.json --allow 'operationId:*'
+   HOME="$REVIEW_HOME" openapi-mcp --json tools --spec shop-3.1.nullable-note.json --allow 'operationId:*'
    ```
 
    Apart from `source` and `contentHash`, both outputs must be the same. Delete

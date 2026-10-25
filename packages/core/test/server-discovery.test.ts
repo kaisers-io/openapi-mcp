@@ -192,12 +192,12 @@ describe('discoverApprovalWarning', () => {
   it('says nothing when every exposed operation is read-only, or outside discover', () => {
     const readOnly = snapshotFor('discover');
     expect(discoverApprovalWarning(readOnly.toolMode, readOnly.operations)).toBeUndefined();
-    const perOperation = snapshotFor('per-operation', { allow: ['**'] });
+    const perOperation = snapshotFor('per-operation', { allow: ['path:/**'] });
     expect(discoverApprovalWarning(perOperation.toolMode, perOperation.operations)).toBeUndefined();
   });
 
   it('names the non-read-only operations one call_operation approval would cover', () => {
-    const widened = snapshotFor('discover', { allow: ['**'] });
+    const widened = snapshotFor('discover', { allow: ['path:/**'] });
     expect(discoverApprovalWarning(widened.toolMode, widened.operations)).toBe(
       '--tool-mode discover exposes 2 non-read-only operation(s) (createThingItem, deleteThing) through the single call_operation tool: a host approval of call_operation covers all of them, writes included. Narrow --allow to read-only operations, or use --tool-mode per-operation to approve each operation separately',
     );
@@ -206,8 +206,8 @@ describe('discoverApprovalWarning', () => {
 
 describe('buildSnapshot — tool modes', () => {
   it('leaves the per-operation snapshot unchanged: no option and an explicit per-operation produce the same tools/list bytes', () => {
-    const implicit = snapshotFor(undefined, { allow: ['**'] });
-    const explicit = snapshotFor('per-operation', { allow: ['**'] });
+    const implicit = snapshotFor(undefined, { allow: ['path:/**'] });
+    const explicit = snapshotFor('per-operation', { allow: ['path:/**'] });
     const wire = (snapshot: ServerSnapshot) =>
       JSON.stringify(snapshot.tools.map((tool) => tool.wireTool));
     expect(wire(explicit)).toBe(wire(implicit));
@@ -225,7 +225,7 @@ describe('buildSnapshot — tool modes', () => {
   });
 
   it('lists exactly the meta tool and the three discovery tools under discover, keeping every exposed operation behind them', () => {
-    const snapshot = snapshotFor('discover', { allow: ['**'] });
+    const snapshot = snapshotFor('discover', { allow: ['path:/**'] });
     expect(snapshot.tools.map((tool) => tool.name)).toEqual([
       'openapi_mcp_status',
       'search_operations',
@@ -261,21 +261,25 @@ describe('buildSnapshot — tool modes', () => {
       openWorldHint: true,
     });
     // A POST (not idempotent) and a DELETE (destructive) are exposed.
-    expect(annotationsOf(snapshotFor('discover', { allow: ['**'] }))).toEqual({
+    expect(annotationsOf(snapshotFor('discover', { allow: ['path:/**'] }))).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     });
     // GETs plus a DELETE only: destructive, but every mutating op is idempotent.
-    expect(annotationsOf(snapshotFor('discover', { allow: ['list*', 'get*', 'delete*'] }))).toEqual(
-      {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: true,
-        openWorldHint: true,
-      },
-    );
+    expect(
+      annotationsOf(
+        snapshotFor('discover', {
+          allow: ['operationId:list*', 'operationId:get*', 'operationId:delete*'],
+        }),
+      ),
+    ).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
+    });
     for (const name of ['search_operations', 'describe_operation']) {
       expect(snapshotFor('discover').toolsByName[name]?.wireTool.annotations).toEqual({
         readOnlyHint: true,
@@ -296,8 +300,8 @@ describe('dispatcher — discover mode', () => {
   });
 
   it('describe_operation returns the listed wire tool, its output schema only when asked (#9)', async () => {
-    const perOperation = snapshotFor('per-operation', { allow: ['**'] });
-    const dispatcher = dispatcherFor(snapshotFor('discover', { allow: ['**'] }));
+    const perOperation = snapshotFor('per-operation', { allow: ['path:/**'] });
+    const dispatcher = dispatcherFor(snapshotFor('discover', { allow: ['path:/**'] }));
     for (const name of ['listThings', 'createThingItem', 'deleteThing']) {
       const listed = perOperation.toolsByName[name]?.wireTool;
       const full = outcomeOf(
@@ -321,7 +325,7 @@ describe('dispatcher — discover mode', () => {
   });
 
   it('describe_operation keeps the output schema of an operation that accepts _fields (#9)', async () => {
-    const { exposed } = applyFilters(OPERATIONS, [parseFilterPattern('**')], []);
+    const { exposed } = applyFilters(OPERATIONS, [parseFilterPattern('path:/**')], []);
     const built = buildTools(exposed, {
       reservedHeaders: SYSTEM_HEADERS,
       openapiVersion: '3.1',
@@ -434,8 +438,12 @@ describe('dispatcher — discover mode', () => {
 
   it.each([
     ['a write operation hidden by the read-only default', {}, 'createThingItem'],
-    ['an operation excluded by --deny', { allow: ['**'], deny: ['deleteThing'] }, 'deleteThing'],
-    ['an operation outside --allow', { allow: ['listThings'] }, 'getThing'],
+    [
+      'an operation excluded by --deny',
+      { allow: ['path:/**'], deny: ['operationId:deleteThing'] },
+      'deleteThing',
+    ],
+    ['an operation outside --allow', { allow: ['operationId:listThings'] }, 'getThing'],
     ['the meta tool', {}, 'openapi_mcp_status'],
     ['a discovery tool', {}, 'call_operation'],
     ['an inherited property name', {}, '__proto__'],
@@ -463,12 +471,12 @@ describe('dispatcher — discover mode', () => {
     async (_label, args) => {
       const executor = vi.fn<ToolExecutor>(() => Promise.resolve(textOutcome('reached', false)));
       const direct = outcomeOf(
-        await dispatcherFor(snapshotFor('per-operation', { allow: ['**'] }), { executor }).call(
-          call('createThingItem', args),
-        ),
+        await dispatcherFor(snapshotFor('per-operation', { allow: ['path:/**'] }), {
+          executor,
+        }).call(call('createThingItem', args)),
       );
       const viaCall = outcomeOf(
-        await dispatcherFor(snapshotFor('discover', { allow: ['**'] }), { executor }).call(
+        await dispatcherFor(snapshotFor('discover', { allow: ['path:/**'] }), { executor }).call(
           call('call_operation', { name: 'createThingItem', arguments: args }),
         ),
       );
@@ -492,12 +500,12 @@ describe('dispatcher — discover mode', () => {
     const directArgs = hostileArgs();
     const viaCallArgs = { name: 'createThingItem', arguments: hostileArgs() };
     const direct = outcomeOf(
-      await dispatcherFor(snapshotFor('per-operation', { allow: ['**'] })).call(
+      await dispatcherFor(snapshotFor('per-operation', { allow: ['path:/**'] })).call(
         call('createThingItem', directArgs),
       ),
     );
     const viaCall = outcomeOf(
-      await dispatcherFor(snapshotFor('discover', { allow: ['**'] })).call(
+      await dispatcherFor(snapshotFor('discover', { allow: ['path:/**'] })).call(
         call('call_operation', viaCallArgs),
       ),
     );
@@ -662,11 +670,11 @@ describe('call_operation — captured upstream request', () => {
   ])(
     'sends the same upstream request and returns the same result for %s',
     async (_label, name, args) => {
-      const direct = await capture(snapshotFor('per-operation', { allow: ['**'] }), {
+      const direct = await capture(snapshotFor('per-operation', { allow: ['path:/**'] }), {
         name,
         arguments: args,
       });
-      const viaCall = await capture(snapshotFor('discover', { allow: ['**'] }), {
+      const viaCall = await capture(snapshotFor('discover', { allow: ['path:/**'] }), {
         name: 'call_operation',
         arguments: { name, arguments: args },
       });
@@ -677,7 +685,7 @@ describe('call_operation — captured upstream request', () => {
   );
 
   it('really did send the inputs (the comparison above is not between two empty requests)', async () => {
-    const { captured } = await capture(snapshotFor('discover', { allow: ['**'] }), {
+    const { captured } = await capture(snapshotFor('discover', { allow: ['path:/**'] }), {
       name: 'call_operation',
       arguments: {
         name: 'createThingItem',
@@ -709,7 +717,7 @@ describe('call_operation — captured upstream request', () => {
         responses: { '200': { description: 'ok' } },
       },
     ]);
-    const snapshot = snapshotFor('discover', { allow: ['! /'] }, { operations });
+    const snapshot = snapshotFor('discover', { allow: ['route:! /'] }, { operations });
     const dispatcher = dispatcherFor(snapshot);
     const found = outcomeOf(await dispatcher.call(call('search_operations', {})));
     const [result] = (found.structuredContent as { results: { name: string }[] }).results;

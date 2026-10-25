@@ -67,7 +67,7 @@ const summaryOf = (operation: { method: string; path: string; decision: string }
 
 describe('not-exposed inventory', () => {
   it('gives every filtered operation its decision, the deny pattern included', () => {
-    const { filtered } = decide(['**'], ['DELETE /**']);
+    const { filtered } = decide(['operationId:*'], ['method:delete']);
     expect(filtered.exposed.map((named) => named.toolName)).toEqual(['listOrders', 'createOrder']);
     expect(filtered.filteredOut).toEqual([
       {
@@ -77,11 +77,12 @@ describe('not-exposed inventory', () => {
         toolName: 'deleteOrder',
         tags: ['Orders'],
         decision: 'denied',
-        pattern: 'DELETE /**',
-        reason: 'excluded by --deny "DELETE /**"',
+        pattern: 'method:delete',
+        reason: 'excluded by --deny "method:delete"',
       },
       {
-        // Item 1 of the issue: no operationId, so `**` does not select it
+        // Item 1 of the issue: no operationId, so `operationId:*` does not
+        // select it (`path:/**` would)
         method: 'GET',
         path: '/reports',
         toolName: 'get_reports',
@@ -147,28 +148,31 @@ describe('not-exposed inventory', () => {
 describe('dead patterns that name an omitted operation', () => {
   // Item 4 of the issue: the suggestion used to point at another operation
   it('says so instead of suggesting a different operation, by operationId or tag', () => {
-    const { filtered } = decide(['listCustomers', 'tag:Customers'], ['searchOrders']);
+    const { filtered } = decide(
+      ['operationId:listCustomers', 'tag:Customers'],
+      ['operationId:searchOrders'],
+    );
     expect(filtered.deadPatterns).toEqual([
-      { raw: 'listCustomers', flag: 'allow', notExposed: true },
+      { raw: 'operationId:listCustomers', flag: 'allow', notExposed: true },
       { raw: 'tag:Customers', flag: 'allow', notExposed: true },
-      { raw: 'searchOrders', flag: 'deny', notExposed: true },
+      { raw: 'operationId:searchOrders', flag: 'deny', notExposed: true },
     ]);
   });
 
   it('keeps the suggestion for a pattern that names nothing', () => {
-    const { filtered } = decide(['listOrdrs'], []);
+    const { filtered } = decide(['operationId:listOrdrs'], []);
     expect(filtered.deadPatterns).toEqual([
-      { raw: 'listOrdrs', flag: 'allow', suggestion: 'listOrders' },
+      { raw: 'operationId:listOrdrs', flag: 'allow', suggestion: 'operationId:listOrders' },
     ]);
   });
 
   // Item 5 of the issue: SEARCH is declared, by an omitted operation
   it('accepts a method only an omitted operation declares', () => {
-    const { filtered } = decide([], ['SEARCH /search']);
+    const { filtered } = decide([], ['route:SEARCH /search']);
     expect(filtered.deadPatterns).toEqual([
-      { raw: 'SEARCH /search', flag: 'deny', notExposed: true },
+      { raw: 'route:SEARCH /search', flag: 'deny', notExposed: true },
     ]);
-    expect(() => decide([], ['PURGE /search'])).toThrow(
+    expect(() => decide([], ['route:PURGE /search'])).toThrow(
       'names PURGE, which is not a standard method and no operation in the spec declares',
     );
   });
@@ -196,22 +200,22 @@ describe('an omitted method that is not upper case', () => {
     const named = assignToolNames(spec.operations);
     const filtered = applyFilters(
       named,
-      patterns('lookupItems'),
+      patterns('operationId:lookupItems'),
       patterns('tag:Lookup'),
       undefined,
       spec.omitted,
     );
     expect(filtered.deadPatterns).toEqual([
-      { raw: 'lookupItems', flag: 'allow', notExposed: true },
+      { raw: 'operationId:lookupItems', flag: 'allow', notExposed: true },
       { raw: 'tag:Lookup', flag: 'deny', notExposed: true },
     ]);
     const tools = buildTools(named, { reservedHeaders: new Set(), openapiVersion: '3.2' });
     expect(
-      applyOutputSchemaOptOut(tools.tools, patterns('lookupItems'), spec).deadPatterns,
-    ).toEqual([{ raw: 'lookupItems', flag: 'omit-output-schema', notExposed: true }]);
+      applyOutputSchemaOptOut(tools.tools, patterns('operationId:lookupItems'), spec).deadPatterns,
+    ).toEqual([{ raw: 'operationId:lookupItems', flag: 'omit-output-schema', notExposed: true }]);
     // It declares no method a `METHOD /path` pattern could name
     expect(() =>
-      applyFilters(named, [], patterns('SEARCH /lookup'), undefined, spec.omitted),
+      applyFilters(named, [], patterns('route:SEARCH /lookup'), undefined, spec.omitted),
     ).toThrow('names SEARCH, which is not a standard method');
   });
 });

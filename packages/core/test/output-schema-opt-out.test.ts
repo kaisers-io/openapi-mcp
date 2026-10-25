@@ -112,80 +112,99 @@ describe('applyOutputSchemaOptOut — selection', () => {
         .tools.filter((tool) => tool.outputSchemaOptedOut === true)
         .map((tool) => tool.toolName)
         .toSorted();
-    expect(select('getItem')).toEqual(['getItem']);
-    expect(select('GET /items/*')).toEqual(['getItem']);
+    expect(select('operationId:getItem')).toEqual(['getItem']);
+    expect(select('route:GET /items/*')).toEqual(['getItem']);
     expect(select('tag:items')).toEqual(['getItem', 'listItems']);
     // A tool without an output schema matches but has nothing to opt out of
-    expect(select('get*', 'DELETE /items/{id}')).toEqual(['getItem']);
+    expect(select('operationId:get*', 'route:DELETE /items/{id}')).toEqual(['getItem']);
     expect(select()).toEqual([]);
   });
 
   it('reports a pattern dead only when it matches no generated tool', () => {
     // Overlapping patterns: the second one matches too, so it is not dead
-    expect(optOut(['get*', 'getItem']).deadPatterns).toEqual([]);
-    expect(optOut(['getIte']).deadPatterns).toEqual([
-      { raw: 'getIte', flag: 'omit-output-schema', suggestion: 'getItem' },
+    expect(optOut(['operationId:get*', 'operationId:getItem']).deadPatterns).toEqual([]);
+    expect(optOut(['operationId:getIte']).deadPatterns).toEqual([
+      { raw: 'operationId:getIte', flag: 'omit-output-schema', suggestion: 'operationId:getItem' },
     ]);
     // An operation the filters leave out does not count
     const filtered = generate(OPERATIONS.filter(({ toolName }) => toolName !== 'getCharge'));
-    expect(optOut(['getCharge'], filtered).deadPatterns).toMatchObject([{ raw: 'getCharge' }]);
+    expect(optOut(['operationId:getCharge'], filtered).deadPatterns).toMatchObject([
+      { raw: 'operationId:getCharge' },
+    ]);
   });
 
   // Review of #13: a closest match would point at an unrelated tool here
   // (getItem for getCharge), while the reason is that it is not exposed
   it('says a dead pattern names an operation that is not exposed, without a suggestion', () => {
     const filtered = generate(OPERATIONS.filter(({ toolName }) => toolName !== 'getItem'));
-    expect(optOut(['getItem'], filtered).deadPatterns).toEqual([
-      { raw: 'getItem', flag: 'omit-output-schema', notExposed: true },
+    expect(optOut(['operationId:getItem'], filtered).deadPatterns).toEqual([
+      { raw: 'operationId:getItem', flag: 'omit-output-schema', notExposed: true },
     ]);
     // An operation normalization omitted is known by method and path only
-    expect(optOut(['GET /items/*/cookie']).deadPatterns).toEqual([
-      { raw: 'GET /items/*/cookie', flag: 'omit-output-schema', notExposed: true },
+    expect(optOut(['route:GET /items/*/cookie']).deadPatterns).toEqual([
+      { raw: 'route:GET /items/*/cookie', flag: 'omit-output-schema', notExposed: true },
     ]);
     // Also for a method only an omitted OpenAPI 3.2 operation declares
-    expect(optOut(['SEARCH /items']).deadPatterns).toEqual([
-      { raw: 'SEARCH /items', flag: 'omit-output-schema', notExposed: true },
+    expect(optOut(['route:SEARCH /items']).deadPatterns).toEqual([
+      { raw: 'route:SEARCH /items', flag: 'omit-output-schema', notExposed: true },
     ]);
     // A pattern naming nothing in the spec keeps its suggestion
-    expect(optOut(['listItem'], filtered).deadPatterns).toEqual([
-      { raw: 'listItem', flag: 'omit-output-schema', suggestion: 'listItems' },
+    expect(optOut(['operationId:listItem'], filtered).deadPatterns).toEqual([
+      {
+        raw: 'operationId:listItem',
+        flag: 'omit-output-schema',
+        suggestion: 'operationId:listItems',
+      },
     ]);
   });
 
   // Review of #13: such a pattern changes nothing, which should not be silent
   it('reports a pattern that matches only tools without an output schema', () => {
-    expect(optOut(['deleteItem', 'getCharge', 'getItem']).ineffectivePatterns).toEqual([
-      'deleteItem',
-      'getCharge',
-    ]);
+    expect(
+      optOut(['operationId:deleteItem', 'operationId:getCharge', 'operationId:getItem'])
+        .ineffectivePatterns,
+    ).toEqual(['operationId:deleteItem', 'operationId:getCharge']);
     // One matched tool with a schema is enough to make it effective
-    expect(optOut(['tag:items', '*Item']).ineffectivePatterns).toEqual([]);
+    expect(optOut(['tag:items', 'operationId:*Item']).ineffectivePatterns).toEqual([]);
   });
 
   // Review of #13: matching before toolgen counted an operation that never
   // becomes a tool, so --strict-filters let such a pattern through
   it('reports a pattern dead when it matches only an operation toolgen omits', () => {
     expect(generate(OPERATIONS).map((tool) => tool.toolName)).not.toContain('searchItems');
-    expect(optOut(['searchItems']).deadPatterns).toMatchObject([{ raw: 'searchItems' }]);
-    expect(optOut(['GET /search']).deadPatterns).toMatchObject([{ raw: 'GET /search' }]);
+    expect(optOut(['operationId:searchItems']).deadPatterns).toMatchObject([
+      { raw: 'operationId:searchItems' },
+    ]);
+    expect(optOut(['route:GET /search']).deadPatterns).toMatchObject([
+      { raw: 'route:GET /search' },
+    ]);
   });
 
   it('rejects a method that is neither standard nor declared by the spec', () => {
-    expect(() => optOut(['FOO /items'])).toThrow(/names FOO, which is not a standard method/u);
+    expect(() => optOut(['route:FOO /items'])).toThrow(
+      /names FOO, which is not a standard method/u,
+    );
     // `link` was omitted as not upper case, so it declares no LINK method
-    expect(() => optOut(['LINK /items'])).toThrow(/names LINK, which is not a standard method/u);
+    expect(() => optOut(['route:LINK /items'])).toThrow(
+      /names LINK, which is not a standard method/u,
+    );
   });
 
   it('returns the tools unchanged without patterns', () => {
     const tools = generate(OPERATIONS);
-    expect(optOut([], tools)).toEqual({ tools, deadPatterns: [], ineffectivePatterns: [] });
+    expect(optOut([], tools)).toEqual({
+      tools,
+      deadPatterns: [],
+      ineffectivePatterns: [],
+      caseCollisions: [],
+    });
   });
 });
 
 describe('applyOutputSchemaOptOut — the opted-out tools', () => {
   it('drops the output schema of the matching tool only and marks it', () => {
     const strict = build([], {});
-    const optedOut = build(['getItem'], {});
+    const optedOut = build(['operationId:getItem'], {});
     const tool = byName(optedOut, 'getItem');
     expect(tool.outputSchema).toBeUndefined();
     expect(tool.outputSchemaOptedOut).toBe(true);
@@ -198,14 +217,17 @@ describe('applyOutputSchemaOptOut — the opted-out tools', () => {
   });
 
   it('does not mark a tool that has no output schema anyway', () => {
-    const tools = build(['deleteItem', 'getCharge'], {});
+    const tools = build(['operationId:deleteItem', 'operationId:getCharge'], {});
     expect(byName(tools, 'deleteItem').outputSchemaOptedOut).toBeUndefined();
     // GetCharge documents `default`, so it has no schema without the flag
     expect(byName(tools, 'getCharge').outputSchemaOptedOut).toBeUndefined();
   });
 
   it('clears the markers of the schema it drops', () => {
-    const widened = build(['getItem', 'getCharge'], { nullable: true, defaultIsError: true });
+    const widened = build(['operationId:getItem', 'operationId:getCharge'], {
+      nullable: true,
+      defaultIsError: true,
+    });
     for (const name of ['getItem', 'getCharge']) {
       const tool = byName(widened, name);
       expect(tool.outputSchemaOptedOut).toBe(true);
@@ -233,7 +255,7 @@ describe('mapResponse for an opted-out tool', () => {
       maxTextBytes: 64,
     });
   const strict = byName(build([], {}), 'getItem');
-  const optedOut = byName(build(['getItem'], {}), 'getItem');
+  const optedOut = byName(build(['operationId:getItem'], {}), 'getItem');
 
   it('returns a body that does not match the spec as text instead of failing', () => {
     const mismatch = '{"id":"abc-123","name":"thing"}';
@@ -302,7 +324,7 @@ describe('_fields on a sequential response without an output schema', () => {
 
   it('projects the items of an opted-out 3.2 tool as the structured path does', () => {
     const strict = mixed('3.2');
-    const [optedOut] = applyOutputSchemaOptOut([strict], patterns('getMixed'), {
+    const [optedOut] = applyOutputSchemaOptOut([strict], patterns('operationId:getMixed'), {
       operations: [strict.operation],
       omitted: [],
     }).tools;
@@ -346,7 +368,7 @@ describe('discover mode for an opted-out tool', () => {
       openapiVersion: '3.1',
     });
     const snapshot = buildSnapshot(
-      { ...built, tools: optOut(['getItem'], built.tools).tools },
+      { ...built, tools: optOut(['operationId:getItem'], built.tools).tools },
       {
         spec: { title: 't', specVersion: '1', omitted: [] },
         contentHash: 'h',

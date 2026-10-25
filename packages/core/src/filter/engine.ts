@@ -24,10 +24,53 @@ export type DeadPattern = {
   notExposed?: true;
 };
 
-// What a pattern is matched against: an operation of the spec, or an
-// omitted one with its provenance (issue #41)
+// What a pattern is matched against: an operation of the spec with its tool
+// name, or an omitted one with its provenance (issue #41)
 export type FilterTarget = Pick<OperationRecord, 'path' | 'operationId' | 'tags'> & {
   method: string;
+  toolName?: string;
+};
+
+// Selectors match regardless of case (issue #42): a target's values are
+// lowered once, with JavaScript's Unicode lowercasing (no normalization),
+// and the work is charged to the budget like any other matching step
+const spendSteps = (budget: MatchBudget, steps: number): void => {
+  budget.remaining -= steps;
+  if (budget.remaining < 0) {
+    throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
+  }
+};
+
+type Attribute = 'path' | 'operationId' | 'toolName' | 'tags';
+const ATTRIBUTE_OF = {
+  path: 'path',
+  operationId: 'operationId',
+  name: 'toolName',
+  tag: 'tags',
+} as const satisfies Record<string, Attribute>;
+type Lowered = { source: readonly string[]; lowered: readonly string[] };
+const foldedTargets = new WeakMap<FilterTarget, Map<Attribute, Lowered>>();
+const sameValues = (left: readonly string[], right: readonly string[]): boolean =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
+// One attribute of a target in lower case, lowered on first use. The entry
+// keeps the values it was made from, so a target changed since is lowered
+// again rather than matched by its old values.
+const folded = (op: FilterTarget, attribute: Attribute, budget: MatchBudget): readonly string[] => {
+  const source =
+    attribute === 'tags' ? [...op.tags] : [op[attribute]].filter((value) => value !== undefined);
+  const cache = foldedTargets.get(op) ?? new Map<Attribute, Lowered>();
+  foldedTargets.set(op, cache);
+  const known = cache.get(attribute);
+  if (known !== undefined && sameValues(known.source, source)) {
+    return known.lowered;
+  }
+  spendSteps(
+    budget,
+    source.reduce((sum, value) => sum + value.length, 0),
+  );
+  const lowered = source.map((value) => value.toLowerCase());
+  cache.set(attribute, { source, lowered });
+  return lowered;
 };
 
 // The budget is threaded through rather than created per call, because the
@@ -39,23 +82,43 @@ export const matchesOperation = (
   op: FilterTarget,
   budget: MatchBudget = createMatchBudget(),
 ): boolean => {
-  // Every comparison uses the raw normalized spec value. Sanitizing first
+  // Every comparison uses the normalized spec value, only lowered: sanitizing
   // would collapse two distinct operations onto one decision and would let a
   // deny pattern silently miss its target; diagnostics sanitize at the print site.
-  // The pattern carries its compiled programme, so nothing is compiled here.
-  if (pattern.kind === 'tag') {
-    return op.tags.some((tag) => globMatches(pattern.compiled, tag, budget));
-  }
-  if (pattern.kind === 'methodPath') {
-    // Normalize stores a standard method lowercase and an additional one as
-    // declared (upper case); the pattern carries it uppercase.
-    // The method is an equality test, never a glob — and checking it FIRST means
-    // a method mismatch costs no matcher steps at all.
+  // The method is an equality test, never a glob, checked first so a method
+  // mismatch costs no matcher steps. An omitted method that no pattern can
+  // name is '' (apply.ts).
+  if (pattern.kind === 'method' || pattern.kind === 'route') {
+    if (op.method.toUpperCase() !== pattern.method) {
+      return false;
+    }
     return (
-      op.method.toUpperCase() === pattern.method && globMatches(pattern.compiled, op.path, budget)
+      pattern.kind === 'method' ||
+      folded(op, 'path', budget).some((path) => globMatches(pattern.compiled, path, budget))
     );
   }
-  return op.operationId !== undefined && globMatches(pattern.compiled, op.operationId, budget);
+  const attribute = ATTRIBUTE_OF[pattern.kind];
+  return folded(op, attribute, budget).some((value) =>
+    globMatches(pattern.compiled, value, budget),
+  );
+};
+
+// The values of a target that a kind of pattern addresses, as written
+export const selectedValues = (kind: FilterPattern['kind'], op: FilterTarget): string[] => {
+  if (kind === 'method') {
+    return op.method === '' ? [] : [op.method.toLowerCase()];
+  }
+  if (kind === 'route') {
+    return op.method === '' ? [] : [`${op.method.toUpperCase()} ${op.path}`];
+  }
+  if (kind === 'tag') {
+    return [...op.tags];
+  }
+  if (kind === 'path') {
+    return [op.path];
+  }
+  const value = kind === 'name' ? op.toolName : op.operationId;
+  return value === undefined ? [] : [value];
 };
 
 // Levenshtein distance, abandoned as soon as it is known to exceed maxDistance.
@@ -164,38 +227,32 @@ export const closestMatch = (
 };
 
 // The suggestion must come from the domain the pattern addresses: proposing an
-// operationId for a dead "tag:" pattern would be actively misleading
+// operationId for a dead "tag:" pattern would be actively misleading. Values
+// are compared in lower case, as they are matched, and shown as written.
 const candidateSpace = (
   pattern: FilterPattern,
   operations: readonly FilterTarget[],
-): readonly string[] => {
-  // Pattern.kind is invariant across the walk, so it is branched on once
-  // rather than re-tested per operation; the Set still dedups in the same
-  // first-occurrence order the accumulating loop produced.
-  if (pattern.kind === 'tag') {
-    // Streams into the Set on purpose: tag occurrences are unbounded in a
-    // hostile spec; flatMap would materialize every occurrence before
-    // deduplication.
-    const tags = new Set<string>();
-    for (const op of operations) {
-      for (const tag of op.tags) {
-        tags.add(tag);
+): ReadonlyMap<string, string> => {
+  const byLower = new Map<string, string>();
+  for (const op of operations) {
+    for (const value of selectedValues(pattern.kind, op)) {
+      if (!byLower.has(value.toLowerCase())) {
+        byLower.set(value.toLowerCase(), value);
       }
     }
-    return [...tags];
   }
-  if (pattern.kind === 'methodPath') {
-    return [...new Set(operations.map((op) => `${op.method.toUpperCase()} ${op.path}`))];
-  }
-  return [
-    ...new Set(operations.flatMap((op) => (op.operationId === undefined ? [] : [op.operationId]))),
-  ];
+  return byLower;
 };
 
-// A tag pattern's raw form carries the "tag:" prefix, which the candidates do
-// not, so the prefix would inflate every distance by four
-const suggestionInput = (pattern: FilterPattern): string =>
-  pattern.kind === 'tag' ? pattern.glob : pattern.raw;
+// The pattern's value without its selector, which the candidates do not carry
+const suggestionInput = (pattern: FilterPattern): string => {
+  if (pattern.kind === 'method') {
+    return pattern.method.toLowerCase();
+  }
+  return (
+    pattern.kind === 'route' ? `${pattern.method} ${pattern.glob}` : pattern.glob
+  ).toLowerCase();
+};
 
 export const deadPatternsFor = (
   patterns: readonly FilterPattern[],
@@ -208,12 +265,10 @@ export const deadPatternsFor = (
       (pattern) => !operations.some((operation) => matchesOperation(pattern, operation, budget)),
     )
     .map((pattern) => {
-      const suggestion = closestMatch(
-        suggestionInput(pattern),
-        candidateSpace(pattern, operations),
-        budget,
-      );
-      return suggestion === undefined
+      const candidates = candidateSpace(pattern, operations);
+      const closest = closestMatch(suggestionInput(pattern), [...candidates.keys()], budget);
+      const value = closest === undefined ? undefined : candidates.get(closest);
+      return value === undefined
         ? { raw: pattern.raw, flag }
-        : { raw: pattern.raw, flag, suggestion };
+        : { raw: pattern.raw, flag, suggestion: `${pattern.kind}:${value}` };
     });

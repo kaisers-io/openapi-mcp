@@ -127,7 +127,9 @@ components:
         message: { type: string }
 `;
 
-const allowAll = HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`));
+const allowAll = HTTP_METHODS.map((method) =>
+  parseFilterPattern(`route:${method.toUpperCase()} /**`),
+);
 
 const baseOpts: SpecPipelineOptions = {
   specHeaders: [],
@@ -299,7 +301,7 @@ describe('an unchanged source reuses the accepted document (kaisers-io/openapi-m
     },
     {
       name: '--deny',
-      pipeline: { deny: [parseFilterPattern('DELETE /**')] },
+      pipeline: { deny: [parseFilterPattern('route:DELETE /**')] },
       check: (tools) => expect(tools).not.toContain('deleteThing'),
     },
     {

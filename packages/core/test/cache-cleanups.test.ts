@@ -147,7 +147,7 @@ describe('orphaned temp files in the entry directory are collected (kaisers-io/o
       trustSpecUpdates: false,
       cacheRoot: '/cache',
       nowMs: NOW,
-      allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
+      allow: HTTP_METHODS.map((method) => parseFilterPattern(`route:${method.toUpperCase()} /**`)),
     };
     // The first fetch seeds the entry; every later one answers 304
     let fetches = 0;

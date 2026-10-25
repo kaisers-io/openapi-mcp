@@ -54,27 +54,29 @@ const fixture = [
 
 describe('matchesOperation', () => {
   it('matches an operationId glob against the raw operationId', () => {
-    expect(matchesOperation(parseFilterPattern('read*'), fixture[1]!)).toBe(true);
-    expect(matchesOperation(parseFilterPattern('read*'), fixture[0]!)).toBe(false);
+    expect(matchesOperation(parseFilterPattern('operationId:read*'), fixture[1]!)).toBe(true);
+    expect(matchesOperation(parseFilterPattern('operationId:read*'), fixture[0]!)).toBe(false);
   });
 
   it('never matches an operationId pattern against an operation without one', () => {
-    expect(matchesOperation(parseFilterPattern('**'), fixture[5]!)).toBe(false);
+    expect(matchesOperation(parseFilterPattern('operationId:*'), fixture[5]!)).toBe(false);
+    // `path:/**` selects it, as every operation
+    expect(matchesOperation(parseFilterPattern('path:/**'), fixture[5]!)).toBe(true);
   });
 
   it('matches a methodPath pattern on method and path together', () => {
-    const pattern = parseFilterPattern('GET /pets/**');
+    const pattern = parseFilterPattern('route:GET /pets/**');
     expect(matchesOperation(pattern, fixture[1]!)).toBe(true);
     expect(matchesOperation(pattern, fixture[4]!)).toBe(false);
   });
 
   it('compares the uppercase pattern method against the normalized lowercase method', () => {
     // Normalize stores methods lowercase; patterns carry the uppercase spelling
-    expect(matchesOperation(parseFilterPattern('DELETE /pets/*'), fixture[4]!)).toBe(true);
+    expect(matchesOperation(parseFilterPattern('route:DELETE /pets/*'), fixture[4]!)).toBe(true);
   });
 
   it('matches a methodPath pattern against the raw path template, braces included', () => {
-    expect(matchesOperation(parseFilterPattern('GET /pets/{petId}'), fixture[1]!)).toBe(true);
+    expect(matchesOperation(parseFilterPattern('route:GET /pets/{petId}'), fixture[1]!)).toBe(true);
   });
 
   it('matches a tag pattern if any tag matches', () => {
@@ -92,9 +94,9 @@ describe('matchesOperation', () => {
     // still see the original, or a deny pattern would miss its target
     const op = record('get', '/pets', 'repos.get');
     expect(named([op])[0]!.toolName).toBe('repos_get');
-    expect(matchesOperation(parseFilterPattern('repos.get'), op)).toBe(true);
-    expect(matchesOperation(parseFilterPattern('repos*'), op)).toBe(true);
-    expect(matchesOperation(parseFilterPattern('repos_get'), op)).toBe(false);
+    expect(matchesOperation(parseFilterPattern('operationId:repos.get'), op)).toBe(true);
+    expect(matchesOperation(parseFilterPattern('operationId:repos*'), op)).toBe(true);
+    expect(matchesOperation(parseFilterPattern('operationId:repos_get'), op)).toBe(false);
   });
 });
 
@@ -188,7 +190,7 @@ describe('applyFilters — precedence', () => {
     expect(exposedIds(decision)).toEqual(['searchPets']);
     // An explicit method pattern names it like any other method
     expect(
-      matchesOperation(parseFilterPattern('QUERY /pets/*'), record('query', '/pets/search')),
+      matchesOperation(parseFilterPattern('route:QUERY /pets/*'), record('query', '/pets/search')),
     ).toBe(true);
   });
 
@@ -206,37 +208,37 @@ describe('applyFilters — precedence', () => {
     });
 
     it('is selected and denied by a "<METHOD> <path>" pattern like any method', () => {
-      const allowed = applyFilters(extra, patterns('LINK /pets/*'), []);
+      const allowed = applyFilters(extra, patterns('route:LINK /pets/*'), []);
       expect(exposedIds(allowed)).toEqual(['linkPet']);
-      const allow = patterns('LINK /**', 'GET /**');
-      const deny = patterns('LINK /owners/**');
+      const allow = patterns('route:LINK /**', 'route:GET /**');
+      const deny = patterns('route:LINK /owners/**');
       expect(exposedIds(applyFilters(extra, allow, deny))).toEqual(['listPets', 'linkPet']);
     });
 
     it('rejects a method no operation declares, so a misspelling stays a usage error', () => {
-      for (const raw of ['LNIK /pets/*', 'UNLINK /pets/*']) {
+      for (const raw of ['route:LNIK /pets/*', 'method:UNLINK']) {
         const deny = patterns(raw);
         expect(() => applyFilters(extra, [], deny)).toThrow(
           expect.objectContaining({ code: 'usage' }) as Error,
         );
       }
       const standard = named(fixture);
-      const allow = patterns('LINK /**');
+      const allow = patterns('route:LINK /**');
       expect(() => applyFilters(standard, allow, [])).toThrow(
         /names LINK, which is not a standard method and no operation in the spec declares/u,
       );
     });
 
     it('keeps a standard method that matches nothing a dead pattern, not an error', () => {
-      const decision = applyFilters(extra, patterns('PATCH /pets/*'), []);
+      const decision = applyFilters(extra, patterns('route:PATCH /pets/*'), []);
       expect(decision.deadPatterns).toEqual([
-        expect.objectContaining({ raw: 'PATCH /pets/*', flag: 'allow' }),
+        expect.objectContaining({ raw: 'route:PATCH /pets/*', flag: 'allow' }),
       ]);
     });
   });
 
   it('rule 3: denied read operations are removed from the default', () => {
-    const decision = applyFilters(named(fixture), [], patterns('read*'));
+    const decision = applyFilters(named(fixture), [], patterns('operationId:read*'));
     expect(exposedIds(decision)).toEqual(['listPets', 'headPets']);
   });
 
@@ -246,32 +248,52 @@ describe('applyFilters — precedence', () => {
   });
 
   it('rule 2: allow does not re-admit anything outside it', () => {
-    const decision = applyFilters(named(fixture), patterns('listPets'), []);
+    const decision = applyFilters(named(fixture), patterns('operationId:listPets'), []);
     expect(exposedIds(decision)).toEqual(['listPets']);
   });
 
   it('rule 1: deny wins over an overlapping allow', () => {
-    const decision = applyFilters(named(fixture), patterns('tag:pets'), patterns('DELETE /**'));
+    const decision = applyFilters(
+      named(fixture),
+      patterns('tag:pets'),
+      patterns('route:DELETE /**'),
+    );
     expect(exposedIds(decision)).toEqual(['listPets', 'readPetById', 'headPets', 'createPet']);
   });
 
   it('rule 1: deny wins even when allow names the operation exactly', () => {
-    const decision = applyFilters(named(fixture), patterns('deletePet'), patterns('deletePet'));
+    const decision = applyFilters(
+      named(fixture),
+      patterns('operationId:deletePet'),
+      patterns('operationId:deletePet'),
+    );
     expect(exposedIds(decision)).toEqual([]);
   });
 
   it('unions multiple allow patterns', () => {
-    const decision = applyFilters(named(fixture), patterns('listPets', 'createPet'), []);
+    const decision = applyFilters(
+      named(fixture),
+      patterns('operationId:listPets', 'operationId:createPet'),
+      [],
+    );
     expect(exposedIds(decision)).toEqual(['listPets', 'createPet']);
   });
 
   it('unions multiple deny patterns', () => {
-    const decision = applyFilters(named(fixture), [], patterns('listPets', 'headPets'));
+    const decision = applyFilters(
+      named(fixture),
+      [],
+      patterns('operationId:listPets', 'operationId:headPets'),
+    );
     expect(exposedIds(decision)).toEqual(['readPetById']);
   });
 
   it('preserves spec order in the exposed set', () => {
-    const decision = applyFilters(named(fixture), patterns('**', 'tag:**', 'GET /**'), []);
+    const decision = applyFilters(
+      named(fixture),
+      patterns('path:/**', 'tag:**', 'route:GET /**'),
+      [],
+    );
     expect(exposedIds(decision).slice(0, 2)).toEqual(['listPets', 'readPetById']);
   });
 
@@ -280,7 +302,7 @@ describe('applyFilters — precedence', () => {
   });
 
   it('exposes an operation with no operationId under a methodPath allow', () => {
-    const decision = applyFilters(named(fixture), patterns('PUT /admin/**'), []);
+    const decision = applyFilters(named(fixture), patterns('route:PUT /admin/**'), []);
     expect(exposedIds(decision)).toEqual(['put_admin_config']);
   });
 });
@@ -290,82 +312,94 @@ describe('applyFilters — dead patterns', () => {
     // "headPets" is 1 edit from "readPets" and "readPetById" is 4: the nearer
     // candidate wins, and that is correct even though the worked example uses
     // the other one against a candidate list that does not contain "headPets"
-    const decision = applyFilters(named(fixture), patterns('readPets'), []);
+    const decision = applyFilters(named(fixture), patterns('operationId:readPets'), []);
     expect(decision.deadPatterns).toEqual([
-      { raw: 'readPets', flag: 'allow', suggestion: 'headPets' },
+      { raw: 'operationId:readPets', flag: 'allow', suggestion: 'operationId:headPets' },
     ]);
   });
 
   it('reports a dead deny pattern with flag "deny"', () => {
-    const decision = applyFilters(named(fixture), [], patterns('removeEverything'));
-    expect(decision.deadPatterns).toEqual([{ raw: 'removeEverything', flag: 'deny' }]);
+    const decision = applyFilters(named(fixture), [], patterns('operationId:removeEverything'));
+    expect(decision.deadPatterns).toEqual([{ raw: 'operationId:removeEverything', flag: 'deny' }]);
   });
 
   it('omits the suggestion when nothing is within the admission bound', () => {
-    const decision = applyFilters(named(fixture), patterns('zzzzzzzzzzzzzz'), []);
-    expect(decision.deadPatterns).toEqual([{ raw: 'zzzzzzzzzzzzzz', flag: 'allow' }]);
+    const decision = applyFilters(named(fixture), patterns('operationId:zzzzzzzzzzzzzz'), []);
+    expect(decision.deadPatterns).toEqual([{ raw: 'operationId:zzzzzzzzzzzzzz', flag: 'allow' }]);
   });
 
   it('reports no dead patterns when every pattern matches', () => {
-    const decision = applyFilters(named(fixture), patterns('tag:pets'), patterns('deletePet'));
+    const decision = applyFilters(
+      named(fixture),
+      patterns('tag:pets'),
+      patterns('operationId:deletePet'),
+    );
     expect(decision.deadPatterns).toEqual([]);
   });
 
   it('suggests a METHOD + path candidate for a dead methodPath pattern', () => {
-    const decision = applyFilters(named(fixture), patterns('GET /pet'), []);
+    const decision = applyFilters(named(fixture), patterns('route:GET /pet'), []);
     expect(decision.deadPatterns).toEqual([
-      { raw: 'GET /pet', flag: 'allow', suggestion: 'GET /pets' },
+      { raw: 'route:GET /pet', flag: 'allow', suggestion: 'route:GET /pets' },
     ]);
   });
 
   it('suggests a bare tag for a dead tag pattern, ignoring the "tag:" prefix', () => {
     const decision = applyFilters(named(fixture), patterns('tag:admins'), []);
     expect(decision.deadPatterns).toEqual([
-      { raw: 'tag:admins', flag: 'allow', suggestion: 'admin' },
+      { raw: 'tag:admins', flag: 'allow', suggestion: 'tag:admin' },
     ]);
   });
 
   it('does not suggest across candidate domains', () => {
     // "listPets" is an operationId, so a tag pattern must never propose it
     const decision = applyFilters(named(fixture), patterns('tag:listPets'), []);
-    expect(decision.deadPatterns[0]?.suggestion).not.toBe('listPets');
+    expect(decision.deadPatterns[0]?.suggestion).not.toBe('operationId:listPets');
   });
 
   it('measures deadness against the whole inventory, not the exposed set', () => {
     // Deadness is counted against patterns matching zero operations in the
     // spec: a deny that removes everything an allow selected is doing its job,
     // not misspelled
-    const decision = applyFilters(named(fixture), patterns('deletePet'), patterns('deletePet'));
+    const decision = applyFilters(
+      named(fixture),
+      patterns('operationId:deletePet'),
+      patterns('operationId:deletePet'),
+    );
     expect(decision.deadPatterns).toEqual([]);
   });
 
   it('is not dead when the read-only default hides the matched operation', () => {
-    const decision = applyFilters(named(fixture), [], patterns('createPet'));
+    const decision = applyFilters(named(fixture), [], patterns('operationId:createPet'));
     expect(decision.deadPatterns).toEqual([]);
   });
 
   it('reports allow patterns before deny patterns, each in argv order', () => {
     const decision = applyFilters(
       named(fixture),
-      patterns('deadAllowOne', 'deadAllowTwo'),
-      patterns('deadDenyOne'),
+      patterns('operationId:deadAllowOne', 'operationId:deadAllowTwo'),
+      patterns('operationId:deadDenyOne'),
     );
     expect(decision.deadPatterns.map((dead) => `${dead.flag}:${dead.raw}`)).toEqual([
-      'allow:deadAllowOne',
-      'allow:deadAllowTwo',
-      'deny:deadDenyOne',
+      'allow:operationId:deadAllowOne',
+      'allow:operationId:deadAllowTwo',
+      'deny:operationId:deadDenyOne',
     ]);
   });
 
   it('reports the same raw pattern once per flag it was supplied to', () => {
-    const decision = applyFilters(named(fixture), patterns('noSuchThing'), patterns('noSuchThing'));
+    const decision = applyFilters(
+      named(fixture),
+      patterns('operationId:noSuchThing'),
+      patterns('operationId:noSuchThing'),
+    );
     expect(decision.deadPatterns.map((dead) => dead.flag)).toEqual(['allow', 'deny']);
   });
 
   it('reports every pattern as dead against an empty spec', () => {
-    const decision = applyFilters([], patterns('anything'), patterns('tag:x'));
+    const decision = applyFilters([], patterns('operationId:anything'), patterns('tag:x'));
     expect(decision.deadPatterns).toEqual([
-      { raw: 'anything', flag: 'allow' },
+      { raw: 'operationId:anything', flag: 'allow' },
       { raw: 'tag:x', flag: 'deny' },
     ]);
   });
@@ -377,14 +411,19 @@ describe('applyFilters — aggregate work budget', () => {
     // what still measured 22.5 s at the maximum admitted dimensions even with a
     // non-backtracking matcher
     const budget = createMatchBudget();
-    applyFilters(named(fixture), patterns('read*'), patterns('nothingLikeThis'), budget);
+    applyFilters(
+      named(fixture),
+      patterns('operationId:read*'),
+      patterns('operationId:nothingLikeThis'),
+      budget,
+    );
     expect(budget.remaining).toBeLessThan(FILTER_MAX_MATCH_STEPS);
   });
 
   it('spends a deterministic number of steps for a fixed input', () => {
     const spend = (): number => {
       const budget = createMatchBudget();
-      applyFilters(named(fixture), patterns('read*'), [], budget);
+      applyFilters(named(fixture), patterns('operationId:read*'), [], budget);
       return FILTER_MAX_MATCH_STEPS - budget.remaining;
     };
     expect(new Set([spend(), spend(), spend()]).size).toBe(1);
@@ -392,9 +431,9 @@ describe('applyFilters — aggregate work budget', () => {
 
   it('fails closed with a validation error rather than running unbounded', () => {
     const budget = createMatchBudget(5);
-    expect(() => applyFilters(named(fixture), patterns('*a*a*a*a*'), [], budget)).toThrow(
-      /work budget/u,
-    );
+    expect(() =>
+      applyFilters(named(fixture), patterns('operationId:*a*a*a*a*'), [], budget),
+    ).toThrow(/work budget/u);
   });
 
   it('stays far inside the budget for a realistic configuration', () => {
@@ -403,7 +442,7 @@ describe('applyFilters — aggregate work budget', () => {
     // 16.5% of the cap, 6.0x headroom. This fixture is far smaller, so it must
     // be a rounding error against it.
     const budget = createMatchBudget();
-    applyFilters(named(fixture), patterns('**'), [], budget);
+    applyFilters(named(fixture), patterns('path:/**'), [], budget);
     expect(FILTER_MAX_MATCH_STEPS - budget.remaining).toBeLessThan(10_000);
   });
 
@@ -411,10 +450,10 @@ describe('applyFilters — aggregate work budget', () => {
     // Issue kaisers-io/openapi-mcp-archive#32 moved the tool budget after
     // filtering, so filters now run over up to SPEC_BUDGETS.maxOperationCount
     // operations instead of 512. Worst realistic shape: 127 allow patterns that
-    // match nothing (all three forms, one with a leading wildcard) before a
-    // final "**", and 128 deny patterns, so every operation is checked against
-    // every pattern, plus the dead-pattern pass. Measured: 28,858,075 steps
-    // (14.4% of the cap) at 4096 operations, about 0.2-0.7 s; 3,960,757 at 512.
+    // match nothing (four selectors, one with a leading wildcard) before a
+    // final "path:/**", and 128 deny patterns, so every operation is checked
+    // against every pattern, plus the dead-pattern and case-collision passes.
+    // Measured: 17,981,936 steps (9% of the cap) at 4096 operations.
     const resources = ['users', 'repos', 'orders', 'invoices', 'customers', 'payments'];
     const methods: readonly OperationMethod[] = ['get', 'put', 'post', 'delete', 'patch'];
     const operations = Array.from({ length: SPEC_BUDGETS.maxOperationCount }, (_, index) => {
@@ -428,13 +467,20 @@ describe('applyFilters — aggregate work budget', () => {
       );
     });
     const allowForms = (index: number): string =>
-      [`list${index}*`, `GET /v2/r${index}/**`, `tag:other${index}*`, `*Nope${index}`][index % 4] ??
-      '';
+      [
+        `operationId:list${index}*`,
+        `route:GET /v2/r${index}/**`,
+        `tag:other${index}*`,
+        `name:*Nope${index}`,
+      ][index % 4] ?? '';
     const denyForms = (index: number): string =>
-      [`delete${index}*`, `DELETE /v2/r${index}/**`, `tag:nobody${index}`, `*Gone${index}`][
-        index % 4
-      ] ?? '';
-    const allow = [...Array.from({ length: 127 }, (_, index) => allowForms(index)), '**'];
+      [
+        `operationId:delete${index}*`,
+        `route:DELETE /v2/r${index}/**`,
+        `tag:nobody${index}`,
+        `operationId:*Gone${index}`,
+      ][index % 4] ?? '';
+    const allow = [...Array.from({ length: 127 }, (_, index) => allowForms(index)), 'path:/**'];
     const deny = Array.from({ length: 128 }, (_, index) => denyForms(index));
     const budget = createMatchBudget();
     applyFilters(named(operations), patterns(...allow), patterns(...deny), budget);
@@ -471,7 +517,7 @@ describe('applyFilters — aggregate work budget', () => {
     const longOps = Array.from({ length: 40 }, (_, index) =>
       record('get', `/p${index}`, `op${'x'.repeat(200)}${index}`),
     );
-    const decoyPattern = `zz${'y'.repeat(200)}`;
+    const decoyPattern = `operationId:zz${'y'.repeat(200)}`;
     const budget = createMatchBudget(50_000);
     expect(() => applyFilters(named(longOps), patterns(decoyPattern), [], budget)).toThrow(
       /work budget/u,

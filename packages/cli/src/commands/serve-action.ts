@@ -52,7 +52,7 @@ import { resolveTokenUrl } from '../oauth-options.ts';
 import type { CliContext } from '../context.ts';
 import { emitError, emitWarnings } from '../output.ts';
 import {
-  deadPatternMessage,
+  filterMessages,
   exposureReport,
   omissionWarningLines,
   parseSpecPipelineArgs,
@@ -481,8 +481,9 @@ export const runServe = async (
     // throw exactly (deadPatternMessage is the shared renderer): building
     // the message inline instead would put unsanitized spec-derived text
     // straight into a thrown error's message.
-    if (cmdOpts.strictFilters === true && result.deadPatterns.length > 0) {
-      throw validationError(result.deadPatterns.map((dead) => deadPatternMessage(dead)).join('\n'));
+    const filterWarnings = filterMessages(result);
+    if (cmdOpts.strictFilters === true && filterWarnings.length > 0) {
+      throw validationError(filterWarnings.join('\n'));
     }
     // Union: a spec header parameter named e.g. "X-Api-Key" is dropped from
     // the tool's input schema when that same name is configured as an
@@ -708,7 +709,7 @@ export const runServe = async (
     // emit(), never raw. Full parity with `tools`' warnings array.
     emitWarnings(ctx, [
       ...result.warnings,
-      ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
+      ...filterWarnings,
       ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
       ...optOut.warnings,
       ...exposure.warnings,

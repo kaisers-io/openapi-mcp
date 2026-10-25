@@ -352,7 +352,7 @@ the readings above. An upstream that serves an excluded operation under another,
 undocumented path, that applies a rewrite of its own (IIS `%u` escapes, a trailing dot,
 suffix patterns such as `.json`, Unicode normalization), or that honours a method-override
 header, cannot be detected from the spec. For a guarantee that does not depend on paths,
-exclude by method: `--deny "DELETE /**"`.
+exclude by method: `--deny "method:delete"`.
 
 ## Discovery tool mode
 

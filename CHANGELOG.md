@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### BREAKING
 
+- **Filter patterns name their selector, and match regardless of case (#42).** `--allow`,
+  `--deny` and `--omit-output-schema` take `method:`, `path:`, `route:`, `operationId:`,
+  `name:` or `tag:`. A bare word used to be an operationId glob, so `--allow "post*" --deny
+  "delete*"` exposed a `DELETE` named `postsDelete`, and `DeleteOrder` slipped past
+  `delete*`. A pattern without a selector is now a usage error that names the replacement:
+
+  | Before | Now |
+  |---|---|
+  | `--deny "DELETE /**"` | `--deny "method:delete"` |
+  | `--allow "GET /orders/**"` | `--allow "route:GET /orders/**"` |
+  | `--allow "**"` | `--allow "operationId:*"`, or `--allow "path:/**"` to include operations without an operationId |
+  | `--allow "read*"` | `--allow "operationId:read*"`, or `--allow "method:get"` |
+  | `--allow "tag:Orders"` | unchanged |
+
+  In an operationId, tool name or tag, `*` now matches any characters, `/` included. A pattern
+  that matches values differing only by case is reported, and is an error under
+  `--strict-filters`. See [`docs/filtering.md`](docs/filtering.md).
+
 - **Redirects are authorized like the request itself (#40).** A redirect that leaves the API
   base URL (another origin, or outside the base path) is no longer followed unless `serve`
   runs with the new `--allow-offsite-redirects`. A redirect to a path on the API that matches
@@ -25,6 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now ask for it.
 
 ### Added
+
+- **`docs/filtering.md` (#42)** explains every selector, the order in which an operation is
+  exposed or excluded, what is reported where, recipes such as "never delete" and their limits,
+  and overlapping paths. Its examples run as tests.
+- **`name:` selector (#42)** matches the tool name the agent sees, also for operations without
+  an operationId.
 
 - **`--allow-offsite-redirects` on `serve` (#40)** follows a redirect off the API base URL.
   The egress policy still applies, and a later hop back onto the API is authorized again.

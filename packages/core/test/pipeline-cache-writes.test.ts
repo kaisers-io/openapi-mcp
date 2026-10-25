@@ -35,7 +35,7 @@ const recordingFs = (): Recorded => {
 const fixturesDir = fileURLToPath(new URL('fixtures/', import.meta.url));
 
 const allowAll = {
-  allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
+  allow: HTTP_METHODS.map((method) => parseFilterPattern(`route:${method.toUpperCase()} /**`)),
 };
 
 const opts = {

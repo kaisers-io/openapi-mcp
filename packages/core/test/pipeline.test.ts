@@ -75,7 +75,7 @@ const baseOpts = {
 // independent of operationId or tags, so one per exposable method truly
 // restores the full inventory regardless of fixture.
 const allowAll = {
-  allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
+  allow: HTTP_METHODS.map((method) => parseFilterPattern(`route:${method.toUpperCase()} /**`)),
 };
 
 // A URL-sourced spec with `count` trivial operations op0..op<count-1>, one per
@@ -1042,7 +1042,11 @@ describe('runSpecPipeline — filters', () => {
   it('lets deny win over allow', async () => {
     const result = await runSpecPipeline(
       fixture('petstore-3.0.json'),
-      { ...baseOpts, allow: [parseFilterPattern('**')], deny: [parseFilterPattern('createPet')] },
+      {
+        ...baseOpts,
+        allow: [parseFilterPattern('path:/**')],
+        deny: [parseFilterPattern('operationId:createPet')],
+      },
       fileDeps,
     );
     expect(result.namedOperations.map((named) => named.toolName)).not.toContain('createPet');
@@ -1051,19 +1055,19 @@ describe('runSpecPipeline — filters', () => {
   it('reports dead patterns with their flag and a closest-match suggestion', async () => {
     const result = await runSpecPipeline(
       fixture('petstore-3.0.json'),
-      { ...baseOpts, allow: [parseFilterPattern('listPetz')] },
+      { ...baseOpts, allow: [parseFilterPattern('operationId:listPetz')] },
       fileDeps,
     );
     expect(result.namedOperations).toEqual([]);
     expect(result.deadPatterns).toEqual([
-      { raw: 'listPetz', flag: 'allow', suggestion: 'listPets' },
+      { raw: 'operationId:listPetz', flag: 'allow', suggestion: 'operationId:listPets' },
     ]);
   });
 
   it('tags a dead deny pattern with the deny flag', async () => {
     const result = await runSpecPipeline(
       fixture('petstore-3.0.json'),
-      { ...baseOpts, deny: [parseFilterPattern('nothingLikeThis')] },
+      { ...baseOpts, deny: [parseFilterPattern('operationId:nothingLikeThis')] },
       fileDeps,
     );
     expect(result.deadPatterns[0]?.flag).toBe('deny');
@@ -1072,7 +1076,7 @@ describe('runSpecPipeline — filters', () => {
   it('reports no dead patterns when every pattern matches', async () => {
     const result = await runSpecPipeline(
       fixture('petstore-3.0.json'),
-      { ...baseOpts, allow: [parseFilterPattern('listPets')] },
+      { ...baseOpts, allow: [parseFilterPattern('operationId:listPets')] },
       fileDeps,
     );
     expect(result.deadPatterns).toEqual([]);
@@ -1095,7 +1099,7 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
   it('lets a narrow --allow carve one tool out of a spec with more operations than the budget', async () => {
     const result = await runSpecPipeline(
       'https://api.example.com/big.json',
-      { ...baseOpts, allow: [parseFilterPattern('op1')] },
+      { ...baseOpts, allow: [parseFilterPattern('operationId:op1')] },
       bigDeps(600),
     );
     expect(result.namedOperations.map((named) => named.toolName)).toEqual(['op1']);
@@ -1115,7 +1119,7 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
   it('counts only what survives --deny against the tool budget', async () => {
     const result = await runSpecPipeline(
       'https://api.example.com/big.json',
-      { ...baseOpts, deny: [parseFilterPattern('GET /r1*')] },
+      { ...baseOpts, deny: [parseFilterPattern('route:GET /r1*')] },
       bigDeps(600),
     );
     // 600 minus /r1, /r10-/r19 and /r100-/r199
@@ -1126,7 +1130,7 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
     await expect(
       runSpecPipeline(
         'https://api.example.com/big.json',
-        { ...baseOpts, allow: [parseFilterPattern('op1')] },
+        { ...baseOpts, allow: [parseFilterPattern('operationId:op1')] },
         bigDeps(SPEC_BUDGETS.maxOperationCount + 1),
       ),
     ).rejects.toMatchObject({
@@ -1142,7 +1146,7 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
     await expect(
       runSpecPipeline(
         'https://api.example.com/big.json',
-        { ...baseOpts, cacheRoot: '/cache', allow: [parseFilterPattern('op1')] },
+        { ...baseOpts, cacheRoot: '/cache', allow: [parseFilterPattern('operationId:op1')] },
         { ...bigDeps(SPEC_BUDGETS.maxOperationCount + 1), cacheFs },
       ),
     ).rejects.toMatchObject({ code: 'validation' });
@@ -1213,7 +1217,7 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
     // 600 operations, but --deny leaves 489 exposed: under the budget
     const refreshed = await runSpecPipeline(
       'https://api.example.com/big.json',
-      { ...cachedOpts, deny: [parseFilterPattern('GET /r1*')], nowMs: 3_600_001 },
+      { ...cachedOpts, deny: [parseFilterPattern('route:GET /r1*')], nowMs: 3_600_001 },
       { ...bigDeps(600), cacheFs },
     );
     expect(refreshed.cacheStatus).toBe('candidate');
@@ -1228,7 +1232,7 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
     const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
     await runSpecPipeline(
       'https://api.example.com/big.json',
-      { ...cachedOpts, allow: [parseFilterPattern('op1')] },
+      { ...cachedOpts, allow: [parseFilterPattern('operationId:op1')] },
       { ...bigDeps(600), cacheFs },
     );
     const before = metaOf(cacheFs);
@@ -1249,7 +1253,7 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
   it('applies the same two-level rule when serving a cached spec', async () => {
     const cacheFs = memoryCacheFs();
     const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };
-    const narrow = { ...cachedOpts, allow: [parseFilterPattern('op1')] };
+    const narrow = { ...cachedOpts, allow: [parseFilterPattern('operationId:op1')] };
     const first = await runSpecPipeline('https://api.example.com/big.json', narrow, {
       ...bigDeps(600),
       cacheFs,
@@ -1367,14 +1371,14 @@ describe('runSpecPipeline — filter before dereference, raw-document cache (iss
     });
     const narrow = await runSpecPipeline(
       specUrl,
-      { ...baseOpts, allow: [parseFilterPattern('getOk')] },
+      { ...baseOpts, allow: [parseFilterPattern('operationId:getOk')] },
       textDeps(text),
     );
     expect(narrow.namedOperations.map((named) => named.toolName)).toEqual(['getOk']);
     await expect(
       runSpecPipeline(
         specUrl,
-        { ...baseOpts, allow: [parseFilterPattern('getDeep')] },
+        { ...baseOpts, allow: [parseFilterPattern('operationId:getDeep')] },
         textDeps(text),
       ),
     ).rejects.toMatchObject({ message: expect.stringContaining('maximum depth') as string });
@@ -1398,7 +1402,7 @@ describe('runSpecPipeline — filter before dereference, raw-document cache (iss
     await expect(
       runSpecPipeline(
         specUrl,
-        { ...baseOpts, cacheRoot: '/cache', allow: [parseFilterPattern('getOk')] },
+        { ...baseOpts, cacheRoot: '/cache', allow: [parseFilterPattern('operationId:getOk')] },
         { ...textDeps(text), cacheFs },
       ),
     ).rejects.toMatchObject({ message: expect.stringContaining('does not resolve') as string });

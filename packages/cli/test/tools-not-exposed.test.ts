@@ -35,7 +35,7 @@ const runTools = async (
 };
 
 const SPEC = ['--spec', 'shop-not-exposed.json'];
-const FILTERS = ['--allow', 'tag:Orders', '--allow', 'tag:Reports', '--deny', 'DELETE /**'];
+const FILTERS = ['--allow', 'tag:Orders', '--allow', 'tag:Reports', '--deny', 'route:DELETE /**'];
 
 type Envelope = {
   data: {
@@ -57,7 +57,7 @@ describe('tools — operations that are not exposed (issue #41)', () => {
       ),
     ).toEqual([
       'GET /orders/{orderId}/{section}: matched by no --allow pattern',
-      'DELETE /orders/{orderId}: excluded by --deny "DELETE /**"',
+      'DELETE /orders/{orderId}: excluded by --deny "route:DELETE /**"',
       'GET /customers: cookie parameters are not supported',
       'SEARCH /search: path-level servers overrides are not supported',
     ]);
@@ -98,7 +98,7 @@ describe('tools — operations that are not exposed (issue #41)', () => {
       ...SPEC,
       ...FILTERS,
       '--deny',
-      'listOrderItems',
+      'operationId:listOrderItems',
       '--strict-filters',
     ]);
     expect(both.code).toBe(EXIT.OK);
@@ -109,18 +109,18 @@ describe('tools — operations that are not exposed (issue #41)', () => {
       'tools',
       ...SPEC,
       '--allow',
-      'listCustomers',
+      'operationId:listCustomers',
       '--deny',
-      'SEARCH /search',
+      'route:SEARCH /search',
     ]);
     expect(code).toBe(EXIT.OK);
     const warnings = errLines.join('\n');
     expect(warnings).toContain(
-      '--allow "listCustomers" matches no operation; it names only operations that are omitted as not supported',
+      '--allow "operationId:listCustomers" matches no operation; it names only operations that are omitted as not supported',
     );
     // SEARCH is declared, by an operation that is omitted: no usage error
     expect(warnings).toContain(
-      '--deny "SEARCH /search" matches no operation; it names only operations that are omitted as not supported',
+      '--deny "route:SEARCH /search" matches no operation; it names only operations that are omitted as not supported',
     );
   });
 });
@@ -197,7 +197,13 @@ describe('exposureReport — bounds', () => {
       JSON.stringify({ openapi: '3.1.0', info: { title: 'Shop', version: '1' }, paths }),
     );
     try {
-      const { code, errLines } = await runTools(['tools', '--spec', spec, '--deny', 'part*']);
+      const { code, errLines } = await runTools([
+        'tools',
+        '--spec',
+        spec,
+        '--deny',
+        'operationId:part*',
+      ]);
       expect(code).toBe(EXIT.OK);
       const overlapLines = errLines.filter((line) => line.includes('which is not exposed'));
       expect(overlapLines).toHaveLength(OVERLAP_WARNING_MAX);
