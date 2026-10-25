@@ -1,4 +1,5 @@
 import type { z } from 'zod';
+import type { ToolAnnotations } from '../toolgen/annotations.ts';
 import type { GeneratedTool } from '../toolgen/build.ts';
 import type { NotExposedCounts } from '../filter/inventory.ts';
 import type { OmittedOperation, OperationRecord } from '../spec/normalize.ts';
@@ -59,6 +60,22 @@ export type SnapshotTool = {
   readonly discovery?: DiscoveryToolName;
 };
 
+// An exposed operation as search, listing and startup see it: everything
+// but its output side. `resolve` returns the whole tool. Under `discover`
+// it builds the output side on first use (issue #47) and throws, every
+// time, if that fails, so a caller must resolve before it sends anything.
+// A distinct type, so an unresolved operation can never be mistaken for a
+// tool that legitimately has no output schema.
+export type OperationEntry = {
+  readonly name: string;
+  readonly operation: RuntimeTool['operation'];
+  // The wire input schema (search reads its parameter names)
+  readonly inputSchema: Readonly<Record<string, unknown>>;
+  readonly annotations: ToolAnnotations;
+  readonly projection?: true;
+  readonly resolve: () => SnapshotTool;
+};
+
 // Read-only, package-authored status content. specTitle/specVersion
 // already passed through normalizeSpec's own sanitizeSpecText call;
 // displaySource and every omittedReasons path/reason are explicitly
@@ -105,8 +122,8 @@ export type ServerSnapshot = {
   // excluded was never built, so it is in neither this list nor the lookup
   // below: there is no second policy path to keep in sync. Same `Object.hasOwn`
   // read rule as toolsByName.
-  readonly operations: readonly SnapshotTool[];
-  readonly operationsByName: Readonly<Record<string, SnapshotTool | undefined>>;
+  readonly operations: readonly OperationEntry[];
+  readonly operationsByName: Readonly<Record<string, OperationEntry | undefined>>;
   // Built once from `operations` under `discover`; absent under
   // `per-operation`, where nothing searches.
   readonly searchIndex?: SearchIndex;

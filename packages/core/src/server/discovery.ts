@@ -12,7 +12,7 @@ import {
   SEARCH_OUTPUT_SCHEMA,
 } from './discovery-schemas.ts';
 import type { DescribeInput } from './discovery-schemas.ts';
-import type { SnapshotTool, ToolMode, WireTool } from './types.ts';
+import type { OperationEntry, SnapshotTool, ToolMode, WireTool } from './types.ts';
 import { presentedOutputSchema } from './wire-tools.ts';
 import { withEffect } from './effect.ts';
 
@@ -61,12 +61,12 @@ const APPROVAL_WARNING_NAMES = 3;
 
 export const discoverApprovalWarning = (
   toolMode: ToolMode,
-  operations: readonly SnapshotTool[],
+  operations: readonly OperationEntry[],
 ): string | undefined => {
   if (toolMode !== 'discover') {
     return undefined;
   }
-  const writes = operations.filter((tool) => tool.generated?.annotations.readOnlyHint !== true);
+  const writes = operations.filter((entry) => entry.annotations.readOnlyHint !== true);
   if (writes.length === 0) {
     return undefined;
   }
@@ -86,8 +86,8 @@ export const discoverApprovalWarning = (
 // the filters are the enforcement. A host that gates approval per tool sees
 // one approval surface for every operation in this mode, as
 // docs/configuration.md states.
-const callAnnotations = (operations: readonly SnapshotTool[]): Record<string, unknown> => {
-  const hints = operations.map((tool) => tool.generated?.annotations ?? {});
+const callAnnotations = (operations: readonly OperationEntry[]): Record<string, unknown> => {
+  const hints = operations.map((entry) => entry.annotations);
   if (hints.every((hint) => hint.readOnlyHint === true)) {
     return { readOnlyHint: true, openWorldHint: true };
   }
@@ -117,7 +117,7 @@ const discoveryTool = (
 // Package-authored, static text: no description below interpolates anything
 // from the spec (the same rule as the server instructions in protocol.ts).
 // Only call_operation's annotations depend on the exposed set.
-export const buildDiscoveryTools = (operations: readonly SnapshotTool[]): SnapshotTool[] => [
+export const buildDiscoveryTools = (operations: readonly OperationEntry[]): SnapshotTool[] => [
   discoveryTool(SEARCH_TOOL_NAME, 'search', SEARCH_INPUT_SCHEMA, {
     description:
       "Search this API's operations by keyword. Returns operation names (best match first) to pass to describe_operation and call_operation. Only operations this server exposes are searchable.",
@@ -154,25 +154,51 @@ export const unknownOperationOutcome = (name: string): ToolCallOutcome =>
   );
 
 export const lookupOperation = (
-  operationsByName: Readonly<Record<string, SnapshotTool | undefined>>,
+  operationsByName: Readonly<Record<string, OperationEntry | undefined>>,
   name: string,
-): SnapshotTool | undefined =>
+): OperationEntry | undefined =>
   Object.hasOwn(operationsByName, name) ? operationsByName[name] : undefined;
+
+// The whole tool of an exposed operation, or a tool error when its output
+// side could not be built (issue #47). Nothing is sent in that case.
+export const resolveOperation = (
+  operationsByName: Readonly<Record<string, OperationEntry | undefined>>,
+  name: string,
+): { tool: SnapshotTool } | { outcome: ToolCallOutcome } => {
+  const entry = lookupOperation(operationsByName, name);
+  if (entry === undefined) {
+    return { outcome: unknownOperationOutcome(name) };
+  }
+  try {
+    return { tool: entry.resolve() };
+  } catch {
+    return {
+      outcome: withEffect(
+        textOutcome(
+          `operation "${sanitizeSpecText(name, REFLECTED_NAME_MAX)}" is unavailable: its definition could not be built`,
+          true,
+        ),
+        'not_sent',
+      ),
+    };
+  }
+};
 
 // Returns the wire tool the per-operation mode lists for this operation (the
 // same sanitized description, schemas and annotations), with its
 // outputSchema only when asked for (see below).
 // `data` was already validated against DESCRIBE_INPUT_SCHEMA.
 export const describeOperation = (
-  operationsByName: Readonly<Record<string, SnapshotTool | undefined>>,
+  operationsByName: Readonly<Record<string, OperationEntry | undefined>>,
   data: unknown,
   compactOutputSchemas = false,
 ): ToolCallOutcome => {
   const { name, include_output_schema: requested } = data as DescribeInput;
-  const tool = lookupOperation(operationsByName, name);
-  if (tool === undefined) {
-    return unknownOperationOutcome(name);
+  const resolved = resolveOperation(operationsByName, name);
+  if ('outcome' in resolved) {
+    return resolved.outcome;
   }
+  const { tool } = resolved;
   // Output schemas are most of the definitions (79% of the per-operation
   // tools/list for the GitHub REST description), and calling needs only the
   // inputSchema: the server validates the result either way (issue #9). An operation that accepts

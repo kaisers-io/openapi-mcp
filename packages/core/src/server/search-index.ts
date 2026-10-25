@@ -2,7 +2,7 @@ import { sanitizeSpecText } from '../spec/sanitize.ts';
 import { structuredOutcome } from './result.ts';
 import type { ToolCallOutcome } from './result.ts';
 import { searchTerms } from './search-terms.ts';
-import type { SnapshotTool } from './types.ts';
+import type { OperationEntry } from './types.ts';
 import { SEARCH_LIMIT_DEFAULT, SEARCH_QUERY_MAX_TOKENS } from './discovery-schemas.ts';
 import type { SearchInput } from './discovery-schemas.ts';
 
@@ -78,8 +78,8 @@ export type SearchIndex = {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
-const parameterNames = (tool: SnapshotTool): string[] => {
-  const { properties } = tool.wireTool.inputSchema;
+const parameterNames = (tool: OperationEntry): string[] => {
+  const { properties } = tool.inputSchema;
   return isRecord(properties) ? Object.keys(properties) : [];
 };
 
@@ -91,8 +91,8 @@ const compareCodePoints = (left: string, right: string): number => {
 };
 
 // The fields of one operation and their weights, as weighted term counts.
-const termCounts = (tool: SnapshotTool, tags: readonly string[]): Map<string, number> => {
-  const operation = tool.generated?.operation;
+const termCounts = (tool: OperationEntry, tags: readonly string[]): Map<string, number> => {
+  const { operation } = tool;
   const description =
     operation?.description === undefined || operation.description === operation.summary
       ? ''
@@ -115,11 +115,11 @@ const termCounts = (tool: SnapshotTool, tags: readonly string[]): Map<string, nu
 };
 
 const searchEntryOf = (
-  tool: SnapshotTool,
+  tool: OperationEntry,
   tags: readonly string[],
   length: number,
 ): SearchEntry => {
-  const operation = tool.generated?.operation;
+  const { operation } = tool;
   const summary =
     operation?.summary === undefined ? '' : sanitizeSpecText(operation.summary, RESULT_SUMMARY_MAX);
   return {
@@ -135,13 +135,13 @@ const searchEntryOf = (
   };
 };
 
-export const buildSearchIndex = (operations: readonly SnapshotTool[]): SearchIndex => {
+export const buildSearchIndex = (operations: readonly OperationEntry[]): SearchIndex => {
   const postings = new Map<string, Posting[]>();
   // Imperative on purpose: one pass builds both the entries and the inverted
   // index, appending to shared posting lists.
   const entries = operations.map((tool, index) => {
     // Tags are raw spec strings (normalizeSpec does not sanitize them).
-    const tags = (tool.generated?.operation.tags ?? [])
+    const tags = tool.operation.tags
       .slice(0, INDEX_TAGS_MAX_COUNT)
       .map((tag) => sanitizeSpecText(tag, RESULT_TAG_MAX))
       .filter((tag) => tag !== '');

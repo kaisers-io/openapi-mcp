@@ -492,12 +492,17 @@ startup when `discover` exposes any non-read-only operation; narrow the set with
 Startup cost: in `per-operation` mode, `serve` compiles one output validator per exposed
 operation before it answers `initialize`, so an output schema the validator cannot compile
 stops `serve` at startup. Operations with identical output schemas share one validator. In
-`discover` mode, which can expose thousands of operations, an operation's validator is
-compiled on its first call instead, before the request is sent: an output schema that cannot
-be compiled then fails that operation's calls with a tool error, and `serve` names it once on
-stderr. Measured on a development machine with a warm spec cache, for the GitHub REST
-description (1,241 operations exposed with `--allow 'operationId:*'`): about 2 s until `initialize` answers in
-`discover` mode.
+`discover` mode, which can expose thousands of operations, an operation's output schema,
+its description and its validator are built on its first `describe_operation` or
+`call_operation` instead, before any request is sent: an output schema that cannot be built
+or compiled then fails that operation's calls with a tool error, and `serve` names it once on
+stderr. With `--omit-output-schema`, every output schema is built at startup, because the
+warnings about its patterns depend on them. Measured on a development machine with a warm
+spec cache, for the GitHub REST description (1,241 operations exposed with
+`--allow 'operationId:*'`): about 0.5 s until `initialize` answers in `discover` mode. A
+session that describes or calls nearly every operation ends up a few MB above an eager
+build (about 3 MB of live heap after describing all of GitHub's), since each operation is
+completed on its own.
 
 Measured `tools/list` sizes (2026-10-24, whole stdio response line, tokens ≈ bytes / 4):
 

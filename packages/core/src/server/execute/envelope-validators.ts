@@ -104,7 +104,7 @@ export type EnvelopeValidators = {
 // sees that error once, for the operator's log.
 export const lazyEnvelopeValidators = (
   compile: EnvelopeCompiler,
-  outputSchemas: ReadonlyMap<string, Record<string, unknown> | undefined>,
+  outputSchemas: Pick<ReadonlyMap<string, Record<string, unknown> | undefined>, 'get' | 'has'>,
   onError?: (toolName: string, error: unknown) => void,
 ): EnvelopeValidators => {
   const settled = new Map<

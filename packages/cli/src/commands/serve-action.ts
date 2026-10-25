@@ -7,7 +7,8 @@ import type { Command } from '@commander-js/extra-typings';
 import {
   assertAllowedRedirectTarget,
   buildSnapshot,
-  buildTools,
+  buildToolsDeferred,
+  completeTools,
   createClientCredentialsSource,
   createEnvelopeCompiler,
   lazyEnvelopeValidators,
@@ -483,19 +484,26 @@ const prepareServe = async (
   // operator auth header (--header/--header-env) — SYSTEM_HEADERS alone
   // would let it reappear as a caller-settable input, silently colliding
   // with the credential the executor injects.
-  const generated = buildTools(result.namedOperations, {
+  const generated = buildToolsDeferred(result.namedOperations, {
     reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
     openapiVersion: result.spec.openapiVersion,
     projection: cmdOpts.responseProjection === true,
     defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
     ...nullableOption(cmdOpts.nullableResponseFields),
   });
-  const optOut = withOutputSchemaOptOut(
-    generated,
-    args.filters.omitOutputSchema,
-    result.spec,
-    cmdOpts.strictFilters === true,
-  );
+  const toolMode = resolveToolMode(requestedToolMode, generated.tools.length);
+  // Under discover, each operation's output side is built on first use
+  // (issue #47): nothing at startup lists it. --omit-output-schema needs
+  // every tool's output schema to report its patterns, so it builds them now.
+  const deferOutput = toolMode === 'discover' && args.filters.omitOutputSchema.length === 0;
+  const optOut = deferOutput
+    ? { built: generated, deadPatterns: [], warnings: [] }
+    : withOutputSchemaOptOut(
+        completeTools(generated),
+        args.filters.omitOutputSchema,
+        result.spec,
+        cmdOpts.strictFilters === true,
+      );
   const { built } = optOut;
   const exposure = exposureReport(result, built, cmdOpts.strictFilters === true);
   // The status tool counts the --omit-output-schema dead patterns too
@@ -505,8 +513,13 @@ const prepareServe = async (
     notExposedCounts: exposure.counts,
   };
   const snapshot = buildSnapshot(built, pipeline, {
-    toolMode: resolveToolMode(requestedToolMode, built.tools.length),
+    toolMode,
     compactOutputSchemas,
+    onDeferredError: (toolName, error) => {
+      emitWarnings(ctx, [
+        `tool "${toolName}" has an output side that cannot be built, so describing or calling it fails: ${describeCause(error)}`,
+      ]);
+    },
   });
 
   // Resolve + validate the API base URL: --base-url (trusted, address
@@ -588,16 +601,21 @@ const prepareServe = async (
   const compileToolValidator = createEnvelopeCompiler();
   let validators: EnvelopeValidators;
   if (snapshot.toolMode === 'discover') {
+    const byName = snapshot.operationsByName;
     validators = lazyEnvelopeValidators(
       compileToolValidator,
-      new Map(snapshot.operations.map((tool) => [tool.name, tool.wireTool.outputSchema])),
+      {
+        has: (toolName) => Object.hasOwn(byName, toolName),
+        get: (toolName) => byName[toolName]?.resolve().wireTool.outputSchema,
+      },
       (toolName, error) =>
         emitWarnings(ctx, [
           `tool "${toolName}" has an output schema that cannot be compiled, so its calls fail: ${describeCause(error)}`,
         ]),
     );
   } else {
-    const validatorEntries = snapshot.operations.map((tool) => {
+    const validatorEntries = snapshot.operations.map((entry) => {
+      const tool = entry.resolve();
       try {
         return [tool.name, compileToolValidator(tool.wireTool.outputSchema)] as const;
       } catch (error) {

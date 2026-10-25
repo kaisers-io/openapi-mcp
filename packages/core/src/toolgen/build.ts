@@ -3,11 +3,10 @@ import type { OmittedOperation, OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import { deriveAnnotations } from './annotations.ts';
 import type { ToolAnnotations } from './annotations.ts';
-import { composeDescription } from './description.ts';
+import { completeTool } from './complete.ts';
 import { buildLayout } from './layout.ts';
 import type { RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
-import { explainOutputSchema } from './output-schema.ts';
 import type { JsonSchemaRecord, NullableFieldScope } from './output-schema.ts';
 import { detectPagination } from './pagination.ts';
 import type { PaginationPlan } from './pagination.ts';
@@ -51,6 +50,31 @@ export type GeneratedTool = {
 
 export type BuildToolsResult = {
   tools: readonly GeneratedTool[];
+  omitted: readonly OmittedOperation[];
+};
+
+// The fields that come from the operation's responses: built together, on
+// demand under `--tool-mode discover` (issue #47)
+export type OutputSide =
+  | 'description'
+  | 'outputSchema'
+  | 'outputSchemaAssumesDefaultIsError'
+  | 'outputSchemaAdmitsNullFields'
+  | 'outputSchemaOptedOut'
+  | 'outputSchemaWithheld';
+
+// A tool without its output side. Which operations become tools, their
+// input schemas and their omission reasons are all decided here; only the
+// output side waits for `complete`, which builds it once and returns the
+// whole tool on every call.
+export type DeferredTool = Omit<GeneratedTool, OutputSide> & {
+  // `seen` is shared by the completions of one build, so an output schema
+  // node several tools share is frozen in one walk
+  complete: (seen?: WeakSet<object>) => GeneratedTool;
+};
+
+export type DeferredToolsResult = {
+  tools: readonly DeferredTool[];
   omitted: readonly OmittedOperation[];
 };
 
@@ -114,7 +138,7 @@ const buildToolEntry = (
   defaultResponseIsError: boolean,
   nullableResponseFields: NullableFieldScope | undefined,
   projection: boolean,
-): GeneratedTool | OmittedOperation => {
+): DeferredTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
   // Provenance for filter diagnostics (issue #41)
   const omitted = (reason: string): OmittedOperation => ({
@@ -136,40 +160,31 @@ const buildToolEntry = (
     return omitted(`input schema cannot be represented as JSON Schema: ${wireResult.error}`);
   }
   const pagination = detectPagination(named.operation, layout.ok.mapper, wireResult.ok);
-  const { outputSchema, withheld, admitsNullFields } = explainOutputSchema(
-    named.operation,
-    openapiVersion,
-    {
-      defaultResponseIsError,
-      ...(nullableResponseFields === undefined ? {} : { nullableResponseFields }),
-      pagination: pagination !== undefined,
-      projection: layout.ok.projection,
-    },
-  );
-  const description = composeDescription(named.operation, withheld);
-  const annotations = deriveAnnotations(named.operation.method);
-  const assumesDefaultIsError =
-    defaultResponseIsError &&
-    outputSchema !== undefined &&
-    Object.hasOwn(named.operation.responses, 'default');
-  return {
+  const core = {
     toolName: named.toolName,
     operation: named.operation,
     inputSchema: layout.ok.inputSchema,
     wireSchema: wireResult.ok,
     mapper: layout.ok.mapper,
-    description,
-    annotations,
-    ...(outputSchema === undefined ? {} : { outputSchema }),
-    ...(assumesDefaultIsError ? { outputSchemaAssumesDefaultIsError: true as const } : {}),
-    ...(admitsNullFields === true ? { outputSchemaAdmitsNullFields: true as const } : {}),
-    ...(withheld === undefined ? {} : { outputSchemaWithheld: withheld }),
+    annotations: deriveAnnotations(named.operation.method),
     ...(pagination === undefined ? {} : { pagination }),
     ...(layout.ok.projection ? { projection: true } : {}),
   };
+  let completed: GeneratedTool | undefined;
+  return {
+    ...core,
+    complete: (seen) => {
+      completed ??= completeTool(
+        core,
+        { openapiVersion, defaultResponseIsError, nullableResponseFields },
+        seen,
+      );
+      return completed;
+    },
+  };
 };
 
-export const buildTools = (
+export const buildToolsDeferred = (
   namedOperations: readonly NamedOperation[],
   // `openapiVersion` is required (no default): the caller threads the spec's
   // version so a 3.0 `nullable: true` is honoured only under 3.0. buildLayout and
@@ -189,7 +204,7 @@ export const buildTools = (
     // a third, paid in every session.
     projection?: boolean;
   },
-): BuildToolsResult => {
+): DeferredToolsResult => {
   // HTTP header names are case-insensitive, and the header drop in paramFields
   // looks up `reservedHeaders.has(name.toLowerCase())`. The caller's set contents
   // are NOT guaranteed lowercase — a caller unions operator-configured
@@ -215,7 +230,22 @@ export const buildTools = (
     ),
   );
   return {
-    tools: entries.filter((entry): entry is GeneratedTool => !('reason' in entry)),
+    tools: entries.filter((entry): entry is DeferredTool => !('reason' in entry)),
     omitted: entries.filter((entry): entry is OmittedOperation => 'reason' in entry),
   };
 };
+
+// Every tool with its output side, in one memo scope so shared response
+// schemas convert once
+export const completeTools = (built: DeferredToolsResult): BuildToolsResult => ({
+  tools: withConvertMemo(() => {
+    const seen = new WeakSet<object>();
+    return built.tools.map((tool) => tool.complete(seen));
+  }),
+  omitted: built.omitted,
+});
+
+export const buildTools = (
+  namedOperations: readonly NamedOperation[],
+  opts: Parameters<typeof buildToolsDeferred>[1],
+): BuildToolsResult => completeTools(buildToolsDeferred(namedOperations, opts));

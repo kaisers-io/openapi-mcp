@@ -179,7 +179,7 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
       instructions: `${
         opts.snapshot.toolMode === 'discover' ? DISCOVER_INSTRUCTIONS : STATIC_INSTRUCTIONS
       }${
-        opts.snapshot.operations.some((tool) => tool.generated?.projection === true)
+        opts.snapshot.operations.some((entry) => entry.projection === true)
           ? ` ${PROJECTION_GUIDE}`
           : ''
       }`,

@@ -141,6 +141,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`--tool-mode discover` starts faster (#47).** An operation's output schema and
+  description are now built on its first `describe_operation` or `call_operation`, not at
+  startup. For the GitHub REST description (1,241 operations), `initialize` answers in about
+  490 ms instead of 815 ms, and peak memory drops from 343 to 315 MB. The definitions and the
+  validation are unchanged. An output schema that cannot be built now fails that operation's
+  calls with a tool error, and nothing is sent. `--omit-output-schema` still builds every
+  output schema at startup.
 - **Clearer error for Swagger 2.0 specs (#11).** A YAML Swagger 2.0 spec that writes its
   version unquoted (`swagger: 2.0`) now gets the Swagger error instead of the generic version
   error.

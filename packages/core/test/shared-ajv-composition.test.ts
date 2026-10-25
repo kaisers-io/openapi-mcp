@@ -97,12 +97,12 @@ const samples = [
 describe('shared envelope compiler × generated output schemas', () => {
   const compile = createEnvelopeCompiler();
   const shared = new Map(
-    snapshot.operations.map((tool) => [tool.name, compile(tool.wireTool.outputSchema)]),
+    snapshot.operations.map((tool) => [tool.name, compile(tool.resolve().wireTool.outputSchema)]),
   );
 
   it('gives every tool the same verdicts as a fresh context per tool', () => {
     for (const tool of snapshot.operations) {
-      const fresh = compileEnvelopeValidator(tool.wireTool.outputSchema);
+      const fresh = compileEnvelopeValidator(tool.resolve().wireTool.outputSchema);
       const mine = shared.get(tool.name);
       expect(mine === undefined).toBe(fresh === undefined);
       for (const sample of samples) {
