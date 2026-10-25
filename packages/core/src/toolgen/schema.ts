@@ -1402,9 +1402,22 @@ const memoKey = (version: OpenapiVersion, mode: SchemaMode): string => `${versio
 let activeScope: BuildScope | undefined;
 let deepestDepth = 0;
 
-export const withConvertMemo = <Value>(run: () => Value): Value => {
+export type ConvertMemo = BuildScope;
+
+export const createConvertMemo = (): ConvertMemo => ({
+  converted: new WeakMap(),
+  jsonSchemas: new WeakMap(),
+});
+
+// `memo` lets several runs over the same spec share one memo (the output
+// schemas a discover snapshot builds on first use, #47). Its WeakMaps hold
+// nothing once the spec's schema nodes are gone.
+export const withConvertMemo = <Value>(
+  run: () => Value,
+  memo: ConvertMemo = createConvertMemo(),
+): Value => {
   const previous = activeScope;
-  activeScope = { converted: new WeakMap(), jsonSchemas: new WeakMap() };
+  activeScope = memo;
   try {
     return run();
   } finally {

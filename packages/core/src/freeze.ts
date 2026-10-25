@@ -14,9 +14,10 @@ import { z } from 'zod';
 // original schema objects unchanged, and freezing is the stronger form of
 // that guarantee, not an accidental side channel. `typeof value !== 'object'`
 // also skips functions (e.g. `GeneratedTool.mapper`, `typeof` is
-// `'function'`, not `'object'`) — deliberately: nothing in this codebase ever reassigns a
-// property on a function object, and freezing would not change whether the
-// function itself can be CALLED, so there is nothing worth protecting there.
+// `'function'`, not `'object'`) — deliberately: nothing in this codebase ever
+// reassigns a property on a function object, and freezing would not change
+// whether the function itself can be CALLED, so there is nothing worth
+// protecting there.
 // `toolsByName` is deliberately NOT a `Map`: `Object.freeze` on a `Map`
 // does not block its `.set()`/`.delete()` methods (a well-known JS
 // limitation — freezing only stops own-property reassignment, and a Map's
@@ -24,10 +25,12 @@ import { z } from 'zod';
 // would still be mutable at runtime even though the TS `ReadonlyMap` type
 // stopped a typed caller from calling `.set()` at compile time only.
 // `toolsByName` is instead a null-prototype, own-property RECORD (built via
-// `Object.create(null)` below) — its entries genuinely ARE its own
+// `Object.create(null)` in operation-entry.ts) — its entries genuinely ARE its own
 // properties, so this same `deepFreeze` walk that freezes every other plain
 // object in the snapshot also genuinely blocks add/replace/delete on it,
 // closing the gap at runtime, not just in the types.
+// `seen` may be shared by the walks of one build, so a schema shared by many
+// operations is walked once, not once per operation (#47).
 export const deepFreeze = <T>(value: T, seen = new WeakSet<object>()): T => {
   if (value === null || typeof value !== 'object') {
     return value;

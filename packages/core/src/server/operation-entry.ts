@@ -6,7 +6,8 @@ import type {
   DeferredToolsResult,
   GeneratedTool,
 } from '../toolgen/build.ts';
-import { withConvertMemo } from '../toolgen/schema.ts';
+import { createConvertMemo, withConvertMemo } from '../toolgen/schema.ts';
+import type { ConvertMemo } from '../toolgen/schema.ts';
 import { deepFreeze } from '../freeze.ts';
 import type { OperationEntry, SnapshotTool, ToolMode, WireTool } from './types.ts';
 import { presentedOutputSchema, runtimeOperationOf, runtimeToolOf, titleOf } from './wire-tools.ts';
@@ -35,10 +36,12 @@ export const resolvedEntry = (generated: GeneratedTool, tool: SnapshotTool): Ope
 export const deferredEntry = (
   deferred: DeferredTool,
   toTool: (generated: GeneratedTool) => SnapshotTool,
+  shared: { memo: ConvertMemo; seen: WeakSet<object> },
   onError?: (toolName: string, error: unknown) => void,
 ): OperationEntry => {
   const name = deferred.toolName;
-  let source: DeferredTool | undefined = deepFreeze(deferred);
+  const { memo } = shared;
+  let source: DeferredTool | undefined = deepFreeze(deferred, shared.seen);
   let settled: { tool: SnapshotTool } | { error: unknown } | undefined;
   return {
     ...factsOf(deferred),
@@ -47,9 +50,9 @@ export const deferredEntry = (
         const pending = source as DeferredTool;
         source = undefined;
         try {
-          // A memo scope of its own: shared nodes convert once within this
-          // tool, and nothing is kept after it
-          settled = { tool: deepFreeze(toTool(withConvertMemo(() => pending.complete()))) };
+          // The snapshot's memo: a schema shared by several operations
+          // converts once, as in an eager build
+          settled = { tool: deepFreeze(toTool(withConvertMemo(() => pending.complete(), memo))) };
         } catch (error) {
           settled = { error };
           onError?.(name, error);
@@ -121,10 +124,12 @@ export const entriesOf = (
   if (toolMode === 'discover' && isDeferred(built)) {
     // Describe_operation presents a compact schema itself
     const toTool = (generated: GeneratedTool): SnapshotTool => snapshotToolOf(generated, false);
+    // One memo for every first use, and one freeze walk at startup
+    const shared = { memo: createConvertMemo(), seen: new WeakSet<object>() };
     return {
       entries: built.tools.map((tool) => {
         assertObjectRoot(tool.toolName, 'inputSchema', tool.wireSchema);
-        return deferredEntry(tool, toTool, options.onDeferredError);
+        return deferredEntry(tool, toTool, shared, options.onDeferredError);
       }),
       tools: [],
     };

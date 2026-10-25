@@ -6,14 +6,22 @@ import { explainOutputSchema } from './output-schema.ts';
 import type { NullableFieldScope } from './output-schema.ts';
 
 // The output side of one tool: its output schema, the description (which
-// names a withheld schema) and the flags that come with them. Frozen:
-// every caller of a tool's `complete` shares it, a server snapshot
-// included, so none may change what the others see.
+// names a withheld schema) and the flags that come with them. The tool and
+// its output schema are frozen: every caller of a tool's `complete` shares
+// them, a server snapshot included, so none may change what the others see.
+// The rest is the tool's core, which a deferred snapshot freezes itself.
 export const completeTool = (
   core: Omit<GeneratedTool, OutputSide>,
-  openapiVersion: OpenapiVersion,
-  defaultResponseIsError: boolean,
-  nullableResponseFields: NullableFieldScope | undefined,
+  {
+    openapiVersion,
+    defaultResponseIsError,
+    nullableResponseFields,
+  }: {
+    openapiVersion: OpenapiVersion;
+    defaultResponseIsError: boolean;
+    nullableResponseFields: NullableFieldScope | undefined;
+  },
+  seen?: WeakSet<object>,
 ): GeneratedTool => {
   const { operation } = core;
   const { outputSchema, withheld, admitsNullFields } = explainOutputSchema(
@@ -30,7 +38,10 @@ export const completeTool = (
     defaultResponseIsError &&
     outputSchema !== undefined &&
     Object.hasOwn(operation.responses, 'default');
-  return deepFreeze({
+  if (outputSchema !== undefined) {
+    deepFreeze(outputSchema, seen);
+  }
+  return Object.freeze({
     toolName: core.toolName,
     operation,
     inputSchema: core.inputSchema,

@@ -68,7 +68,9 @@ export type OutputSide =
 // output side waits for `complete`, which builds it once and returns the
 // whole tool on every call.
 export type DeferredTool = Omit<GeneratedTool, OutputSide> & {
-  complete: () => GeneratedTool;
+  // `seen` is shared by the completions of one build, so an output schema
+  // node several tools share is frozen in one walk
+  complete: (seen?: WeakSet<object>) => GeneratedTool;
 };
 
 export type DeferredToolsResult = {
@@ -171,12 +173,11 @@ const buildToolEntry = (
   let completed: GeneratedTool | undefined;
   return {
     ...core,
-    complete: () => {
+    complete: (seen) => {
       completed ??= completeTool(
         core,
-        openapiVersion,
-        defaultResponseIsError,
-        nullableResponseFields,
+        { openapiVersion, defaultResponseIsError, nullableResponseFields },
+        seen,
       );
       return completed;
     },
@@ -237,7 +238,10 @@ export const buildToolsDeferred = (
 // Every tool with its output side, in one memo scope so shared response
 // schemas convert once
 export const completeTools = (built: DeferredToolsResult): BuildToolsResult => ({
-  tools: withConvertMemo(() => built.tools.map((tool) => tool.complete())),
+  tools: withConvertMemo(() => {
+    const seen = new WeakSet<object>();
+    return built.tools.map((tool) => tool.complete(seen));
+  }),
   omitted: built.omitted,
 });
 

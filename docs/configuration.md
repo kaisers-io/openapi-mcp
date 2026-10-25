@@ -499,7 +499,10 @@ or compiled then fails that operation's calls with a tool error, and `serve` nam
 stderr. With `--omit-output-schema`, every output schema is built at startup, because the
 warnings about its patterns depend on them. Measured on a development machine with a warm
 spec cache, for the GitHub REST description (1,241 operations exposed with
-`--allow 'operationId:*'`): about 0.6 s until `initialize` answers in `discover` mode.
+`--allow 'operationId:*'`): about 0.5 s until `initialize` answers in `discover` mode. A
+session that describes or calls nearly every operation ends up a few MB above an eager
+build (about 3 MB of live heap after describing all of GitHub's), since each operation is
+completed on its own.
 
 Measured `tools/list` sizes (2026-10-24, whole stdio response line, tokens ≈ bytes / 4):
 
