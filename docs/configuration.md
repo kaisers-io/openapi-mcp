@@ -685,6 +685,46 @@ Each property of the body object becomes one part:
   absent is refused with a message naming the parts, instead of sending an empty body that
   strict servers reject.
 
+### Binary bodies and uploads
+
+A request body of `application/octet-stream`, or of `image/png`, `image/jpeg`, `image/gif` or
+`image/webp`, is one base64 tool argument (`body`), sent as the raw bytes with that
+`Content-Type`. A structured body type (JSON, form, multipart) is preferred when the operation
+declares one, then `application/octet-stream`, then an image type.
+
+Base64 costs the model about a third more characters than the file has bytes, which makes
+anything but a tiny file impractical to send. `serve --uploads` lets every binary field (a
+multipart file part, an octet-stream body or an image body) also take a file name:
+
+```json
+{ "body": { "file": "photo.png" } }
+```
+
+- **Where files come from:** the server reads the named file from
+  `~/.kaisers-io/openapi-mcp/uploads/<api>/` and sends its bytes.
+  - `<api>` is the spec cache's name for the spec source and `--cache-key`.
+  - The folder is the same on every platform, owner-only, and created at startup.
+  - The field's description names it, so the agent can copy a file there first.
+  - Files in it older than 24 hours are removed at startup.
+- **Agents in a sandbox** need write access to that folder:
+  - Codex in `workspace-write` mode: add it to `writable_roots` under
+    `[sandbox_workspace_write]` in `config.toml`.
+  - Claude Code: add it to `permissions.additionalDirectories`, or pass it with `--add-dir`.
+    Otherwise it asks before writing there.
+- **Cost:** a call costs a few tokens for the name instead of about 1.3 characters per byte of
+  the file.
+- **Names:** letters, digits, `_` and `-`, in dot-separated parts, at most 128 characters, in a
+  flat folder. Paths, `..`, drive letters, `:`, spaces, non-ASCII characters and Windows device
+  names (`CON`, `NUL`, …) are refused before anything is opened.
+- **Which files:** only a regular file with a single link, within the request body limit
+  (`--max-response-bytes`). A link, a junction, a directory or a hard link to a file elsewhere
+  is refused.
+- **Content check:** for a declared image type, the file's first bytes must show that type; an
+  octet-stream field takes any file.
+- **What is sent:** a refused upload is a tool error, and nothing is sent. Base64 keeps working
+  alongside file names.
+- `--uploads` cannot be combined with a non-loopback `--http-host`.
+
 ## `cache`
 
 Inspect and manage the on-disk spec cache (`~/.kaisers-io/openapi-mcp/cache/`). Has no flags

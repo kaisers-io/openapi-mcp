@@ -6,6 +6,7 @@ import {
   isSafePartName,
   isStrictBase64,
   MULTIPART_FORM_DATA,
+  isRawBinaryEssence,
   OCTET_STREAM,
   parseMediaType,
   sequenceKind,
@@ -591,7 +592,7 @@ const bodyEncoding = (
   if (sequence !== undefined) {
     return sequence;
   }
-  if (essence === OCTET_STREAM) {
+  if (isRawBinaryEssence(essence)) {
     return 'binary';
   }
   if (essence === MULTIPART_FORM_DATA) {

@@ -405,8 +405,9 @@ Each is off unless a default or "on" is stated; details in
   hosts would see only the first page.
 - `--upstream-oauth-client-id-env` / `--upstream-oauth-client-secret-env`: obtain the upstream
   API's access token with the OAuth2 client-credentials grant.
-- Request bodies: JSON, form, `multipart/form-data` and `application/octet-stream` (binary as a
-  base64 argument). Query styles: `form`, `deepObject`, `spaceDelimited`, `pipeDelimited`.
+- Request bodies: JSON, form, `multipart/form-data`, `application/octet-stream` and raw
+  `image/*` bodies (binary as a base64 argument, or a file name with `--uploads`; see
+  [uploads](docs/configuration.md#binary-bodies-and-uploads)). Query styles: `form`, `deepObject`, `spaceDelimited`, `pipeDelimited`.
   Binary responses are a tool error, except images with `--image-responses inline|file`
   ([image responses](docs/configuration.md#image-responses)).
 - Results carry selected response headers (`ETag`, same-origin `Location`, rate-limit headers,

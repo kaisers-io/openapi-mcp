@@ -34,6 +34,8 @@ import type { RouteTable } from './route-table.ts';
 import { mapResponse } from './response.ts';
 import { imageOutcome, isImageResponse } from './image-result.ts';
 import { decorateResponseOutcome } from './forwarded-headers.ts';
+import { resolveUploads } from './uploads.ts';
+import type { Uploads } from './uploads.ts';
 import type { ImageResponses } from './image-result.ts';
 import type { EnvelopeValidator, EnvelopeValidators } from './envelope-validators.ts';
 import type { PageInput } from './forwarded-headers.ts';
@@ -105,6 +107,8 @@ export type ExecutorConfig = {
   // --image-responses (#14): an upstream image becomes an MCP image block or
   // a saved file. Absent means off: an image is an unsupported media type.
   images?: ImageResponses;
+  // --uploads (#29): a binary field may name a file in this folder
+  uploads?: Uploads;
   oauth?: {
     tokens: {
       getToken: () => Promise<{ ok: string } | { error: string }>;
@@ -439,7 +443,22 @@ const runUpstreamCall = async (
     );
   }
   const method = generated.operation.method.toUpperCase();
-  const data = isRecord(args) ? args : {};
+  const given = isRecord(args) ? args : {};
+  // A named upload is read before anything is sent; a refusal sends nothing.
+  // Reading it counts against the call's time budget, so a slow disk cannot
+  // send a request after the deadline (review of #58).
+  const uploadStarted = retryDeps.now();
+  const uploaded =
+    config.uploads === undefined
+      ? { ok: given }
+      : await resolveUploads(given, generated.mapper, config.uploads);
+  if ('error' in uploaded) {
+    report({ outcome: 'validation_error' });
+    return unsent(sanitizeSpecText(uploaded.error, DISPLAY_TEXT_MAX));
+  }
+  // What is left of the budget; the check before sending refuses at zero
+  const callTimeoutMs = timeoutMs - (retryDeps.now() - uploadStarted);
+  const data = uploaded.ok;
   const built = buildRequest(
     generated.mapper,
     method,
@@ -544,7 +563,8 @@ const runUpstreamCall = async (
   // The call's time budget runs from here: the token request (when one is
   // needed) and every upstream attempt share it.
   const upstreamStarted = retryDeps.now();
-  const budgetLeftMs = (): number => Math.floor(timeoutMs - (retryDeps.now() - upstreamStarted));
+  const budgetLeftMs = (): number =>
+    Math.floor(callTimeoutMs - (retryDeps.now() - upstreamStarted));
   const remainingMs = (): number => Math.max(budgetLeftMs(), 1);
   // A token for this call, or the tool error that ends it. A cancelled or
   // expired wait sends nothing more. For the first token nothing was sent
@@ -598,7 +618,7 @@ const runUpstreamCall = async (
       baseTrusted: config.baseTrusted,
       ...(authorizeHop === undefined ? {} : { authorizeHop }),
       allowPrivateNetwork: config.allowPrivateNetwork,
-      timeoutMs,
+      timeoutMs: callTimeoutMs,
       maxResponseBytes: config.maxResponseBytes,
       signal,
     };

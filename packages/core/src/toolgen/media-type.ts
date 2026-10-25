@@ -58,6 +58,16 @@ export const sequenceKind = (essence: string): SequenceKind | undefined => {
 export const FORM_URLENCODED = 'application/x-www-form-urlencoded';
 
 export const OCTET_STREAM = 'application/octet-stream';
+// Image types a request body can carry as raw bytes (#29), like an
+// octet-stream body; the four the server can recognise by their bytes
+export const RAW_IMAGE_TYPES: ReadonlySet<string> = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]);
+export const isRawBinaryEssence = (essence: string | undefined): boolean =>
+  essence === OCTET_STREAM || (essence !== undefined && RAW_IMAGE_TYPES.has(essence));
 export const MULTIPART_FORM_DATA = 'multipart/form-data';
 
 // A multipart part name goes into a quoted `Content-Disposition` parameter
