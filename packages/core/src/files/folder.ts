@@ -22,9 +22,15 @@ const closedToOthers = (stats: BigIntStats): boolean => isWindows || (stats.mode
 const plainDirectory = (stats: BigIntStats): boolean =>
   stats.isDirectory() && !stats.isSymbolicLink();
 
-// Creates the folder if it is missing, checks what is there, and closes it
-// to other users if an earlier run left it open (as the cache does)
-export const openManagedFolder = async (dir: string, label: string): Promise<ManagedFolder> => {
+// Creates the folder if it is missing and checks what is there. A folder
+// this server manages is closed to other users if an earlier run left it
+// open (as the cache does); one the operator chose is refused instead, since
+// its permissions are theirs to decide.
+export const openManagedFolder = async (
+  dir: string,
+  label: string,
+  repair = true,
+): Promise<ManagedFolder> => {
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const stats = await lstat(dir, { bigint: true });
   if (!plainDirectory(stats)) {
@@ -34,6 +40,9 @@ export const openManagedFolder = async (dir: string, label: string): Promise<Man
     throw validationError(`${label} ${dir} belongs to another user`);
   }
   if (!closedToOthers(stats)) {
+    if (!repair) {
+      throw validationError(`${label} ${dir} is open to other users; restrict it with chmod 700`);
+    }
     await chmod(dir, 0o700);
   }
   // The resolved path, so later steps do not walk a link in a parent again;

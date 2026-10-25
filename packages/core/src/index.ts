@@ -351,3 +351,7 @@ export { sniffImage } from './images/sniff.ts';
 export type { ImageKind } from './images/sniff.ts';
 export { IMAGE_MAX_BYTES, IMAGE_MAX_SIDE } from './server/execute/image-result.ts';
 export type { ImageResponses } from './server/execute/image-result.ts';
+export { openManagedFolder } from './files/folder.ts';
+export type { ManagedFolder } from './files/folder.ts';
+export { isUploadName, sweepUploads } from './files/upload.ts';
+export type { Uploads } from './server/execute/uploads.ts';

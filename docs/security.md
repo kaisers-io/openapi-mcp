@@ -188,6 +188,40 @@ cover:
   - The folder is separate from any upload folder, so a saved image cannot be sent upstream
     again through this server.
 
+### Uploads
+
+`--upload-dir` (off by default) lets a tool argument name a local file that the server reads
+and sends upstream. This is a path for data to leave the machine: a prompt-injected agent
+could try to name a file it should not send. The boundary is the upload folder:
+
+- **Names:**
+  - Only plain names in one flat folder: no paths, `..`, drive letters, `:` (Windows
+    alternate data streams), spaces, non-ASCII characters or Windows device names.
+  - The rules are checked before anything is opened.
+- **Read sequence:**
+  1. The folder is checked to be the same directory as at startup (device and inode).
+  2. The name is `lstat`ed: it must be a regular file, not a link.
+  3. The file is opened read-only, with `O_NOFOLLOW` where the platform has it.
+  4. The open handle must be the same file (device and inode, compared as 64-bit values),
+     with exactly one link.
+  5. The folder is checked again, and the bytes are read through the handle up to the body
+     limit.
+
+  On Windows, where Node cannot open without following a reparse point, the device and inode
+  comparison is what catches a junction, a symlink or a swapped file. A hard link to a file
+  elsewhere is refused by its link count.
+- **Content:** a field declared as an image only takes a file whose bytes are that image type.
+- **Who can put files there is the trust boundary:** anything in the folder can be sent.
+  - The default folder is owner-only and per API.
+  - Files in it older than 24 hours are removed at startup.
+  - A folder the operator chooses is never cleaned, and is refused if open to other users.
+    On Windows it is refused altogether: privacy there comes from the ACL the default folder
+    inherits from the user profile, and a folder elsewhere may let other users add files.
+- **No secret scanning:** uploaded bytes are not scanned for registered secrets. Keep the
+  folder for files meant to be sent.
+- **Remote clients:** `--upload-dir` is refused with a non-loopback `--http-host`, so a remote
+  client cannot make this machine's files be sent.
+
 ### Failed writes and retries
 
 An agent that retries a write after an unclear failure can apply it twice. Every tool error of

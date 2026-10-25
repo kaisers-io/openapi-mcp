@@ -46,7 +46,12 @@ import type {
   RequestGuardOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
-import { parseImageResponseMode, resolveApiConfig, resolveImageResponses } from '../api-options.ts';
+import {
+  parseImageResponseMode,
+  resolveApiConfig,
+  resolveImageResponses,
+  resolveUploadOptions,
+} from '../api-options.ts';
 import type { ApiCmdOpts } from '../api-options.ts';
 import { resolveTokenUrl } from '../oauth-options.ts';
 import type { CliContext } from '../context.ts';
@@ -228,6 +233,7 @@ export type ServeCmdOpts = SpecCmdOpts &
     outputSchema: string;
     imageResponses: string;
     imageDirMaxBytes: string;
+    uploadDir?: string | true;
   };
 
 type HttpAuthConfig =
@@ -488,10 +494,27 @@ const prepareServe = async (
   // operator auth header (--header/--header-env) — SYSTEM_HEADERS alone
   // would let it reappear as a caller-settable input, silently colliding
   // with the credential the executor injects.
+  // Before the tools are built: their binary fields name this folder
+  const uploads = await resolveUploadOptions({
+    uploadDir: cmdOpts.uploadDir,
+    homeDir: ctx.homeDir(),
+    source: args.source,
+    cwd: ctx.cwd(),
+    ...(args.options.cacheKey === undefined ? {} : { cacheKey: args.options.cacheKey }),
+    ...(httpConfig === undefined ? {} : { httpHost: httpConfig.hostname }),
+    maxBytes: apiConfig.maxResponseBytes,
+    now: ctx.now(),
+  });
+  if (uploads !== undefined && uploads.deleted > 0) {
+    emitWarnings(ctx, [
+      `--upload-dir: removed ${String(uploads.deleted)} file(s) older than 24 hours from ${uploads.folder.path}`,
+    ]);
+  }
   const generated = buildToolsDeferred(result.namedOperations, {
     reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
     openapiVersion: result.spec.openapiVersion,
     projection: cmdOpts.responseProjection === true,
+    ...(uploads === undefined ? {} : { uploadDir: uploads.folder.path }),
     defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
     ...nullableOption(cmdOpts.nullableResponseFields),
   });
@@ -669,6 +692,9 @@ const prepareServe = async (
     propagateTraceContext: apiConfig.propagateTraceContext,
     validators,
     ...(images === undefined ? {} : { images }),
+    ...(uploads === undefined
+      ? {}
+      : { uploads: { folder: uploads.folder, maxBytes: uploads.maxBytes } }),
     ...(oauth === undefined || tokenUrl === undefined
       ? {}
       : {

@@ -138,6 +138,7 @@ const buildToolEntry = (
   defaultResponseIsError: boolean,
   nullableResponseFields: NullableFieldScope | undefined,
   projection: boolean,
+  uploadDir: string | undefined,
 ): DeferredTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
   // Provenance for filter diagnostics (issue #41)
@@ -151,7 +152,13 @@ const buildToolEntry = (
     ...(named.operation.tags.length === 0 ? {} : { tags: named.operation.tags }),
     toolName: named.toolName,
   });
-  const layout = buildLayout(named.operation, reservedHeaders, openapiVersion, projection);
+  const layout = buildLayout(
+    named.operation,
+    reservedHeaders,
+    openapiVersion,
+    projection,
+    uploadDir,
+  );
   if (!('ok' in layout)) {
     return omitted(layout.unrepresentable);
   }
@@ -203,6 +210,8 @@ export const buildToolsDeferred = (
     // --response-projection). Off by default: it grows tools/list by about
     // a third, paid in every session.
     projection?: boolean;
+    // --upload-dir (#29): binary fields also take a file name in this folder
+    uploadDir?: string;
   },
 ): DeferredToolsResult => {
   // HTTP header names are case-insensitive, and the header drop in paramFields
@@ -226,6 +235,7 @@ export const buildToolsDeferred = (
         opts.defaultResponseIsError === true,
         opts.nullableResponseFields,
         opts.projection === true,
+        opts.uploadDir,
       ),
     ),
   );

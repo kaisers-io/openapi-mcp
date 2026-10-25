@@ -10,11 +10,14 @@ import {
   isSafePartName,
   isStrictBase64,
   MULTIPART_FORM_DATA,
+  isRawBinaryEssence,
   OCTET_STREAM,
   parseMediaType,
+  RAW_IMAGE_TYPES,
   sequenceKind,
 } from './media-type.ts';
 import { convertSchema, isDangerousKey } from './schema.ts';
+import { isUploadName } from '../files/upload.ts';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -48,6 +51,9 @@ export type FieldMapping =
       // The part's Content-Type: the property's declared concrete
       // `contentMediaType` (e.g. `image/png`), else application/octet-stream.
       partContentType?: string;
+      // With --upload-dir (#29): the value may also be `{ file: <name> }`,
+      // a file the server reads from its upload folder
+      upload?: true;
     };
 
 export type QueryStyle = 'form' | 'deepObject' | 'spaceDelimited' | 'pipeDelimited';
@@ -497,7 +503,7 @@ const selectMedia = (
       : [];
   });
   if (binary.length === 0) {
-    return undefined;
+    return selectRawImage(content);
   }
   const chosen = pickOne(binary);
   return chosen === undefined
@@ -591,12 +597,35 @@ const isBinarySchema = (schema: unknown): boolean =>
 // decodes it. Validated strictly here, advertised with the JSON Schema
 // content vocabulary (2020-12 Validation §8.3 contentEncoding, §8.4
 // contentMediaType) so a client knows how to encode it.
-const binaryBodySchema = (contentType: string, subject = 'The request body'): z.ZodType =>
-  z
+const binaryBodySchema = (
+  contentType: string,
+  subject: string,
+  uploadDir: string | undefined,
+): z.ZodType => {
+  const base64 = z
     .string()
     .refine((value) => isStrictBase64(value), { message: 'must be valid base64 (RFC 4648)' })
     .meta({ contentEncoding: 'base64', contentMediaType: contentType })
     .describe(`${subject} as base64-encoded bytes (${contentType}).`);
+  if (uploadDir === undefined) {
+    return base64;
+  }
+  // With --upload-dir (#29) the bytes can come from a file instead: a few
+  // tokens for its name rather than the whole file as base64
+  const reference = z
+    .object({
+      file: z
+        .string()
+        .refine((name) => isUploadName(name), { message: 'must be a plain file name' })
+        .describe('The name of a file in the upload folder.'),
+    })
+    .strict();
+  return z
+    .union([base64, reference])
+    .describe(
+      `${subject} (${contentType}): base64-encoded bytes, or {"file": "<name>"} to send a file the server reads from ${uploadDir}. Copy the file there first; a name costs far fewer tokens than base64.`,
+    );
+};
 
 const isFlattenableRoot = (root: unknown): root is Record<string, unknown> => {
   if (!isRecord(root)) {
@@ -692,9 +721,29 @@ const sequenceBody = (
   };
 };
 
+// 5. A raw image body (`image/png`, `image/jpeg`, `image/gif`, `image/webp`,
+//    #29), sent like an octet-stream body; last, after octet-stream.
+const selectRawImage = (
+  content: Record<string, unknown>,
+): { contentType: string; entry: Record<string, unknown> } | { ambiguous: string } | undefined => {
+  const images = Object.keys(content).filter(
+    (contentType) =>
+      RAW_IMAGE_TYPES.has(parseMediaType(contentType)?.essence ?? '') &&
+      isRecord(content[contentType]),
+  );
+  const [only] = images;
+  if (only === undefined) {
+    return undefined;
+  }
+  return images.length === 1
+    ? { contentType: only, entry: content[only] as Record<string, unknown> }
+    : { ambiguous: `several image media types (${images.join(', ')})` };
+};
+
 const bodyFields = (
   requestBody: Record<string, unknown> | undefined,
   version: OpenapiVersion = '3.1',
+  uploadDir?: string,
 ): { ok: BodyResult } | { unrepresentable: string } => {
   if (requestBody === undefined) {
     return { ok: { fields: [], mode: 'none' } };
@@ -730,9 +779,11 @@ const bodyFields = (
   }
   const bodyRequired = requestBody['required'] === true;
   const root = media.entry['schema'];
-  if (parseMediaType(media.contentType)?.essence === OCTET_STREAM) {
+  if (isRawBinaryEssence(parseMediaType(media.contentType)?.essence)) {
     if (!isBinarySchema(root)) {
-      return { unrepresentable: 'the application/octet-stream body schema is not a binary string' };
+      return {
+        unrepresentable: `the ${media.contentType} body schema is not a binary string`,
+      };
     }
     return {
       ok: {
@@ -741,9 +792,14 @@ const bodyFields = (
             preferred: 'body',
             name: 'body',
             location: 'body',
-            schema: binaryBodySchema(media.contentType),
+            schema: binaryBodySchema(media.contentType, 'The request body', uploadDir),
             required: bodyRequired,
-            mapping: { destination: 'body', bodyPath: [], required: bodyRequired },
+            mapping: {
+              destination: 'body',
+              bodyPath: [],
+              required: bodyRequired,
+              ...(uploadDir === undefined ? {} : { upload: true as const }),
+            },
           },
         ],
         mode: 'single',
@@ -817,7 +873,7 @@ const bodyFields = (
           preferred: prop,
           name: prop,
           location: 'body',
-          schema: binaryBodySchema(partContentType, 'This multipart file part'),
+          schema: binaryBodySchema(partContentType, 'This multipart file part', uploadDir),
           required: propRequired && bodyRequired,
           mapping: {
             destination: 'body',
@@ -825,6 +881,7 @@ const bodyFields = (
             required: propRequired && bodyRequired,
             binary: true,
             ...(partContentType === OCTET_STREAM ? {} : { partContentType }),
+            ...(uploadDir === undefined ? {} : { upload: true as const }),
           },
           ...(bodyRequired ? {} : { bodyGroup: { requiredWhenPresent: propRequired } }),
         });
@@ -999,12 +1056,14 @@ export const buildLayout = (
   // declared; skipped — the operation is kept, without projection — when one
   // of its own fields already has that name.
   projectable = false,
+  // --upload-dir (#29): binary fields also take a file name in this folder
+  uploadDir?: string,
 ): { ok: LayoutResult } | { unrepresentable: string } => {
   const params = paramFields(operation, reservedHeaders, version);
   if (!('ok' in params)) {
     return params;
   }
-  const body = bodyFields(operation.requestBody, version);
+  const body = bodyFields(operation.requestBody, version, uploadDir);
   if (!('ok' in body)) {
     return body;
   }
