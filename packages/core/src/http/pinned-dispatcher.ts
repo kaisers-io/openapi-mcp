@@ -557,6 +557,29 @@ export const pinnedRequest = async (
     // After a 303 the request has no body, so it carries no content-type.
     const headers = seeOther ? withoutContentType(hopHeaders) : hopHeaders;
     const sendBody = hop === 0 && opts.body !== undefined && !GET_HEAD_METHODS.has(method);
+    // Undici calls onRequestStart right before it writes a request to an
+    // open connection, and may send a request again on its own (a new
+    // connection after a 421, a replay after an HTTP/2 GOAWAY). A failure
+    // proves nothing was sent only if no write ever started (issue #53).
+    let started = false;
+    const observed = agent.compose(
+      (dispatch) => (options, handler) =>
+        dispatch(
+          options,
+          new Proxy(handler, {
+            get: (target, key) => {
+              const value: unknown = Reflect.get(target, key);
+              if (typeof value !== 'function') {
+                return value;
+              }
+              return (...args: unknown[]): unknown => {
+                started ||= key === 'onRequestStart';
+                return Reflect.apply(value, target, args);
+              };
+            },
+          }),
+        ),
+    );
     // Declared then assigned inside try/catch (not `.catch()`): a fetch
     // rejection must first destroy() the agent and classify the error
     // (cancelled vs timeout vs egress vs network) before this function can
@@ -569,7 +592,7 @@ export const pinnedRequest = async (
         method,
         headers,
         ...(sendBody ? { body: opts.body } : {}),
-        dispatcher: agent,
+        dispatcher: observed,
         redirect: 'manual',
         signal,
       });
@@ -579,17 +602,19 @@ export const pinnedRequest = async (
       if (!pooled) {
         await agent.destroy().catch(() => {});
       }
+      // No write started on the first hop: whatever failed (DNS, a refused
+      // connection, TLS, a deadline or a cancel while connecting), nothing
+      // was sent
+      const unwritten = started ? {} : unsent;
       if (signal.aborted) {
-        return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
+        return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal), ...unwritten };
       }
-      const reason = classifyFetchError(error);
-      // A pinned DNS refusal stops the connection, so nothing was sent
       return {
         kind: 'error',
-        reason,
+        reason: classifyFetchError(error),
         detail: describeCause(error),
         beforeResponse: true,
-        ...(reason === 'egress' ? unsent : {}),
+        ...unwritten,
       };
     }
     // Threaded through the try/catch/finally below on purpose: the finally

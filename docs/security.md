@@ -172,10 +172,10 @@ generated API request:
 An agent that retries a write after an unclear failure can apply it twice. Every tool error of
 an API call therefore states what is known about its effect (`_meta["openapi-mcp/effect"]`,
 see [configuration](configuration.md)). Only a refusal before anything left the server is
-`not_sent`. A failure that may have come after sending is `outcome_unknown`, and so is every
-call that sent more than one attempt, since an earlier attempt may have been applied. A first
-request rejected with `401` and sent again with a fresh OAuth2 token does not count, because it
-was not authorized. For a
+`not_sent`, including a first hop that failed before its request was written. A failure that
+may have come after sending is `outcome_unknown`, and so is every call that sent more than one
+attempt, since an earlier attempt may have been applied. A first request rejected with `401`
+and sent again with a fresh OAuth2 token does not count, because it was not authorized. For a
 write, such an error, and one whose `2xx` result could not be returned, ends with a fixed
 warning not to retry blindly. The warning is the server's own text and is added whatever the
 upstream's error text says, so an upstream cannot suppress it.
