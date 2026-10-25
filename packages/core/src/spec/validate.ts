@@ -1,7 +1,4 @@
 import type { ValidateFunction } from 'ajv';
-import load30 from './generated/openapi-3.0-validator.cjs';
-import load31 from './generated/openapi-3.1-validator.cjs';
-import load32 from './generated/openapi-3.2-validator.cjs';
 import { validationError } from '../errors.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 
@@ -19,15 +16,16 @@ export type ValidatedSpec = {
   version: OpenapiVersion;
 };
 
-// Each generated module exports a loader that evaluates its validator on
-// first use, so a run pays only for the version its spec declares
-const VALIDATORS: Record<OpenapiVersion, () => ValidateFunction> = {
-  '3.0': load30,
-  '3.1': load31,
-  '3.2': load32,
-};
+// One loader per version, each evaluating its validator on first use, so a
+// run pays only for the version its spec declares
+export type OpenApiValidators = Readonly<Record<OpenapiVersion, () => ValidateFunction>>;
 
-const getValidator = (version: OpenapiVersion): ValidateFunction => VALIDATORS[version]();
+// The generated code is large (about 750 KB), and a run that serves its spec
+// from the cache never validates: it is loaded only when a spec is (#47)
+export const loadOpenApiValidators = async (): Promise<OpenApiValidators> => {
+  const { OPENAPI_VALIDATORS } = await import('./validators.ts');
+  return OPENAPI_VALIDATORS;
+};
 
 // The declared version is spec content: bound it before it reaches any message
 const DECLARED_VERSION_MAX = 32;
@@ -54,7 +52,10 @@ const formatAjvErrors = (errors: readonly AjvErrorLike[]): string => {
 export const openapiVersionOf = (declared: string): OpenapiVersion | undefined =>
   (['3.0', '3.1', '3.2'] as const).find((version) => declared.startsWith(`${version}.`));
 
-export const validateOpenApiDocument = (document: Record<string, unknown>): ValidatedSpec => {
+export const validateOpenApiDocument = (
+  document: Record<string, unknown>,
+  validators: OpenApiValidators,
+): ValidatedSpec => {
   // Any `swagger` field marks a 2.0 document: unquoted in YAML (`swagger: 2.0`)
   // the version parses as a number. The value is never echoed.
   if (document['swagger'] !== undefined) {
@@ -67,7 +68,7 @@ export const validateOpenApiDocument = (document: Record<string, unknown>): Vali
   if (typeof declared !== 'string' || version === undefined) {
     throw validationError('spec must declare an "openapi" version of 3.0.x, 3.1.x or 3.2.x');
   }
-  const validate = getValidator(version);
+  const validate = validators[version]();
   if (!validate(document)) {
     // The declared version is attacker-controlled past the "3.x." prefix
     // checked by the gate above: sanitize and cap it before it is echoed
