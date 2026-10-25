@@ -12,6 +12,8 @@ import type {
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
+import { rememberEffect, withEffect, withEffectWarning, withMetaEntry } from '../effect.ts';
+import type { CallEffect } from '../effect.ts';
 import { retryableErrorOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
 import { DEFAULT_RESPONSE_IS_ERROR_FLAG } from '../../toolgen/output-schema.ts';
@@ -139,6 +141,26 @@ const PINNED_OUTCOME: Readonly<Record<PinnedErrorReason, CallOutcomeKind>> = {
   'redirect-offsite': 'response_error',
 };
 
+// What the final outcome of a sent call says about its effect (issue #25).
+// Only a first-hop refusal proves nothing was sent, and only a single
+// attempt makes a 4xx a rejection of the whole call; a 2xx was applied at
+// least once.
+const effectAfterSend = (outcome: PinnedOutcome, attempts: number): CallEffect => {
+  if (outcome.kind === 'error') {
+    return outcome.notSent === true && attempts === 1 ? 'not_sent' : 'outcome_unknown';
+  }
+  // A status speaks for the call only when it answers its one request:
+  // after a redirect it answers the follow-up (`POST` → 303 → `GET`), and
+  // after a retry an earlier attempt may have been applied
+  if (attempts > 1 || outcome.redirected === true) {
+    return 'outcome_unknown';
+  }
+  if (outcome.status >= 200 && outcome.status < 300) {
+    return 'upstream_reported_success';
+  }
+  return outcome.status >= 400 && outcome.status < 500 ? 'upstream_rejected' : 'outcome_unknown';
+};
+
 const classifyUpstream = (outcome: PinnedOutcome, mapped: ToolCallOutcome): CallOutcomeKind => {
   if (outcome.kind === 'error') {
     return PINNED_OUTCOME[outcome.reason];
@@ -154,10 +176,16 @@ const classifyUpstream = (outcome: PinnedOutcome, mapped: ToolCallOutcome): Call
 export const OVERLOADED_RETRY_AFTER_MS = 1000;
 
 const overloaded = (message: string): ToolCallOutcome =>
-  retryableErrorOutcome(`tool execution failed: ${message}`, {
-    error: 'overloaded',
-    retryAfterMs: OVERLOADED_RETRY_AFTER_MS,
-  });
+  withEffect(
+    retryableErrorOutcome(`tool execution failed: ${message}`, {
+      error: 'overloaded',
+      retryAfterMs: OVERLOADED_RETRY_AFTER_MS,
+    }),
+    'not_sent',
+  );
+
+// A refusal before anything was sent (issue #25)
+const unsent = (message: string): ToolCallOutcome => withEffect(isError(message), 'not_sent');
 
 // URL.hostname keeps brackets around an IPv6 literal; strip them before
 // classifying (mirrors egress.ts's/pinned-dispatcher.ts's own hostnameOf).
@@ -351,7 +379,7 @@ const runUpstreamCall = async (
     // exactly one createExecutor and passes it only as the upstream
     // ToolExecutor).
     report({ outcome: 'internal_error' });
-    return isError('this tool has no upstream operation to execute');
+    return unsent('this tool has no upstream operation to execute');
   }
   // Validators FAIL-CLOSED, mandatory: a missing map entry is a wiring bug
   // (the caller must build one entry per upstream tool, `undefined` for a
@@ -359,7 +387,7 @@ const runUpstreamCall = async (
   // unvalidated text path.
   if (!config.validators.has(tool.name)) {
     report({ outcome: 'internal_error' });
-    return isError('no response validator is registered for this tool');
+    return unsent('no response validator is registered for this tool');
   }
   // A validator compiled on demand can fail here. That happens before the
   // request is built, so a refused schema never follows a sent write. The
@@ -370,7 +398,7 @@ const runUpstreamCall = async (
     validator = config.validators.get(tool.name);
   } catch {
     report({ outcome: 'internal_error' });
-    return isError(
+    return unsent(
       "this tool's output schema could not be compiled, so its response cannot be validated; the request was not sent",
     );
   }
@@ -386,7 +414,7 @@ const runUpstreamCall = async (
   } catch {
     // Defensive: baseUrl is resolved and validated before this point.
     report({ outcome: 'internal_error' });
-    return isError('the configured base URL is invalid');
+    return unsent('the configured base URL is invalid');
   }
   if (cleartextBlocked(config, base)) {
     // Operator policy, not a bad argument: counted as `refused`.
@@ -395,7 +423,7 @@ const runUpstreamCall = async (
       method: generated.operation.method.toUpperCase(),
       pathTemplate: generated.operation.path,
     });
-    return isError(
+    return unsent(
       'refusing to send a secret header in cleartext over a non-loopback http:// origin (pass --allow-insecure-http to override)',
     );
   }
@@ -418,7 +446,7 @@ const runUpstreamCall = async (
     // single choke point where every buildRequest error becomes a tool
     // outcome, so sanitizeSpecText here (the untrusted-text rule) covers
     // every wireName-bearing message from this module in one place.
-    return isError(sanitizeSpecText(built.error, DISPLAY_TEXT_MAX));
+    return unsent(sanitizeSpecText(built.error, DISPLAY_TEXT_MAX));
   }
   // DEFENSIVE reserved-name check, mandatory rather than merely defensive in
   // effect: toolgen/layout.ts already drops any reserved header name from a
@@ -433,15 +461,15 @@ const runUpstreamCall = async (
   // invariants for a security guard.
   for (const name of Object.keys(built.ok.headers)) {
     if (config.reservedHeaderNames.has(name.toLowerCase())) {
-      return isError('a tool argument collided with a reserved header name');
+      return unsent('a tool argument collided with a reserved header name');
     }
   }
   const finalUrl = joinFinalUrl(base, built.ok.pathname, built.ok.query);
   if (finalUrl === undefined) {
-    return isError('the final request URL could not be constructed');
+    return unsent('the final request URL could not be constructed');
   }
   if (finalUrl.origin !== base.origin || !withinBasePath(finalUrl.pathname, base.pathname)) {
-    return isError('the final request URL escaped the configured base URL');
+    return unsent('the final request URL escaped the configured base URL');
   }
   const authorizeHop =
     config.routes === undefined
@@ -491,7 +519,7 @@ const runUpstreamCall = async (
     sentAttempts === undefined ? operationFacts : { ...operationFacts, attempts: sentAttempts };
   const overBudget = (sentAttempts?: number): ToolCallOutcome => {
     report({ outcome: 'refused', ...factsAfter(sentAttempts) });
-    return isError('the final request exceeds the outbound resource budget');
+    return unsent('the final request exceeds the outbound resource budget');
   };
   const { oauth } = config;
   // A token failure is a tool error naming the env vars to check; its text
@@ -500,7 +528,7 @@ const runUpstreamCall = async (
   // it was, and was not sent again.
   const tokenError = (error: string, sentAttempts?: number): ToolCallOutcome => {
     report({ outcome: 'token_error', ...factsAfter(sentAttempts) });
-    return isError(`${error} (check the ${oauth?.envVarHint ?? ''} environment variables)`);
+    return unsent(`${error} (check the ${oauth?.envVarHint ?? ''} environment variables)`);
   };
   // The call's time budget runs from here: the token request (when one is
   // needed) and every upstream attempt share it.
@@ -577,16 +605,16 @@ const runUpstreamCall = async (
   };
   const first = oauth === undefined ? undefined : await tokenFor(oauth.tokens);
   if (first !== undefined && 'failed' in first) {
-    return first.failed;
+    return withEffect(first.failed, 'not_sent');
   }
   const firstHeaders = headersFor(first?.token);
   if (firstHeaders === undefined) {
-    return overBudget();
+    return withEffect(overBudget(), 'not_sent');
   }
   // A token that arrived just as the budget ran out
   if (budgetLeftMs() <= 0) {
     report({ outcome: 'timeout', ...operationFacts });
-    return isError('the call timed out before the request was sent');
+    return unsent('the call timed out before the request was sent');
   }
   const idempotencyKey =
     generatedKey === undefined ? undefined : firstHeaders.sameOriginHeaders['idempotency-key'];
@@ -596,7 +624,18 @@ const runUpstreamCall = async (
   const withRecoveryKey = (result: ToolCallOutcome): ToolCallOutcome =>
     idempotencyKey === undefined
       ? result
-      : { ...result, meta: { ...result.meta, 'openapi-mcp/idempotencyKey': idempotencyKey } };
+      : withMetaEntry(result, 'openapi-mcp/idempotencyKey', idempotencyKey);
+  // Every exit from here on follows a sent attempt: a failure records what
+  // the evidence says about its effect, and warns before a blind retry of a
+  // write (issue #25)
+  // The warning is added last, so the outcome returned is the one marked as
+  // warned (a later boundary step that replaces its text keeps the warning)
+  // A success records its effect only internally, for a boundary that may
+  // still withhold it (a 2xx after a redirect or a retry is no proof)
+  const finish = (result: ToolCallOutcome, effect: CallEffect): ToolCallOutcome =>
+    result.isError
+      ? withEffectWarning(withRecoveryKey(result), effect, method)
+      : rememberEffect(withRecoveryKey(result), effect);
   const allowedRetries = isRetryableMethod(method, idempotencyKeyField) ? retries : 0;
   const sent = await send(firstHeaders, allowedRetries);
   let { outcome, attempts } = sent;
@@ -614,29 +653,35 @@ const runUpstreamCall = async (
     first !== undefined &&
     outcome.kind === 'response' &&
     outcome.status === 401 &&
+    // A 401 after a redirect answers the follow-up, not the request itself,
+    // which may have been applied: it is never replayed (issue #25)
+    outcome.redirected !== true &&
     oauth.tokens.invalidate(first.token)
   ) {
     // Every exit from here on follows at least one sent attempt. The 401
     // itself had no effect, but with --retries an earlier attempt may have
     // failed ambiguously and still been applied, so each exit keeps the
     // idempotency key a repeated call needs (see the end of this function).
+    // The 401 had no effect; an earlier retried attempt may have had one
+    const unreplayed: CallEffect = attempts > 1 ? 'outcome_unknown' : 'upstream_rejected';
     const fresh = await tokenFor(oauth.tokens, attempts);
     if ('failed' in fresh) {
-      return withRecoveryKey(fresh.failed);
+      return finish(fresh.failed, unreplayed);
     }
     // A spent budget sends no replay: the clamp in remainingMs would
     // otherwise still grant it a millisecond.
     if (budgetLeftMs() <= 0) {
       report({ outcome: 'timeout', ...operationFacts, attempts });
-      return withRecoveryKey(
+      return finish(
         isError(
           'the call timed out before the request could be sent again with a fresh OAuth2 access token',
         ),
+        unreplayed,
       );
     }
     const replayHeaders = headersFor(fresh.token);
     if (replayHeaders === undefined) {
-      return withRecoveryKey(overBudget(attempts));
+      return finish(overBudget(attempts), unreplayed);
     }
     const replay = await send(replayHeaders, Math.max(allowedRetries - (attempts - 1), 0));
     ({ outcome } = replay);
@@ -691,7 +736,7 @@ const runUpstreamCall = async (
       ? { status: outcome.status, responseBytes: outcome.bodyBytes.byteLength }
       : {}),
   });
-  return withRecoveryKey(mapped);
+  return finish(mapped, effectAfterSend(outcome, attempts));
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {
@@ -736,8 +781,9 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
     if (slot !== 'acquired') {
       report?.({ outcome: slot === 'cancelled' ? 'cancelled' : 'overloaded', queuedMs });
     }
+    // Cancelled while still queued: nothing was sent (issue #25)
     if (slot === 'cancelled') {
-      return isError('the request was cancelled');
+      return unsent('the request was cancelled');
     }
     if (slot === 'overloaded') {
       return overloaded('too many upstream requests are already in flight or queued');

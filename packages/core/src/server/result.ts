@@ -1,3 +1,5 @@
+import type { CallEffect } from './effect.ts';
+
 // SDK-neutral domain result type. Mirrors the shape MCP's CallToolResult
 // needs WITHOUT importing the SDK — server/sdk/protocol.ts is the only
 // place that ever imports the SDK's own CallToolResult type and maps this
@@ -11,6 +13,19 @@ export type ToolCallOutcome = {
   // conform to the tool's outputSchema when one is declared (MCP tools spec,
   // "Output Schema"), and an error detail never does.
   meta?: Record<string, unknown>;
+  // Server-internal facts about a call's effect (issue #25, server/effect.ts).
+  // Plain data, so every `{ ...outcome }` copy keeps it; never sent: the
+  // protocol adapter maps only the fields above.
+  effectNote?: EffectNote;
+};
+
+export type EffectNote = {
+  // The text already carries the warning against a blind retry
+  warned?: true;
+  // The text claims a reported success; use this one if the effect is unknown
+  uncertainText?: string;
+  // A success's effect, for a boundary that may still withhold it
+  successEffect?: CallEffect;
 };
 
 // Structured results that an executor has ALREADY scanned for secrets in

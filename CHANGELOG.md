@@ -158,6 +158,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A failed write could read like a safe retry (#25).** A tool error after the request had
+  reached the upstream did not always say so. This applied to a timeout, a lost connection,
+  an oversized response, a redirect of a write, a `5xx`, and a `2xx` whose result did not
+  match its schema or was not valid JSON. An agent could repeat a write that had already been
+  applied. Every tool error of an API call now carries `_meta["openapi-mcp/effect"]`
+  (`not_sent`, `upstream_rejected`, `upstream_reported_success` or `outcome_unknown`). For a
+  write that may have been applied, the text warns not to retry it blindly. Reads are unchanged.
 - **Every operation that is not a tool is reported, with its reason (#41).** Operations left
   out by `--allow`, `--deny` or the read-only default had no record at all, and an operation
   without an `operationId` disappeared under `--allow '**'` without a trace. `tools --json`

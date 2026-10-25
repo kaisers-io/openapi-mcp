@@ -14,6 +14,7 @@ import {
 import type { DescribeInput } from './discovery-schemas.ts';
 import type { SnapshotTool, ToolMode, WireTool } from './types.ts';
 import { presentedOutputSchema } from './wire-tools.ts';
+import { withEffect } from './effect.ts';
 
 // Discovery tool mode (issue kaisers-io/openapi-mcp-archive#38): instead of one
 // MCP tool per operation, tools/list carries three package-authored tools that
@@ -144,9 +145,12 @@ export const buildDiscoveryTools = (operations: readonly SnapshotTool[]): Snapsh
 // operation that is not exposed, and can recover by searching. The name is
 // caller-supplied, so it is sanitized and capped before it is reflected.
 export const unknownOperationOutcome = (name: string): ToolCallOutcome =>
-  textOutcome(
-    `unknown operation "${sanitizeSpecText(name, REFLECTED_NAME_MAX)}" — use search_operations to find an operation name`,
-    true,
+  withEffect(
+    textOutcome(
+      `unknown operation "${sanitizeSpecText(name, REFLECTED_NAME_MAX)}" — use search_operations to find an operation name`,
+      true,
+    ),
+    'not_sent',
   );
 
 export const lookupOperation = (

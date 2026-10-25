@@ -163,6 +163,17 @@ generated API request:
 - On stdio, stdout carries exclusively JSON-RPC traffic; all diagnostics go to stderr, so a
   host parsing stdout as the protocol stream is never polluted by log output.
 
+### Failed writes and retries
+
+An agent that retries a write after an unclear failure can apply it twice. Every tool error of
+an API call therefore states what is known about its effect (`_meta["openapi-mcp/effect"]`,
+see [configuration](configuration.md)). Only a refusal before anything left the server is
+`not_sent`. A failure that may have come after sending is `outcome_unknown`, and so is every
+call that sent more than one attempt, since an earlier attempt may have been applied. For a
+write, such an error, and one whose `2xx` result could not be returned, ends with a fixed
+warning not to retry blindly. The warning is the server's own text and is added whatever the
+upstream's error text says, so an upstream cannot suppress it.
+
 ## HTTP-mode authentication and limits
 
 `--http` starts a Streamable HTTP server. Binding to `127.0.0.1` alone does not authenticate
