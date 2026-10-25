@@ -56,7 +56,7 @@ describe('image options (#14)', () => {
     const images = await resolveImageResponses({ ...base, mode: 'file', homeDir: home });
     const expected = imageDirOf(home, 'https://api.example.test/openapi.json');
     // The store reports the resolved path (macOS temp folders are links)
-    expect(images?.mode === 'file' && images.store.dir).toBe(realpathSync(expected));
+    expect(images?.mode === 'file' && images.store.dir).toBe(realpathSync.native(expected));
     expect(expected.startsWith(join(home, '.kaisers-io', 'openapi-mcp', 'images'))).toBe(true);
     expect(imageDirOf(home, 'https://api.example.test/openapi.json', 'prod')).not.toBe(expected);
     expect(imageDirOf(home, 'https://other.example.test/openapi.json')).not.toBe(expected);

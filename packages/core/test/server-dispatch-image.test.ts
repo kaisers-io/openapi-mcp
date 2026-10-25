@@ -9,6 +9,8 @@ import {
 } from '../src/index.ts';
 import type { DispatchResult, ToolCallOutcome } from '../src/index.ts';
 import { BOUNDARY_WITHHELD_SUCCESS_TEXT } from '../src/server/withheld.ts';
+import { markSecretScanned } from '../src/server/result.ts';
+import type { ImageBlock } from '../src/server/result.ts';
 import { pngOf } from './helpers/images.ts';
 
 // The dispatch boundary for image results (#14): an image block passes
@@ -16,6 +18,7 @@ import { pngOf } from './helpers/images.ts';
 // whole result, since an image cannot be redacted without breaking it.
 
 const SECRET = 'example-token-not-a-secret';
+const redactor = createRedactor([SECRET]);
 
 const snapshot = buildSnapshot(
   buildTools(
@@ -42,13 +45,18 @@ const snapshot = buildSnapshot(
   },
 );
 
-const callWith = async (image: Uint8Array): Promise<ToolCallOutcome> => {
+const callWith = async (image: Uint8Array, scanned = false): Promise<ToolCallOutcome> => {
+  const block: ImageBlock = {
+    type: 'image',
+    data: Buffer.from(image).toString('base64'),
+    mimeType: 'image/png',
+  };
+  if (scanned) {
+    markSecretScanned(block, redactor);
+  }
   const outcome: ToolCallOutcome = {
     isError: false,
-    content: [
-      { type: 'text', text: 'image image/png' },
-      { type: 'image', data: Buffer.from(image).toString('base64'), mimeType: 'image/png' },
-    ],
+    content: [{ type: 'text', text: 'image image/png' }, block],
   };
   const dispatcher = createDispatcher({
     snapshot,
@@ -56,7 +64,7 @@ const callWith = async (image: Uint8Array): Promise<ToolCallOutcome> => {
     now: () => 0,
     executor: () => Promise.resolve(outcome),
     metaExecutor: createMetaExecutor(),
-    redactor: createRedactor([SECRET]),
+    redactor,
   });
   const result: DispatchResult = await dispatcher.call({
     name: 'getItemImage',
@@ -86,5 +94,14 @@ describe('dispatch boundary for images (#14)', () => {
     const outcome = await callWith(png);
     expect(outcome.isError).toBe(true);
     expect(outcome.content).toStrictEqual([{ type: 'text', text: BOUNDARY_WITHHELD_SUCCESS_TEXT }]);
+  });
+
+  // Review of #57: an image the executor scanned is not decoded and scanned
+  // again at the boundary. A marked block passes even with secret bytes,
+  // which shows the boundary skipped it.
+  it('does not scan an image block again that the executor already scanned', async () => {
+    const png = Uint8Array.from([...pngOf(1, 1), ...new TextEncoder().encode(SECRET)]);
+    const outcome = await callWith(png, true);
+    expect(outcome.isError).toBe(false);
   });
 });

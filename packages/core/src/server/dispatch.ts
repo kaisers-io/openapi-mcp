@@ -86,7 +86,9 @@ const scanAndRedact = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOu
   if (
     outcome.content.some(
       (block) =>
-        block.type === 'image' && imageHasSecret(redactor, Buffer.from(block.data, 'base64')),
+        block.type === 'image' &&
+        !wasSecretScanned(block, redactor) &&
+        imageHasSecret(redactor, Buffer.from(block.data, 'base64')),
     )
   ) {
     return withheld(outcome);

@@ -33,6 +33,7 @@ import { routeKey } from './route-table.ts';
 import type { RouteTable } from './route-table.ts';
 import { mapResponse } from './response.ts';
 import { imageOutcome, isImageResponse } from './image-result.ts';
+import { decorateResponseOutcome } from './forwarded-headers.ts';
 import type { ImageResponses } from './image-result.ts';
 import type { EnvelopeValidator, EnvelopeValidators } from './envelope-validators.ts';
 import type { PageInput } from './forwarded-headers.ts';
@@ -748,7 +749,13 @@ const runUpstreamCall = async (
   const mapped =
     config.images !== undefined &&
     isImageResponse(outcome, tool.wireTool.outputSchema !== undefined)
-      ? await imageOutcome(outcome, config.images, config.redactor)
+      ? decorateResponseOutcome(
+          await imageOutcome(outcome, config.images, config.redactor),
+          outcome,
+          config.baseUrl,
+          config.redactor,
+          Date.now(),
+        )
       : mapRest();
   report({
     outcome: classifyUpstream(outcome, mapped),

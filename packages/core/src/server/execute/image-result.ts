@@ -2,8 +2,8 @@ import type { PinnedOutcome } from '../../http/pinned-dispatcher.ts';
 import { imageHasSecret } from '../../images/scan.ts';
 import { sniffImage } from '../../images/sniff.ts';
 import type { ImageStore } from '../../images/store.ts';
-import { textOutcome } from '../result.ts';
-import type { ToolCallOutcome } from '../result.ts';
+import { markSecretScanned, textOutcome } from '../result.ts';
+import type { ImageBlock, ToolCallOutcome } from '../result.ts';
 import { withheldSuccess } from '../withheld.ts';
 import { mediaEssence } from './response-media.ts';
 
@@ -28,6 +28,8 @@ export const isImageResponse = (
   outcome.kind === 'response' &&
   outcome.status >= 200 &&
   outcome.status < 300 &&
+  // A HEAD response (and any other without a body) has nothing to show
+  outcome.bodyBytes.byteLength > 0 &&
   !hasOutputSchema &&
   mediaEssence(outcome.contentType)?.startsWith('image/') === true;
 
@@ -55,17 +57,14 @@ export const imageOutcome = async (
   }
   const facts = `${kind.mediaType}, ${String(kind.width)}x${String(kind.height)}, ${String(bodyBytes.byteLength)} bytes`;
   if (images.mode === 'inline') {
-    return {
-      isError: false,
-      content: [
-        { type: 'text', text: `image ${facts}` },
-        {
-          type: 'image',
-          data: Buffer.from(bodyBytes).toString('base64'),
-          mimeType: kind.mediaType,
-        },
-      ],
+    const image: ImageBlock = {
+      type: 'image',
+      data: Buffer.from(bodyBytes).toString('base64'),
+      mimeType: kind.mediaType,
     };
+    // Scanned above: the dispatch boundary need not decode and scan it again
+    markSecretScanned(image, redactor);
+    return { isError: false, content: [{ type: 'text', text: `image ${facts}` }, image] };
   }
   try {
     const path = await images.store.save(bodyBytes, kind);

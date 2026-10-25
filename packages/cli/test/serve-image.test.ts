@@ -23,6 +23,11 @@ const SPEC = {
         parameters: [{ name: 'case', in: 'path', required: true, schema: { type: 'string' } }],
         responses: { '200': { description: 'the picture', content: { 'image/png': {} } } },
       },
+      head: {
+        operationId: 'checkItemImage',
+        parameters: [{ name: 'case', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: 'the picture exists', content: { 'image/png': {} } } },
+      },
     },
   },
 };
@@ -50,8 +55,17 @@ describe('serve — image responses (issue #14)', () => {
     writeFileSync(specPath, JSON.stringify(SPEC));
     api = createServer((req, res) => {
       const svg = (req.url ?? '').includes('/svg/');
-      res.writeHead(200, { 'content-type': svg ? 'image/svg+xml' : 'image/png' });
-      res.end(svg ? '<svg xmlns="http://www.w3.org/2000/svg"/>' : PNG);
+      res.writeHead(200, {
+        'content-type': svg ? 'image/svg+xml' : 'image/png',
+        etag: '"image-v1"',
+        location: '/items/42/image',
+        'x-ratelimit-remaining': '7',
+      });
+      if (svg) {
+        res.end('<svg xmlns="http://www.w3.org/2000/svg"/>');
+      } else {
+        res.end(req.method === 'HEAD' ? undefined : PNG);
+      }
     });
     await new Promise<void>((resolve) => {
       api.listen(0, '127.0.0.1', resolve);
@@ -67,7 +81,11 @@ describe('serve — image responses (issue #14)', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  const call = async (extraArgs: readonly string[], cases: readonly string[]): Promise<Reply[]> => {
+  const call = async (
+    extraArgs: readonly string[],
+    cases: readonly string[],
+    tool = 'getItemImage',
+  ): Promise<Reply[]> => {
     const child = spawn(
       process.execPath,
       [
@@ -78,6 +96,8 @@ describe('serve — image responses (issue #14)', () => {
         specPath,
         '--base-url',
         baseUrl,
+        '--allow',
+        'path:/**',
         ...extraArgs,
       ],
       { env: { ...process.env, HOME: home, USERPROFILE: home } },
@@ -102,7 +122,7 @@ describe('serve — image responses (issue #14)', () => {
     };
     try {
       for (const [index, name] of cases.entries()) {
-        const params = { name: 'getItemImage', arguments: { case: name }, _meta: meta };
+        const params = { name: tool, arguments: { case: name }, _meta: meta };
         child.stdin.write(
           `${JSON.stringify({ jsonrpc: '2.0', id: index + 1, method: 'tools/call', params })}\n`,
         );
@@ -140,12 +160,15 @@ describe('serve — image responses (issue #14)', () => {
     async () => {
       const [png, svg] = await call(['--image-responses', 'inline'], ['png', 'svg']);
       expect(png).not.toHaveProperty('structuredContent');
-      expect(png).toMatchObject({
-        isError: false,
-        content: [
-          { type: 'text', text: `image image/png, 4x3, ${String(PNG.byteLength)} bytes` },
-          { type: 'image', data: PNG.toString('base64'), mimeType: 'image/png' },
-        ],
+      expect(png?.isError).toBe(false);
+      expect(png?.content[0]).toStrictEqual({
+        type: 'text',
+        text: `image image/png, 4x3, ${String(PNG.byteLength)} bytes`,
+      });
+      expect(png?.content[1]).toStrictEqual({
+        type: 'image',
+        data: PNG.toString('base64'),
+        mimeType: 'image/png',
       });
       expect(svg?.isError).toBe(true);
       expect(svg?.content[0]?.text).toContain('is not a PNG, JPEG, GIF or WebP image');
@@ -158,7 +181,8 @@ describe('serve — image responses (issue #14)', () => {
     async () => {
       const [reply] = await call(['--image-responses', 'file'], ['png']);
       expect(reply?.isError).toBe(false);
-      expect(reply?.content).toHaveLength(1);
+      // The text line, then the forwarded headers; no image block
+      expect(reply?.content.some((block) => block.type === 'image')).toBe(false);
       const text = reply?.content[0]?.text ?? '';
       const path = /saved to (?<path>.+)$/u.exec(text)?.groups?.['path'] ?? '';
       expect(path).toContain(join('.kaisers-io', 'openapi-mcp', 'images'));
@@ -166,6 +190,29 @@ describe('serve — image responses (issue #14)', () => {
       if (process.platform !== 'win32') {
         expect(statSync(path).mode & 0o777).toBe(0o600);
       }
+    },
+    SUBPROCESS_TEST_TIMEOUT_MS,
+  );
+
+  it.each(['inline', 'file'])(
+    'keeps the forwarded response headers in %s mode',
+    async (mode) => {
+      const [reply] = await call(['--image-responses', mode], ['png']);
+      expect(reply?.isError).toBe(false);
+      const headers = reply?.content.find((block) => block.text?.startsWith('headers:'));
+      expect(headers?.text).toContain('etag: "image-v1"');
+      expect(headers?.text).toContain('location:');
+      expect(headers?.text).toContain('x-ratelimit-remaining: 7');
+    },
+    SUBPROCESS_TEST_TIMEOUT_MS,
+  );
+
+  it.each(['inline', 'file'])(
+    'answers a HEAD request as before in %s mode',
+    async (mode) => {
+      const [reply] = await call(['--image-responses', mode], ['png'], 'checkItemImage');
+      expect(reply?.isError).toBe(false);
+      expect(reply?.content.some((block) => block.type === 'image')).toBe(false);
     },
     SUBPROCESS_TEST_TIMEOUT_MS,
   );
