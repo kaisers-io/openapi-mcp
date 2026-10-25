@@ -14,12 +14,9 @@ import type { Route, RouteEntry } from './route-table.ts';
 // Letter case is ignored, as the route table also refuses a request that
 // differs from an excluded operation only by case.
 
-export type RouteOverlap = {
-  // The exposed operation, `METHOD path`
-  exposed: string;
-  // The operation that is not exposed and whose path can match the same URL
-  excluded: string;
-};
+// `METHOD path` of the exposed operation, and of the one that is not exposed
+// and whose path can match the same URL
+export type RouteOverlap = { exposed: string; excluded: string };
 
 export type RouteOverlapReport = {
   overlaps: readonly RouteOverlap[];
@@ -27,11 +24,19 @@ export type RouteOverlapReport = {
   complete: boolean;
 };
 
-// Overlap checks per startup. The GitHub API (1,241 operations) needs under
-// 500,000 with half of them exposed; a hostile spec ends the check early,
-// after about half a second, and the report says it is incomplete.
+// Overlap work per startup: search states, and every character compiled,
+// read or compared, charged before the work is done. The GitHub API (1,241
+// operations) needs under 500,000 with half of them exposed; a hostile spec
+// ends the check early (in well under a second on one development
+// machine), and the report says it is incomplete.
 export const OVERLAP_WORK_BUDGET = 5_000_000;
-
+type Work = { remaining: number };
+const spend = (work: Work, steps: number): void => {
+  work.remaining -= steps;
+  if (work.remaining < 0) {
+    throw new RangeError('overlap budget exceeded');
+  }
+};
 type Item = { char: string } | 'one' | 'star';
 
 // A placeholder is one character followed by any number of characters
@@ -49,11 +54,7 @@ const compatible = (left: Item, right: Item): boolean =>
 
 // Whether some text matches both segments: a search over pairs of positions,
 // each visited once, so the work is bounded by the product of their lengths
-const segmentsIntersect = (
-  left: readonly Item[],
-  right: readonly Item[],
-  work: { remaining: number },
-): boolean => {
+const segmentsIntersect = (left: readonly Item[], right: readonly Item[], work: Work): boolean => {
   const width = right.length + 1;
   const seen = new Set<number>([0]);
   const pending = [0];
@@ -64,10 +65,7 @@ const segmentsIntersect = (
     }
   };
   for (let state = pending.pop(); state !== undefined; state = pending.pop()) {
-    work.remaining -= 1;
-    if (work.remaining < 0) {
-      throw new RangeError('overlap budget exceeded');
-    }
+    spend(work, 1);
     const row = Math.floor(state / width);
     const col = state % width;
     if (row === left.length && col === right.length) {
@@ -95,22 +93,26 @@ const segmentsIntersect = (
 
 // Each route's segments as items, folded or as written, built once
 const itemCache = new WeakMap<Route, Map<boolean, Item[][]>>();
-const itemsOfRoute = (route: Route, fold: boolean): Item[][] => {
+const itemsOfRoute = (route: Route, fold: boolean, work: Work): Item[][] => {
   const cached = itemCache.get(route) ?? new Map<boolean, Item[][]>();
   itemCache.set(route, cached);
-  const items = cached.get(fold) ?? route.segments.map((tokens) => itemsOf(tokens, fold));
+  const known = cached.get(fold);
+  if (known !== undefined) {
+    return known;
+  }
+  const all = route.segments.flat();
+  spend(
+    work,
+    all.reduce((sum, token) => sum + ('literal' in token ? token.literal.length : 2), 0),
+  );
+  const items = route.segments.map((tokens) => itemsOf(tokens, fold));
   cached.set(fold, items);
   return items;
 };
 
-const routesIntersect = (
-  left: Route,
-  right: Route,
-  fold: boolean,
-  work: { remaining: number },
-): boolean => {
-  const theirs = itemsOfRoute(right, fold);
-  return itemsOfRoute(left, fold).every((items, index) =>
+const routesIntersect = (left: Route, right: Route, fold: boolean, work: Work): boolean => {
+  const theirs = itemsOfRoute(right, fold, work);
+  return itemsOfRoute(left, fold, work).every((items, index) =>
     segmentsIntersect(items, theirs[index] ?? [], work),
   );
 };
@@ -154,7 +156,7 @@ const refuses = (
   exposed: Route,
   excluded: Route,
   concrete: ReadonlySet<string>,
-  work: { remaining: number },
+  work: Work,
   reading: boolean,
 ): boolean => {
   const precedence = !reading && excluded.method === exposed.method;
@@ -209,19 +211,30 @@ const indexExcluded = (routes: readonly Route[]): Map<string, Route[]> => {
   return index;
 };
 
+// Any plain segment of the route bounds its candidates: an excluded route
+// that can share a URL has the same text there, or a placeholder. The most
+// selective one is used, so a common prefix such as `/v1` does not put every
+// route in one bucket. Without a plain segment, every route of the shape.
 const candidatesFor = (route: Route, method: string, index: Map<string, Route[]>): Route[] => {
   const shape = `${method} ${String(route.segments.length)}`;
-  const at = route.segments.findIndex(
-    (tokens, position) => position > 0 && plainText(tokens) !== undefined,
-  );
-  const text = plainText(route.segments[at] ?? []);
-  if (text === undefined) {
-    return index.get(shape) ?? [];
+  let best: Route[][] = [index.get(shape) ?? []];
+  let bestSize = best[0]?.length ?? 0;
+  for (const [at, tokens] of route.segments.entries()) {
+    const text = plainText(tokens);
+    if (at === 0 || text === undefined) {
+      continue;
+    }
+    const buckets = [
+      index.get(`${shape} ${String(at)} ${text}`) ?? [],
+      index.get(`${shape} ${String(at)} *`) ?? [],
+    ];
+    const size = buckets.reduce((sum, bucket) => sum + bucket.length, 0);
+    if (size < bestSize) {
+      best = buckets;
+      bestSize = size;
+    }
   }
-  return [
-    ...(index.get(`${shape} ${String(at)} ${text}`) ?? []),
-    ...(index.get(`${shape} ${String(at)} *`) ?? []),
-  ];
+  return best.flat();
 };
 
 // The operations that are not exposed and can make a request for `route`
@@ -232,12 +245,13 @@ const addOverlapsOf = (
   route: Route,
   excluded: Map<string, Route[]>,
   concrete: ReadonlySet<string>,
-  work: { remaining: number },
+  work: Work,
   found: RouteOverlap[],
 ): void => {
   const seen = new Set<string>();
   // The request authorization also reads the path as an upstream may
   const own = JSON.stringify(route.segments);
+  spend(work, route.path.length);
   const readings = withReadings({ method: route.method, path: route.path, exposed: false })
     .slice(1)
     .filter((reading) => JSON.stringify(reading.segments) !== own);
@@ -258,14 +272,19 @@ export const routeOverlaps = (
   entries: readonly RouteEntry[],
   budget = OVERLAP_WORK_BUDGET,
 ): RouteOverlapReport => {
-  const routes = compileRoutes(entries);
-  const excluded = indexExcluded(routes.filter((route) => !route.exposed));
-  const concrete = new Set(
-    routes.filter((route) => route.concrete).map((route) => concreteKey(route.method, route)),
-  );
   const work = { remaining: budget };
   const overlaps: RouteOverlap[] = [];
   try {
+    // One step per character of a path, whose readings are compiled too
+    spend(
+      work,
+      entries.reduce((sum, entry) => sum + entry.path.length, 0),
+    );
+    const routes = compileRoutes(entries);
+    const excluded = indexExcluded(routes.filter((route) => !route.exposed));
+    const concrete = new Set(
+      routes.filter((route) => route.concrete).map((route) => concreteKey(route.method, route)),
+    );
     for (const route of routes.filter((candidate) => candidate.exposed)) {
       addOverlapsOf(route, excluded, concrete, work, overlaps);
     }

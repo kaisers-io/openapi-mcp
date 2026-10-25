@@ -155,6 +155,38 @@ describe('routeOverlaps', () => {
     }
   });
 
+  // Review of #44: a common prefix such as `/v1` must not put every route in
+  // one bucket
+  it('compares a route only with those that share its most selective plain segment', () => {
+    const catalog = Array.from({ length: 1024 }, (_unused, index) =>
+      route('GET', `/v1/resources${String(index)}/{id}`, index % 2 === 0),
+    );
+    expect(routeOverlaps(catalog)).toEqual({ overlaps: [], complete: true });
+    // The chosen segment differs per route, and overlaps are still found
+    const others = Array.from({ length: 50 }, (_unused, index) =>
+      route('GET', `/v1/other${String(index)}/{id}`, false),
+    );
+    expect(
+      pairs([
+        ...others,
+        route('GET', '/v1/orders/{id}'),
+        route('GET', '/v1/{kind}/{id}', false),
+        route('GET', '/beta/{a}/x'),
+        route('GET', '/beta/{b}/{c}', false),
+      ]),
+    ).toEqual(['GET /v1/orders/{id} | GET /v1/{kind}/{id}', 'GET /beta/{a}/x | GET /beta/{b}/{c}']);
+  });
+
+  // Review of #44: compiling paths and their readings is charged before it
+  // is done, so long paths cannot run past the budget
+  it('charges compiling and reading paths', () => {
+    const long = `/${'a'.repeat(5000)}/{id}`;
+    expect(routeOverlaps([route('GET', long), route('GET', '/x/{id}', false)], 4000)).toEqual({
+      overlaps: [],
+      complete: false,
+    });
+  });
+
   it('stops when the work budget is spent, and says the list is incomplete', () => {
     const long = (prefix: string): string =>
       `/${Array.from({ length: 300 }, () => `{p}${prefix}`).join('')}`;
@@ -166,9 +198,10 @@ describe('routeOverlaps', () => {
     ];
     expect(routeOverlaps(entries, 10_000)).toEqual({ overlaps: [], complete: false });
     // Review of #41: what was found before the budget ran out is kept
+    // Enough to compile the paths and compare the short pair, not the long one
     const found = routeOverlaps(
       [route('GET', '/{p}'), route('GET', '/{y}', false), route('GET', long('b'), false)],
-      200,
+      long('b').length + 200,
     );
     expect(found).toEqual({
       overlaps: [{ exposed: 'GET /{p}', excluded: 'GET /{y}' }],

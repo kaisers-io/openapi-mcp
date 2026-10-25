@@ -147,6 +147,48 @@ describe('exposureReport — bounds', () => {
     };
   }
 
+  // Review of #44: a version prefix shared by every path completes the check
+  it('passes --strict-filters for a large catalog under one version prefix', async () => {
+    const catalog: Record<string, unknown> = {};
+    for (let index = 0; index < 1024; index += 1) {
+      catalog[`/v1/resources${String(index)}/{id}`] = {
+        get: {
+          operationId: `getResource${String(index)}`,
+          tags: [index % 2 === 0 ? 'public' : 'internal'],
+          parameters: [param('id')],
+          responses: ok,
+        },
+      };
+    }
+    const dir = await mkdtemp(join(tmpdir(), 'openapi-mcp-catalog-'));
+    const spec = join(dir, 'catalog.json');
+    await writeFile(
+      spec,
+      JSON.stringify({
+        openapi: '3.1.0',
+        info: { title: 'Catalog', version: '1' },
+        paths: catalog,
+      }),
+    );
+    try {
+      const { code, lines } = await runTools([
+        '--json',
+        'tools',
+        '--spec',
+        spec,
+        '--deny',
+        'tag:internal',
+        '--strict-filters',
+      ]);
+      expect(code).toBe(EXIT.OK);
+      const { data } = JSON.parse(lines[0]!) as Envelope & { data: { toolCount: number } };
+      expect(data.toolCount).toBe(512);
+      expect(data.overlapCheckComplete).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('names at most 20 overlaps and counts the rest', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'openapi-mcp-overlaps-'));
     const spec = join(dir, 'many.json');
