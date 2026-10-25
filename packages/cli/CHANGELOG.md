@@ -149,6 +149,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Large results return faster (#48).** The text preview of a schema-validated result is
+  built from only as much of the result as fits in it, instead of serializing all of it. A
+  1 MB result takes about 13% less time per call. The preview is byte-identical.
 - **`--tool-mode discover` starts faster (#47).** An operation's output schema and
   description are now built on its first `describe_operation` or `call_operation`, not at
   startup. For the GitHub REST description (1,241 operations), `initialize` answers in about
