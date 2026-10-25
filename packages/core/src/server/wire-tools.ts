@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { GeneratedTool } from '../toolgen/build.ts';
 import { compactOutputSchema } from '../toolgen/output-schema.ts';
-import type { SnapshotTool, WireTool } from './types.ts';
+import { deriveAccept } from './execute/accept.ts';
+import type { RuntimeTool, SnapshotTool, WireTool } from './types.ts';
 
 // The wire shape of listed tools: the status tool's definition and the
 // display helpers (title, stable order) for the generated ones.
@@ -109,6 +110,19 @@ export const titleOf = (generated: GeneratedTool): string | undefined => {
   const title = summary === undefined ? '' : sanitizeSpecText(summary, TITLE_MAX);
   return title === '' ? undefined : title;
 };
+
+// What a snapshot keeps of a generated tool (see RuntimeTool).
+export const runtimeToolOf = ({ operation, ...tool }: GeneratedTool): RuntimeTool => ({
+  ...tool,
+  operation: {
+    method: operation.method,
+    path: operation.path,
+    tags: operation.tags,
+    ...(operation.summary === undefined ? {} : { summary: operation.summary }),
+    ...(operation.description === undefined ? {} : { description: operation.description }),
+  },
+  accept: deriveAccept(operation.responses),
+});
 
 // Code-point order (never locale-dependent): `<` on strings compares UTF-16
 // code units, identical everywhere.

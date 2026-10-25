@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 import type { GeneratedTool } from '../toolgen/build.ts';
 import type { NotExposedCounts } from '../filter/inventory.ts';
-import type { OmittedOperation } from '../spec/normalize.ts';
+import type { OmittedOperation, OperationRecord } from '../spec/normalize.ts';
 import type { DiscoveryToolName } from './discovery.ts';
 import type { SearchIndex } from './search-index.ts';
 
@@ -33,6 +33,15 @@ export type SnapshotToolKind = 'meta' | 'upstream' | 'discovery';
 // before a snapshot is built (see resolveToolMode).
 export type ToolMode = 'per-operation' | 'discover';
 
+// What an exposed operation keeps for call time. The parameter, body and
+// response schemas are left out: the mapper, the validators and `accept`
+// already cover them, and the server would otherwise hold them for its life.
+export type RuntimeTool = Omit<GeneratedTool, 'operation'> & {
+  readonly operation: Pick<OperationRecord, 'method' | 'path' | 'tags' | 'summary' | 'description'>;
+  // The Accept header, derived once from the declared success responses.
+  readonly accept: string;
+};
+
 export type SnapshotTool = {
   readonly kind: SnapshotToolKind;
   readonly name: string;
@@ -45,7 +54,7 @@ export type SnapshotTool = {
   readonly inputSchema: z.ZodType;
   // Present only for an upstream (OpenAPI-generated) tool; the meta tool has
   // no OpenAPI mapper to execute against.
-  readonly generated?: GeneratedTool;
+  readonly generated?: RuntimeTool;
   // Present only for a `discovery` tool: which of the three it is.
   readonly discovery?: DiscoveryToolName;
 };

@@ -72,6 +72,20 @@ describe('buildSnapshot', () => {
     expect(snapshot.toolsByName['getThing']?.kind).toBe('upstream');
   });
 
+  it('keeps only the call-time fields of an operation, with the Accept header derived once (#47)', () => {
+    const named = namedOp('getThing', '/things/{id}');
+    const built = buildTools([named], { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
+    const generated = buildSnapshot(built, pipelineOf()).toolsByName['getThing']?.generated;
+    expect(generated?.operation).toStrictEqual({
+      method: 'get',
+      path: '/things/{id}',
+      tags: [],
+      summary: 'A thing',
+    });
+    expect(generated?.accept).toBe('application/json, */*;q=0.1');
+    expect(generated?.mapper).toBe(built.tools[0]?.mapper);
+  });
+
   it('reports a cache lock that blocked start-up bookkeeping as cacheLock, and nothing otherwise (kaisers-io/openapi-mcp-archive#65)', () => {
     const built = buildTools([namedOp('getThing', '/things/{id}')], {
       reservedHeaders: SYSTEM_HEADERS,
