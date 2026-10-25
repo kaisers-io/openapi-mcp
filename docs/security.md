@@ -108,7 +108,11 @@ generated API request:
   text and structured tool results. Redaction covers the raw value and, for secrets of 8+
   characters, common encoded variants (standard Base64, URL-safe Base64, percent-encoded with
   upper- or lowercase hex, form-encoded, JSON-string-escaped including `\/`) — shorter values
-  are excluded from variant redaction to avoid common-substring false positives. For a value
+  are excluded from variant redaction to avoid common-substring false positives, except their
+  JSON-string-escaped forms when those differ from the raw value (a secret with `"`, `\` or a
+  control character, embedded in a text or HTML error body). Such a form contains an escape the
+  raw value does not; it may also match that escape in a body without the secret, which
+  redacts more, never less. For a value
   shaped like an `Authorization` credential (`<scheme> <credential>`, e.g. `Bearer …`), the
   bare credential is redacted too, and for `Basic` also the decoded `user:password` and the
   password alone (each only when 8+ characters; the user name alone is not treated as

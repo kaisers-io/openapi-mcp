@@ -158,6 +158,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A short secret could appear JSON-escaped in a text error body (#46).** A secret shorter than
+  8 characters was redacted only as its raw value. One containing `"`, `\` or a control
+  character, embedded in a JSON snippet of a text/plain or HTML error page, appeared escaped
+  and was not redacted. Its JSON-escaped forms are now redacted too, for every length.
 - **A failed write could read like a safe retry (#25).** A tool error after the request had
   reached the upstream did not always say so. This applied to a timeout, a lost connection,
   an oversized response, a redirect of a write, a `5xx`, and a `2xx` whose result did not
