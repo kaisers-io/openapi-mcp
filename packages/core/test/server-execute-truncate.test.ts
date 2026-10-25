@@ -98,6 +98,14 @@ describe('jsonPreview (#48)', () => {
     }
   });
 
+  // Review: valid JSON nested thousands deep must not overflow the stack
+  it('serializes a value nested thousands deep like JSON.stringify', () => {
+    const deep = JSON.parse(`${'['.repeat(3000)}0${']'.repeat(3000)}`) as unknown;
+    const value = { data: deep, status: 200 };
+    expect(jsonPreview(value, 8192)).toBe(truncateUtf8(JSON.stringify(value), 8192));
+    expect(jsonPreview(value, 100)).toBe(truncateUtf8(JSON.stringify(value), 100));
+  });
+
   it('returns a value that fits whole', () => {
     const value = { items: [1, 'two', { three: true }] };
     expect(jsonPreview(value, 1000)).toBe(JSON.stringify(value));

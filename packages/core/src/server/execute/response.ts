@@ -208,6 +208,9 @@ export const truncateUtf8 = (text: string, maxBytes: number): string => {
 const SKIPPED = new Set(['undefined', 'function', 'symbol']);
 // Below about 16 times the budget, the native serializer is faster
 const PREVIEW_NATIVE_FACTOR = 16;
+// Deeper subtrees go to the native serializer, whose recursion goes further
+// than this one's: valid JSON nested thousands deep must not overflow here
+const PREVIEW_MAX_DEPTH = 256;
 export const jsonPreview = (value: unknown, maxBytes: number, sizeHint = Infinity): string => {
   if (sizeHint < maxBytes * PREVIEW_NATIVE_FACTOR) {
     return truncateUtf8(JSON.stringify(value), maxBytes);
@@ -221,11 +224,11 @@ export const jsonPreview = (value: unknown, maxBytes: number, sizeHint = Infinit
     length += part.length;
     return length <= maxBytes;
   };
-  const write = (node: unknown): boolean => {
+  const write = (node: unknown, depth: number): boolean => {
     if (node === null || typeof node !== 'object') {
       return push(JSON.stringify(node) ?? 'null');
     }
-    if (typeof (node as { toJSON?: unknown }).toJSON === 'function') {
+    if (depth > PREVIEW_MAX_DEPTH || typeof (node as { toJSON?: unknown }).toJSON === 'function') {
       return push(JSON.stringify(node));
     }
     if (Array.isArray(node)) {
@@ -233,7 +236,8 @@ export const jsonPreview = (value: unknown, maxBytes: number, sizeHint = Infinit
         push('[') &&
         node.every(
           (item: unknown, index) =>
-            push(index === 0 ? '' : ',') && (SKIPPED.has(typeof item) ? push('null') : write(item)),
+            push(index === 0 ? '' : ',') &&
+            (SKIPPED.has(typeof item) ? push('null') : write(item, depth + 1)),
         ) &&
         push(']')
       );
@@ -247,12 +251,12 @@ export const jsonPreview = (value: unknown, maxBytes: number, sizeHint = Infinit
         }
         const separator = first ? '' : ',';
         first = false;
-        return push(`${separator}${JSON.stringify(key)}:`) && write(item);
+        return push(`${separator}${JSON.stringify(key)}:`) && write(item, depth + 1);
       }) &&
       push('}')
     );
   };
-  write(value);
+  write(value, 0);
   return truncateUtf8(parts.join(''), maxBytes);
 };
 
