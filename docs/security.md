@@ -172,7 +172,7 @@ generated API request:
 An agent that retries a write after an unclear failure can apply it twice. Every tool error of
 an API call therefore states what is known about its effect (`_meta["openapi-mcp/effect"]`,
 see [configuration](configuration.md)). Only a refusal before anything left the server is
-`not_sent`. A failure that may have come after sending is `outcome_unknown`, and so is every
+`not_sent`, including a first connection that could not be opened. A failure that may have come after sending is `outcome_unknown`, and so is every
 call that sent more than one attempt, since an earlier attempt may have been applied. A first
 request rejected with `401` and sent again with a fresh OAuth2 token does not count, because it
 was not authorized. For a

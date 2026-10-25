@@ -397,20 +397,33 @@ const withoutContentType = (headers: Readonly<Record<string, string>>): Record<s
 // some Node error aggregation paths use that shape without literally being
 // an AggregateError instance.
 const MAX_CAUSE_DEPTH = 8;
-const containsEgressError = (err: unknown, depth = 0): boolean => {
+const containsError = (err: unknown, test: (value: object) => boolean, depth = 0): boolean => {
   if (depth > MAX_CAUSE_DEPTH || err === null || typeof err !== 'object') {
     return false;
   }
-  if (isEgressError(err)) {
+  if (test(err)) {
     return true;
   }
   const { errors } = err as { errors?: unknown };
-  if (Array.isArray(errors) && errors.some((sub) => containsEgressError(sub, depth + 1))) {
+  if (Array.isArray(errors) && errors.some((sub) => containsError(sub, test, depth + 1))) {
     return true;
   }
   const { cause } = err as { cause?: unknown };
-  return cause === undefined ? false : containsEgressError(cause, depth + 1);
+  return cause === undefined ? false : containsError(cause, test, depth + 1);
 };
+const containsEgressError = (err: unknown): boolean => containsError(err, isEgressError);
+
+// Failures to resolve or connect: no socket was open, so no request was
+// written (issue #53). A reset or a closed keep-alive socket is not one of
+// them, because the request may already have been sent.
+const CONNECT_ERROR_CODES: ReadonlySet<unknown> = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+const containsConnectError = (err: unknown): boolean =>
+  containsError(err, (value) => CONNECT_ERROR_CODES.has((value as { code?: unknown }).code));
 
 // Never read err.message (undici's generic "fetch failed" TypeError tells us
 // nothing); walk the cause chain for the branded EgressError instead.
@@ -563,13 +576,36 @@ export const pinnedRequest = async (
     // decide what to return — that sequence cannot be expressed as a value
     // produced by a `.catch()` handler without duplicating the
     // classification logic.
+    // undici calls onRequestStart right before it writes a request to an
+    // open connection, and may send a request again on its own (a new
+    // connection after a 421, a replay after an HTTP/2 GOAWAY). A refusal
+    // proves nothing was sent only if no write ever started (issue #53).
+    let started = false;
+    const observed = agent.compose(
+      (dispatch) => (options, handler) =>
+        dispatch(
+          options,
+          new Proxy(handler, {
+            get: (target, key) => {
+              const value: unknown = Reflect.get(target, key);
+              if (typeof value !== 'function') {
+                return value;
+              }
+              return (...args: unknown[]): unknown => {
+                started ||= key === 'onRequestStart';
+                return Reflect.apply(value, target, args);
+              };
+            },
+          }),
+        ),
+    );
     let response: UndiciResponse;
     try {
       response = await deps.fetch(url, {
         method,
         headers,
         ...(sendBody ? { body: opts.body } : {}),
-        dispatcher: agent,
+        dispatcher: observed,
         redirect: 'manual',
         signal,
       });
@@ -583,13 +619,14 @@ export const pinnedRequest = async (
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
       const reason = classifyFetchError(error);
-      // A pinned DNS refusal stops the connection, so nothing was sent
+      // A pinned DNS refusal stops the connection, and so does a failure to
+      // resolve or connect, so nothing was sent
       return {
         kind: 'error',
         reason,
         detail: describeCause(error),
         beforeResponse: true,
-        ...(reason === 'egress' ? unsent : {}),
+        ...(!started && (reason === 'egress' || containsConnectError(error)) ? unsent : {}),
       };
     }
     // Threaded through the try/catch/finally below on purpose: the finally

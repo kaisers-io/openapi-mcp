@@ -1108,6 +1108,129 @@ describe('pinnedRequest', () => {
     });
   });
 
+  // Issue #53: no socket was open, so nothing was written
+  it('marks a refused first connection as not sent', async () => {
+    const closed = await startFlexServer((_req, res) => {
+      res.end();
+    });
+    const { port } = closed;
+    await closed.close();
+    const outcome = await pinnedRequest(
+      new URL(`http://origin.test:${port}/`),
+      buildOpts({ method: 'POST', body: new TextEncoder().encode('{}') }),
+      buildDeps(),
+    );
+    expect(outcome).toMatchObject({ kind: 'error', reason: 'network', notSent: true });
+  });
+
+  it.each([
+    ['a lookup failure', { cause: { code: 'ENOTFOUND' } }],
+    ['a temporary lookup failure', { cause: { code: 'EAI_AGAIN' } }],
+    ['a connect timeout', { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } }],
+    ['every address refused', { cause: { errors: [{ code: 'ECONNREFUSED' }] } }],
+  ])('marks %s on the first hop as not sent', async (_name, options) => {
+    const outcome = await pinnedRequest(
+      new URL('http://origin.test/'),
+      buildOpts(),
+      buildDeps({ fetch: () => Promise.reject(new Error('fetch failed', options)) }),
+    );
+    expect(outcome).toMatchObject({ kind: 'error', reason: 'network', notSent: true });
+  });
+
+  it('does not mark a reset as not sent: the request may have been written', async () => {
+    const outcome = await pinnedRequest(
+      new URL('http://origin.test/'),
+      buildOpts(),
+      buildDeps({
+        fetch: () => Promise.reject(new Error('fetch failed', { cause: { code: 'ECONNRESET' } })),
+      }),
+    );
+    expect(outcome).toEqual({
+      kind: 'error',
+      reason: 'network',
+      detail: 'fetch failed',
+      beforeResponse: true,
+    });
+  });
+
+  it('does not mark a refused connection after a redirect as not sent', async () => {
+    const closed = await startFlexServer((_req, res) => {
+      res.end();
+    });
+    const closedPort = closed.port;
+    await closed.close();
+    const server = await startFlexServer((_req, res) => {
+      res.writeHead(302, { location: `http://origin.test:${closedPort}/next` });
+      res.end();
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/`),
+        buildOpts(),
+        buildDeps(),
+      );
+      expect(server.requests).toHaveLength(1);
+      expect(outcome).toMatchObject({ kind: 'error', reason: 'network' });
+      expect(outcome).not.toHaveProperty('notSent');
+    } finally {
+      await server.close();
+    }
+  });
+
+  // Review of #53: undici's fetch sends a request again on a new connection
+  // after a 421, so a refused connection then follows a request that was sent
+  it('does not mark a refused connection after an internal 421 retry as not sent', async () => {
+    const server = await startFlexServer((_req, res) => {
+      res.writeHead(421);
+      res.end();
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/`),
+        buildOpts({ method: 'POST', body: new TextEncoder().encode('{}') }),
+        buildDeps({
+          // The first connection succeeds; the retry's connection is refused
+          resolve: (() => {
+            let lookups = 0;
+            return () => {
+              lookups += 1;
+              return lookups === 1
+                ? Promise.resolve(['127.0.0.1'])
+                : Promise.reject(Object.assign(new Error('refused'), { code: 'ECONNREFUSED' }));
+            };
+          })(),
+        }),
+      );
+      expect(server.requests).toHaveLength(1);
+      expect(outcome).toMatchObject({ kind: 'error' });
+      expect(outcome).not.toHaveProperty('notSent');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('does not mark a DNS refusal after an internal 421 retry as not sent', async () => {
+    const server = await startFlexServer((_req, res) => {
+      res.writeHead(421);
+      res.end();
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/`),
+        buildOpts({ method: 'POST', body: new TextEncoder().encode('{}') }),
+        buildDeps({
+          // The retry's lookup has no answer, which the pinned lookup refuses
+          resolve: () => Promise.resolve(server.requests.length === 0 ? ['127.0.0.1'] : []),
+        }),
+      );
+      expect(server.requests).toHaveLength(1);
+      expect(outcome).toMatchObject({ kind: 'error', reason: 'egress' });
+      expect(outcome).not.toHaveProperty('notSent');
+    } finally {
+      await server.close();
+    }
+  });
+
   it('allows a private-address hop 0 when baseTrusted is set (the --base-url case)', async () => {
     const server = await startFlexServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/plain' });
