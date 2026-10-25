@@ -11,6 +11,7 @@ import {
   metaWireTool,
   OMITTED_REASONS_CAP,
   presentedOutputSchema,
+  runtimeToolOf,
   titleOf,
 } from './wire-tools.ts';
 import { buildDiscoveryTools } from './discovery.ts';
@@ -97,15 +98,14 @@ export type SnapshotPipelineInput = {
 // types.ts. Zod `ZodType` instances are explicitly left un-walked (see the
 // comment on `SnapshotTool.inputSchema` in types.ts) — everything else
 // reachable (plain objects, arrays, and the `GeneratedTool`/`mapper`
-// function objects) is frozen. A side effect worth naming: because
-// `wireToolOf`/`SnapshotTool.generated` retain the ORIGINAL `GeneratedTool`
-// object references from `built.tools` (never copied) rather than cloning
-// them, this also freezes the caller's own `BuildToolsResult.tools[*]`
-// objects — intentional: this snapshot must retain the original schema
-// objects unchanged, and freezing is the stronger form of that guarantee,
-// not an accidental side channel. `typeof value !== 'object'` also skips
-// functions (e.g. `GeneratedTool.mapper`, `typeof` is `'function'`, not
-// `'object'`) — deliberately: nothing in this codebase ever reassigns a
+// function objects) is frozen. A side effect worth naming: `wireToolOf` and
+// `runtimeToolOf` copy only the top level of each `GeneratedTool`, so the
+// schema objects they share with the caller's `BuildToolsResult.tools[*]`
+// are frozen there too — intentional: this snapshot must retain the
+// original schema objects unchanged, and freezing is the stronger form of
+// that guarantee, not an accidental side channel. `typeof value !== 'object'`
+// also skips functions (e.g. `GeneratedTool.mapper`, `typeof` is
+// `'function'`, not `'object'`) — deliberately: nothing in this codebase ever reassigns a
 // property on a function object, and freezing would not change whether the
 // function itself can be CALLED, so there is nothing worth protecting there.
 // `toolsByName` is deliberately NOT a `Map`: `Object.freeze` on a `Map`
@@ -184,7 +184,7 @@ export const buildSnapshot = (
     name: generated.toolName,
     wireTool: wireToolOf(generated, compact && toolMode === 'per-operation'),
     inputSchema: generated.inputSchema,
-    generated,
+    generated: runtimeToolOf(generated),
   }));
   const metaTool: SnapshotTool = {
     kind: 'meta',

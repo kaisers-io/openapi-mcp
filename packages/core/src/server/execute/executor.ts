@@ -26,14 +26,13 @@ import { DEFAULT_RESPONSE_IS_ERROR_FLAG } from '../../toolgen/output-schema.ts';
 import type { CallOutcomeKind, CallTelemetry } from '../telemetry.ts';
 import type { TraceContext } from '../trace.ts';
 import type { SnapshotTool } from '../types.ts';
-import { deriveAccept } from './accept.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
 import { hopAuthorizer } from './hop-authorizer.ts';
 import { routeKey } from './route-table.ts';
 import type { RouteTable } from './route-table.ts';
 import { mapResponse } from './response.ts';
-import type { EnvelopeValidator, EnvelopeValidators } from './response.ts';
+import type { EnvelopeValidator, EnvelopeValidators } from './envelope-validators.ts';
 import type { PageInput } from './forwarded-headers.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
 import { PROJECTION_FIELD } from '../../toolgen/projection.ts';
@@ -486,7 +485,7 @@ const runUpstreamCall = async (
           routeKey(method, generated.operation.path),
           config.allowOffsiteRedirects === true,
         );
-  const accept = deriveAccept(generated.operation.responses);
+  const { accept } = generated;
   const retries = Math.min(config.retries ?? 0, MAX_RETRIES);
   const idempotencyKeyField = Object.values(generated.mapper.fields).some(
     (mapping) =>
