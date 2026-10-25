@@ -9,7 +9,8 @@ import type { CacheEntry } from '../cache/store.ts';
 import { evaluateFreshness } from '../cache/ttl.ts';
 import { CACHE_META_SCHEMA_VERSION } from '../schemas/cache.ts';
 import { usageError, validationError } from '../errors.ts';
-import { applyFilters } from '../filter/engine.ts';
+import { applyFilters } from '../filter/apply.ts';
+import type { NotExposedOperation } from '../filter/apply.ts';
 import type { DeadPattern } from '../filter/engine.ts';
 import type { FilterPattern } from '../filter/pattern.ts';
 import type { DnsLookup } from '../http/egress.ts';
@@ -80,6 +81,9 @@ export type SpecPipelineResult = {
   // Accepted operations hidden because the pending candidate removed them
   // (kaisers-io/openapi-mcp-archive#60); empty when no candidate is waiting
   withheldOperations: readonly OmittedOperation[];
+  // The operations --allow, --deny or the read-only default leave out, each
+  // with its decision (issue #41)
+  filteredOut: readonly NotExposedOperation[];
   // Set when this run could not record its revalidation because another
   // process holds the cache entry's writer lock
   // (kaisers-io/openapi-mcp-archive#65): "held" while a live writer is busy,
@@ -573,10 +577,7 @@ const finish = (
   const { spec } = processed;
   const named = assignToolNames(spec.operations);
   // One budget for the whole filtering pass
-  const filtered = applyFilters(named, opts.allow, opts.deny);
-  // Every result, fresh or cached, passes through here: this is the one place
-  // the exposed set is known, so the tool budget is enforced on it here
-  enforceToolBudget(filtered.exposed.length, opts.maxToolCount ?? SPEC_BUDGETS.maxToolCount);
+  const filtered = applyFilters(named, opts.allow, opts.deny, undefined, spec.omitted);
   // Reporting the candidate only on the `candidate` status would mean a
   // later start inside the TTL returns `fresh` with no candidate hash and no
   // warning — the candidate would be on disk, gating the update, and
@@ -586,6 +587,10 @@ const finish = (
   const pending = input.cached?.meta.candidate;
   const candidateContentHash = input.candidateContentHash ?? pending?.contentHash;
   const withholding = withholdRemoved(filtered.exposed, input.candidateOperationKeys);
+  // Every result, fresh or cached, passes through here: this is the one place
+  // the exposed set is known, so the tool budget is enforced on it here,
+  // after withholding, on the tools that would actually be served (issue #41)
+  enforceToolBudget(withholding.exposed.length, opts.maxToolCount ?? SPEC_BUDGETS.maxToolCount);
   // Every served path (fresh, cached, refreshed) ends here, so the rejected
   // server URL is reported on each of them, not only when it was first seen
   const rejected = spec.serverUrlRejected;
@@ -611,6 +616,7 @@ const finish = (
     spec,
     namedOperations: exposed,
     withheldOperations: withholding.withheld,
+    filteredOut: filtered.filteredOut,
     contentHash: input.contentHash,
     ...(candidateContentHash === undefined ? {} : { candidateContentHash }),
     displaySource: input.displaySource,
@@ -655,8 +661,13 @@ const candidateBudgetWarning = (
   const budget = opts.maxToolCount ?? SPEC_BUDGETS.maxToolCount;
   let exposedCount: number;
   try {
-    exposedCount = applyFilters(assignToolNames(candidate.operations), opts.allow, opts.deny)
-      .exposed.length;
+    exposedCount = applyFilters(
+      assignToolNames(candidate.operations),
+      opts.allow,
+      opts.deny,
+      undefined,
+      candidate.omitted,
+    ).exposed.length;
   } catch (error) {
     return `the candidate spec could not be checked against the ${budget}-tool budget (${describeCause(error)}); after "openapi-mcp cache promote" this server may refuse to start with the current filters`;
   }

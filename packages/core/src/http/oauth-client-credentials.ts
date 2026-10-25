@@ -93,6 +93,7 @@ const TRANSPORT_FAILURES: Readonly<Record<PinnedErrorReason, string>> = {
   network: 'the token endpoint could not be reached',
   // Route authorization binds API calls only; listed for completeness
   'route-refused': 'the token request was refused',
+  'route-overlap': 'the token request was refused',
   'redirect-refused': 'the token endpoint redirected, which is never followed',
   'redirect-offsite': 'the token endpoint redirected, which is never followed',
 };

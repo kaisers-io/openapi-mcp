@@ -30,9 +30,35 @@ const SPEC = {
     '/denied': { get: { operationId: 'denied', responses: ok } },
     '/orders': { post: { operationId: 'createOrder', responses: ok } },
     '/download': { get: { operationId: 'download', responses: ok } },
+    '/notes/{noteId}/items': {
+      get: {
+        operationId: 'listNoteItems',
+        parameters: [{ name: 'noteId', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: ok,
+      },
+    },
+    '/notes/{noteId}/{part}': {
+      get: {
+        operationId: 'getNotePart',
+        parameters: [
+          { name: 'noteId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'part', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: ok,
+      },
+    },
   },
 };
-const DENY = ['--allow', '**', '--deny', 'GET /items/export', '--deny', 'GET /denied'];
+const DENY = [
+  '--allow',
+  '**',
+  '--deny',
+  'GET /items/export',
+  '--deny',
+  'GET /denied',
+  '--deny',
+  'getNotePart',
+];
 
 describe('serve — request authorization (issue #40)', () => {
   let home: string;
@@ -211,6 +237,33 @@ describe('serve — request authorization (issue #40)', () => {
       );
       expect(opted).toEqual({ isError: false, text: '{"file":true}' });
       expect(received).toEqual(['api GET /download', 'storage GET /file']);
+    },
+    SUBPROCESS_TEST_TIMEOUT_MS,
+  );
+
+  // Issue #41: the URL is the tool's own operation, but also matches one
+  // that is not exposed, so the text does not blame the arguments
+  it(
+    'refuses a URL another excluded template shares, and counts what is not exposed',
+    async () => {
+      const [refused, status] = await call(DENY, [
+        { name: 'listNoteItems', arguments: { noteId: '1' } },
+        { name: 'openapi_mcp_status', arguments: {} },
+      ]);
+      expect(refused).toEqual({
+        isError: true,
+        text: 'tool execution failed: the request was not sent: its URL also matches an operation this server does not expose; see the server startup diagnostics',
+      });
+      expect(received).toEqual([]);
+      expect(JSON.parse(status?.text ?? '{}')).toMatchObject({
+        notExposedCounts: {
+          denied: 3,
+          'not-allowed': 0,
+          'read-only-default': 0,
+          omitted: 0,
+          withheld: 0,
+        },
+      });
     },
     SUBPROCESS_TEST_TIMEOUT_MS,
   );

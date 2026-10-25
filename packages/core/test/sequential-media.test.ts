@@ -355,7 +355,7 @@ describe('a sequential request body', () => {
     ],
   ])('omits an operation with %s', (_label, content, reason) => {
     expect(build(doc32({ content })).omitted).toEqual([
-      { method: 'POST', path: '/orders/import', reason },
+      { method: 'POST', path: '/orders/import', reason, toolName: 'post_orders_import' },
     ]);
   });
 

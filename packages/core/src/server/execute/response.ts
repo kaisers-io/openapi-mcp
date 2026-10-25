@@ -213,6 +213,10 @@ const PINNED_ERROR_TEXT: Record<PinnedErrorReason, string> = {
   // Issue #40. Nothing was sent: the arguments make the URL another operation
   'route-refused':
     "the request was not sent: with these arguments its URL is not this tool's own operation of the API",
+  // Issue #41: the URL is this tool's own operation, but also matches one
+  // this server does not expose; the operator sees which at startup
+  'route-overlap':
+    'the request was not sent: its URL also matches an operation this server does not expose; see the server startup diagnostics',
   // The upstream answered with a redirect, so the original request reached it
   'redirect-refused':
     'the upstream server redirected to a URL that is not an operation this server exposes, which is not followed; the original request reached the upstream and may have been applied, so do not retry it blindly',

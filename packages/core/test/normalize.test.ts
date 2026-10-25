@@ -267,7 +267,13 @@ describe('normalizeSpec — extraction', () => {
     );
     expect(spec.operations).toEqual([]);
     expect(spec.omitted).toEqual([
-      { method: 'GET', path: '/x', reason: 'cookie parameters are not supported' },
+      // The operationId stays, for filter diagnostics (issue #41)
+      {
+        method: 'GET',
+        path: '/x',
+        reason: 'cookie parameters are not supported',
+        operationId: 'getX',
+      },
     ]);
   });
 

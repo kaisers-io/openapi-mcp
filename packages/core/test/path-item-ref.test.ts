@@ -115,7 +115,12 @@ describe('Path Item $ref with sibling fields', () => {
     const spec = normalizeSpec(document, '3.2');
     expect(spec.operations.map((operation) => operation.operationId)).toEqual(['copyOrders']);
     expect(spec.omitted).toEqual([
-      { method: 'LINK', path: '/orders', reason: 'declared both in the Path Item and in its $ref' },
+      {
+        method: 'LINK',
+        path: '/orders',
+        reason: 'declared both in the Path Item and in its $ref',
+        operationId: 'linkOrders',
+      },
     ]);
   });
 

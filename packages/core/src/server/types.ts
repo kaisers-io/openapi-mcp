@@ -1,5 +1,6 @@
 import type { z } from 'zod';
 import type { GeneratedTool } from '../toolgen/build.ts';
+import type { NotExposedCounts } from '../filter/inventory.ts';
 import type { OmittedOperation } from '../spec/normalize.ts';
 import type { DiscoveryToolName } from './discovery.ts';
 import type { SearchIndex } from './search-index.ts';
@@ -66,6 +67,7 @@ export type MetaSummary = {
   readonly omittedReasons: readonly OmittedOperation[];
   readonly acceptedContentHash: string;
   readonly deadPatternCount: number;
+  readonly notExposedCounts: NotExposedCounts;
   // See META_OUTPUT_SCHEMA in snapshot.ts
   readonly cacheLock?: 'held' | 'stale';
 };

@@ -114,17 +114,24 @@ const buildToolEntry = (
   projection: boolean,
 ): GeneratedTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
+  // Provenance for filter diagnostics (issue #41)
+  const omitted = (reason: string): OmittedOperation => ({
+    method,
+    path: named.operation.path,
+    reason,
+    ...(named.operation.operationId === undefined
+      ? {}
+      : { operationId: named.operation.operationId }),
+    ...(named.operation.tags.length === 0 ? {} : { tags: named.operation.tags }),
+    toolName: named.toolName,
+  });
   const layout = buildLayout(named.operation, reservedHeaders, openapiVersion, projection);
   if (!('ok' in layout)) {
-    return { method, path: named.operation.path, reason: layout.unrepresentable };
+    return omitted(layout.unrepresentable);
   }
   const wireResult = toWireSchema(layout.ok.inputSchema);
   if ('error' in wireResult) {
-    return {
-      method,
-      path: named.operation.path,
-      reason: `input schema cannot be represented as JSON Schema: ${wireResult.error}`,
-    };
+    return omitted(`input schema cannot be represented as JSON Schema: ${wireResult.error}`);
   }
   const pagination = detectPagination(named.operation, layout.ok.mapper, wireResult.ok);
   const { outputSchema, withheld, admitsNullFields } = explainOutputSchema(

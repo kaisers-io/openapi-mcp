@@ -38,6 +38,10 @@ export const META_OUTPUT_SCHEMA: Record<string, unknown> = {
     },
     acceptedContentHash: { type: 'string' },
     deadPatternCount: { type: 'integer' },
+    // Every operation that is not a tool, counted by why (issue #41): denied,
+    // not-allowed, read-only-default, omitted and withheld. Kept small, as
+    // this schema is part of every tools/list.
+    notExposedCounts: { type: 'object', additionalProperties: { type: 'integer' } },
     // Process-local call counters (server/telemetry.ts), when collected.
     calls: {
       type: 'object',
@@ -66,7 +70,7 @@ export const META_OUTPUT_SCHEMA: Record<string, unknown> = {
       type: 'string',
       enum: ['held', 'stale'],
       description:
-        'Cache metadata not updated at start-up. stale: a dead process left the cache lock; the operator should run "openapi-mcp cache unlock". Tools still work.',
+        'Cache metadata not updated at start-up. stale: a dead process left the lock; run "openapi-mcp cache unlock". Tools still work.',
     },
   },
   required: [
@@ -87,8 +91,7 @@ export const META_INPUT_SCHEMA = z.strictObject({});
 export const metaWireTool = (): WireTool => ({
   name: META_TOOL_NAME,
   title: 'Server status',
-  description:
-    "Report this server's accepted spec, tool inventory, and omissions. Read-only, package-authored — never spec-derived.",
+  description: 'Server spec, tools, omissions and exposure counts; not spec-derived.',
   inputSchema: z.toJSONSchema(META_INPUT_SCHEMA),
   outputSchema: META_OUTPUT_SCHEMA,
   // Not the OpenAPI-method heuristic (this is our own tool, not a wrapped

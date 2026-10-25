@@ -102,11 +102,37 @@ describe('operations removed in a pending candidate are withheld (kaisers-io/ope
     expect(result.cacheStatus).toBe('candidate');
     expect(toolNames(result)).toStrictEqual(['getA']);
     expect(result.withheldOperations).toStrictEqual([
-      { method: 'get', path: '/b', reason: expect.stringContaining('cache promote') as string },
+      {
+        method: 'get',
+        path: '/b',
+        reason: expect.stringContaining('cache promote') as string,
+        operationId: 'getB',
+        toolName: 'getB',
+      },
     ]);
     expect(result.warnings.join('\n')).toContain(
       '1 operation(s) removed in the pending candidate spec are withheld until "openapi-mcp cache promote": GET /b (getB)',
     );
+  });
+
+  // Issue #41: the tool budget counts the tools that are served, so an
+  // operation withheld for the candidate does not count against it
+  it('checks the tool budget after withholding', async () => {
+    const fs = memoryCacheFs();
+    await runAt(fs, 10_000, BOTH);
+    const result = await runSpecPipeline(
+      'https://api.example.com/openapi.json',
+      { ...opts, nowMs: 20_000, maxToolCount: 1 },
+      {
+        readFileText: () => Promise.reject(new Error('no files')),
+        fileSizeBytes: () => Promise.reject(new Error('no files')),
+        fetcher: serving(ONLY_A),
+        lookup: () => Promise.resolve(['93.184.216.34']),
+        cacheFs: fs,
+      },
+    );
+    expect(toolNames(result)).toStrictEqual(['getA']);
+    expect(result.withheldOperations.map((omission) => omission.path)).toStrictEqual(['/b']);
   });
 
   it('on a later start inside the TTL (fresh, candidate still pending)', async () => {

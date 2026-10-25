@@ -84,6 +84,9 @@ export type SnapshotPipelineInput = {
   // omissions, each with its reason, so the meta tool shows exactly why a
   // baseline operation is not a tool.
   withheldOperations?: readonly OmittedOperation[] | undefined;
+  // Every operation that is not a tool, counted by why (issue #41). Without
+  // it only the omitted and withheld ones are counted.
+  notExposedCounts?: MetaSummary['notExposedCounts'] | undefined;
   cacheLock?: 'held' | 'stale' | undefined;
 };
 
@@ -230,6 +233,13 @@ export const buildSnapshot = (
       .map((omission) => sanitizeOmission(omission)),
     acceptedContentHash: pipeline.contentHash,
     deadPatternCount: pipeline.deadPatterns.length,
+    notExposedCounts: pipeline.notExposedCounts ?? {
+      denied: 0,
+      'not-allowed': 0,
+      'read-only-default': 0,
+      omitted: pipeline.spec.omitted.length + built.omitted.length,
+      withheld: pipeline.withheldOperations?.length ?? 0,
+    },
     ...(pipeline.cacheLock === undefined ? {} : { cacheLock: pipeline.cacheLock }),
   };
   return deepFreeze({

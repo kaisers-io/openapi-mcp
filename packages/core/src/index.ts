@@ -201,11 +201,15 @@ export type {
   GlobToken,
   MatchBudget,
 } from './filter/pattern.ts';
-export { applyFilters, closestMatch, matchesOperation } from './filter/engine.ts';
-export type { DeadPattern, DeadPatternFlag, FilterDecision } from './filter/engine.ts';
+export { closestMatch, matchesOperation } from './filter/engine.ts';
+export { applyFilters } from './filter/apply.ts';
+export type { FilterDecision, NotExposedDecision, NotExposedOperation } from './filter/apply.ts';
+export type { DeadPattern, DeadPatternFlag, FilterTarget } from './filter/engine.ts';
 export { applyOutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
 export { createRouteTable, routeEntriesFor, routeKey } from './server/execute/route-table.ts';
 export { hopAuthorizer } from './server/execute/hop-authorizer.ts';
+export { routeOverlaps } from './server/execute/route-overlaps.ts';
+export type { RouteOverlap, RouteOverlapReport } from './server/execute/route-overlaps.ts';
 export type { RouteEntry, RouteRefusal, RouteTable } from './server/execute/route-table.ts';
 export type { OutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
 export {
@@ -323,3 +327,10 @@ export type {
   StreamableHttpOptions,
   StreamableHttpServerHandle,
 } from './server/sdk/streamable-http.ts';
+export {
+  notExposedCounts,
+  notExposedOperations,
+  notExposedSummary,
+  publicOmission,
+} from './filter/inventory.ts';
+export type { NotExposedCounts, NotExposedSources } from './filter/inventory.ts';

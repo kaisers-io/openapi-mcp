@@ -257,6 +257,10 @@ The request a tool sends is checked against the same decision before every hop, 
 included, so an excluded operation is never reached through a tool's arguments or a redirect
 (see [request authorization](docs/security.md#request-authorization)).
 
+Every operation that is not a tool is reported with its reason: `tools` and `serve` print a
+summary line, and `openapi-mcp --json tools` lists each one under `notExposed` (see
+[`tools`](docs/configuration.md#tools)).
+
 Pass `--strict-filters` to turn a dead pattern (one that matches nothing) into a startup
 error instead of a warning — useful once a filter set is stable and you want drift to fail
 loudly. Full flag reference: [`docs/configuration.md`](docs/configuration.md).

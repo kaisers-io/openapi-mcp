@@ -1,4 +1,4 @@
-import { templateReadings } from './path-readings.ts';
+import { decodeSegment, splitPath, templateReadings } from './path-readings.ts';
 import type { Token } from './path-readings.ts';
 import type { NormalizedSpec, OmittedOperation } from '../../spec/normalize.ts';
 
@@ -21,7 +21,8 @@ export type RouteEntry = {
   exposed: boolean;
 };
 
-export type RouteRefusal = 'not-exposed' | 'other-operation' | 'unknown';
+// `shared`: the tool's own operation, but also one not exposed (issue #41)
+export type RouteRefusal = 'not-exposed' | 'shared' | 'other-operation' | 'unknown';
 
 export type RouteTable = {
   // `bound` is the `METHOD path` of the tool's own operation, for hop 0: the
@@ -59,27 +60,10 @@ export const routeEntriesFor = (
   ];
 };
 
-type Route = RouteEntry & {
+export type Route = RouteEntry & {
   key: string;
   segments: readonly (readonly Token[])[];
   concrete: boolean;
-};
-
-// Percent-decoding for comparison only: an upstream decodes before routing,
-// so `%65xport` is `export`. A malformed sequence is kept as written.
-const decodeSegment = (segment: string): string => {
-  try {
-    return decodeURIComponent(segment);
-  } catch {
-    return segment;
-  }
-};
-
-// Leading `/` gives an empty first segment; one trailing `/` is ignored, so
-// `/orders/` resolves like `/orders`
-const splitPath = (path: string): string[] => {
-  const segments = path.split('/');
-  return segments.length > 2 && segments.at(-1) === '' ? segments.slice(0, -1) : segments;
 };
 
 const PLACEHOLDER_RE = /\{[^{}]*\}/gu;
@@ -103,9 +87,6 @@ const tokenize = (segment: string, decode: (text: string) => string): Token[] =>
   return tokens;
 };
 
-// Whether the tokens cover the whole segment. A set of reachable positions
-// is advanced token by token, so no input can make it backtrack: the cost is
-// bounded by tokens x segment length.
 // Matching work per hop. A hostile spec can declare many templates with many
 // placeholders, and every reading of a long path is matched against all of
 // them, synchronously. Past this many steps the hop is refused rather than
@@ -179,12 +160,9 @@ const compile = (entry: RouteEntry): Route => {
   };
 };
 
-// A HEAD request matches HEAD operations; GET ones only when the spec
-// declares no HEAD operation for the path, so an excluded HEAD operation is
-// never answered by an exposed GET
 // An excluded operation, plus its path in the readings an upstream may give
 // it (`/denied//export` as `/denied/export`), which can only add refusals
-const withReadings = (entry: RouteEntry): Route[] => {
+export const withReadings = (entry: RouteEntry): Route[] => {
   const route = compile(entry);
   const raw = splitPath(entry.path).map((segment) => tokenize(segment, (text) => text));
   return [
@@ -219,17 +197,23 @@ const anchorOf = (route: Route): string => {
     : WILDCARD;
 };
 
-const methodsFor = (method: string): readonly string[] =>
+// A HEAD request matches HEAD operations; GET ones only when the spec
+// declares no HEAD operation for the path, so an excluded HEAD operation is
+// never answered by an exposed GET
+export const methodsFor = (method: string): readonly string[] =>
   method === 'HEAD' ? ['HEAD', 'GET'] : [method];
 
-export const createRouteTable = (entries: readonly RouteEntry[]): RouteTable => {
-  // Only paths: webhook omissions and other non-path keys are no routes. An
-  // operation that is not exposed is also registered in the readings an
-  // upstream may give its own path (`/denied//export` as `/denied/export`),
-  // which can only add refusals.
-  const routes = entries
+// Only paths: webhook omissions and other non-path keys are no routes. An
+// operation that is not exposed is also registered in the readings an
+// upstream may give its own path (`/denied//export` as `/denied/export`),
+// which can only add refusals.
+export const compileRoutes = (entries: readonly RouteEntry[]): Route[] =>
+  entries
     .filter((entry) => entry.path.startsWith('/'))
     .flatMap((entry) => (entry.exposed ? [compile(entry)] : withReadings(entry)));
+
+export const createRouteTable = (entries: readonly RouteEntry[]): RouteTable => {
+  const routes = compileRoutes(entries);
   const groups = Map.groupBy(routes, (route) =>
     groupOf(route.method, route.segments.length, anchorOf(route)),
   );
@@ -258,21 +242,30 @@ export const createRouteTable = (entries: readonly RouteEntry[]): RouteTable => 
     segments: readonly string[],
     work: MatchWork,
     bound?: string,
+    // The tool's own route when it was resolved under another method (HEAD)
+    given?: Route,
   ): RouteRefusal | undefined => {
     const exact = candidates(method, segments, false, work);
     // Matching regardless of case can only add a refusal: an operation that
     // differs from the request just by case, and is not exposed. It counts
     // even when nothing matches exactly, for every reading of a path
-    const foldedExcluded = candidates(method, segments, true, work).some(
+    const folded = candidates(method, segments, true, work).filter(
       (route) => !route.exposed && !exact.includes(route),
     );
     if (exact.length === 0) {
-      return foldedExcluded ? 'not-exposed' : 'unknown';
+      return folded.length > 0 ? 'not-exposed' : 'unknown';
     }
     const concrete = exact.filter((route) => route.concrete);
     const winners = concrete.length > 0 ? concrete : exact;
-    if (foldedExcluded || winners.some((route) => !route.exposed)) {
-      return 'not-exposed';
+    const blockers = [...folded, ...winners.filter((route) => !route.exposed)];
+    if (blockers.length > 0) {
+      // `shared` (issue #41): the tool's own operation wins, and so does one
+      // that is not exposed. A concrete one inside the tool's template is that
+      // URL of another operation (`/items/EXPORT` under `/items/{id}`)
+      const own = given ?? winners.find((route) => route.key === bound);
+      return own !== undefined && blockers.some((route) => own.concrete || !route.concrete)
+        ? 'shared'
+        : 'not-exposed';
     }
     return bound !== undefined && !winners.some((route) => route.key === bound)
       ? 'other-operation'
@@ -289,7 +282,9 @@ export const createRouteTable = (entries: readonly RouteEntry[]): RouteTable => 
         }
         // A server may answer HEAD through its GET handler, so the GET reading
         // can only add a refusal: an excluded GET operation is never reached
-        return resolve('GET', segments, work) === 'not-exposed' ? 'not-exposed' : verdict;
+        const own = candidates('HEAD', segments, false, work).find((route) => route.key === bound);
+        const viaGet = resolve('GET', segments, work, undefined, own);
+        return viaGet === 'shared' || viaGet === 'not-exposed' ? viaGet : verdict;
       } catch {
         // The matching budget is spent: refuse rather than stall the server
         return 'not-exposed';

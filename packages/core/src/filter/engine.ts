@@ -1,17 +1,7 @@
-import { usageError, validationError } from '../errors.ts';
+import { validationError } from '../errors.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
-import type { NamedOperation } from '../toolgen/naming.ts';
-import {
-  FILTER_WORK_BUDGET_EXCEEDED_MESSAGE,
-  STANDARD_FILTER_METHODS,
-  createMatchBudget,
-  globMatches,
-} from './pattern.ts';
+import { FILTER_WORK_BUDGET_EXCEEDED_MESSAGE, createMatchBudget, globMatches } from './pattern.ts';
 import type { FilterPattern, MatchBudget } from './pattern.ts';
-
-// With no --allow, only these methods are exposed. QUERY (OpenAPI 3.2) is
-// safe by definition (RFC 10008 §2): a read with a request body.
-const READ_ONLY_METHODS = new Set(['get', 'head', 'query']);
 
 // Suggestions are advisory: a pattern or candidate longer than this is skipped
 // rather than paid for, which bounds the O(n*m) matrix at 65k cells
@@ -28,14 +18,16 @@ export type DeadPattern = {
   // raw-string-to-flag map — a pattern given to both flags appears twice
   flag: DeadPatternFlag;
   suggestion?: string | undefined;
-  // --omit-output-schema only: the pattern names an operation of the spec
-  // that is not exposed (filtered out or omitted), so no suggestion is given
+  // The pattern names an operation of the spec that is not exposed, so no
+  // suggestion is given: one omitted as not supported (every flag), or for
+  // --omit-output-schema also one the filters leave out
   notExposed?: true;
 };
 
-export type FilterDecision = {
-  exposed: readonly NamedOperation[];
-  deadPatterns: readonly DeadPattern[];
+// What a pattern is matched against: an operation of the spec, or an
+// omitted one with its provenance (issue #41)
+export type FilterTarget = Pick<OperationRecord, 'path' | 'operationId' | 'tags'> & {
+  method: string;
 };
 
 // The budget is threaded through rather than created per call, because the
@@ -44,7 +36,7 @@ export type FilterDecision = {
 // having to construct one.
 export const matchesOperation = (
   pattern: FilterPattern,
-  op: OperationRecord,
+  op: FilterTarget,
   budget: MatchBudget = createMatchBudget(),
 ): boolean => {
   // Every comparison uses the raw normalized spec value. Sanitizing first
@@ -175,7 +167,7 @@ export const closestMatch = (
 // operationId for a dead "tag:" pattern would be actively misleading
 const candidateSpace = (
   pattern: FilterPattern,
-  operations: readonly OperationRecord[],
+  operations: readonly FilterTarget[],
 ): readonly string[] => {
   // Pattern.kind is invariant across the walk, so it is branched on once
   // rather than re-tested per operation; the Set still dedups in the same
@@ -208,7 +200,7 @@ const suggestionInput = (pattern: FilterPattern): string =>
 export const deadPatternsFor = (
   patterns: readonly FilterPattern[],
   flag: DeadPatternFlag,
-  operations: readonly OperationRecord[],
+  operations: readonly FilterTarget[],
   budget: MatchBudget,
 ): readonly DeadPattern[] =>
   patterns
@@ -225,63 +217,3 @@ export const deadPatternsFor = (
         ? { raw: pattern.raw, flag }
         : { raw: pattern.raw, flag, suggestion };
     });
-
-// ONE budget for the whole run — exposure and dead-pattern detection alike.
-// Scoping it per match would bound nothing: the reachable cost is the aggregate
-// over patterns x operations x candidate lengths, which is what measured 22.5 s
-// at the maximum admitted dimensions even with a non-backtracking matcher.
-// A "<METHOD> <path>" pattern may name a method outside HTTP_METHODS only
-// when an operation of this spec declares it (OpenAPI 3.2
-// `additionalOperations`). Anything else is a misspelling, which stays a
-// usage error as it was when only the standard methods were accepted: a
-// misspelled --deny method would otherwise deny nothing.
-export const assertKnownMethods = (
-  patterns: readonly FilterPattern[],
-  records: readonly { method: string }[],
-): void => {
-  const declared = new Set(records.map((op) => op.method.toUpperCase()));
-  const unknown = patterns.find(
-    (pattern) =>
-      pattern.kind === 'methodPath' &&
-      !STANDARD_FILTER_METHODS.has(pattern.method) &&
-      !declared.has(pattern.method),
-  );
-  if (unknown?.kind === 'methodPath') {
-    throw usageError(
-      `a "<METHOD> <path>" filter pattern names ${unknown.method}, which is not a standard method and no operation in the spec declares`,
-    );
-  }
-};
-
-export const applyFilters = (
-  operations: readonly NamedOperation[],
-  allow: readonly FilterPattern[],
-  deny: readonly FilterPattern[],
-  budget: MatchBudget = createMatchBudget(),
-): FilterDecision => {
-  const records = operations.map((entry) => entry.operation);
-  assertKnownMethods([...allow, ...deny], records);
-  const exposed = operations.filter(({ operation }) => {
-    // Rule 1: --deny always wins over --allow, no exceptions
-    if (deny.some((pattern) => matchesOperation(pattern, operation, budget))) {
-      return false;
-    }
-    if (allow.length > 0) {
-      // Rule 2: an explicit allow replaces the default entirely, so a matching
-      // write operation present at startup is exposed
-      return allow.some((pattern) => matchesOperation(pattern, operation, budget));
-    }
-    // Rule 3: read-only default
-    return READ_ONLY_METHODS.has(operation.method);
-  });
-  // A pattern is dead when it matches zero operations in the ENTIRE
-  // normalized inventory, evaluated before exposure. Deliberately not "zero
-  // exposed operations" — a deny pattern that removes everything an allow
-  // pattern selected is doing its job, not misspelled, and a pattern naming a
-  // write operation hidden by the read-only default matched perfectly well.
-  const deadPatterns = [
-    ...deadPatternsFor(allow, 'allow', records, budget),
-    ...deadPatternsFor(deny, 'deny', records, budget),
-  ];
-  return { exposed, deadPatterns };
-};
