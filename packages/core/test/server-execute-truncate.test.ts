@@ -21,12 +21,16 @@ const reference = (text: string, maxBytes: number): string => {
   return walkBack(Math.max(0, maxBytes - markerBytes));
 };
 
-// A deterministic generator, so a failure reproduces
+// A deterministic generator, so a failure reproduces. xorshift32 in 32-bit
+// integer arithmetic: a multiplicative one in floating point loses its low
+// bits and drew almost only the first two pieces (review of #56).
 const randomFrom = (seed: number) => {
   let state = seed;
   return (bound: number): number => {
-    state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
-    return state % bound;
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return (state >>> 0) % bound;
   };
 };
 
@@ -36,10 +40,19 @@ const PIECES = ['a', 'é', '€', '😀', '\uD83D', '\uDE00', '"', '\n'];
 describe('truncateUtf8 (#48)', () => {
   it('matches encoding the whole text for every cut', () => {
     const pick = randomFrom(7);
+    const drawn = new Map<string, number>();
     for (let round = 0; round < 3000; round += 1) {
-      const text = Array.from({ length: pick(40) }, () => PIECES[pick(PIECES.length)]).join('');
+      const text = Array.from({ length: pick(40) }, () => {
+        const piece = PIECES[pick(PIECES.length)] ?? '';
+        drawn.set(piece, (drawn.get(piece) ?? 0) + 1);
+        return piece;
+      }).join('');
       const maxBytes = pick(60);
       expect(truncateUtf8(text, maxBytes)).toBe(reference(text, maxBytes));
+    }
+    // Every kind of character took part, many times
+    for (const piece of PIECES) {
+      expect(drawn.get(piece)).toBeGreaterThan(1000);
     }
   });
 
