@@ -13,6 +13,11 @@ const encoder = new TextEncoder();
 // becomes U+FFFD instead of stopping the decoding, so `%FF%2F..` still
 // yields its separator and dot segment
 const decodeBytes = (text: string): string => {
+  // Nothing to decode: the text reads as itself. A lone surrogate becomes
+  // U+FFFD and a leading U+FEFF is dropped below, so those take the slow path
+  if (!text.includes('%') && text.isWellFormed() && !text.startsWith('\uFEFF')) {
+    return text;
+  }
   const bytes: number[] = [];
   let index = 0;
   while (index < text.length) {
@@ -152,11 +157,21 @@ export const templateReadings = (segments: readonly Segment[]): Segment[][] => {
     (text: string) => decodeBytes(decodeBytes(text)),
   ];
   // Decoded before splitting (an encoded separator splits), and split before
-  // decoding (an encoded `%2e%2e` is a dot segment), as for request paths
-  const splitters = decoders.flatMap((decode) => [
-    (text: string) => decode(text).split(SEPARATOR_RE),
-    (text: string) => text.split(SEPARATOR_RE).map((piece) => decode(piece)),
-  ]);
+  // decoding (an encoded `%2e%2e` is a dot segment), as for request paths.
+  // Each literal is split once per splitter, not once per cut/merge variant
+  const splitters = decoders
+    .flatMap((decode) => [
+      (text: string) => decode(text).split(SEPARATOR_RE),
+      (text: string) => text.split(SEPARATOR_RE).map((piece) => decode(piece)),
+    ])
+    .map((split) => {
+      const pieces = new Map<string, string[]>();
+      return (text: string): string[] => {
+        const known = pieces.get(text) ?? split(text);
+        pieces.set(text, known);
+        return known;
+      };
+    });
   const readings = splitters.flatMap((piecesOf) =>
     [false, true].flatMap((cutParameters) =>
       [false, true].map((mergeFirst) =>

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRouteTable, hopAuthorizer, routeEntriesFor, routeKey } from '../src/index.ts';
+import { pathReadings, templateReadings } from '../src/server/execute/path-readings.ts';
 import { ROUTE_MATCH_BUDGET } from '../src/server/execute/route-table.ts';
 import type { RouteEntry } from '../src/index.ts';
 
@@ -225,6 +226,22 @@ describe('createRouteTable — HEAD through GET', () => {
   });
 });
 
+// Review of #40: text without `%` skips the byte-wise decoder, which must
+// not change a reading. A lone surrogate still becomes U+FFFD, a leading
+// U+FEFF is still dropped, and a malformed escape is still kept as written
+describe('readings — text that needs no decoding', () => {
+  it('reads as before for plain, malformed and invalid input', () => {
+    expect(pathReadings('/orders/42')).toEqual(['/orders/42']);
+    expect(pathReadings('/\uFEFFx')).toEqual(['/\uFEFFx', '/x']);
+    expect(pathReadings('/\uD800x')).toEqual(['/\uD800x', '/\uFFFDx']);
+    expect(pathReadings('/%zz')).toEqual(['/%zz']);
+    expect(pathReadings('/%FFa')).toEqual(['/%FFa', '/\uFFFDa']);
+    expect(
+      templateReadings([[{ literal: '' }], [{ literal: '\uFEFFx' }, { param: true }]]),
+    ).toEqual([[[{ literal: '\uFEFFx' }, { param: true }]], [[{ literal: 'x' }, { param: true }]]]);
+  });
+});
+
 describe('createRouteTable — bounded work', () => {
   // Review of #40: the work multiplies across routes and readings, and runs
   // synchronously, so it is budgeted per hop and fails closed when spent
@@ -251,6 +268,8 @@ describe('createRouteTable — bounded work', () => {
   // Review of #40: a long literal compared at many positions is charged by
   // its length, not as one step
   it('charges long literal comparisons, so they cannot stall the server either', () => {
+    // Building the table counts too: `serve` does it synchronously at startup
+    const started = performance.now();
     const table = createRouteTable([
       ...Array.from({ length: 60 }, (_unused, index) =>
         route('GET', `/{id}${'a'.repeat(4000)}b${String(index)}`, false),
@@ -263,7 +282,6 @@ describe('createRouteTable — bounded work', () => {
       routeKey('GET', '/{id}'),
       false,
     );
-    const started = performance.now();
     const url = new URL(`/${'a'.repeat(8000)}`, 'https://api.example.test');
     expect(authorize(url, 'GET', 0)).toBe('route-refused');
     expect(performance.now() - started).toBeLessThan(1000);
