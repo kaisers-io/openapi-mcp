@@ -182,7 +182,7 @@ Notes:
 
   | Value | When |
   |---|---|
-  | `not_sent` | refused before any request left the server: invalid arguments, request authorization, egress, the rate limit, a full queue, a failed first OAuth2 token, and a failed DNS lookup, refused connection or connect timeout on the first hop |
+  | `not_sent` | refused before any request left the server: invalid arguments, request authorization, egress, the rate limit, a full queue, a failed first OAuth2 token, and any failure on the first hop before the request was written: a failed DNS lookup, a refused connection, a TLS error, a timeout or a cancel while connecting |
   | `upstream_rejected` | the call sent one request, and the upstream answered it with a `4xx` |
   | `upstream_reported_success` | the call sent one request, the upstream answered it with a `2xx`, but the result could not be returned (it did not match the declared schema, was not valid JSON, or contained a secret) |
   | `outcome_unknown` | everything else: a timeout, a lost connection, an oversized response, a redirect, a `5xx`, and any call that sent more than one attempt |

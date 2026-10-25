@@ -867,6 +867,7 @@ describe('pinnedRequest', () => {
       reason: 'network',
       detail: 'ECONNREFUSED-ish',
       beforeResponse: true,
+      notSent: true,
     });
   });
 
@@ -970,7 +971,7 @@ describe('pinnedRequest', () => {
         buildOpts({ signal: controller.signal, timeoutMs: 5000 }),
         buildDeps(),
       );
-      expect(outcome).toEqual({ kind: 'error', reason: 'cancelled' });
+      expect(outcome).toEqual({ kind: 'error', reason: 'cancelled', notSent: true });
       expect(server.requests).toHaveLength(0);
     } finally {
       await server.close();
@@ -1010,7 +1011,7 @@ describe('pinnedRequest', () => {
     // propagates asynchronously to a real in-flight undici fetch.
     fetchReject?.(new DOMException('This operation was aborted', 'AbortError'));
     const outcome = await outcomePromise;
-    expect(outcome).toEqual({ kind: 'error', reason: 'timeout' });
+    expect(outcome).toEqual({ kind: 'error', reason: 'timeout', notSent: true });
   });
 
   it('classifies a private-address DNS denial as egress, not network (real socket-level denial)', async () => {
@@ -1047,6 +1048,7 @@ describe('pinnedRequest', () => {
       reason: 'network',
       detail: 'ECONNREFUSED-ish',
       beforeResponse: true,
+      notSent: true,
     });
   });
 
@@ -1063,6 +1065,7 @@ describe('pinnedRequest', () => {
       reason: 'network',
       detail: 'fetch failed',
       beforeResponse: true,
+      notSent: true,
     });
   });
 
@@ -1123,34 +1126,52 @@ describe('pinnedRequest', () => {
     expect(outcome).toMatchObject({ kind: 'error', reason: 'network', notSent: true });
   });
 
-  it.each([
-    ['a lookup failure', { cause: { code: 'ENOTFOUND' } }],
-    ['a temporary lookup failure', { cause: { code: 'EAI_AGAIN' } }],
-    ['a connect timeout', { cause: { code: 'UND_ERR_CONNECT_TIMEOUT' } }],
-    ['every address refused', { cause: { errors: [{ code: 'ECONNREFUSED' }] } }],
-  ])('marks %s on the first hop as not sent', async (_name, options) => {
-    const outcome = await pinnedRequest(
-      new URL('http://origin.test/'),
-      buildOpts(),
-      buildDeps({ fetch: () => Promise.reject(new Error('fetch failed', options)) }),
-    );
-    expect(outcome).toMatchObject({ kind: 'error', reason: 'network', notSent: true });
+  it('does not mark a reset as not sent: the request may have been written', async () => {
+    const server = await startFlexServer((req) => {
+      req.socket.destroy();
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/`),
+        buildOpts({ method: 'POST', body: new TextEncoder().encode('{}') }),
+        buildDeps(),
+      );
+      expect(server.requests).toHaveLength(1);
+      expect(outcome).toMatchObject({ kind: 'error', reason: 'network' });
+      expect(outcome).not.toHaveProperty('notSent');
+    } finally {
+      await server.close();
+    }
   });
 
-  it('does not mark a reset as not sent: the request may have been written', async () => {
+  it('marks a TLS failure on the first hop as not sent', async () => {
+    // An https URL against a plain-HTTP listener: the handshake fails
+    const server = await startFlexServer((_req, res) => {
+      res.end();
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`https://origin.test:${server.port}/`),
+        buildOpts({ method: 'POST', body: new TextEncoder().encode('{}') }),
+        buildDeps(),
+      );
+      expect(server.requests).toHaveLength(0);
+      expect(outcome).toMatchObject({ kind: 'error', reason: 'network', notSent: true });
+    } finally {
+      await server.close();
+    }
+  });
+
+  it('marks a deadline that expires while resolving as not sent', async () => {
     const outcome = await pinnedRequest(
       new URL('http://origin.test/'),
-      buildOpts(),
+      buildOpts({ method: 'POST', body: new TextEncoder().encode('{}') }),
       buildDeps({
-        fetch: () => Promise.reject(new Error('fetch failed', { cause: { code: 'ECONNRESET' } })),
+        resolve: () => new Promise<readonly string[]>(() => {}),
+        timeoutSignal: () => AbortSignal.timeout(50),
       }),
     );
-    expect(outcome).toEqual({
-      kind: 'error',
-      reason: 'network',
-      detail: 'fetch failed',
-      beforeResponse: true,
-    });
+    expect(outcome).toEqual({ kind: 'error', reason: 'timeout', notSent: true });
   });
 
   it('does not mark a refused connection after a redirect as not sent', async () => {

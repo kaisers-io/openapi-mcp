@@ -397,33 +397,20 @@ const withoutContentType = (headers: Readonly<Record<string, string>>): Record<s
 // some Node error aggregation paths use that shape without literally being
 // an AggregateError instance.
 const MAX_CAUSE_DEPTH = 8;
-const containsError = (err: unknown, test: (value: object) => boolean, depth = 0): boolean => {
+const containsEgressError = (err: unknown, depth = 0): boolean => {
   if (depth > MAX_CAUSE_DEPTH || err === null || typeof err !== 'object') {
     return false;
   }
-  if (test(err)) {
+  if (isEgressError(err)) {
     return true;
   }
   const { errors } = err as { errors?: unknown };
-  if (Array.isArray(errors) && errors.some((sub) => containsError(sub, test, depth + 1))) {
+  if (Array.isArray(errors) && errors.some((sub) => containsEgressError(sub, depth + 1))) {
     return true;
   }
   const { cause } = err as { cause?: unknown };
-  return cause === undefined ? false : containsError(cause, test, depth + 1);
+  return cause === undefined ? false : containsEgressError(cause, depth + 1);
 };
-const containsEgressError = (err: unknown): boolean => containsError(err, isEgressError);
-
-// Failures to resolve or connect: no socket was open, so no request was
-// written (issue #53). A reset or a closed keep-alive socket is not one of
-// them, because the request may already have been sent.
-const CONNECT_ERROR_CODES: ReadonlySet<unknown> = new Set([
-  'ECONNREFUSED',
-  'ENOTFOUND',
-  'EAI_AGAIN',
-  'UND_ERR_CONNECT_TIMEOUT',
-]);
-const containsConnectError = (err: unknown): boolean =>
-  containsError(err, (value) => CONNECT_ERROR_CODES.has((value as { code?: unknown }).code));
 
 // Never read err.message (undici's generic "fetch failed" TypeError tells us
 // nothing); walk the cause chain for the branded EgressError instead.
@@ -570,15 +557,9 @@ export const pinnedRequest = async (
     // After a 303 the request has no body, so it carries no content-type.
     const headers = seeOther ? withoutContentType(hopHeaders) : hopHeaders;
     const sendBody = hop === 0 && opts.body !== undefined && !GET_HEAD_METHODS.has(method);
-    // Declared then assigned inside try/catch (not `.catch()`): a fetch
-    // rejection must first destroy() the agent and classify the error
-    // (cancelled vs timeout vs egress vs network) before this function can
-    // decide what to return — that sequence cannot be expressed as a value
-    // produced by a `.catch()` handler without duplicating the
-    // classification logic.
-    // undici calls onRequestStart right before it writes a request to an
+    // Undici calls onRequestStart right before it writes a request to an
     // open connection, and may send a request again on its own (a new
-    // connection after a 421, a replay after an HTTP/2 GOAWAY). A refusal
+    // connection after a 421, a replay after an HTTP/2 GOAWAY). A failure
     // proves nothing was sent only if no write ever started (issue #53).
     let started = false;
     const observed = agent.compose(
@@ -599,6 +580,12 @@ export const pinnedRequest = async (
           }),
         ),
     );
+    // Declared then assigned inside try/catch (not `.catch()`): a fetch
+    // rejection must first destroy() the agent and classify the error
+    // (cancelled vs timeout vs egress vs network) before this function can
+    // decide what to return — that sequence cannot be expressed as a value
+    // produced by a `.catch()` handler without duplicating the
+    // classification logic.
     let response: UndiciResponse;
     try {
       response = await deps.fetch(url, {
@@ -615,18 +602,19 @@ export const pinnedRequest = async (
       if (!pooled) {
         await agent.destroy().catch(() => {});
       }
+      // No write started on the first hop: whatever failed (DNS, a refused
+      // connection, TLS, a deadline or a cancel while connecting), nothing
+      // was sent
+      const unwritten = started ? {} : unsent;
       if (signal.aborted) {
-        return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
+        return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal), ...unwritten };
       }
-      const reason = classifyFetchError(error);
-      // A pinned DNS refusal stops the connection, and so does a failure to
-      // resolve or connect, so nothing was sent
       return {
         kind: 'error',
-        reason,
+        reason: classifyFetchError(error),
         detail: describeCause(error),
         beforeResponse: true,
-        ...(!started && (reason === 'egress' || containsConnectError(error)) ? unsent : {}),
+        ...unwritten,
       };
     }
     // Threaded through the try/catch/finally below on purpose: the finally

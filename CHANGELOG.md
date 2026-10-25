@@ -169,8 +169,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applied. Every tool error of an API call now carries `_meta["openapi-mcp/effect"]`
   (`not_sent`, `upstream_rejected`, `upstream_reported_success` or `outcome_unknown`). For a
   write that may have been applied, the text warns not to retry it blindly. Reads are unchanged.
-  A failed DNS lookup, a refused connection or a connect timeout on the first hop is
-  `not_sent` (#53): no connection was open, so nothing was sent.
+  A failure on the first hop before the request was written (a failed DNS lookup, a refused
+  connection, a TLS error, a timeout or a cancel while connecting) is `not_sent` (#53).
 - **Every operation that is not a tool is reported, with its reason (#41).** Operations left
   out by `--allow`, `--deny` or the read-only default had no record at all, and an operation
   without an `operationId` disappeared under `--allow '**'` without a trace. `tools --json`
