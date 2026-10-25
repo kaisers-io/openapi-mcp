@@ -1,3 +1,4 @@
+import { OPENAPI_VALIDATORS } from '../src/spec/validators.ts';
 import { describe, expect, it } from 'vitest';
 import {
   assignToolNames,
@@ -296,7 +297,7 @@ const doc32 = (
 });
 
 const build = (document: Record<string, unknown>): BuildToolsResult => {
-  const { version } = validateOpenApiDocument(document);
+  const { version } = validateOpenApiDocument(document, OPENAPI_VALIDATORS);
   const normalized = normalizeSpec(document, version);
   const dereferencer = createDereferencer(document, {
     collapseCycles: true,

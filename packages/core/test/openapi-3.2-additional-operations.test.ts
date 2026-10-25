@@ -1,3 +1,4 @@
+import { OPENAPI_VALIDATORS } from '../src/spec/validators.ts';
 import { describe, expect, it } from 'vitest';
 import {
   assignToolNames,
@@ -28,7 +29,7 @@ const doc32 = (paths: Record<string, unknown>): Record<string, unknown> => ({
 
 // The pipeline's path: validate, normalize, dereference what is exposed, build
 const build = (document: Record<string, unknown>): BuildToolsResult => {
-  const { version } = validateOpenApiDocument(document);
+  const { version } = validateOpenApiDocument(document, OPENAPI_VALIDATORS);
   const normalized = normalizeSpec(document, version);
   const dereferencer = createDereferencer(document, {
     collapseCycles: true,
@@ -133,7 +134,7 @@ describe('OpenAPI 3.2 additionalOperations (issue #33)', () => {
       '/orders': { additionalOperations: { [method]: { responses: okResponses } } },
     });
     // The meta-schema accepts each of these: any token but the fixed names
-    expect(validateOpenApiDocument(spec).version).toBe('3.2');
+    expect(validateOpenApiDocument(spec, OPENAPI_VALIDATORS).version).toBe('3.2');
     const normalized = normalizeSpec(spec, '3.2');
     expect(normalized.operations).toEqual([]);
     // The method name is spec text, shown shortened when it is long
@@ -168,7 +169,7 @@ describe('OpenAPI 3.2 additionalOperations (issue #33)', () => {
     ['', { responses: okResponses }, 'additionalOperations key is not a valid HTTP method name'],
   ])('omits %j without relying on the meta-schema', (method, operation, reason) => {
     const spec = doc32({ '/orders': { additionalOperations: { [method]: operation } } });
-    expect(() => validateOpenApiDocument(spec)).toThrow(/schema validation/u);
+    expect(() => validateOpenApiDocument(spec, OPENAPI_VALIDATORS)).toThrow(/schema validation/u);
     const normalized = normalizeSpec(spec, '3.2');
     expect(normalized.operations).toEqual([]);
     expect(normalized.omitted).toEqual([{ method, path: '/orders', reason }]);

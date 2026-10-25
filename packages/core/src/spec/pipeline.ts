@@ -28,7 +28,7 @@ import type { NormalizedSpec, OmittedOperation, OperationRecord } from './normal
 import { parseSpecText } from './parse.ts';
 import { operationKeysOf, pendingCandidateKeys, withholdRemoved } from './pending-candidate.ts';
 import { serverUrlRejectedWarning } from './server-url.ts';
-import { validateOpenApiDocument } from './validate.ts';
+import { loadOpenApiValidators, validateOpenApiDocument } from './validate.ts';
 import type { OpenapiVersion } from './validate.ts';
 
 export type SpecPipelineOptions = {
@@ -139,9 +139,9 @@ const enforceToolBudget = (exposedCount: number, maxToolCount: number): void => 
 // unvalidated, dangling-$ref or over-limit spec can never reach the disk. The
 // validated document itself is what gets cached: it is the
 // source's own size, where its dereferenced form was 15-30x larger.
-const processSpecText = (text: string): ProcessedSpec => {
+const processSpecText = async (text: string): Promise<ProcessedSpec> => {
   const parsed = parseSpecText(text);
-  const validated = validateOpenApiDocument(parsed);
+  const validated = validateOpenApiDocument(parsed, await loadOpenApiValidators());
   checkRefs(validated.document);
   const spec = normalizeSpec(validated.document, validated.version);
   enforceOperationBudget(spec);
@@ -408,7 +408,7 @@ const runSpecPipelineOnce = async (
       // Only the fetch and the validation may fall back.
       processedRefresh =
         reusableAcceptedDocument(cached, refreshed.loaded.contentHash) ??
-        processSpecText(refreshed.loaded.text);
+        (await processSpecText(refreshed.loaded.text));
     }
   } catch (error) {
     if (cached === undefined) {

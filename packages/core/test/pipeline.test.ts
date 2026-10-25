@@ -1,3 +1,4 @@
+import { OPENAPI_VALIDATORS } from '../src/spec/validators.ts';
 import { createHash } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -1434,7 +1435,7 @@ describe('runSpecPipeline — filter before dereference, raw-document cache (iss
   it('generates the same tools as dereferencing the whole document first', async () => {
     for (const name of ['petstore-3.0.json', 'petstore-3.1.yaml']) {
       const text = await readFile(fixture(name), 'utf8');
-      const validated = validateOpenApiDocument(parseSpecText(text));
+      const validated = validateOpenApiDocument(parseSpecText(text), OPENAPI_VALIDATORS);
       const reference = normalizeSpec(dereference(validated.document), validated.version);
       const result = await runSpecPipeline(fixture(name), { ...baseOpts, ...allowAll }, fileDeps);
       const opts = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: validated.version };
@@ -1719,7 +1720,7 @@ describe('runSpecPipeline — collapseCycles differential (issue kaisers-io/open
     let compared = 0;
     for (let seed = 1; seed <= 300; seed += 1) {
       const text = randomSpec(seed);
-      const validated = validateOpenApiDocument(parseSpecText(text));
+      const validated = validateOpenApiDocument(parseSpecText(text), OPENAPI_VALIDATORS);
       let reference: ReturnType<typeof buildTools> | undefined;
       try {
         const full = normalizeSpec(dereference(validated.document), validated.version);

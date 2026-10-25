@@ -172,12 +172,17 @@ const findBranch = (
 // point is walked back until it lands on a valid UTF-8 boundary so the
 // result never contains a split multi-byte codepoint.
 const textEncoder = new TextEncoder();
-const truncateUtf8 = (text: string, maxBytes: number): string => {
-  const encoded = textEncoder.encode(text);
-  if (encoded.byteLength <= maxBytes) {
+export const truncateUtf8 = (text: string, maxBytes: number): string => {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) {
     return text;
   }
   const markerBytes = textEncoder.encode(TRUNCATION_MARKER).byteLength;
+  // Only the head can be kept: every character is at least one byte, so the
+  // first `budget` characters hold the first `budget` bytes (#48). A
+  // surrogate pair cut at the end encodes differently, but it is cut off by
+  // the walk below in both forms.
+  const budgetBytes = Math.max(0, maxBytes - markerBytes);
+  const encoded = textEncoder.encode(text.slice(0, budgetBytes));
   // Imperative on purpose (recursion, not a mutable loop counter): walks the
   // byte budget back one byte at a time until it lands on a valid UTF-8
   // boundary. `TextDecoder`'s `fatal: true` throws when a cut splits a
@@ -192,7 +197,67 @@ const truncateUtf8 = (text: string, maxBytes: number): string => {
       return walkBack(budget - 1);
     }
   };
-  return walkBack(Math.max(0, maxBytes - markerBytes));
+  return walkBack(budgetBytes);
+};
+
+// `truncateUtf8(JSON.stringify(value), maxBytes)` without serializing all
+// of a large value: writing stops once the text is longer than the budget,
+// which every truncation needs (#48). Leaves and keys still go through
+// JSON.stringify, so the text is the same prefix; a value with a `toJSON`
+// is serialized whole.
+const SKIPPED = new Set(['undefined', 'function', 'symbol']);
+// Below about 16 times the budget, the native serializer is faster
+const PREVIEW_NATIVE_FACTOR = 16;
+// Deeper subtrees go to the native serializer, whose recursion goes further
+// than this one's: valid JSON nested thousands deep must not overflow here
+const PREVIEW_MAX_DEPTH = 256;
+export const jsonPreview = (value: unknown, maxBytes: number, sizeHint = Infinity): string => {
+  if (sizeHint < maxBytes * PREVIEW_NATIVE_FACTOR) {
+    return truncateUtf8(JSON.stringify(value), maxBytes);
+  }
+  const parts: string[] = [];
+  let length = 0;
+  // Imperative on purpose: one shared buffer, abandoned as soon as it holds
+  // more than the budget
+  const push = (part: string): boolean => {
+    parts.push(part);
+    length += part.length;
+    return length <= maxBytes;
+  };
+  const write = (node: unknown, depth: number): boolean => {
+    if (node === null || typeof node !== 'object') {
+      return push(JSON.stringify(node) ?? 'null');
+    }
+    if (depth > PREVIEW_MAX_DEPTH || typeof (node as { toJSON?: unknown }).toJSON === 'function') {
+      return push(JSON.stringify(node));
+    }
+    if (Array.isArray(node)) {
+      return (
+        push('[') &&
+        node.every(
+          (item: unknown, index) =>
+            push(index === 0 ? '' : ',') &&
+            (SKIPPED.has(typeof item) ? push('null') : write(item, depth + 1)),
+        ) &&
+        push(']')
+      );
+    }
+    let first = true;
+    return (
+      push('{') &&
+      Object.entries(node).every(([key, item]) => {
+        if (SKIPPED.has(typeof item)) {
+          return true;
+        }
+        const separator = first ? '' : ',';
+        first = false;
+        return push(`${separator}${JSON.stringify(key)}:`) && write(item, depth + 1);
+      }) &&
+      push('}')
+    );
+  };
+  write(value, 0);
+  return truncateUtf8(parts.join(''), maxBytes);
 };
 
 // Byte-capped excerpt budget for a 4xx/5xx error body. Reuses
@@ -546,7 +611,7 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   // spec's SHOULD), not a second full copy of the payload: it is capped at
   // the same maxTextBytes as an unstructured result, with the truncation
   // marker, while structuredContent carries the complete data.
-  return structuredOutcome(truncateUtf8(JSON.stringify(envelope), maxTextBytes), envelope);
+  return structuredOutcome(jsonPreview(envelope, maxTextBytes, bodyBytes.byteLength), envelope);
 };
 
 const mapBody = (
