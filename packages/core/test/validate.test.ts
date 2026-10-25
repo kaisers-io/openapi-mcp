@@ -18,6 +18,8 @@ import load30 from '../src/spec/generated/openapi-3.0-validator.cjs';
 import load31 from '../src/spec/generated/openapi-3.1-validator.cjs';
 import load32 from '../src/spec/generated/openapi-3.2-validator.cjs';
 
+const OPENAPI_VALIDATORS = { '3.0': load30, '3.1': load31, '3.2': load32 };
+
 const minimal30 = (): Record<string, unknown> => ({
   openapi: '3.0.3',
   info: { title: 'T', version: '1.0.0' },
@@ -38,20 +40,20 @@ const minimal32 = (): Record<string, unknown> => ({
 
 describe('validateOpenApiDocument', () => {
   it('accepts a minimal valid 3.0 document', () => {
-    const validated = validateOpenApiDocument(minimal30());
+    const validated = validateOpenApiDocument(minimal30(), OPENAPI_VALIDATORS);
     expect(validated.version).toBe('3.0');
     expect(validated.document['openapi']).toBe('3.0.3');
   });
 
   it('accepts a minimal valid 3.1 document', () => {
-    expect(validateOpenApiDocument(minimal31()).version).toBe('3.1');
+    expect(validateOpenApiDocument(minimal31(), OPENAPI_VALIDATORS).version).toBe('3.1');
   });
 
   it('rejects a 3.0 document violating the meta-schema with a precise path', () => {
     const doc = minimal30();
     doc['info'] = { title: 'T' };
     try {
-      validateOpenApiDocument(doc);
+      validateOpenApiDocument(doc, OPENAPI_VALIDATORS);
       expect.unreachable('expected a validation error');
     } catch (error) {
       expect((error as OpenapiMcpError).code).toBe('validation');
@@ -62,12 +64,15 @@ describe('validateOpenApiDocument', () => {
   it('rejects a 3.1 document violating the meta-schema', () => {
     const doc = minimal31();
     doc['paths'] = { '/pets': { get: { responses: 'not-an-object' } } };
-    expect(() => validateOpenApiDocument(doc)).toThrow(OpenapiMcpError);
+    expect(() => validateOpenApiDocument(doc, OPENAPI_VALIDATORS)).toThrow(OpenapiMcpError);
   });
 
   it('rejects swagger 2.0 documents with a targeted message', () => {
     expect(() =>
-      validateOpenApiDocument({ swagger: '2.0', info: { title: 'T', version: '1' }, paths: {} }),
+      validateOpenApiDocument(
+        { swagger: '2.0', info: { title: 'T', version: '1' }, paths: {} },
+        OPENAPI_VALIDATORS,
+      ),
     ).toThrow(
       'OpenAPI 2.0 (swagger) documents are not supported — provide an OpenAPI 3.0, 3.1 or 3.2 spec',
     );
@@ -76,11 +81,16 @@ describe('validateOpenApiDocument', () => {
   it('recognizes a YAML swagger version written without quotes (#11)', () => {
     const document = parseSpecText('swagger: 2.0\ninfo: {title: T, version: "1"}\npaths: {}\n');
     expect(document['swagger']).toBe(2);
-    expect(() => validateOpenApiDocument(document)).toThrow(/OpenAPI 2\.0 \(swagger\)/u);
+    expect(() => validateOpenApiDocument(document, OPENAPI_VALIDATORS)).toThrow(
+      /OpenAPI 2\.0 \(swagger\)/u,
+    );
   });
 
   it.each(['3.2.0', '3.2.1'])('accepts a minimal valid %s document (#33)', (version) => {
-    const validated = validateOpenApiDocument({ ...minimal32(), openapi: version });
+    const validated = validateOpenApiDocument(
+      { ...minimal32(), openapi: version },
+      OPENAPI_VALIDATORS,
+    );
     expect(validated.version).toBe('3.2');
   });
 
@@ -97,7 +107,7 @@ describe('validateOpenApiDocument', () => {
         },
       },
     };
-    expect(() => validateOpenApiDocument(doc)).toThrow(
+    expect(() => validateOpenApiDocument(doc, OPENAPI_VALIDATORS)).toThrow(
       /spec failed OpenAPI 3\.2\.0 schema validation/u,
     );
   });
@@ -109,7 +119,7 @@ describe('validateOpenApiDocument', () => {
       paths: {},
     };
     try {
-      validateOpenApiDocument(doc);
+      validateOpenApiDocument(doc, OPENAPI_VALIDATORS);
       expect.unreachable('expected a validation error');
     } catch (error) {
       const { message } = error as OpenapiMcpError;
@@ -123,17 +133,20 @@ describe('validateOpenApiDocument', () => {
     'rejects unsupported openapi version %s',
     (version) => {
       expect(() =>
-        validateOpenApiDocument({
-          openapi: version,
-          info: { title: 'T', version: '1' },
-          paths: {},
-        }),
+        validateOpenApiDocument(
+          {
+            openapi: version,
+            info: { title: 'T', version: '1' },
+            paths: {},
+          },
+          OPENAPI_VALIDATORS,
+        ),
       ).toThrow(/3\.0\.x, 3\.1\.x or 3\.2\.x/u);
     },
   );
 
   it('rejects a document without an openapi field', () => {
-    expect(() => validateOpenApiDocument({ info: { title: 'T' } })).toThrow(
+    expect(() => validateOpenApiDocument({ info: { title: 'T' } }, OPENAPI_VALIDATORS)).toThrow(
       /3\.0\.x, 3\.1\.x or 3\.2\.x/u,
     );
   });
@@ -147,7 +160,7 @@ describe('validateOpenApiDocument', () => {
     }
     doc['paths'] = paths;
     try {
-      validateOpenApiDocument(doc);
+      validateOpenApiDocument(doc, OPENAPI_VALIDATORS);
       expect.unreachable('expected a validation error');
     } catch (error) {
       const lines = (error as OpenapiMcpError).message.split('\n');
@@ -157,8 +170,8 @@ describe('validateOpenApiDocument', () => {
   });
 
   it('reuses the compiled validator across calls (still correct on second call)', () => {
-    expect(validateOpenApiDocument(minimal31()).version).toBe('3.1');
-    expect(validateOpenApiDocument(minimal31()).version).toBe('3.1');
+    expect(validateOpenApiDocument(minimal31(), OPENAPI_VALIDATORS).version).toBe('3.1');
+    expect(validateOpenApiDocument(minimal31(), OPENAPI_VALIDATORS).version).toBe('3.1');
   });
 
   it('does not echo control characters from the declared openapi version', () => {
@@ -170,7 +183,7 @@ describe('validateOpenApiDocument', () => {
       paths: {},
     };
     try {
-      validateOpenApiDocument(doc);
+      validateOpenApiDocument(doc, OPENAPI_VALIDATORS);
       expect.unreachable('expected a validation error');
     } catch (error) {
       const { message } = error as OpenapiMcpError;
@@ -183,7 +196,7 @@ describe('validateOpenApiDocument', () => {
   it('caps an over-long declared openapi version in the error message', () => {
     const doc = { openapi: `3.0.${'x'.repeat(500)}`, info: { title: 'T' }, paths: {} };
     try {
-      validateOpenApiDocument(doc);
+      validateOpenApiDocument(doc, OPENAPI_VALIDATORS);
       expect.unreachable('expected a validation error');
     } catch (error) {
       // 32-char cap on the version fragment, not on the whole message

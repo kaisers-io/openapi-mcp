@@ -1,3 +1,4 @@
+import { OPENAPI_VALIDATORS } from '../src/spec/validators.ts';
 import { describe, expect, it } from 'vitest';
 import {
   assignToolNames,
@@ -30,7 +31,7 @@ const doc32 = (
 
 // The pipeline's path: validate, normalize, dereference what is exposed, build
 const build = (document: Record<string, unknown>): BuildToolsResult => {
-  const { version } = validateOpenApiDocument(document);
+  const { version } = validateOpenApiDocument(document, OPENAPI_VALIDATORS);
   const normalized = normalizeSpec(document, version);
   const dereferencer = createDereferencer(document, {
     collapseCycles: true,
@@ -70,7 +71,9 @@ describe('OpenAPI 3.2 (issue #33)', () => {
     });
     // The meta-schema refuses the control character; normalization must not
     // rely on that (a cache hit skips revalidation)
-    expect(() => validateOpenApiDocument(document)).toThrow(/schema validation/u);
+    expect(() => validateOpenApiDocument(document, OPENAPI_VALIDATORS)).toThrow(
+      /schema validation/u,
+    );
     const spec = normalizeSpec(document, '3.2');
     expect(spec.operations.map((operation) => [operation.method, operation.operationId])).toEqual([
       ['get', 'listOrders'],
@@ -94,7 +97,7 @@ describe('OpenAPI 3.2 (issue #33)', () => {
         additionalOperations: { LINK: { responses: okResponses } },
       },
     });
-    expect(validateOpenApiDocument(document).version).toBe('3.2');
+    expect(validateOpenApiDocument(document, OPENAPI_VALIDATORS).version).toBe('3.2');
   });
 
   describe('querystring parameters', () => {
@@ -225,7 +228,7 @@ describe('OpenAPI 3.2 (issue #33)', () => {
           get: { parameters: [{ ...formFilter(filterSchema), name: 'b' }], responses: okResponses },
         },
       });
-      expect(validateOpenApiDocument(document).version).toBe('3.2');
+      expect(validateOpenApiDocument(document, OPENAPI_VALIDATORS).version).toBe('3.2');
       const built = build(document);
       expect(built.tools).toEqual([]);
       expect(built.omitted).toEqual([
