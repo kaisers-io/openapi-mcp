@@ -103,9 +103,9 @@ export type SnapshotPipelineInput = {
 // schema objects they share with the caller's `BuildToolsResult.tools[*]`
 // are frozen there too — intentional: this snapshot must retain the
 // original schema objects unchanged, and freezing is the stronger form of
-// that guarantee, not an accidental side channel. `typeof value !== 'object'` also skips
-// functions (e.g. `GeneratedTool.mapper`, `typeof` is `'function'`, not
-// `'object'`) — deliberately: nothing in this codebase ever reassigns a
+// that guarantee, not an accidental side channel. `typeof value !== 'object'`
+// also skips functions (e.g. `GeneratedTool.mapper`, `typeof` is
+// `'function'`, not `'object'`) — deliberately: nothing in this codebase ever reassigns a
 // property on a function object, and freezing would not change whether the
 // function itself can be CALLED, so there is nothing worth protecting there.
 // `toolsByName` is deliberately NOT a `Map`: `Object.freeze` on a `Map`
