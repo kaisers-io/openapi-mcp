@@ -11,6 +11,8 @@ import type {
   BuildToolsResult,
   NotExposedCounts,
   NotExposedOperation,
+  Route,
+  RouteEntry,
   RouteOverlap,
   SpecPipelineResult,
 } from '@kaisers-io/openapi-mcp-core';
@@ -24,6 +26,10 @@ export const OVERLAP_WARNING_MAX = 20;
 export type ExposureReport = {
   notExposed: readonly NotExposedOperation[];
   counts: NotExposedCounts;
+  // The request-authorization routes, for `serve`'s route table
+  routeEntries: readonly RouteEntry[];
+  // Absent when the overlap check's budget ran out before compiling them
+  routes?: readonly Route[] | undefined;
   overlaps: readonly RouteOverlap[];
   overlapCheckComplete: boolean;
   warnings: readonly string[];
@@ -44,14 +50,13 @@ export const exposureReport = (
   overlapBudget?: number,
 ): ExposureReport => {
   const notExposed = notExposedOperations(result, built.omitted);
-  const { overlaps, complete } = routeOverlaps(
-    routeEntriesFor(
-      result.spec,
-      result.withheldOperations,
-      built.tools.map((tool) => tool.operation),
-    ),
-    overlapBudget,
+  // Compiled once: `serve` builds its route table from the same routes
+  const routeEntries = routeEntriesFor(
+    result.spec,
+    result.withheldOperations,
+    built.tools.map((tool) => tool.operation),
   );
+  const { overlaps, complete, routes } = routeOverlaps(routeEntries, overlapBudget);
   const toolNames = new Map(
     built.tools.map((tool) => [
       `${tool.operation.method.toUpperCase()} ${tool.operation.path}`,
@@ -81,6 +86,8 @@ export const exposureReport = (
   return {
     notExposed,
     counts,
+    routeEntries,
+    routes,
     overlaps,
     overlapCheckComplete: complete,
     warnings: [...(summary === undefined ? [] : [summary]), ...lines],

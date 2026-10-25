@@ -597,6 +597,36 @@ describe('cache unlock', () => {
 });
 
 describe('cache refresh', () => {
+  // Review of #47: every command hashes a spec file as bytes, so a file with
+  // an invalid UTF-8 byte is unchanged for `cache refresh` after `tools`
+  it('hashes a spec file the same way as tools does', async () => {
+    const path = '/specs/shop.json';
+    const bytes = Buffer.concat([
+      Buffer.from(specText.slice(0, -1)),
+      Buffer.from(',"x-note":"'),
+      Buffer.from([0xff]),
+      Buffer.from('"}'),
+    ]);
+    const capture = cacheCtx([specText], {
+      readFileText: () => Promise.resolve(bytes.toString('utf8')),
+      readFileBytes: () => Promise.resolve(new Uint8Array(bytes)),
+      fileSizeBytes: () => Promise.resolve(bytes.byteLength),
+      cwd: () => '/specs',
+    });
+    expect(await run(capture.ctx, ['node', 'openapi-mcp', 'tools', '--spec', path])).toBe(EXIT.OK);
+    capture.lines.length = 0;
+    const code = await run(capture.ctx, [
+      'node',
+      'openapi-mcp',
+      'cache',
+      'refresh',
+      '--spec',
+      path,
+    ]);
+    expect(code).toBe(EXIT.OK);
+    expect(capture.lines.join('\n')).toContain('unchanged');
+  });
+
   it('forces a refetch and writes a candidate when the spec changed', async () => {
     const capture = cacheCtx([specText, changedText]);
     await seed(capture);

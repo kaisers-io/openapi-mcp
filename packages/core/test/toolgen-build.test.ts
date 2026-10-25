@@ -396,3 +396,39 @@ describe('buildTools — per-build memoization (issue kaisers-io/openapi-mcp-arc
     }
   });
 });
+
+// Issue #47: zod's z.toJSONSchema adds a hidden `~standard` property that
+// keeps the zod schema alive as long as the JSON Schema; tools keep a copy
+describe('buildTools — no hidden zod reference in wire schemas', () => {
+  it('leaves no `~standard` property on the input or output schema', () => {
+    const operation = named('getThing', [
+      { name: 'id', in: 'query', required: true, schema: { type: 'string' } },
+    ]);
+    const withResponse: NamedOperation = {
+      ...operation,
+      operation: {
+        ...operation.operation,
+        method: 'get',
+        responses: {
+          '200': {
+            description: 'ok',
+            content: {
+              'application/json': {
+                schema: { type: 'object', properties: { a: { type: 'string' } } },
+              },
+            },
+          },
+        },
+      },
+    };
+    const [tool] = buildTools([withResponse], {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    }).tools;
+    expect(Object.getOwnPropertyNames(tool?.wireSchema)).not.toContain('~standard');
+    expect(tool?.outputSchema).toBeDefined();
+    const output = tool?.outputSchema as { properties?: { data?: object } } | undefined;
+    const data = output?.properties?.data;
+    expect(Object.getOwnPropertyNames(data ?? {})).not.toContain('~standard');
+  });
+});

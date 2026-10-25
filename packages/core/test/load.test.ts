@@ -220,3 +220,38 @@ describe('loadSpecFromFile', () => {
     ).rejects.toMatchObject({ code: 'validation' });
   });
 });
+
+// Issue #47: with a byte reader, a spec file is hashed as bytes and decoded
+// only when its text is used
+describe('loadSpecFromFile — bytes', () => {
+  const byteDeps = (bytes: Uint8Array) => ({
+    readFileText: () => Promise.reject(new Error('text read not expected')),
+    readFileBytes: () => Promise.resolve(bytes),
+    fileSizeBytes: () => Promise.resolve(bytes.byteLength),
+  });
+
+  it('gives the same text and hash as reading the file as text, BOM included', async () => {
+    for (const text of ['{"a":1}', '﻿{"title":"Bestellungen ü — €"}']) {
+      const bytes = new TextEncoder().encode(text);
+      const loaded = await loadSpecFromFile('/tmp/spec.json', 1024, byteDeps(bytes));
+      expect(loaded.contentHash).toBe(hashContent(text));
+      expect(loaded.text).toBe(Buffer.from(bytes).toString('utf8'));
+    }
+  });
+
+  it('decodes invalid UTF-8 leniently, and hashes the bytes as read', async () => {
+    const bytes = new Uint8Array([0x7b, 0xff, 0x7d]);
+    const loaded = await loadSpecFromFile('/tmp/spec.json', 1024, byteDeps(bytes));
+    expect(loaded.text).toBe('{�}');
+    // Differs from the text's hash once: a cache sees changed content
+    expect(loaded.contentHash).not.toBe(hashContent(loaded.text));
+  });
+
+  it('refuses bytes over the budget even when the size check passed', async () => {
+    const bytes = new Uint8Array(2048);
+    const deps = { ...byteDeps(bytes), fileSizeBytes: () => Promise.resolve(10) };
+    await expect(loadSpecFromFile('/tmp/spec.json', 1024, deps)).rejects.toThrow(
+      /2048 bytes — exceeds the 1024-byte budget/u,
+    );
+  });
+});

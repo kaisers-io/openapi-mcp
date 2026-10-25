@@ -207,11 +207,16 @@ export type { FilterDecision, NotExposedDecision, NotExposedOperation } from './
 export type { CaseCollision } from './filter/case-collisions.ts';
 export type { DeadPattern, DeadPatternFlag, FilterTarget } from './filter/engine.ts';
 export { applyOutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
-export { createRouteTable, routeEntriesFor, routeKey } from './server/execute/route-table.ts';
+export {
+  compileRoutes,
+  createRouteTable,
+  routeEntriesFor,
+  routeKey,
+} from './server/execute/route-table.ts';
 export { hopAuthorizer } from './server/execute/hop-authorizer.ts';
 export { routeOverlaps } from './server/execute/route-overlaps.ts';
 export type { RouteOverlap, RouteOverlapReport } from './server/execute/route-overlaps.ts';
-export type { RouteEntry, RouteRefusal, RouteTable } from './server/execute/route-table.ts';
+export type { Route, RouteEntry, RouteRefusal, RouteTable } from './server/execute/route-table.ts';
 export type { OutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
 export {
   assignToolNames,

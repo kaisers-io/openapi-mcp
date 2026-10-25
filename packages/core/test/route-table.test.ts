@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createRouteTable, hopAuthorizer, routeEntriesFor, routeKey } from '../src/index.ts';
-import { pathReadings, templateReadings } from '../src/server/execute/path-readings.ts';
-import { ROUTE_MATCH_BUDGET } from '../src/server/execute/route-table.ts';
+import {
+  mayHaveOtherReadings,
+  pathReadings,
+  templateReadings,
+} from '../src/server/execute/path-readings.ts';
+import { ROUTE_MATCH_BUDGET, withReadings } from '../src/server/execute/route-table.ts';
 import type { RouteEntry } from '../src/index.ts';
 
 // Issue #40: every hop of a request is resolved against every operation of
@@ -566,5 +570,72 @@ describe('hopAuthorizer — combined readings', () => {
     // because the decoded reading is an exposed operation
     expect(authorizer(false)(new URL('/%61pi/items/7', origin), 'GET', 1)).toBe('redirect-offsite');
     expect(authorizer(true)(new URL('/%61pi/items/7', origin), 'GET', 1)).toBeUndefined();
+  });
+});
+
+// Issue #47: a path without anything a reading can change is read only as
+// written, so its readings are skipped. Proven against templateReadings on
+// generated paths and on the special characters it acts on.
+describe('readings — skipped only for paths that cannot have other readings', () => {
+  const pieces = [
+    'a',
+    'B',
+    '{id}',
+    'x.json',
+    '',
+    '.',
+    '..',
+    '%2F',
+    'a;b',
+    'a\\b',
+    '\uFEFFa',
+    '\uD800',
+    'ü',
+    '{p}{q}',
+    '*',
+  ];
+
+  it('finds no other reading for any path it skips', () => {
+    let seed = 7;
+    const random = (n: number): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed % n;
+    };
+    let skipped = 0;
+    for (let run = 0; run < 4000; run += 1) {
+      const path = `/${Array.from({ length: 1 + random(4) }, () => pieces[random(pieces.length)]).join('/')}`;
+      if (mayHaveOtherReadings(path)) {
+        continue;
+      }
+      skipped += 1;
+      // Without a `%`, the route's compiled tokens are its raw tokens
+      const [compiled] = withReadings({ method: 'GET', path, exposed: false });
+      const written = JSON.stringify(compiled?.segments);
+      for (const reading of templateReadings(compiled?.segments ?? [])) {
+        const segments = [
+          [{ literal: '' }],
+          ...(reading.length === 0 ? [[{ literal: '' }]] : reading),
+        ];
+        expect({ path, reading: JSON.stringify(segments) }).toEqual({ path, reading: written });
+      }
+    }
+    expect(skipped).toBeGreaterThan(500);
+  });
+
+  it('keeps the readings of every path that has a trigger', () => {
+    for (const path of [
+      '/a%2Fb',
+      '/a;b',
+      '/a\\b',
+      '/a//b',
+      '/a/./b',
+      '/a/../b',
+      '/\uFEFFa',
+      '/a\uD800',
+      '/',
+    ]) {
+      expect(mayHaveOtherReadings(path)).toBe(true);
+    }
+    expect(mayHaveOtherReadings('/orders/{orderId}/items')).toBe(false);
   });
 });

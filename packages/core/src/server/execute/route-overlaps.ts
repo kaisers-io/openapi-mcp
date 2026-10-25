@@ -22,6 +22,9 @@ export type RouteOverlapReport = {
   overlaps: readonly RouteOverlap[];
   // False when the work budget ran out before every pair was compared
   complete: boolean;
+  // The routes as compiled within the budget, for the route table to reuse
+  // (issue #47); absent when the budget ran out before compiling them
+  routes?: readonly Route[];
 };
 
 // Overlap work per startup: search states, and every character compiled,
@@ -274,6 +277,7 @@ export const routeOverlaps = (
 ): RouteOverlapReport => {
   const work = { remaining: budget };
   const overlaps: RouteOverlap[] = [];
+  let compiled: readonly Route[] | undefined;
   try {
     // One step per character of a path, whose readings are compiled too
     spend(
@@ -281,6 +285,7 @@ export const routeOverlaps = (
       entries.reduce((sum, entry) => sum + entry.path.length, 0),
     );
     const routes = compileRoutes(entries);
+    compiled = routes;
     const excluded = indexExcluded(routes.filter((route) => !route.exposed));
     const concrete = new Set(
       routes.filter((route) => route.concrete).map((route) => concreteKey(route.method, route)),
@@ -289,7 +294,7 @@ export const routeOverlaps = (
       addOverlapsOf(route, excluded, concrete, work, overlaps);
     }
   } catch {
-    return { overlaps, complete: false };
+    return { overlaps, complete: false, ...(compiled === undefined ? {} : { routes: compiled }) };
   }
-  return { overlaps, complete: true };
+  return { overlaps, complete: true, ...(compiled === undefined ? {} : { routes: compiled }) };
 };
