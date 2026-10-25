@@ -17,7 +17,9 @@ export default defineConfig({
   // Inline every dependency: the published tarball is bin + dist only
   deps: { alwaysBundle: [/.*/u] },
   outExtensions: () => ({ js: '.mjs' }),
-  outputOptions: { banner: '#!/usr/bin/env node' },
+  // ASCII-only output: V8 stores a module source with any non-ASCII
+  // character at two bytes per character, about 2 MB more for this bundle
+  outputOptions: { banner: '#!/usr/bin/env node', charset: 'ascii' },
   onSuccess: async () => {
     await chmod('dist/openapi-mcp.mjs', 0o755);
   },
