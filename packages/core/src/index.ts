@@ -204,6 +204,9 @@ export type {
 export { applyFilters, closestMatch, matchesOperation } from './filter/engine.ts';
 export type { DeadPattern, DeadPatternFlag, FilterDecision } from './filter/engine.ts';
 export { applyOutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
+export { createRouteTable, routeEntriesFor, routeKey } from './server/execute/route-table.ts';
+export { hopAuthorizer } from './server/execute/hop-authorizer.ts';
+export type { RouteEntry, RouteRefusal, RouteTable } from './server/execute/route-table.ts';
 export type { OutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
 export {
   assignToolNames,

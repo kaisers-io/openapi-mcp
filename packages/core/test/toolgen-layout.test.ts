@@ -601,6 +601,13 @@ describe('buildLayout — path template consistency', () => {
     ['/a/%23/b'], // Decoded: "#"
     ['/a/?abc/b'], // A literal "?" needs no percent-encoding to reach this check
     ['/a/abc#/b'], // A literal "#" likewise
+    // Issue #40: URL parsing removes tab and newline, so these become ".."
+    // and route the request to another operation; any control character is
+    // refused, raw or encoded
+    ['/a/.\t./denied'],
+    ['/a/.\n./denied'],
+    ['/a/%09/b'],
+    ['/a/x\u007F/b'],
   ])('omits an operation with a dangerous static path segment: %s', (path) => {
     expect('unrepresentable' in buildLayout(pathOp(path, []), new Set())).toBe(true);
   });

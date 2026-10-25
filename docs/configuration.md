@@ -92,6 +92,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--oauth-required-scope <scope>` | yes | scope every access token must grant; advertised as `scopes_supported` | `[]` |
 | `--tool-mode <mode>` | no | `per-operation`, `discover` or `auto` — see [Tool modes](#tool-modes) | `per-operation` |
 | `--response-projection` | no | offer an optional `_fields` argument (JSON Pointers) on tools with a JSON response | off |
+| `--allow-offsite-redirects` | no | follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply, and a later hop back onto the API is checked again — see [security](security.md#request-authorization) | off |
 | `--output-schema <form>` | no | how output schemas are shown to the host: `inline` or `defs` (repeated subschemas once under `$defs`) — see [Output schema form](#output-schema-form) | `inline` |
 | `--tools-page-size <n>` | no | page `tools/list` with `n` tools per page (1–512); only for MCP hosts that follow `nextCursor` | off (all tools in one response) |
 

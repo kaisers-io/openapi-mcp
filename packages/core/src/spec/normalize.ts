@@ -1,6 +1,8 @@
 import { SPEC_BUDGETS } from './budgets.ts';
 import { mergeParameters } from './merge-parameters.ts';
 import type { Resolve } from './merge-parameters.ts';
+import { conflictReason, resolvePathItem } from './path-item.ts';
+import type { PathItemView } from './path-item.ts';
 import { isRecord, resolveShallowOrSelf } from './refs.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import { extractSecuritySchemes, parseSecurityRequirements } from './security.ts';
@@ -179,10 +181,10 @@ const additionalMethodProblem = (name: string): string | undefined => {
 // declaration order, so a spec without them keeps its order.
 const buildPathEntries = (
   path: string,
-  item: unknown,
+  { item, conflicts }: PathItemView,
   resolve: Resolve,
 ): { operations: OperationRecord[]; omitted: OmittedOperation[] } => {
-  if (!path.startsWith('/') || !isRecord(item)) {
+  if (!path.startsWith('/') || item === undefined) {
     // Path-object extension keys (x-*) are not paths
     return { operations: [], omitted: [] };
   }
@@ -202,6 +204,10 @@ const buildPathEntries = (
     }
     if (!isRecord(op)) {
       return [{ method: method.toUpperCase(), path, reason: 'operation is not an object' }];
+    }
+    const conflict = conflictReason(conflicts, method);
+    if (conflict !== undefined) {
+      return [{ method: method.toUpperCase(), path, reason: conflict }];
     }
     if (pathHasServers) {
       return [
@@ -223,6 +229,10 @@ const buildPathEntries = (
     }
     if (!isRecord(op)) {
       return { method: name, path, reason: 'operation is not an object' };
+    }
+    const conflict = conflictReason(conflicts, `additionalOperations/${name}`);
+    if (conflict !== undefined) {
+      return { method: name, path, reason: conflict };
     }
     if (pathHasServers) {
       return { method: name, path, reason: 'path-level servers overrides are not supported' };
@@ -257,7 +267,7 @@ export const normalizeSpec = (
   // original outer for-of's iteration order exactly.
   const resolve: Resolve = (node) => resolveShallowOrSelf(document, node);
   const perPath = Object.entries(paths).map(([path, item]) =>
-    buildPathEntries(path, resolve(item), resolve),
+    buildPathEntries(path, resolvePathItem(document, item), resolve),
   );
   const operations = perPath.flatMap((entry) => entry.operations);
   const webhooks = isRecord(document['webhooks']) ? document['webhooks'] : {};

@@ -253,6 +253,10 @@ Rules, no exceptions:
 3. No `--allow` given: read-only default — only `GET`/`HEAD` operations, and OpenAPI 3.2
    `QUERY` operations, a read with a request body (minus denied ones).
 
+The request a tool sends is checked against the same decision before every hop, redirects
+included, so an excluded operation is never reached through a tool's arguments or a redirect
+(see [request authorization](docs/security.md#request-authorization)).
+
 Pass `--strict-filters` to turn a dead pattern (one that matches nothing) into a startup
 error instead of a warning — useful once a filter set is stable and you want drift to fail
 loudly. Full flag reference: [`docs/configuration.md`](docs/configuration.md).

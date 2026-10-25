@@ -70,7 +70,9 @@ generated API request:
   `--allow-private-network` to opt into private/loopback ranges (the common case when
   developing against a local API) — cloud-metadata endpoints are never permitted by this flag.
 - Redirects are bounded (max 5 hops) and every hop is re-validated against the same egress
-  policy; authentication headers are not forwarded across an origin change on redirect.
+  policy; authentication headers are not forwarded across an origin change on redirect. A
+  redirect is also authorized like the request itself (see
+  [Request authorization](#request-authorization)).
 - DNS resolution is pinned per connection rather than trusted at face value: the outbound
   fetch layer resolves once, validates every returned address (covering IPv4-mapped IPv6,
   CNAME chains, and alternate numeric IP encodings), and connects to a validated address —
@@ -288,6 +290,58 @@ loopback-only.
   is refused with `403` before authentication. Browser `Origin`s are still refused. The request
   body is read only after the token validated. The tool-call rate limit and the upstream
   concurrency cap remain process-wide, not per user: every authenticated caller shares them.
+
+## Request authorization
+
+`--allow`, `--deny` and the read-only default decide which operations become tools. The
+request a tool sends is checked against the same decision, so an excluded operation is never
+reached through a tool's arguments or through a redirect (issue #40):
+
+- Before every hop, the request's method and path (relative to the API base URL) are resolved
+  against every operation of the spec: exposed ones, filtered-out ones, operations omitted as
+  unsupported and operations a pending candidate withholds. The path is read as an upstream
+  would read it: percent-decoded, one trailing slash ignored.
+- A concrete path matches before a template, as OpenAPI defines. Templates are not ranked
+  against each other: when two templates match and one of them is not exposed, the request
+  is refused. Matching regardless of letter case can only add a refusal, never allow one.
+  The same holds for the readings common servers give a path before routing: every
+  percent-encoding decoded byte by byte (also twice, and past bytes that are not valid
+  UTF-8), `\` taken as a separator, repeated slashes merged, `;parameters` cut from a segment
+  or kept (`..;/`), and dot segments resolved before or after repeated slashes are merged, so
+  `x%2F..%2F%2Fdenied` counts as `/denied`. The base path is matched in the same readings,
+  in the request and in the configured base URL. An id such as `group%2Fproject` still
+  reaches its own operation, but no reading may reach an operation that is not exposed, and
+  a reading that climbs out of the base path counts as leaving the API.
+- Hop 0 must resolve to the tool's own operation. `getItem` with `id: "export"` resolves to
+  `GET /items/export`; when that is another operation, the call fails and nothing is sent.
+- A `HEAD` request also counts as `GET`, since a server may answer it through its GET
+  handler: an excluded GET operation for the path refuses it.
+- A redirect must resolve to an exposed operation with the method the hop is sent with (a
+  `303` turns it into `GET`). A redirect to an excluded operation, or to a path on the API
+  that matches no operation, is not followed. The tool error says that the original request
+  reached the upstream and may have been applied.
+- A redirect off the API (another origin, or outside the base path) is not followed unless
+  `serve` runs with `--allow-offsite-redirects`. The egress policy applies either way, and a
+  later hop back onto the API is authorized again.
+- A spec path with a control character in a static segment is omitted: URL parsing removes
+  tab and newline, which would turn `.<TAB>.` into `..` and route the request elsewhere.
+
+An excluded operation's own path counts in those readings too, so `/denied//export` also
+refuses a request for `/denied/export`. The matching work per hop is bounded: a hop that would
+need more (a hostile spec with many long templates against a long path) is refused instead
+of holding up other calls; a hop on a 290-operation API uses under half a percent of it.
+
+The checks err on the side of refusing: matching regardless of case, the `HEAD` rule and the
+work budget can refuse a request that a particular upstream would have routed to an exposed
+operation. Such a call fails with a tool error and sends nothing (hop 0) or follows no
+further redirect.
+
+None of these refusals is retried. Limits: the check knows only what the spec documents and
+the readings above. An upstream that serves an excluded operation under another,
+undocumented path, that applies a rewrite of its own (IIS `%u` escapes, a trailing dot,
+suffix patterns such as `.json`, Unicode normalization), or that honours a method-override
+header, cannot be detected from the spec. For a guarantee that does not depend on paths,
+exclude by method: `--deny "DELETE /**"`.
 
 ## Discovery tool mode
 

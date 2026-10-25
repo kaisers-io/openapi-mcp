@@ -18,12 +18,14 @@ import {
   createOAuthResourceServer,
   formatCallLog,
   createRateLimiter,
+  createRouteTable,
   createRedactor,
   createStreamableHttpServer,
   EXIT,
   isValidBearerToken,
   parseSpecSource,
   resolveToolMode,
+  routeEntriesFor,
   runSpecPipeline,
   SPEC_BUDGETS,
   serveStdioSession,
@@ -220,6 +222,7 @@ export type ServeCmdOpts = SpecCmdOpts &
     log?: string;
     toolsPageSize?: string;
     responseProjection?: boolean;
+    allowOffsiteRedirects?: boolean;
     toolMode: string;
     outputSchema: string;
   };
@@ -609,6 +612,15 @@ export const runServe = async (
     const executorConfig: ExecutorConfig = {
       baseUrl: resolvedBase.url.toString(),
       baseTrusted: resolvedBase.trusted,
+      // Issue #40: every hop is checked against every operation of the spec
+      routes: createRouteTable(
+        routeEntriesFor(
+          result.spec,
+          result.withheldOperations,
+          built.tools.map((tool) => tool.operation),
+        ),
+      ),
+      allowOffsiteRedirects: cmdOpts.allowOffsiteRedirects === true,
       allowPrivateNetwork,
       allowInsecureHttp: apiConfig.allowInsecureHttp,
       secretHeaders: apiConfig.secretHeaders,

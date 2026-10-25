@@ -210,6 +210,14 @@ const PINNED_ERROR_TEXT: Record<PinnedErrorReason, string> = {
     'the upstream server redirected a request other than GET or HEAD, which is not followed',
   'redirect-invalid': 'the upstream server sent an invalid redirect',
   network: 'the request to the upstream server failed',
+  // Issue #40. Nothing was sent: the arguments make the URL another operation
+  'route-refused':
+    "the request was not sent: with these arguments its URL is not this tool's own operation of the API",
+  // The upstream answered with a redirect, so the original request reached it
+  'redirect-refused':
+    'the upstream server redirected to a URL that is not an operation this server exposes, which is not followed; the original request reached the upstream and may have been applied, so do not retry it blindly',
+  'redirect-offsite':
+    'the upstream server redirected outside the API base URL, which is not followed unless the server runs with --allow-offsite-redirects; the original request reached the upstream and may have been applied, so do not retry it blindly',
 };
 
 const mapPinnedError = (reason: PinnedErrorReason): ToolCallOutcome =>
