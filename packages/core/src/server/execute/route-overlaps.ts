@@ -33,7 +33,9 @@ export type RouteOverlapReport = {
 // ends the check early (in well under a second on one development
 // machine), and the report says it is incomplete.
 export const OVERLAP_WORK_BUDGET = 5_000_000;
-type Work = { remaining: number };
+// `items` caches each route's segments as items, folded or as written. It
+// lives only as long as one check, because the routes outlive it (issue #47).
+type Work = { remaining: number; items: Map<Route, Map<boolean, Item[][]>> };
 const spend = (work: Work, steps: number): void => {
   work.remaining -= steps;
   if (work.remaining < 0) {
@@ -94,11 +96,9 @@ const segmentsIntersect = (left: readonly Item[], right: readonly Item[], work: 
   return false;
 };
 
-// Each route's segments as items, folded or as written, built once
-const itemCache = new WeakMap<Route, Map<boolean, Item[][]>>();
 const itemsOfRoute = (route: Route, fold: boolean, work: Work): Item[][] => {
-  const cached = itemCache.get(route) ?? new Map<boolean, Item[][]>();
-  itemCache.set(route, cached);
+  const cached = work.items.get(route) ?? new Map<boolean, Item[][]>();
+  work.items.set(route, cached);
   const known = cached.get(fold);
   if (known !== undefined) {
     return known;
@@ -275,7 +275,7 @@ export const routeOverlaps = (
   entries: readonly RouteEntry[],
   budget = OVERLAP_WORK_BUDGET,
 ): RouteOverlapReport => {
-  const work = { remaining: budget };
+  const work: Work = { remaining: budget, items: new Map() };
   const overlaps: RouteOverlap[] = [];
   let compiled: readonly Route[] | undefined;
   try {

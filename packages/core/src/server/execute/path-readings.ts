@@ -201,7 +201,7 @@ export const splitPath = (path: string): string[] => {
 };
 
 // Whether a spec path can have a reading other than itself (issue #47):
-// only a `%`, `;`, `\\` or U+FEFF, text that is not well-formed, or an
+// only a `%`, `;`, `\` or U+FEFF, text that is not well-formed, or an
 // empty, `.` or `..` segment gives `templateReadings` anything to change.
 // Every other path is read as written, so its readings need no work.
 const READING_TRIGGER_RE = /[%;\\\uFEFF]/u;
