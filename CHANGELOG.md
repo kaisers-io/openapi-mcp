@@ -44,6 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Image responses (#14).** `--image-responses inline|file` returns an upstream PNG, JPEG,
+  GIF or WebP image instead of a tool error:
+  - `inline` returns it as an MCP image;
+  - `file` saves it under `~/.kaisers-io/openapi-mcp/images/<api>/` and returns only its
+    path, about 30 tokens instead of about 1,300 for a 1000×1000 image;
+  - `--image-dir-max-bytes` (default `100MB`) caps the folder, and the oldest saved images
+    go first.
+  The default, `off`, keeps the tool error.
 - **`docs/filtering.md` (#42)** explains every selector, the order in which an operation is
   exposed or excluded, what is reported where, recipes such as "never delete" and their limits,
   and overlapping paths. Its examples run as tests.

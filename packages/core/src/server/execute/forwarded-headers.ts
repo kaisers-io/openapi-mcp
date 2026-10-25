@@ -173,3 +173,19 @@ export const pageHinter = (
     return hasSecret(redactor, hint) ? { next: NO_NEXT_PAGE } : hint;
   };
 };
+
+// A non-structured result of a response, decorated as mapResponse decorates
+// one: the forwarded headers as their own block and the upstream's
+// Retry-After (an image result, #14)
+export const decorateResponseOutcome = (
+  outcome: ToolCallOutcome,
+  response: { headers: Readonly<Record<string, string>>; url: string; status: number },
+  baseUrl: string,
+  redactor: Redactor,
+  nowMs: number,
+): ToolCallOutcome =>
+  decorateTextOutcome(
+    outcome,
+    forwardableHeaders({ headers: response.headers, responseUrl: response.url, baseUrl, redactor }),
+    upstreamRetryAfterMs(response.status, response.headers, nowMs),
+  );

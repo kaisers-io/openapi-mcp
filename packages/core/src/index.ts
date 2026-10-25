@@ -345,3 +345,9 @@ export {
   publicOmission,
 } from './filter/inventory.ts';
 export type { NotExposedCounts, NotExposedSources } from './filter/inventory.ts';
+export { createImageStore } from './images/store.ts';
+export type { ImageStore, ImageStoreDeps } from './images/store.ts';
+export { sniffImage } from './images/sniff.ts';
+export type { ImageKind } from './images/sniff.ts';
+export { IMAGE_MAX_BYTES, IMAGE_MAX_SIDE } from './server/execute/image-result.ts';
+export type { ImageResponses } from './server/execute/image-result.ts';

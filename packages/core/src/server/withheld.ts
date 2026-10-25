@@ -9,6 +9,9 @@ import { textOutcome } from './result.ts';
 import type { ToolCallOutcome } from './result.ts';
 import { tagOutcome } from './telemetry.ts';
 
+// A result whose image carries a secret is withheld as a whole (#14)
+export { imageHasSecret } from '../images/scan.ts';
+
 // A fixed message — never the withheld content itself — for the case a
 // registered secret is found anywhere in a result. It tells the caller what
 // happened and what it may conclude: when the executor reported success,
