@@ -199,3 +199,15 @@ export const splitPath = (path: string): string[] => {
   const segments = path.split('/');
   return segments.length > 2 && segments.at(-1) === '' ? segments.slice(0, -1) : segments;
 };
+
+// Whether a spec path can have a reading other than itself (issue #47):
+// only a `%`, `;`, `\` or U+FEFF, text that is not well-formed, or an
+// empty, `.` or `..` segment gives `templateReadings` anything to change.
+// Every other path is read as written, so its readings need no work.
+const READING_TRIGGER_RE = /[%;\\\uFEFF]/u;
+export const mayHaveOtherReadings = (path: string): boolean =>
+  READING_TRIGGER_RE.test(path) ||
+  !path.isWellFormed() ||
+  splitPath(path)
+    .slice(1)
+    .some((segment) => segment === '' || segment === '.' || segment === '..');

@@ -277,6 +277,7 @@ export const parseSpecPipelineArgs = (cmdOpts: SpecCmdOpts, ctx: CliContext): Sp
       fetcher: ctx.fetcher,
       lookup: ctx.lookup,
       readFileText: ctx.readFileText,
+      ...(ctx.readFileBytes === undefined ? {} : { readFileBytes: ctx.readFileBytes }),
       fileSizeBytes: ctx.fileSizeBytes,
       cacheFs: ctx.cacheFs,
     },

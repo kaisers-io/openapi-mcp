@@ -168,6 +168,9 @@ const registerRefresh: CommandRegistrar = (program, ctx, state) => {
             fetcher: ctx.fetcher,
             lookup: ctx.lookup,
             readFileText: ctx.readFileText,
+            // The same byte hashing as serve and tools, so an unchanged file
+            // hashes the same in every command (issue #47)
+            ...(ctx.readFileBytes === undefined ? {} : { readFileBytes: ctx.readFileBytes }),
             fileSizeBytes: ctx.fileSizeBytes,
             cacheFs: ctx.cacheFs,
           },

@@ -40,6 +40,7 @@ export type CliContext = {
   homeDir: () => string | undefined;
   pathExists: (path: string) => boolean;
   readFileText: (path: string) => Promise<string>;
+  readFileBytes?: (path: string) => Promise<Uint8Array>;
   fileSizeBytes: (path: string) => Promise<number>;
   cwd: () => string;
   lookup: (hostname: string, signal: AbortSignal) => Promise<readonly string[]>;
@@ -556,6 +557,7 @@ export const realContext = (): CliContext => ({
   // oxlint-disable-next-line node/no-sync -- CliContext's pathExists contract returns boolean, not Promise<boolean>; existsSync is the only fs primitive matching that synchronous shape
   pathExists: (path) => existsSync(path),
   readFileText: (path) => readFile(path, 'utf8'),
+  readFileBytes: (path) => readFile(path),
   fileSizeBytes: async (path) => {
     const stats = await stat(path);
     return stats.size;

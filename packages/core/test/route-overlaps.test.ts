@@ -150,7 +150,7 @@ describe('routeOverlaps', () => {
         route('GET', shape(index), index % 2 === 0),
       );
       const started = performance.now();
-      expect(routeOverlaps(entries)).toEqual({ overlaps: [], complete: true });
+      expect(routeOverlaps(entries)).toMatchObject({ overlaps: [], complete: true });
       expect(performance.now() - started).toBeLessThan(2000);
     }
   });
@@ -161,7 +161,7 @@ describe('routeOverlaps', () => {
     const catalog = Array.from({ length: 1024 }, (_unused, index) =>
       route('GET', `/v1/resources${String(index)}/{id}`, index % 2 === 0),
     );
-    expect(routeOverlaps(catalog)).toEqual({ overlaps: [], complete: true });
+    expect(routeOverlaps(catalog)).toMatchObject({ overlaps: [], complete: true });
     // The chosen segment differs per route, and overlaps are still found
     const others = Array.from({ length: 50 }, (_unused, index) =>
       route('GET', `/v1/other${String(index)}/{id}`, false),
@@ -196,14 +196,14 @@ describe('routeOverlaps', () => {
         route('GET', long(`b${String(index)}`), false),
       ),
     ];
-    expect(routeOverlaps(entries, 10_000)).toEqual({ overlaps: [], complete: false });
+    expect(routeOverlaps(entries, 10_000)).toMatchObject({ overlaps: [], complete: false });
     // Review of #41: what was found before the budget ran out is kept
     // Enough to compile the paths and compare the short pair, not the long one
     const found = routeOverlaps(
       [route('GET', '/{p}'), route('GET', '/{y}', false), route('GET', long('b'), false)],
       long('b').length + 200,
     );
-    expect(found).toEqual({
+    expect(found).toMatchObject({
       overlaps: [{ exposed: 'GET /{p}', excluded: 'GET /{y}' }],
       complete: false,
     });

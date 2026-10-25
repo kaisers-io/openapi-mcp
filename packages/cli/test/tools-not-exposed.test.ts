@@ -240,6 +240,8 @@ describe('exposureReport — an incomplete overlap check', () => {
   it('warns, and fails under --strict-filters', () => {
     const report = exposureReport(result, built, false, 0);
     expect(report.overlapCheckComplete).toBe(false);
+    // Review of #47: nothing is compiled past the budget
+    expect(report.routes).toBeUndefined();
     expect(report.warnings).toContain(
       'the check for overlapping paths ran out of its work budget, so the list is incomplete',
     );

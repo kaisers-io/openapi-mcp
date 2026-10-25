@@ -22,6 +22,9 @@ export type RouteOverlapReport = {
   overlaps: readonly RouteOverlap[];
   // False when the work budget ran out before every pair was compared
   complete: boolean;
+  // The routes as compiled within the budget, for the route table to reuse
+  // (issue #47); absent when the budget ran out before compiling them
+  routes?: readonly Route[];
 };
 
 // Overlap work per startup: search states, and every character compiled,
@@ -30,7 +33,9 @@ export type RouteOverlapReport = {
 // ends the check early (in well under a second on one development
 // machine), and the report says it is incomplete.
 export const OVERLAP_WORK_BUDGET = 5_000_000;
-type Work = { remaining: number };
+// `items` caches each route's segments as items, folded or as written. It
+// lives only as long as one check, because the routes outlive it (issue #47).
+type Work = { remaining: number; items: Map<Route, Map<boolean, Item[][]>> };
 const spend = (work: Work, steps: number): void => {
   work.remaining -= steps;
   if (work.remaining < 0) {
@@ -91,11 +96,9 @@ const segmentsIntersect = (left: readonly Item[], right: readonly Item[], work: 
   return false;
 };
 
-// Each route's segments as items, folded or as written, built once
-const itemCache = new WeakMap<Route, Map<boolean, Item[][]>>();
 const itemsOfRoute = (route: Route, fold: boolean, work: Work): Item[][] => {
-  const cached = itemCache.get(route) ?? new Map<boolean, Item[][]>();
-  itemCache.set(route, cached);
+  const cached = work.items.get(route) ?? new Map<boolean, Item[][]>();
+  work.items.set(route, cached);
   const known = cached.get(fold);
   if (known !== undefined) {
     return known;
@@ -272,8 +275,9 @@ export const routeOverlaps = (
   entries: readonly RouteEntry[],
   budget = OVERLAP_WORK_BUDGET,
 ): RouteOverlapReport => {
-  const work = { remaining: budget };
+  const work: Work = { remaining: budget, items: new Map() };
   const overlaps: RouteOverlap[] = [];
+  let compiled: readonly Route[] | undefined;
   try {
     // One step per character of a path, whose readings are compiled too
     spend(
@@ -281,6 +285,7 @@ export const routeOverlaps = (
       entries.reduce((sum, entry) => sum + entry.path.length, 0),
     );
     const routes = compileRoutes(entries);
+    compiled = routes;
     const excluded = indexExcluded(routes.filter((route) => !route.exposed));
     const concrete = new Set(
       routes.filter((route) => route.concrete).map((route) => concreteKey(route.method, route)),
@@ -289,7 +294,7 @@ export const routeOverlaps = (
       addOverlapsOf(route, excluded, concrete, work, overlaps);
     }
   } catch {
-    return { overlaps, complete: false };
+    return { overlaps, complete: false, ...(compiled === undefined ? {} : { routes: compiled }) };
   }
-  return { overlaps, complete: true };
+  return { overlaps, complete: true, ...(compiled === undefined ? {} : { routes: compiled }) };
 };

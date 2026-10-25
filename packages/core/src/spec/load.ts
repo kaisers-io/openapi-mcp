@@ -103,6 +103,10 @@ export type LoadedSpecText = {
 export type FileLoadDeps = {
   readFileText: (path: string) => Promise<string>;
   fileSizeBytes: (path: string) => Promise<number>;
+  // Reads the raw bytes. When present, a spec file is hashed as bytes and
+  // decoded only if its text is used (a cache miss), so an unchanged spec
+  // is never held as a second, decoded copy (issue #47)
+  readFileBytes?: (path: string) => Promise<Uint8Array>;
 };
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
@@ -130,6 +134,28 @@ export const loadSpecFromFile = async (
     throw validationError(
       `spec file "${path}" is ${size} bytes — exceeds the ${maxBytes}-byte budget`,
     );
+  }
+  const { readFileBytes } = deps;
+  if (readFileBytes !== undefined) {
+    const bytes = await readOrNotFound(() => readFileBytes(path), path);
+    // TOCTOU guard on the bytes actually read: the file may have grown
+    if (bytes.byteLength > maxBytes) {
+      throw validationError(
+        `spec file "${path}" is ${bytes.byteLength} bytes — exceeds the ${maxBytes}-byte budget`,
+      );
+    }
+    // The same lenient UTF-8 decoding as reading the file as text. Valid
+    // UTF-8 hashes the same as its text; invalid UTF-8 hashes differently
+    // once, which a cache treats as changed content (a gated candidate).
+    let text: string | undefined;
+    return {
+      get text() {
+        text ??= Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('utf8');
+        return text;
+      },
+      contentHash: hashBytes(bytes),
+      displaySource: path,
+    };
   }
   const text = await readOrNotFound(() => deps.readFileText(path), path);
   const byteLength = Buffer.byteLength(text, 'utf8');

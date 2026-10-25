@@ -93,7 +93,9 @@ const describeCause = (err: unknown): string => (err instanceof Error ? err.mess
 // the caller never needs a `let` to survive the try/catch.
 const toWireSchema = (inputSchema: z.ZodType): { ok: WireSchema } | { error: string } => {
   try {
-    return { ok: z.toJSONSchema(inputSchema) };
+    // A shallow copy: zod adds a hidden `~standard` property to the result
+    // that keeps the zod schema alive for as long as the JSON Schema (#47)
+    return { ok: { ...z.toJSONSchema(inputSchema) } };
   } catch (error) {
     // Defensive: our schemas are representable (proven), but fail closed if a
     // future construct is not — omit rather than emit a nonconforming schema.

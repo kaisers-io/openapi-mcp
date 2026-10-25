@@ -58,6 +58,8 @@ export type SpecPipelineDeps = {
   lookup: DnsLookup;
   readFileText: (path: string) => Promise<string>;
   fileSizeBytes: (path: string) => Promise<number>;
+  // See FileLoadDeps: hash a spec file as bytes, decode only when used
+  readFileBytes?: (path: string) => Promise<Uint8Array>;
   cacheFs: CacheFs;
 };
 

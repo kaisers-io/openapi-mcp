@@ -1,4 +1,9 @@
-import { decodeSegment, splitPath, templateReadings } from './path-readings.ts';
+import {
+  decodeSegment,
+  mayHaveOtherReadings,
+  splitPath,
+  templateReadings,
+} from './path-readings.ts';
 import type { Token } from './path-readings.ts';
 import type { NormalizedSpec, OmittedOperation } from '../../spec/normalize.ts';
 
@@ -8,10 +13,9 @@ import type { NormalizedSpec, OmittedOperation } from '../../spec/normalize.ts';
 // and a redirect can lead anywhere. Every hop is therefore resolved against
 // every operation of the spec, exposed or not, before it is sent.
 //
-// Resolution follows OpenAPI's one rule (OAS 3.1.1 §4.8.8: "concrete
-// (non-templated) paths would be matched before their templated
-// counterparts") and nothing beyond it: templates that both match are not
-// ranked, so a hop they share is refused whenever one of them is not exposed.
+// Resolution follows OpenAPI's one rule (OAS 3.1.1 §4.8.8: concrete paths
+// before templated ones) and nothing beyond it: templates that both match are
+// not ranked, so a hop they share is refused if one of them is not exposed.
 
 export type RouteEntry = {
   // Upper case, as sent
@@ -87,11 +91,10 @@ const tokenize = (segment: string, decode: (text: string) => string): Token[] =>
   return tokens;
 };
 
-// Matching work per hop. A hostile spec can declare many templates with many
-// placeholders, and every reading of a long path is matched against all of
-// them, synchronously. Past this many steps the hop is refused rather than
-// stalling every other client: authorization fails closed. A hop on the
-// DigitalOcean API (290 operations) takes under 4,000.
+// Matching work per hop. A hostile spec's many long templates, matched
+// synchronously against every reading of a long path, would stall every
+// client: past this many steps the hop is refused (fail closed). A hop on
+// the DigitalOcean API (290 operations) takes under 4,000.
 export const ROUTE_MATCH_BUDGET = 1_000_000;
 export type MatchWork = { remaining: number };
 const spend = (work: MatchWork, steps: number): void => {
@@ -164,6 +167,9 @@ const compile = (entry: RouteEntry): Route => {
 // it (`/denied//export` as `/denied/export`), which can only add refusals
 export const withReadings = (entry: RouteEntry): Route[] => {
   const route = compile(entry);
+  if (!mayHaveOtherReadings(entry.path)) {
+    return [route];
+  }
   const raw = splitPath(entry.path).map((segment) => tokenize(segment, (text) => text));
   return [
     route,
@@ -172,8 +178,7 @@ export const withReadings = (entry: RouteEntry): Route[] => {
       path: route.path,
       exposed: false,
       key: route.key,
-      // The root has one empty segment after the leading one, as a request
-      // for `/` is split
+      // The root splits like a request for `/`: one empty segment after it
       segments: [[{ literal: '' }], ...(segments.length === 0 ? [[{ literal: '' }]] : segments)],
       concrete: segments.every((tokens) => tokens.every((token) => 'literal' in token)),
     })),
@@ -197,23 +202,24 @@ const anchorOf = (route: Route): string => {
     : WILDCARD;
 };
 
-// A HEAD request matches HEAD operations; GET ones only when the spec
-// declares no HEAD operation for the path, so an excluded HEAD operation is
-// never answered by an exposed GET
+// A HEAD request matches HEAD operations, and GET ones only when the spec
+// declares no HEAD for the path: an excluded HEAD is never answered by a GET
 export const methodsFor = (method: string): readonly string[] =>
   method === 'HEAD' ? ['HEAD', 'GET'] : [method];
 
 // Only paths: webhook omissions and other non-path keys are no routes. An
-// operation that is not exposed is also registered in the readings an
-// upstream may give its own path (`/denied//export` as `/denied/export`),
-// which can only add refusals.
+// operation that is not exposed is registered in its readings too.
 export const compileRoutes = (entries: readonly RouteEntry[]): Route[] =>
   entries
     .filter((entry) => entry.path.startsWith('/'))
     .flatMap((entry) => (entry.exposed ? [compile(entry)] : withReadings(entry)));
 
-export const createRouteTable = (entries: readonly RouteEntry[]): RouteTable => {
-  const routes = compileRoutes(entries);
+// `compiled`: the same entries already compiled, shared with the overlap check
+export const createRouteTable = (
+  entries: readonly RouteEntry[],
+  compiled?: readonly Route[],
+): RouteTable => {
+  const routes = compiled ?? compileRoutes(entries);
   const groups = Map.groupBy(routes, (route) =>
     groupOf(route.method, route.segments.length, anchorOf(route)),
   );

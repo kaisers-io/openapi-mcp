@@ -18,7 +18,9 @@ export const isSequenceContentType = (contentType: string): boolean =>
 // result so the caller never needs a `let` to survive the try/catch.
 const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
   try {
-    return z.toJSONSchema(schema);
+    // A shallow copy drops zod's hidden `~standard` property, which keeps
+    // the zod schema alive (#47)
+    return { ...z.toJSONSchema(schema) };
   } catch {
     // Defensive: our schemas are representable (proven upstream); fail
     // closed rather than emit a nonconforming outputSchema.
