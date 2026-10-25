@@ -693,23 +693,24 @@ A request body of `application/octet-stream`, or of `image/png`, `image/jpeg`, `
 declares one, then `application/octet-stream`, then an image type.
 
 Base64 costs the model about a third more characters than the file has bytes, which makes
-anything but a tiny file impractical to send. `serve --upload-dir` lets every binary field (a
+anything but a tiny file impractical to send. `serve --uploads` lets every binary field (a
 multipart file part, an octet-stream body or an image body) also take a file name:
 
 ```json
 { "body": { "file": "photo.png" } }
 ```
 
-- **Where files come from:** the server reads the named file from the upload folder and sends
-  its bytes. The field's description names the folder, so the agent can copy a file there
-  first.
-  - Without a value, the folder is `~/.kaisers-io/openapi-mcp/uploads/<api>/`. `<api>` is the
-    spec cache's name for the spec source and `--cache-key`. At startup, files in it older than
-    24 hours are removed.
-  - With a value, it is that folder, relative to the working directory. Nothing in it is ever
-    deleted, and it must not be open to other users. Not on Windows: a folder outside the
-    user profile does not inherit its private ACL, and Node cannot check one, so there only
-    the default folder is available.
+- **Where files come from:** the server reads the named file from
+  `~/.kaisers-io/openapi-mcp/uploads/<api>/` and sends its bytes.
+  - `<api>` is the spec cache's name for the spec source and `--cache-key`.
+  - The folder is the same on every platform, owner-only, and created at startup.
+  - The field's description names it, so the agent can copy a file there first.
+  - Files in it older than 24 hours are removed at startup.
+- **Agents in a sandbox** need write access to that folder:
+  - Codex in `workspace-write` mode: add it to `writable_roots` under
+    `[sandbox_workspace_write]` in `config.toml`.
+  - Claude Code: add it to `permissions.additionalDirectories`, or pass it with `--add-dir`.
+    Otherwise it asks before writing there.
 - **Cost:** a call costs a few tokens for the name instead of about 1.3 characters per byte of
   the file.
 - **Names:** letters, digits, `_` and `-`, in dot-separated parts, at most 128 characters, in a
@@ -722,7 +723,7 @@ multipart file part, an octet-stream body or an image body) also take a file nam
   octet-stream field takes any file.
 - **What is sent:** a refused upload is a tool error, and nothing is sent. Base64 keeps working
   alongside file names.
-- `--upload-dir` cannot be combined with a non-loopback `--http-host`.
+- `--uploads` cannot be combined with a non-loopback `--http-host`.
 
 ## `cache`
 

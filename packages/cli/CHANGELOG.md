@@ -44,15 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Uploads by file name (#29).** With `serve --upload-dir`, a binary request field (a
+- **Uploads by file name (#29).** With `serve --uploads`, a binary request field (a
   multipart file part, an octet-stream or an image body) also takes `{"file": "<name>"}`.
-  The server reads that file from the upload folder and sends its bytes. A call costs a few
-  tokens for the name instead of the whole file as base64.
-  - Without a value the folder is `~/.kaisers-io/openapi-mcp/uploads/<api>/`, where files
-    older than 24 hours are removed at startup.
+  The server reads that file from `~/.kaisers-io/openapi-mcp/uploads/<api>/` and sends its
+  bytes. A call costs a few tokens for the name instead of the whole file as base64.
+  - The folder is the same on every platform, owner-only, and files in it older than
+    24 hours are removed at startup.
   - Names are plain, the folder is flat, and links and hard links are refused, also on
-    Windows. There only the default folder is available, since the privacy of another
-    folder cannot be checked.
+    Windows.
   - An image field only takes a file of its declared type.
 - **Raw image request bodies (#29).** An operation whose body is `image/png`, `image/jpeg`,
   `image/gif` or `image/webp` is now a tool, with the body as one base64 argument, like

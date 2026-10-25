@@ -4,7 +4,7 @@ import { sniffImage } from '../../images/sniff.ts';
 import { parseMediaType, RAW_IMAGE_TYPES } from '../../toolgen/media-type.ts';
 import type { RequestMapper } from '../../toolgen/layout.ts';
 
-// --upload-dir (#29): the server reads a file the agent named and sends its
+// --uploads (#29): the server reads a file the agent named and sends its
 // bytes, where the tool's binary field would otherwise take base64.
 export type Uploads = { folder: ManagedFolder; maxBytes: number };
 

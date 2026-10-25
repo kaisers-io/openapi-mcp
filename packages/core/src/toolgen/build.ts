@@ -210,7 +210,7 @@ export const buildToolsDeferred = (
     // --response-projection). Off by default: it grows tools/list by about
     // a third, paid in every session.
     projection?: boolean;
-    // --upload-dir (#29): binary fields also take a file name in this folder
+    // --uploads (#29): binary fields also take a file name in this folder
     uploadDir?: string;
   },
 ): DeferredToolsResult => {

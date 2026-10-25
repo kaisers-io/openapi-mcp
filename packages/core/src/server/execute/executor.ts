@@ -107,7 +107,7 @@ export type ExecutorConfig = {
   // --image-responses (#14): an upstream image becomes an MCP image block or
   // a saved file. Absent means off: an image is an unsupported media type.
   images?: ImageResponses;
-  // --upload-dir (#29): a binary field may name a file in this folder
+  // --uploads (#29): a binary field may name a file in this folder
   uploads?: Uploads;
   oauth?: {
     tokens: {

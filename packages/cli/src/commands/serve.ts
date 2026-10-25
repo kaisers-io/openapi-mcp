@@ -82,8 +82,8 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       'off',
     )
     .option(
-      '--upload-dir [dir]',
-      'let binary request fields take {"file": "<name>"} for a file read from this folder instead of base64; without a folder, ~/.kaisers-io/openapi-mcp/uploads/<api>/, where files older than 24 hours are removed at startup',
+      '--uploads',
+      'let binary request fields take {"file": "<name>"} for a file read from ~/.kaisers-io/openapi-mcp/uploads/<api>/ instead of base64; files there older than 24 hours are removed at startup',
     )
     .option(
       '--image-dir-max-bytes <size>',

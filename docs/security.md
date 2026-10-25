@@ -190,7 +190,7 @@ cover:
 
 ### Uploads
 
-`--upload-dir` (off by default) lets a tool argument name a local file that the server reads
+`--uploads` (off by default) lets a tool argument name a local file that the server reads
 and sends upstream. This is a path for data to leave the machine: a prompt-injected agent
 could try to name a file it should not send. The boundary is the upload folder:
 
@@ -212,14 +212,15 @@ could try to name a file it should not send. The boundary is the upload folder:
   elsewhere is refused by its link count.
 - **Content:** a field declared as an image only takes a file whose bytes are that image type.
 - **Who can put files there is the trust boundary:** anything in the folder can be sent.
-  - The default folder is owner-only and per API.
-  - Files in it older than 24 hours are removed at startup.
-  - A folder the operator chooses is never cleaned, and is refused if open to other users.
-    On Windows it is refused altogether: privacy there comes from the ACL the default folder
-    inherits from the user profile, and a folder elsewhere may let other users add files.
+  - The folder is always `~/.kaisers-io/openapi-mcp/uploads/<api>/`.
+  - It is owner-only: `0700` on POSIX, and on Windows the private ACL it inherits from the
+    user profile (checked in CI).
+  - It is per API, and files in it older than 24 hours are removed at startup.
+  - There is no option to choose another folder: one elsewhere could let other users add
+    files, and on Windows Node cannot check its ACL.
 - **No secret scanning:** uploaded bytes are not scanned for registered secrets. Keep the
   folder for files meant to be sent.
-- **Remote clients:** `--upload-dir` is refused with a non-loopback `--http-host`, so a remote
+- **Remote clients:** `--uploads` is refused with a non-loopback `--http-host`, so a remote
   client cannot make this machine's files be sent.
 
 ### Failed writes and retries

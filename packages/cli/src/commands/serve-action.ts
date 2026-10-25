@@ -233,7 +233,7 @@ export type ServeCmdOpts = SpecCmdOpts &
     outputSchema: string;
     imageResponses: string;
     imageDirMaxBytes: string;
-    uploadDir?: string | true;
+    uploads?: boolean;
   };
 
 type HttpAuthConfig =
@@ -496,7 +496,7 @@ const prepareServe = async (
   // with the credential the executor injects.
   // Before the tools are built: their binary fields name this folder
   const uploads = await resolveUploadOptions({
-    uploadDir: cmdOpts.uploadDir,
+    enabled: cmdOpts.uploads === true,
     homeDir: ctx.homeDir(),
     source: args.source,
     cwd: ctx.cwd(),
@@ -507,7 +507,7 @@ const prepareServe = async (
   });
   if (uploads !== undefined && uploads.deleted > 0) {
     emitWarnings(ctx, [
-      `--upload-dir: removed ${String(uploads.deleted)} file(s) older than 24 hours from ${uploads.folder.path}`,
+      `--uploads: removed ${String(uploads.deleted)} file(s) older than 24 hours from ${uploads.folder.path}`,
     ]);
   }
   const generated = buildToolsDeferred(result.namedOperations, {

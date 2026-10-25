@@ -174,7 +174,7 @@ describe('serve — uploads by file name (issue #29)', () => {
     'sends the named file as a multipart part and as a raw image body',
     async () => {
       const replies = await call(
-        ['--upload-dir'],
+        ['--uploads'],
         [
           { name: 'uploadPhoto', arguments: { photo: { file: 'photo.png' } } },
           { name: 'putImage', arguments: { body: { file: 'photo.png' } } },
@@ -196,7 +196,7 @@ describe('serve — uploads by file name (issue #29)', () => {
     'refuses a name outside the folder, and a file that is not the declared image, sending nothing',
     async () => {
       const replies = await call(
-        ['--upload-dir'],
+        ['--uploads'],
         [
           { name: 'putImage', arguments: { body: { file: 'notes.txt' } } },
           { name: 'putImage', arguments: { body: { file: 'missing.png' } } },
@@ -211,7 +211,7 @@ describe('serve — uploads by file name (issue #29)', () => {
   );
 
   it(
-    'takes no file name without --upload-dir',
+    'takes no file name without --uploads',
     async () => {
       const [reply] = await call(
         [],

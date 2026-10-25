@@ -51,7 +51,7 @@ export type FieldMapping =
       // The part's Content-Type: the property's declared concrete
       // `contentMediaType` (e.g. `image/png`), else application/octet-stream.
       partContentType?: string;
-      // With --upload-dir (#29): the value may also be `{ file: <name> }`,
+      // With --uploads (#29): the value may also be `{ file: <name> }`,
       // a file the server reads from its upload folder
       upload?: true;
     };
@@ -610,7 +610,7 @@ const binaryBodySchema = (
   if (uploadDir === undefined) {
     return base64;
   }
-  // With --upload-dir (#29) the bytes can come from a file instead: a few
+  // With --uploads (#29) the bytes can come from a file instead: a few
   // tokens for its name rather than the whole file as base64
   const reference = z
     .object({
@@ -1056,7 +1056,7 @@ export const buildLayout = (
   // declared; skipped — the operation is kept, without projection — when one
   // of its own fields already has that name.
   projectable = false,
-  // --upload-dir (#29): binary fields also take a file name in this folder
+  // --uploads (#29): binary fields also take a file name in this folder
   uploadDir?: string,
 ): { ok: LayoutResult } | { unrepresentable: string } => {
   const params = paramFields(operation, reservedHeaders, version);

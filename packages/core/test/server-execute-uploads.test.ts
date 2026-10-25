@@ -9,7 +9,7 @@ import { openManagedFolder } from '../src/files/folder.ts';
 import { resolveUploads } from '../src/server/execute/uploads.ts';
 import { pngOf } from './helpers/images.ts';
 
-// --upload-dir (#29): binary fields take a file name; the server reads it
+// --uploads (#29): binary fields take a file name; the server reads it
 
 const binary = { type: 'string', format: 'binary' };
 const op = (toolName: string, path: string, content: Record<string, unknown>): NamedOperation => ({
@@ -60,13 +60,13 @@ describe('file uploads (#29)', () => {
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
-  it('builds a tool for a raw image body, with or without --upload-dir', () => {
+  it('builds a tool for a raw image body, with or without --uploads', () => {
     expect(toolsWith().tools.map((tool) => tool.toolName)).toContain('putImage');
     const body = toolsWith().tools.find((tool) => tool.toolName === 'putImage');
     expect(body?.mapper.bodyContentType).toBe('image/png');
   });
 
-  it('offers a file name only with --upload-dir, and names the folder', () => {
+  it('offers a file name only with --uploads, and names the folder', () => {
     const plain = toolsWith().tools.find((tool) => tool.toolName === 'uploadPhoto');
     expect(JSON.stringify(plain?.wireSchema)).not.toContain('"file"');
     const tool = toolsWith('/home/example/uploads').tools.find(
