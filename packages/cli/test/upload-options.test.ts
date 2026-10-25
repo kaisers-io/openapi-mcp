@@ -44,7 +44,7 @@ describe('upload options (#29)', () => {
   it('uses one folder per API under the home folder', async () => {
     const home = homeOf();
     const uploads = await resolveUploadOptions(inputOf(home));
-    expect(uploads?.folder.path).toBe(realpathSync(uploadDirOf(home, SOURCE)));
+    expect(uploads?.folder.path).toBe(realpathSync.native(uploadDirOf(home, SOURCE)));
     expect(uploadDirOf(home, SOURCE, 'prod')).not.toBe(uploadDirOf(home, SOURCE));
     expect(uploadDirOf(home, 'https://other.example.test/openapi.json')).not.toBe(
       uploadDirOf(home, SOURCE),

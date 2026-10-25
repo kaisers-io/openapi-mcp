@@ -617,7 +617,7 @@ const binaryBodySchema = (
       file: z
         .string()
         .refine((name) => isUploadName(name), { message: 'must be a plain file name' })
-        .describe('The name of a file in the upload folder.'),
+        .describe('A file name in the upload folder: letters, digits, _ and -, dot-separated.'),
     })
     .strict();
   return z

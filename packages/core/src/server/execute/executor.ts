@@ -444,7 +444,10 @@ const runUpstreamCall = async (
   }
   const method = generated.operation.method.toUpperCase();
   const given = isRecord(args) ? args : {};
-  // A named upload is read before anything is sent; a refusal sends nothing
+  // A named upload is read before anything is sent; a refusal sends nothing.
+  // Reading it counts against the call's time budget, so a slow disk cannot
+  // send a request after the deadline (review of #58).
+  const uploadStarted = retryDeps.now();
   const uploaded =
     config.uploads === undefined
       ? { ok: given }
@@ -453,6 +456,8 @@ const runUpstreamCall = async (
     report({ outcome: 'validation_error' });
     return unsent(sanitizeSpecText(uploaded.error, DISPLAY_TEXT_MAX));
   }
+  // What is left of the budget; the check before sending refuses at zero
+  const callTimeoutMs = timeoutMs - (retryDeps.now() - uploadStarted);
   const data = uploaded.ok;
   const built = buildRequest(
     generated.mapper,
@@ -558,7 +563,8 @@ const runUpstreamCall = async (
   // The call's time budget runs from here: the token request (when one is
   // needed) and every upstream attempt share it.
   const upstreamStarted = retryDeps.now();
-  const budgetLeftMs = (): number => Math.floor(timeoutMs - (retryDeps.now() - upstreamStarted));
+  const budgetLeftMs = (): number =>
+    Math.floor(callTimeoutMs - (retryDeps.now() - upstreamStarted));
   const remainingMs = (): number => Math.max(budgetLeftMs(), 1);
   // A token for this call, or the tool error that ends it. A cancelled or
   // expired wait sends nothing more. For the first token nothing was sent
@@ -612,7 +618,7 @@ const runUpstreamCall = async (
       baseTrusted: config.baseTrusted,
       ...(authorizeHop === undefined ? {} : { authorizeHop }),
       allowPrivateNetwork: config.allowPrivateNetwork,
-      timeoutMs,
+      timeoutMs: callTimeoutMs,
       maxResponseBytes: config.maxResponseBytes,
       signal,
     };

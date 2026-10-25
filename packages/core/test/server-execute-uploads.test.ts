@@ -3,7 +3,14 @@ import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildTools, SYSTEM_HEADERS } from '../src/index.ts';
+import {
+  buildSnapshot,
+  buildTools,
+  compileEnvelopeValidator,
+  createExecutor,
+  createRedactor,
+  SYSTEM_HEADERS,
+} from '../src/index.ts';
 import type { NamedOperation } from '../src/index.ts';
 import { openManagedFolder } from '../src/files/folder.ts';
 import { resolveUploads } from '../src/server/execute/uploads.ts';
@@ -171,5 +178,77 @@ describe('file uploads (#29)', () => {
         await resolveUploads({ body: 'AAEC' }, mapperOf('uploadFile'), { folder, maxBytes: 1000 }),
       ).toStrictEqual({ ok: { body: 'AAEC' } });
     });
+  });
+
+  // Review of #58: reading the file counts against the call's deadline, so a
+  // slow disk cannot send a write after the call should have timed out
+  it('sends nothing when reading the file used up the time budget', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'oamcp-deadline-'));
+    roots.push(root);
+    const folder = await openManagedFolder(join(root, 'uploads'), 'upload folder');
+    await writeFile(join(folder.path, 'file.bin'), 'bytes');
+    const snapshot = buildSnapshot(
+      buildTools(OPERATIONS, {
+        reservedHeaders: SYSTEM_HEADERS,
+        openapiVersion: '3.1',
+        uploadDir: folder.path,
+      }),
+      {
+        spec: { title: 't', specVersion: '1', omitted: [] },
+        contentHash: 'h',
+        displaySource: 's',
+        deadPatterns: [],
+      },
+    );
+    const tool = snapshot.toolsByName['uploadFile'];
+    if (tool === undefined) {
+      throw new Error('uploadFile');
+    }
+    let sent = 0;
+    // 0 before the file is read, 3 s from then on: only the read takes time
+    const readings = [0];
+    const executor = createExecutor(
+      {
+        baseUrl: 'https://api.example.test',
+        baseTrusted: true,
+        allowPrivateNetwork: false,
+        allowInsecureHttp: false,
+        secretHeaders: [],
+        staticHeaders: [],
+        reservedHeaderNames: new Set(SYSTEM_HEADERS),
+        redactor: createRedactor([]),
+        timeoutMs: 2000,
+        maxResponseBytes: 65_536,
+        outboundBudgets: { maxUrlLength: 8192, maxHeaderBytes: 16_384, maxBodyBytes: 65_536 },
+        maxConcurrent: 4,
+        validators: new Map([['uploadFile', compileEnvelopeValidator(tool.wireTool.outputSchema)]]),
+        uploads: { folder, maxBytes: 1000 },
+      },
+      {
+        transport: {
+          fetch: () => {
+            sent += 1;
+            return Promise.reject(new Error('must not be sent'));
+          },
+          resolve: () => Promise.reject(new Error('no DNS')),
+          timeoutSignal: () => new AbortController().signal,
+        },
+        retry: {
+          sleep: () => Promise.resolve(),
+          random: () => 0,
+          now: () => readings.shift() ?? 3000,
+        },
+        now: () => 0,
+      },
+    );
+    const outcome = await executor(
+      tool,
+      { body: { file: 'file.bin' } },
+      new AbortController().signal,
+    );
+    expect(outcome.isError).toBe(true);
+    expect(outcome.content[0]?.text).toContain('the call timed out before the request was sent');
+    expect(outcome.meta?.['openapi-mcp/effect']).toBe('not_sent');
+    expect(sent).toBe(0);
   });
 });
