@@ -413,7 +413,7 @@ describe('dispatcher — discover mode', () => {
       const snapshot = snapshotFor('discover', {}, toolgen);
       // The operation itself keeps the inline form the executor validates with
       expect(
-        snapshot.operationsByName['getCustomer']?.wireTool.outputSchema?.['$defs'],
+        snapshot.operationsByName['getCustomer']?.resolve().wireTool.outputSchema?.['$defs'],
       ).toBeUndefined();
       const outcome = outcomeOf(
         await dispatcherFor(snapshot).call(
@@ -617,7 +617,7 @@ describe('call_operation — captured upstream request', () => {
     const validators = new Map<string, EnvelopeValidator | undefined>(
       snapshot.operations.map((tool) => [
         tool.name,
-        compileEnvelopeValidator(tool.wireTool.outputSchema),
+        compileEnvelopeValidator(tool.resolve().wireTool.outputSchema),
       ]),
     );
     const executor = createExecutor(

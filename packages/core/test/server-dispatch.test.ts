@@ -18,6 +18,7 @@ import type {
   MetaSummary,
   NamedOperation,
   ServerSnapshot,
+  OperationEntry,
   SnapshotTool,
   ToolExecutor,
 } from '../src/index.ts';
@@ -280,7 +281,7 @@ const buildTransformSnapshot = (): ServerSnapshot => {
     tools: [tool],
     toolsByName,
     operations: [],
-    operationsByName: Object.create(null) as Record<string, SnapshotTool | undefined>,
+    operationsByName: Object.create(null) as Record<string, OperationEntry | undefined>,
     meta,
   };
 };

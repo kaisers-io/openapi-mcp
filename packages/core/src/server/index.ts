@@ -19,6 +19,7 @@ export type { SearchIndex } from './search-index.ts';
 export type {
   MetaSummary,
   ServerSnapshot,
+  OperationEntry,
   SnapshotTool,
   SnapshotToolKind,
   ToolMode,

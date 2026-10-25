@@ -71,7 +71,7 @@ const config = (
   const validators = new Map(
     snapshot.operations.map((tool) => [
       tool.name,
-      compileEnvelopeValidator(tool.wireTool.outputSchema),
+      compileEnvelopeValidator(tool.resolve().wireTool.outputSchema),
     ]),
   );
   return {

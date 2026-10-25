@@ -1,5 +1,5 @@
 import type { CallRequest, DispatcherDeps } from './dispatch.ts';
-import { describeOperation, lookupOperation, unknownOperationOutcome } from './discovery.ts';
+import { describeOperation, resolveOperation } from './discovery.ts';
 import { executeWithEffect } from './effect.ts';
 import type { CallInput } from './discovery-schemas.ts';
 import { textOutcome } from './result.ts';
@@ -25,10 +25,11 @@ const callOperation = (
   { signal, trace, report }: CallRequest,
 ): Promise<ToolCallOutcome> => {
   const input = data as CallInput;
-  const target = lookupOperation(deps.snapshot.operationsByName, input.name);
-  if (target === undefined) {
-    return Promise.resolve(unknownOperationOutcome(input.name));
+  const resolved = resolveOperation(deps.snapshot.operationsByName, input.name);
+  if ('outcome' in resolved) {
+    return Promise.resolve(resolved.outcome);
   }
+  const target = resolved.tool;
   // The call record names the operation that ran, not `call_operation`.
   const reportTarget =
     report === undefined

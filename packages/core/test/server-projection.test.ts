@@ -96,7 +96,7 @@ const callWith = async (
   const validators = new Map(
     snapshot.operations.map((tool) => [
       tool.name,
-      compileEnvelopeValidator(tool.wireTool.outputSchema),
+      compileEnvelopeValidator(tool.resolve().wireTool.outputSchema),
     ]),
   );
   const config: ExecutorConfig = {
@@ -143,7 +143,7 @@ const callWith = async (
   if (result.kind !== 'outcome') {
     throw new Error('unexpected unknown-tool');
   }
-  const tool = snapshot.operationsByName['listItems'];
+  const tool = snapshot.operationsByName['listItems']?.resolve();
   const validate = compileEnvelopeValidator(tool?.wireTool.outputSchema);
   return { outcome: result.outcome, tool, validate };
 };

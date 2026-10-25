@@ -1096,6 +1096,47 @@ describe('serve — upstream client behaviour (stdio subprocess)', () => {
     );
   }, 15_000);
 
+  // Issue #47: under discover the output schema is built on first use, and
+  // still decides the result; --omit-output-schema still applies and warns
+  it('validates a call_operation result under discover against its output schema', async () => {
+    const port = await start();
+    const { proc, stdoutLines } = await spawnServe(`http://127.0.0.1:${String(port)}/mismatch`, [
+      '--tool-mode',
+      'discover',
+    ]);
+    sendModern(proc, 1, 'tools/call', {
+      name: 'call_operation',
+      arguments: { name: 'listPets', arguments: {} },
+    });
+    await waitFor(() => stdoutLines.length > 0, 8000);
+    const response = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(response.result?.['isError']).toBe(true);
+    expect(JSON.stringify(response.result?.['content'])).toContain(
+      "did not match the tool's declared output schema",
+    );
+  }, 15_000);
+
+  it('applies --omit-output-schema under discover and warns at startup', async () => {
+    const port = await start();
+    const { proc, stdoutLines, stderrLines } = await spawnServe(
+      `http://127.0.0.1:${String(port)}/mismatch`,
+      ['--tool-mode', 'discover', '--omit-output-schema', 'route:GET /pets'],
+    );
+    sendModern(proc, 1, 'tools/call', {
+      name: 'call_operation',
+      arguments: { name: 'listPets', arguments: {} },
+    });
+    await waitFor(() => stdoutLines.length > 0, 8000);
+    const response = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(response.result).toMatchObject({
+      content: [{ type: 'text', text: JSON.stringify([{ id: 'one', name: 'Rex' }]) }],
+      isError: false,
+    });
+    expect(stderrLines).toContain(
+      'openapi-mcp: warning: --omit-output-schema: response-schema validation is off for 1 tool, results are returned as text: listPets',
+    );
+  }, 15_000);
+
   it('--request-timeout bounds an upstream call independently of --timeout', async () => {
     const port = await start();
     // The base path makes listPets hit /slow/pets, which never answers.

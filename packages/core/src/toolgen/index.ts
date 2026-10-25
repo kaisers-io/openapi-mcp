@@ -5,8 +5,14 @@ export { hasNestedQuantifier } from './pattern-safety.ts';
 export type { SchemaMode, SchemaResult } from './schema.ts';
 export { buildLayout, paramFields } from './layout.ts';
 export type { Field, FieldMapping, LayoutResult, RequestMapper } from './layout.ts';
-export { buildTools, SYSTEM_HEADERS } from './build.ts';
-export type { BuildToolsResult, GeneratedTool, WireSchema } from './build.ts';
+export { buildTools, buildToolsDeferred, completeTools, SYSTEM_HEADERS } from './build.ts';
+export type {
+  BuildToolsResult,
+  DeferredTool,
+  DeferredToolsResult,
+  GeneratedTool,
+  WireSchema,
+} from './build.ts';
 export type { NullableFieldScope } from './nullable-fields.ts';
 export { deriveAnnotations } from './annotations.ts';
 export type { ToolAnnotations } from './annotations.ts';

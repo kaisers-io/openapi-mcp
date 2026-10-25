@@ -222,6 +222,8 @@ export {
   assignToolNames,
   buildLayout,
   buildTools,
+  buildToolsDeferred,
+  completeTools,
   composeDescription,
   convertSchema,
   deriveAnnotations,
@@ -237,6 +239,8 @@ export {
 } from './toolgen/index.ts';
 export type {
   BuildToolsResult,
+  DeferredTool,
+  DeferredToolsResult,
   Field,
   FieldMapping,
   GeneratedTool,
@@ -314,6 +318,7 @@ export type {
   ServerSnapshot,
   SnapshotOptions,
   SnapshotPipelineInput,
+  OperationEntry,
   SnapshotTool,
   SnapshotToolKind,
   ToolCallOutcome,

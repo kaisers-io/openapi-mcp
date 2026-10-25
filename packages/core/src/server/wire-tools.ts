@@ -1,9 +1,10 @@
 import { z } from 'zod';
+import type { OperationRecord } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { GeneratedTool } from '../toolgen/build.ts';
 import { compactOutputSchema } from '../toolgen/output-schema.ts';
 import { deriveAccept } from './execute/accept.ts';
-import type { RuntimeTool, SnapshotTool, WireTool } from './types.ts';
+import type { RuntimeTool, WireTool } from './types.ts';
 
 // The wire shape of listed tools: the status tool's definition and the
 // display helpers (title, stable order) for the generated ones.
@@ -111,22 +112,28 @@ export const titleOf = (generated: GeneratedTool): string | undefined => {
   return title === '' ? undefined : title;
 };
 
+// What a snapshot keeps of an operation (see RuntimeTool).
+export const runtimeOperationOf = (operation: OperationRecord): RuntimeTool['operation'] => ({
+  method: operation.method,
+  path: operation.path,
+  tags: operation.tags,
+  ...(operation.summary === undefined ? {} : { summary: operation.summary }),
+  ...(operation.description === undefined ? {} : { description: operation.description }),
+});
+
 // What a snapshot keeps of a generated tool (see RuntimeTool).
 export const runtimeToolOf = ({ operation, ...tool }: GeneratedTool): RuntimeTool => ({
   ...tool,
-  operation: {
-    method: operation.method,
-    path: operation.path,
-    tags: operation.tags,
-    ...(operation.summary === undefined ? {} : { summary: operation.summary }),
-    ...(operation.description === undefined ? {} : { description: operation.description }),
-  },
+  operation: runtimeOperationOf(operation),
   accept: deriveAccept(operation.responses),
 });
 
 // Code-point order (never locale-dependent): `<` on strings compares UTF-16
 // code units, identical everywhere.
-export const byToolName = (first: SnapshotTool, second: SnapshotTool): number => {
+export const byToolName = (
+  first: { readonly name: string },
+  second: { readonly name: string },
+): number => {
   if (first.name === second.name) {
     return 0;
   }

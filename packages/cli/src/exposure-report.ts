@@ -9,6 +9,7 @@ import {
 } from '@kaisers-io/openapi-mcp-core';
 import type {
   BuildToolsResult,
+  DeferredToolsResult,
   NotExposedCounts,
   NotExposedOperation,
   Route,
@@ -44,7 +45,7 @@ const display = (key: string): string => sanitizeSpecText(key, KEY_DISPLAY_MAX);
 // exposed. Under --strict-filters such an overlap stops the start.
 export const exposureReport = (
   result: SpecPipelineResult,
-  built: BuildToolsResult,
+  built: BuildToolsResult | DeferredToolsResult,
   strictFilters: boolean,
   // Tests only: a smaller work budget for the overlap check
   overlapBudget?: number,

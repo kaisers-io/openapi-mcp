@@ -1,22 +1,19 @@
-import { z } from 'zod';
-import { validationError } from '../errors.ts';
+import { deepFreeze } from '../freeze.ts';
 import type { DeadPattern } from '../filter/engine.ts';
 import type { OmittedOperation } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
-import type { BuildToolsResult, GeneratedTool } from '../toolgen/build.ts';
+import type { BuildToolsResult, DeferredToolsResult } from '../toolgen/build.ts';
+import { assertObjectRoot, entriesOf, indexByName } from './operation-entry.ts';
 import {
   byToolName,
   META_INPUT_SCHEMA,
   META_TOOL_NAME,
   metaWireTool,
   OMITTED_REASONS_CAP,
-  presentedOutputSchema,
-  runtimeToolOf,
-  titleOf,
 } from './wire-tools.ts';
 import { buildDiscoveryTools } from './discovery.ts';
 import { buildSearchIndex } from './search-index.ts';
-import type { MetaSummary, ServerSnapshot, SnapshotTool, ToolMode, WireTool } from './types.ts';
+import type { MetaSummary, ServerSnapshot, SnapshotTool, ToolMode } from './types.ts';
 
 export { META_TOOL_NAME } from './wire-tools.ts';
 
@@ -37,32 +34,6 @@ const sanitizeOmission = (omission: OmittedOperation): OmittedOperation => ({
   path: sanitizeSpecText(omission.path, PATH_DISPLAY_MAX),
   reason: sanitizeSpecText(omission.reason, PATH_DISPLAY_MAX),
 });
-
-const wireToolOf = (generated: GeneratedTool, compact: boolean): WireTool => {
-  const title = titleOf(generated);
-  return {
-    name: generated.toolName,
-    ...(title === undefined ? {} : { title }),
-    description: generated.description,
-    inputSchema: generated.wireSchema,
-    ...(generated.outputSchema === undefined
-      ? {}
-      : { outputSchema: presentedOutputSchema(generated.outputSchema, compact) }),
-    annotations: generated.annotations,
-  };
-};
-
-const assertObjectRoot = (
-  toolName: string,
-  field: string,
-  schema: Record<string, unknown>,
-): void => {
-  if (schema['type'] !== 'object') {
-    throw validationError(
-      `tool "${toolName}" ${field} is not object-rooted (MCP requires type:"object" at the root)`,
-    );
-  }
-};
 
 // The subset of SpecPipelineResult the meta summary needs — deliberately
 // narrower than the full result (no `namedOperations`, no `cacheStatus`, and
@@ -91,77 +62,6 @@ export type SnapshotPipelineInput = {
   cacheLock?: 'held' | 'stale' | undefined;
 };
 
-// Recursively freezes a snapshot subgraph so the exposed ServerSnapshot is
-// DEEP-immutable, not just the outer `tools` array — every nested WireTool,
-// MetaSummary, omitted-reason entry, and array reachable from a held
-// `ServerSnapshot` must reject mutation, matching the `readonly` types in
-// types.ts. Zod `ZodType` instances are explicitly left un-walked (see the
-// comment on `SnapshotTool.inputSchema` in types.ts) — everything else
-// reachable (plain objects, arrays, and the `GeneratedTool`/`mapper`
-// function objects) is frozen. A side effect worth naming: `wireToolOf` and
-// `runtimeToolOf` copy only the top level of each `GeneratedTool`, so the
-// schema objects they share with the caller's `BuildToolsResult.tools[*]`
-// are frozen there too — intentional: this snapshot must retain the
-// original schema objects unchanged, and freezing is the stronger form of
-// that guarantee, not an accidental side channel. `typeof value !== 'object'`
-// also skips functions (e.g. `GeneratedTool.mapper`, `typeof` is
-// `'function'`, not `'object'`) — deliberately: nothing in this codebase ever reassigns a
-// property on a function object, and freezing would not change whether the
-// function itself can be CALLED, so there is nothing worth protecting there.
-// `toolsByName` is deliberately NOT a `Map`: `Object.freeze` on a `Map`
-// does not block its `.set()`/`.delete()` methods (a well-known JS
-// limitation — freezing only stops own-property reassignment, and a Map's
-// entries live outside its own properties), so a frozen Map's routing table
-// would still be mutable at runtime even though the TS `ReadonlyMap` type
-// stopped a typed caller from calling `.set()` at compile time only.
-// `toolsByName` is instead a null-prototype, own-property RECORD (built via
-// `Object.create(null)` below) — its entries genuinely ARE its own
-// properties, so this same `deepFreeze` walk that freezes every other plain
-// object in the snapshot also genuinely blocks add/replace/delete on it,
-// closing the gap at runtime, not just in the types.
-const deepFreeze = <T>(value: T, seen = new WeakSet<object>()): T => {
-  if (value === null || typeof value !== 'object') {
-    return value;
-  }
-  if (value instanceof z.ZodType) {
-    return value;
-  }
-  const asObject = value;
-  if (seen.has(asObject)) {
-    return value;
-  }
-  // Imperative on purpose: cycle detection during a recursive walk needs a
-  // set that is genuinely mutated as traversal proceeds — a purely
-  // functional "seen" set would have to be threaded through and returned
-  // from every recursive call instead, which buys nothing here since the set
-  // is never observed outside this walk.
-  seen.add(asObject);
-  for (const key of Object.keys(asObject)) {
-    deepFreeze((asObject as Record<string, unknown>)[key], seen);
-  }
-  return Object.freeze(value);
-};
-
-// Null-prototype: tool names are sanitized identifiers already, but a null
-// prototype is the safe default regardless — `__proto__`/`constructor` are
-// just ordinary own keys here, never a prototype-pollution vector, and
-// `Object.hasOwn` never needs to distinguish an own key from an inherited one.
-// Imperative on purpose: this is validate-then-write, not a plain
-// accumulation — `Object.fromEntries`/`reduce` would either silently let a
-// later duplicate name overwrite an earlier tool (losing the throw entirely)
-// or need the same hasOwn-then-throw check re-embedded in a reducer callback
-// for no readability gain over the loop below.
-const indexByName = (tools: readonly SnapshotTool[]): Record<string, SnapshotTool | undefined> => {
-  const byName = Object.create(null) as Record<string, SnapshotTool | undefined>;
-  for (const tool of tools) {
-    if (Object.hasOwn(byName, tool.name)) {
-      throw validationError(`duplicate tool name "${tool.name}" in the server snapshot`);
-    }
-    byName[tool.name] = tool;
-  }
-  return byName;
-};
-
 export type SnapshotOptions = {
   // Omitted means `per-operation`, whose snapshot is unchanged by this option.
   toolMode?: ToolMode;
@@ -170,22 +70,19 @@ export type SnapshotOptions = {
   // `discover` describe_operation computes it on demand, so startup does not
   // pay for operations nobody describes.
   compactOutputSchemas?: boolean;
+  // Under `discover`, sees an operation whose output side fails to build on
+  // first use (the call or description that needed it gets a tool error)
+  onDeferredError?: (toolName: string, error: unknown) => void;
 };
 
 export const buildSnapshot = (
-  built: BuildToolsResult,
+  built: BuildToolsResult | DeferredToolsResult,
   pipeline: SnapshotPipelineInput,
   options: SnapshotOptions = {},
 ): ServerSnapshot => {
   const toolMode = options.toolMode ?? 'per-operation';
   const compact = options.compactOutputSchemas === true;
-  const upstreamTools: SnapshotTool[] = built.tools.map((generated) => ({
-    kind: 'upstream',
-    name: generated.toolName,
-    wireTool: wireToolOf(generated, compact && toolMode === 'per-operation'),
-    inputSchema: generated.inputSchema,
-    generated: runtimeToolOf(generated),
-  }));
+  const { entries, tools: upstreamTools } = entriesOf(built, toolMode, options);
   const metaTool: SnapshotTool = {
     kind: 'meta',
     name: META_TOOL_NAME,
@@ -198,17 +95,20 @@ export const buildSnapshot = (
   // the spec document — a YAML-to-JSON round trip or a registry that
   // re-serializes the spec cannot reorder the list. Under `discover` the
   // operations leave tools/list; the three discovery tools take their place.
-  const sorted = upstreamTools.toSorted(byToolName);
+  const sortedEntries = entries.toSorted(byToolName);
   const all =
-    toolMode === 'discover' ? [metaTool, ...buildDiscoveryTools(sorted)] : [metaTool, ...sorted];
+    toolMode === 'discover'
+      ? [metaTool, ...buildDiscoveryTools(sortedEntries)]
+      : [metaTool, ...upstreamTools.toSorted(byToolName)];
   // Two separate namespaces under `discover`: an operation that happens to
   // be named `call_operation` is reached as call_operation's `name` argument
   // and never collides with the listed tool of that name.
   const toolsByName = indexByName(all);
-  const operationsByName = indexByName(sorted);
-  // Every operation's schemas stay checked under `discover` too: they reach
-  // the client through describe_operation instead of tools/list.
-  for (const tool of toolMode === 'discover' ? [...all, ...sorted] : all) {
+  const operationsByName = indexByName(sortedEntries);
+  // Every listed tool's schemas are checked here; an operation's were
+  // checked when it was built (under `discover`, its output schema on first
+  // use, before anything is sent)
+  for (const tool of all) {
     assertObjectRoot(tool.name, 'inputSchema', tool.wireTool.inputSchema);
     if (tool.wireTool.outputSchema !== undefined) {
       assertObjectRoot(tool.name, 'outputSchema', tool.wireTool.outputSchema);
@@ -226,7 +126,7 @@ export const buildSnapshot = (
     specTitle: pipeline.spec.title,
     specVersion: pipeline.spec.specVersion,
     displaySource: sanitizeSpecText(pipeline.displaySource, PATH_DISPLAY_MAX),
-    toolCount: upstreamTools.length,
+    toolCount: entries.length,
     omittedCount: mergedOmitted.length,
     omittedReasons: mergedOmitted
       .slice(0, OMITTED_REASONS_CAP)
@@ -247,9 +147,9 @@ export const buildSnapshot = (
     ...(compact ? { compactOutputSchemas: true as const } : {}),
     tools: all,
     toolsByName,
-    operations: upstreamTools,
+    operations: entries,
     operationsByName,
-    ...(toolMode === 'discover' ? { searchIndex: buildSearchIndex(upstreamTools) } : {}),
+    ...(toolMode === 'discover' ? { searchIndex: buildSearchIndex(entries) } : {}),
     meta,
   });
 };
