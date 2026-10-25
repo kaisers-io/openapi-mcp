@@ -71,10 +71,11 @@ export const withMetaEntry = (
 // The methods whose request can change state. GET, HEAD and QUERY are safe
 // (RFC 9110 §9.2.1, RFC 10008): their messages stay as they are.
 const SAFE_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'QUERY']);
+export const isSafeMethod = (method: string): boolean => SAFE_METHODS.has(method.toUpperCase());
 
 const WARNING: Readonly<Partial<Record<CallEffect, string>>> = {
   outcome_unknown: 'the request may have reached the upstream and been applied',
-  upstream_reported_success: 'the upstream reported success, so the write was likely applied',
+  upstream_reported_success: 'the upstream reported success and the write was likely applied',
 };
 
 // Records the effect and, for a write that may have been applied, appends a
@@ -95,12 +96,7 @@ export const withEffectWarning = (
     });
   }
   const warning = WARNING[effect];
-  if (
-    warning === undefined ||
-    !outcome.isError ||
-    SAFE_METHODS.has(method.toUpperCase()) ||
-    isWarned(outcome)
-  ) {
+  if (warning === undefined || !outcome.isError || isSafeMethod(method) || isWarned(outcome)) {
     return recorded;
   }
   return appendWarning(recorded, warning);

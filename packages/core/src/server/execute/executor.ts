@@ -12,7 +12,13 @@ import type {
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
-import { rememberEffect, withEffect, withEffectWarning, withMetaEntry } from '../effect.ts';
+import {
+  isSafeMethod,
+  rememberEffect,
+  withEffect,
+  withEffectWarning,
+  withMetaEntry,
+} from '../effect.ts';
 import type { CallEffect } from '../effect.ts';
 import { retryableErrorOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
@@ -639,6 +645,10 @@ const runUpstreamCall = async (
   const allowedRetries = isRetryableMethod(method, idempotencyKeyField) ? retries : 0;
   const sent = await send(firstHeaders, allowedRetries);
   let { outcome, attempts } = sent;
+  // The attempts that speak for the call's effect: a lone first 401 had
+  // none, so after its replay only the replay's attempts count
+  let effectAttempts = attempts;
+  let replayed = false;
   // At most one replay on 401: the request was not authorized, so it had no
   // effect — replaying it once (writes included) with a fresh token is safe.
   // No replay when the token source keeps the token (it was minted moments
@@ -654,8 +664,9 @@ const runUpstreamCall = async (
     outcome.kind === 'response' &&
     outcome.status === 401 &&
     // A 401 after a redirect answers the follow-up, not the request itself,
-    // which may have been applied: it is never replayed (issue #25)
-    outcome.redirected !== true &&
+    // which may have been applied: a write is never replayed then (issue
+    // #25). A read is, as before: replaying it changes nothing
+    (outcome.redirected !== true || isSafeMethod(method)) &&
     oauth.tokens.invalidate(first.token)
   ) {
     // Every exit from here on follows at least one sent attempt. The 401
@@ -685,6 +696,8 @@ const runUpstreamCall = async (
     }
     const replay = await send(replayHeaders, Math.max(allowedRetries - (attempts - 1), 0));
     ({ outcome } = replay);
+    effectAttempts = attempts > 1 ? attempts + replay.attempts : replay.attempts;
+    replayed = true;
     attempts += replay.attempts;
   }
   const upstreamMs = Math.max(0, retryDeps.now() - upstreamStarted);
@@ -736,7 +749,9 @@ const runUpstreamCall = async (
       ? { status: outcome.status, responseBytes: outcome.bodyBytes.byteLength }
       : {}),
   });
-  return finish(mapped, effectAfterSend(outcome, attempts));
+  const effect = effectAfterSend(outcome, effectAttempts);
+  // A replay refused before sending still follows the rejected 401
+  return finish(mapped, replayed && effect === 'not_sent' ? 'upstream_rejected' : effect);
 };
 
 export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): UpstreamExecutor => {

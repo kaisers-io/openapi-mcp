@@ -148,11 +148,11 @@ const run = async (
       body: raw === undefined ? undefined : new TextDecoder().decode(raw),
     });
     const status = statuses[seen.length - 1] ?? 500;
-    // A 303 sends the follow-up to /ping (a GET)
+    // A 302 or 303 sends the follow-up to /ping (a GET)
     return Promise.resolve(
       new Response(status === 204 ? null : 'denied', {
         status,
-        headers: status === 303 ? { location: '/ping' } : {},
+        headers: status === 302 || status === 303 ? { location: '/ping' } : {},
       }),
     );
   };
@@ -270,6 +270,38 @@ describe('createExecutor — OAuth2 client credentials', () => {
     expect(outcome.content[0]?.text).toContain(
       'may have reached the upstream and been applied, so do not retry it blindly',
     );
+  });
+
+  // Review of #50: a read is replayed after a redirect as before, or its
+  // rejected token stays cached and the next call fails the same way
+  it('replays a read whose redirect follow-up got the 401', async () => {
+    const tokens = fakeTokens();
+    const { outcome, seen } = await run('ping', {}, [302, 401, 302, 204], tokens.source);
+    expect(outcome.isError).toBe(false);
+    expect(tokens.invalidated).toEqual(['oauth-access-token-1']);
+    expect(seen.map((entry) => entry.authorization)).toEqual([
+      'Bearer oauth-access-token-1',
+      'Bearer oauth-access-token-1',
+      'Bearer oauth-access-token-2',
+      'Bearer oauth-access-token-2',
+    ]);
+  });
+
+  // Review of #50: the first 401 had no effect, so a routine token refresh
+  // does not make a cleanly rejected write uncertain
+  it('a write rejected after its 401 replay is upstream_rejected, without a warning', async () => {
+    const tokens = fakeTokens();
+    const { outcome, seen } = await run('create', { name: 'x' }, [401, 422], tokens.source);
+    expect(seen).toHaveLength(2);
+    expect(outcome.meta?.['openapi-mcp/effect']).toBe('upstream_rejected');
+    expect(JSON.stringify(outcome)).not.toContain('do not retry');
+  });
+
+  it('a write that fails ambiguously after its 401 replay is still warned', async () => {
+    const tokens = fakeTokens();
+    const { outcome } = await run('create', { name: 'x' }, [401, 500], tokens.source);
+    expect(outcome.meta?.['openapi-mcp/effect']).toBe('outcome_unknown');
+    expect(JSON.stringify(outcome)).toContain('do not retry it blindly');
   });
 
   it('a token failure on the replay is reported the same way', async () => {

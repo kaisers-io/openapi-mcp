@@ -51,7 +51,7 @@ const SPEC = {
 };
 
 const WARNING = 'may have reached the upstream and been applied, so do not retry it blindly';
-const REPORTED = 'the upstream reported success, so the write was likely applied';
+const REPORTED = 'the upstream reported success and the write was likely applied';
 
 type Result = { isError: boolean; text: string; effect: unknown };
 

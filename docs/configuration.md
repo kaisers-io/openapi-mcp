@@ -187,6 +187,9 @@ Notes:
   | `upstream_reported_success` | the call sent one request, the upstream answered it with a `2xx`, but the result could not be returned (it did not match the declared schema, was not valid JSON, or contained a secret) |
   | `outcome_unknown` | everything else: a timeout, a lost connection, an oversized response, a redirect, a `5xx`, and any call that sent more than one attempt |
 
+  A first request answered `401` and sent again with a fresh OAuth2 token does not count: it
+  was not authorized, so it had no effect, and the request sent again decides the value.
+
   For a write (any method other than `GET`, `HEAD` and `QUERY`), the text of an
   `outcome_unknown` or `upstream_reported_success` error ends with a warning that the request
   may have been applied and must not be retried blindly. Messages for reads are unchanged.
