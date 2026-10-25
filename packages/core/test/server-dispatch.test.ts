@@ -339,7 +339,11 @@ describe('createDispatcher', () => {
         content: [
           { type: 'text', text: 'rate limit exceeded — too many tool calls; retry after 1s' },
         ],
-        meta: { 'openapi-mcp/error': 'rate_limited', 'openapi-mcp/retryAfterMs': 1000 },
+        meta: {
+          'openapi-mcp/error': 'rate_limited',
+          'openapi-mcp/retryAfterMs': 1000,
+          'openapi-mcp/effect': 'not_sent',
+        },
       },
     });
     expect(executor).not.toHaveBeenCalled();
@@ -447,7 +451,10 @@ describe('createDispatcher', () => {
     });
     expect(result).toEqual({
       kind: 'outcome',
-      outcome: textOutcome('invalid tool arguments:\nid: invalid_type', true),
+      outcome: {
+        ...textOutcome('invalid tool arguments:\nid: invalid_type', true),
+        meta: { 'openapi-mcp/effect': 'not_sent' },
+      },
     });
   });
 
@@ -468,7 +475,10 @@ describe('createDispatcher', () => {
     });
     expect(result).toEqual({
       kind: 'outcome',
-      outcome: textOutcome('invalid tool arguments:\nstatus: invalid_value', true),
+      outcome: {
+        ...textOutcome('invalid tool arguments:\nstatus: invalid_value', true),
+        meta: { 'openapi-mcp/effect': 'not_sent' },
+      },
     });
     const text = result.kind === 'outcome' ? (result.outcome.content[0]?.text ?? '') : '';
     // NOTE: pinned Zod 4.4.3's default enum-mismatch message ("Invalid
@@ -694,7 +704,14 @@ describe('createDispatcher', () => {
     });
     expect(result).toEqual({
       kind: 'outcome',
-      outcome: textOutcome('tool execution failed unexpectedly', true),
+      // A throw may come after sending: unknown, with the warning for a write
+      outcome: {
+        ...textOutcome(
+          'tool execution failed unexpectedly; the request may have reached the upstream and been applied, so do not retry it blindly',
+          true,
+        ),
+        meta: { 'openapi-mcp/effect': 'outcome_unknown' },
+      },
     });
   });
 
@@ -895,7 +912,16 @@ describe('createDispatcher — boundary scan of structuredContent (scan once)', 
     );
     expect(result).toMatchObject({
       kind: 'outcome',
-      outcome: { isError: true, content: [{ text: BOUNDARY_WITHHELD_ERROR_TEXT }] },
+      outcome: {
+        isError: true,
+        // The executor's unknown effect and its warning survive (#25)
+        content: [
+          {
+            text: `${BOUNDARY_WITHHELD_ERROR_TEXT}; the request may have reached the upstream and been applied, so do not retry it blindly`,
+          },
+        ],
+        meta: { 'openapi-mcp/effect': 'outcome_unknown' },
+      },
     });
   });
 

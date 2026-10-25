@@ -1098,11 +1098,13 @@ describe('pinnedRequest', () => {
       buildOpts(),
       buildDeps({ fetch: () => Promise.reject(aggregated) }),
     );
+    // A pinned DNS refusal of the first hop: no connection, nothing sent (#25)
     expect(outcome).toEqual({
       kind: 'error',
       reason: 'egress',
       detail: 'fetch failed',
       beforeResponse: true,
+      notSent: true,
     });
   });
 
@@ -1544,7 +1546,7 @@ describe('pinnedRequest — authorizeHop', () => {
         buildOpts({ authorizeHop: () => 'route-refused' }),
         buildDeps(),
       );
-      expect(first).toEqual({ kind: 'error', reason: 'route-refused' });
+      expect(first).toEqual({ kind: 'error', reason: 'route-refused', notSent: true });
       expect(server.requests.map((req) => req.url)).toEqual(['/safe']);
     } finally {
       await server.close();

@@ -292,3 +292,37 @@ describe('createRedactor — many-needle matcher path', () => {
     expect(few.redactString('<AAAAexample-overlapZZZZ>')).toBe('<[redacted]>');
   });
 });
+
+// Issue #46: a short secret embedded in a JSON string inside a text or HTML
+// body appears JSON-escaped; that form is redacted too
+describe('createRedactor — JSON-escaped short secrets', () => {
+  it('redacts the escaped form of a short secret with a quote, backslash or control character', () => {
+    for (const secret of ['a"b1', 'a\\b1', 'a\nb1', 'a\u0001b', 'a/b"']) {
+      const redactor = createRedactor([secret]);
+      const escaped = JSON.stringify(secret).slice(1, -1);
+      const html = `<pre>{"token":"${escaped}"}</pre>`;
+      expect(redactor.redactString(html)).toBe('<pre>{"token":"[redacted]"}</pre>');
+      expect(redactor.scanForSecret(html)).toBe(true);
+    }
+    // `\/` as some encoders write it
+    expect(createRedactor(['a/b"']).redactString('x=a\\/b\\"')).toBe('x=[redacted]');
+  });
+
+  it('leaves a body unchanged that has the same escapes but not the secret', () => {
+    const redactor = createRedactor(['a"b1']);
+    const benign = String.raw`{"note":"say \"hi\"\n","path":"C:\\temp"}`;
+    expect(redactor.redactString(benign)).toBe(benign);
+    expect(redactor.scanForSecret(benign)).toBe(false);
+  });
+
+  it('adds no needle for a short secret without characters JSON escapes', () => {
+    const redactor = createRedactor(['ab12']);
+    expect(redactor.redactString(String.raw`x\"y ab12`)).toBe(String.raw`x\"y [redacted]`);
+  });
+
+  it('applies to runtime secrets and object keys too', () => {
+    const redactor = createRedactor([]);
+    redactor.registerRuntimeSecret('t"k1', Number.MAX_SAFE_INTEGER, 0);
+    expect(redactor.redactString(String.raw`{"t\"k1":1}`)).toBe('{"[redacted]":1}');
+  });
+});
