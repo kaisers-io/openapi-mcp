@@ -36,6 +36,7 @@ export const SUBPROCESS_E2E_FILES = [
   'test/serve.test.ts',
   'test/serve-http.test.ts',
   'test/serve-http-oauth.test.ts',
+  'test/serve-image.test.ts',
   'test/serve-oauth.test.ts',
   'test/serve-openapi-3.2.test.ts',
   'test/serve-route-authorization.test.ts',
@@ -49,6 +50,8 @@ export const SUBPROCESS_E2E_FILES = [
 export const LIGHT_SUBPROCESS_FILES: Readonly<Record<string, string>> = {
   'packages/cli/test/context.test.ts':
     'one spawnSync of `node -e` that loads context.ts only (umask probe), plus `icacls` on Windows (ACL check), not the CLI',
+  'packages/core/test/images-store.test.ts':
+    '`icacls` on Windows only (ACL check of the image folder), not the CLI',
   'packages/core/test/http-token-docs.test.ts':
     'runs the documented token generators (`openssl rand`, `node -p`), not the CLI',
 };

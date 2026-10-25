@@ -46,7 +46,7 @@ import type {
   RequestGuardOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
-import { resolveApiConfig } from '../api-options.ts';
+import { parseImageResponseMode, resolveApiConfig, resolveImageResponses } from '../api-options.ts';
 import type { ApiCmdOpts } from '../api-options.ts';
 import { resolveTokenUrl } from '../oauth-options.ts';
 import type { CliContext } from '../context.ts';
@@ -226,6 +226,8 @@ export type ServeCmdOpts = SpecCmdOpts &
     allowOffsiteRedirects?: boolean;
     toolMode: string;
     outputSchema: string;
+    imageResponses: string;
+    imageDirMaxBytes: string;
   };
 
 type HttpAuthConfig =
@@ -454,6 +456,8 @@ const prepareServe = async (
   // the httpConfig check just above.
   const apiConfig = resolveApiConfig(cmdOpts, ctx);
   const requestedToolMode = parseToolMode(cmdOpts.toolMode);
+  // Usage errors first, before any spec or network work
+  parseImageResponseMode(cmdOpts.imageResponses);
   const compactOutputSchemas = parseOutputSchemaForm(cmdOpts.outputSchema);
   const args = parseSpecPipelineArgs(cmdOpts, ctx);
   // The exposed-set budget follows the tool mode: one tool per operation
@@ -627,6 +631,15 @@ const prepareServe = async (
     validators = new Map<string, EnvelopeValidator | undefined>(validatorEntries);
   }
 
+  const images = await resolveImageResponses({
+    mode: cmdOpts.imageResponses,
+    dirMaxBytes: cmdOpts.imageDirMaxBytes,
+    homeDir: ctx.homeDir(),
+    source: args.source,
+    cwd: ctx.cwd(),
+    ...(args.options.cacheKey === undefined ? {} : { cacheKey: args.options.cacheKey }),
+    ...(httpConfig === undefined ? {} : { httpHost: httpConfig.hostname }),
+  });
   const executorConfig: ExecutorConfig = {
     baseUrl: resolvedBase.url.toString(),
     baseTrusted: resolvedBase.trusted,
@@ -655,6 +668,7 @@ const prepareServe = async (
     retries: apiConfig.retries,
     propagateTraceContext: apiConfig.propagateTraceContext,
     validators,
+    ...(images === undefined ? {} : { images }),
     ...(oauth === undefined || tokenUrl === undefined
       ? {}
       : {

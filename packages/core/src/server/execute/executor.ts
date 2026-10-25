@@ -32,6 +32,8 @@ import { hopAuthorizer } from './hop-authorizer.ts';
 import { routeKey } from './route-table.ts';
 import type { RouteTable } from './route-table.ts';
 import { mapResponse } from './response.ts';
+import { imageOutcome, isImageResponse } from './image-result.ts';
+import type { ImageResponses } from './image-result.ts';
 import type { EnvelopeValidator, EnvelopeValidators } from './envelope-validators.ts';
 import type { PageInput } from './forwarded-headers.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
@@ -99,6 +101,9 @@ export type ExecutorConfig = {
   // `envVarHint` names the client id/secret env vars for error hints.
   // `tokens` is structurally http/oauth-client-credentials.ts's TokenSource
   // (spelled out here to keep this module's dependency set unchanged).
+  // --image-responses (#14): an upstream image becomes an MCP image block or
+  // a saved file. Absent means off: an image is an unsupported media type.
+  images?: ImageResponses;
   oauth?: {
     tokens: {
       getToken: () => Promise<{ ok: string } | { error: string }>;
@@ -702,42 +707,49 @@ const runUpstreamCall = async (
   const upstreamMs = Math.max(0, retryDeps.now() - upstreamStarted);
   const [firstSecretHeader] = config.secretHeaders;
   const envVarHint = oauth?.envVarHint ?? firstSecretHeader?.envVar;
-  const mapped = mapResponse({
-    outcome,
-    validator,
-    outputSchema: tool.wireTool.outputSchema,
-    redactor: config.redactor,
-    ...(envVarHint === undefined ? {} : { envVarHint }),
-    ...(tool.generated?.outputSchemaAssumesDefaultIsError === true
-      ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
-      : {}),
-    maxTextBytes: DISPLAY_TEXT_MAX,
-    baseUrl: config.baseUrl,
-    // `_fields` was validated by the tool's input schema (toolgen/projection.ts)
-    // and is never mapped onto the request (buildRequest only reads mapped
-    // fields).
-    ...(generated.projection === true ? { projectable: true } : {}),
-    ...(generated.projection === true && Array.isArray(data[PROJECTION_FIELD])
-      ? { fields: data[PROJECTION_FIELD] as string[] }
-      : {}),
-    ...(generated.pagination === undefined
-      ? {}
-      : {
-          paginate: (page: PageInput) => {
-            const hint = nextPageHint(generated.pagination as PaginationPlan, {
-              ...page,
-              requestUrl: finalUrl.href,
-              args: data,
-            });
-            // A hint is only worth giving if the next call can actually be
-            // made with it: one the tool's own input schema would reject
-            // becomes "no next page known" rather than a dead end.
-            return hint.next !== NO_NEXT_PAGE && !generated.inputSchema.safeParse(hint.next).success
-              ? { next: NO_NEXT_PAGE }
-              : hint;
-          },
-        }),
-  });
+  const mapRest = (): ToolCallOutcome =>
+    mapResponse({
+      outcome,
+      validator,
+      outputSchema: tool.wireTool.outputSchema,
+      redactor: config.redactor,
+      ...(envVarHint === undefined ? {} : { envVarHint }),
+      ...(tool.generated?.outputSchemaAssumesDefaultIsError === true
+        ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
+        : {}),
+      maxTextBytes: DISPLAY_TEXT_MAX,
+      baseUrl: config.baseUrl,
+      // `_fields` was validated by the tool's input schema (toolgen/projection.ts)
+      // and is never mapped onto the request (buildRequest only reads mapped
+      // fields).
+      ...(generated.projection === true ? { projectable: true } : {}),
+      ...(generated.projection === true && Array.isArray(data[PROJECTION_FIELD])
+        ? { fields: data[PROJECTION_FIELD] as string[] }
+        : {}),
+      ...(generated.pagination === undefined
+        ? {}
+        : {
+            paginate: (page: PageInput) => {
+              const hint = nextPageHint(generated.pagination as PaginationPlan, {
+                ...page,
+                requestUrl: finalUrl.href,
+                args: data,
+              });
+              // A hint is only worth giving if the next call can actually be
+              // made with it: one the tool's own input schema would reject
+              // becomes "no next page known" rather than a dead end.
+              return hint.next !== NO_NEXT_PAGE &&
+                !generated.inputSchema.safeParse(hint.next).success
+                ? { next: NO_NEXT_PAGE }
+                : hint;
+            },
+          }),
+    });
+  const mapped =
+    config.images !== undefined &&
+    isImageResponse(outcome, tool.wireTool.outputSchema !== undefined)
+      ? await imageOutcome(outcome, config.images, config.redactor)
+      : mapRest();
   report({
     outcome: classifyUpstream(outcome, mapped),
     method,

@@ -9,7 +9,7 @@ import type { ServerSnapshot, SnapshotTool } from './types.ts';
 import { runDiscoveryTool } from './discovery-route.ts';
 import { executeWithEffect, withEffect } from './effect.ts';
 import { validateAndExecute } from './validation.ts';
-import { withheld } from './withheld.ts';
+import { imageHasSecret, withheld } from './withheld.ts';
 
 export type ToolExecutor = (
   tool: SnapshotTool,
@@ -81,10 +81,19 @@ const scanAndRedact = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOu
   ) {
     return withheld(outcome);
   }
-  const redactedContent = outcome.content.map((block) => ({
-    ...block,
-    text: redactor.redactString(block.text),
-  }));
+  // An image cannot be redacted without breaking it: one with a secret in
+  // its bytes withholds the whole result, like a structured one
+  if (
+    outcome.content.some(
+      (block) =>
+        block.type === 'image' && imageHasSecret(redactor, Buffer.from(block.data, 'base64')),
+    )
+  ) {
+    return withheld(outcome);
+  }
+  const redactedContent = outcome.content.map((block) =>
+    block.type === 'text' ? { ...block, text: redactor.redactString(block.text) } : block,
+  );
   // Rescan after redaction: redactString's single ordered replacement pass
   // can, in composition, still leave or synthesize a registered secret in
   // its own output (e.g. an earlier, longer needle's replacement text can go
@@ -94,7 +103,11 @@ const scanAndRedact = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOu
   // throwing, downgrades the whole outcome to the same generic boundary
   // error as the structuredContent branch above, rather than ever returning
   // text that still matches a registered secret.
-  if (redactedContent.some((block) => scanForSecretSafely(redactor, block.text))) {
+  if (
+    redactedContent.some(
+      (block) => block.type === 'text' && scanForSecretSafely(redactor, block.text),
+    )
+  ) {
     return withheld(outcome);
   }
   return carryOutcomeTag(outcome, {

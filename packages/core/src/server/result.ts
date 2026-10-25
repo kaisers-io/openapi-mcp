@@ -4,9 +4,16 @@ import type { CallEffect } from './effect.ts';
 // needs WITHOUT importing the SDK — server/sdk/protocol.ts is the only
 // place that ever imports the SDK's own CallToolResult type and maps this
 // onto it.
+export type TextBlock = { type: 'text'; text: string };
+// An image an upstream returned (#14): base64 bytes and their media type.
+// Only ever after a text block, so code that reads or amends the first
+// block always meets text.
+export type ImageBlock = { type: 'image'; data: string; mimeType: string; text?: undefined };
+export type ContentBlock = TextBlock | ImageBlock;
+
 export type ToolCallOutcome = {
   isError: boolean;
-  content: readonly { type: 'text'; text: string }[];
+  content: readonly ContentBlock[];
   structuredContent?: Record<string, unknown>;
   // Result metadata, mapped onto CallToolResult `_meta`. Used for
   // machine-readable details of an ERROR result: structuredContent must

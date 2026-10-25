@@ -660,7 +660,7 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
 const withProjectionHint = (outcome: ToolCallOutcome, opts: MapResponseOptions): ToolCallOutcome =>
   opts.projectable === true &&
   opts.fields === undefined &&
-  outcome.content[0]?.text.endsWith(TRUNCATION_MARKER) === true
+  outcome.content[0]?.text?.endsWith(TRUNCATION_MARKER) === true
     ? {
         ...outcome,
         content: [

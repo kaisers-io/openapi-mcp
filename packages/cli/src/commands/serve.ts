@@ -1,5 +1,6 @@
 import type { Command } from '@commander-js/extra-typings';
 import { AUTO_DISCOVER_THRESHOLD } from '@kaisers-io/openapi-mcp-core';
+import { DEFAULT_IMAGE_DIR_MAX_BYTES } from '../image-options.ts';
 import { registerApiOptions } from '../api-options.ts';
 import { emitError } from '../output.ts';
 import { registerSpecOptions } from '../spec-options.ts';
@@ -74,6 +75,16 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       '--tool-mode <mode>',
       `per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above ${String(AUTO_DISCOVER_THRESHOLD)} operations)`,
       'per-operation',
+    )
+    .option(
+      '--image-responses <mode>',
+      'an upstream PNG, JPEG, GIF or WebP image: off (an unsupported media type, the default), inline (returned as an MCP image) or file (saved under ~/.kaisers-io/openapi-mcp/images/, and its path returned)',
+      'off',
+    )
+    .option(
+      '--image-dir-max-bytes <size>',
+      'with --image-responses file: the most the image folder of this API may hold; the oldest saved images go first',
+      DEFAULT_IMAGE_DIR_MAX_BYTES,
     )
     .option(
       '--output-schema <form>',

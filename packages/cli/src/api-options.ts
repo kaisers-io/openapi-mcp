@@ -14,6 +14,9 @@ import type { CliContext } from './context.ts';
 import { resolveOAuthConfig } from './oauth-options.ts';
 import type { OAuthCmdOpts, ResolvedOAuthConfig } from './oauth-options.ts';
 
+// The image options belong to the API side too (#14)
+export { parseImageResponseMode, resolveImageResponses } from './image-options.ts';
+
 const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,
   value,

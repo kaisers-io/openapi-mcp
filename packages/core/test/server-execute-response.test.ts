@@ -540,8 +540,8 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     const outcome = response(200, 'text/plain', 'a'.repeat(100));
     const result = mapResponse(defaultOpts({ outcome, maxTextBytes: 10 }));
     expect(result.isError).toBe(false);
-    expect(result.content[0]?.text.endsWith(TRUNCATION_MARKER)).toBe(true);
-    expect(result.content[0]?.text.length).toBeLessThan(100);
+    expect(result.content[0]?.text?.endsWith(TRUNCATION_MARKER)).toBe(true);
+    expect(result.content[0]?.text?.length).toBeLessThan(100);
   });
 
   it('truncates on a valid UTF-8 boundary rather than splitting a multi-byte codepoint', () => {
