@@ -145,6 +145,11 @@ export const withholdRemoved = (
       method: named.operation.method,
       path: named.operation.path,
       reason: WITHHELD_REASON,
+      ...(named.operation.operationId === undefined
+        ? {}
+        : { operationId: named.operation.operationId }),
+      ...(named.operation.tags.length === 0 ? {} : { tags: named.operation.tags }),
+      toolName: named.toolName,
     })),
     warning: `${String(removed.length)} operation(s) removed in the pending candidate spec are withheld until "openapi-mcp cache promote": ${listed.join(', ')}${
       more > 0 ? `, and ${String(more)} more` : ''

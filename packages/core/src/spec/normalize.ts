@@ -1,42 +1,25 @@
 import { SPEC_BUDGETS } from './budgets.ts';
 import { mergeParameters } from './merge-parameters.ts';
 import type { Resolve } from './merge-parameters.ts';
+import {
+  additionalMethodProblem,
+  HTTP_METHODS,
+  METHOD_NAME_MAX_LENGTH,
+  NEVER_EXPOSED_METHODS,
+} from './methods.ts';
+import type { AdditionalMethod, OperationMethod } from './methods.ts';
 import { conflictReason, resolvePathItem } from './path-item.ts';
 import type { PathItemView } from './path-item.ts';
 import { isRecord, resolveShallowOrSelf } from './refs.ts';
+import { withProvenance } from './provenance.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import { extractSecuritySchemes, parseSecurityRequirements } from './security.ts';
 import type { SecurityRequirement, SecurityScheme } from './security.ts';
 import { extractServerUrl } from './server-url.ts';
 import type { OpenapiVersion } from './validate.ts';
 
-// `query` (OpenAPI 3.2, RFC 10008) last, so specs without it keep their order
-export const HTTP_METHODS = ['get', 'put', 'post', 'delete', 'patch', 'head', 'query'] as const;
-export type HttpMethod = (typeof HTTP_METHODS)[number];
-
-// OPTIONS and TRACE operations are never exposed
-const NEVER_EXPOSED_METHODS = ['options', 'trace'] as const;
-
-// A method from OpenAPI 3.2 `additionalOperations` (issue #33), sent exactly
-// as declared. Only upper-case names are mapped, so every place that shows,
-// filters or sends `method.toUpperCase()` sees the declared name unchanged.
-export type AdditionalMethod = Uppercase<string>;
-export type OperationMethod = HttpMethod | AdditionalMethod;
-
-// Methods `additionalOperations` may not declare: those with their own Path
-// Item field (OAS 3.2.1 §4.9.1), and the never-exposed ones. CONNECT opens a
-// tunnel and TRACK echoes the request like TRACE; fetch refuses all three.
-const RESERVED_ADDITIONAL_METHODS: ReadonlySet<string> = new Set([
-  ...HTTP_METHODS.map((method) => method.toUpperCase()),
-  ...NEVER_EXPOSED_METHODS.map((method) => method.toUpperCase()),
-]);
-const NEVER_EXPOSED_ADDITIONAL_METHODS: ReadonlySet<string> = new Set(['CONNECT', 'TRACK']);
-
-// RFC 9110 §9.1: a method is a token (1*tchar)
-const METHOD_TOKEN_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
-
-// A method name from `additionalOperations` is spec text, shown in omissions
-const METHOD_NAME_MAX_LENGTH = 32;
+export { HTTP_METHODS } from './methods.ts';
+export type { AdditionalMethod, HttpMethod, OperationMethod } from './methods.ts';
 
 const TITLE_MAX_LENGTH = 256;
 
@@ -60,6 +43,11 @@ export type OmittedOperation = {
   method: string;
   path: string;
   reason: string;
+  // Provenance for filter diagnostics (issue #41), never serialized as part
+  // of an omission: the operationId, tags and tool name it would have had
+  operationId?: string;
+  tags?: readonly string[];
+  toolName?: string;
 };
 
 export type NormalizedSpec = {
@@ -149,30 +137,6 @@ const buildOperation = (
   };
 };
 
-// Why an `additionalOperations` key is not mapped, or undefined when it is.
-// The official meta-schema checks the token and the fixed-field names, but a
-// cached document is not revalidated, so both are checked here as well.
-const additionalMethodProblem = (name: string): string | undefined => {
-  if (!METHOD_TOKEN_RE.test(name)) {
-    return 'additionalOperations key is not a valid HTTP method name';
-  }
-  // Every registered method is far shorter (IANA HTTP Method Registry)
-  if (name.length > METHOD_NAME_MAX_LENGTH) {
-    return `additionalOperations method names longer than ${METHOD_NAME_MAX_LENGTH} characters are not supported`;
-  }
-  const upper = name.toUpperCase();
-  if (NEVER_EXPOSED_ADDITIONAL_METHODS.has(upper)) {
-    return `${upper} operations are never exposed`;
-  }
-  if (name !== upper) {
-    return 'additionalOperations methods that are not upper case are not supported';
-  }
-  if (RESERVED_ADDITIONAL_METHODS.has(upper)) {
-    return `${upper} must be declared by its own Path Item field, not in additionalOperations`;
-  }
-  return undefined;
-};
-
 // Per-path slice of what normalizeSpec's old nested loop did in one iteration
 // of its outer `for (const [path, item] of ...)`: everything this returns for
 // a single path, in the SAME internal order (never-exposed omissions first,
@@ -192,11 +156,16 @@ const buildPathEntries = (
   const pathHasServers = item['servers'] !== undefined;
   const neverExposed: OmittedOperation[] = NEVER_EXPOSED_METHODS.filter(
     (method) => item[method] !== undefined,
-  ).map((method) => ({
-    method: method.toUpperCase(),
-    path,
-    reason: `${method.toUpperCase()} operations are never exposed`,
-  }));
+  ).map((method) =>
+    withProvenance(
+      {
+        method: method.toUpperCase(),
+        path,
+        reason: `${method.toUpperCase()} operations are never exposed`,
+      },
+      item[method],
+    ),
+  );
   const perMethod = HTTP_METHODS.flatMap((method): (OperationRecord | OmittedOperation)[] => {
     const op = item[method];
     if (op === undefined) {
@@ -220,9 +189,10 @@ const buildPathEntries = (
     }
     return [buildOperation(method, path, op, pathParameters, resolve)];
   });
-  const additional = Object.entries(
+  const declared = Object.entries(
     isRecord(item['additionalOperations']) ? item['additionalOperations'] : {},
-  ).map(([name, op]): OperationRecord | OmittedOperation => {
+  );
+  const additional = declared.map(([name, op]): OperationRecord | OmittedOperation => {
     const reason = additionalMethodProblem(name);
     if (reason !== undefined) {
       return { method: sanitizeSpecText(name, METHOD_NAME_MAX_LENGTH), path, reason };
@@ -239,7 +209,10 @@ const buildPathEntries = (
     }
     return buildOperation(name as AdditionalMethod, path, op, pathParameters, resolve);
   });
-  const entries = [...perMethod, ...additional];
+  const entries = [
+    ...perMethod.map((entry) => withProvenance(entry, item[entry.method.toLowerCase()])),
+    ...additional.map((entry, index) => withProvenance(entry, declared[index]?.[1])),
+  ];
   return {
     operations: entries.filter((entry): entry is OperationRecord => !('reason' in entry)),
     omitted: [

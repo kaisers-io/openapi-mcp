@@ -243,4 +243,26 @@ describe('buildSnapshot', () => {
       ]),
     );
   });
+
+  // Issue #41: the status tool counts every operation that is not a tool
+  it('counts the operations that are not tools by why, with the omitted ones by default', () => {
+    const built: BuildToolsResult = {
+      tools: [],
+      omitted: [{ method: 'POST', path: '/things', reason: 'unrepresentable request body' }],
+    };
+    const counts = {
+      denied: 2,
+      'not-allowed': 1,
+      'read-only-default': 0,
+      omitted: 1,
+      withheld: 0,
+    };
+    expect(buildSnapshot(built, pipelineOf()).meta.notExposedCounts).toEqual({
+      ...counts,
+      denied: 0,
+      'not-allowed': 0,
+    });
+    const snapshot = buildSnapshot(built, { ...pipelineOf(), notExposedCounts: counts });
+    expect(snapshot.meta.notExposedCounts).toEqual(counts);
+  });
 });

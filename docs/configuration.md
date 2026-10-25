@@ -55,7 +55,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--spec <url\|file>` | no | OpenAPI spec source, JSON or YAML | required |
 | `--allow <pattern>` | yes | whitelist pattern | `[]` (read-only default applies) |
 | `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
-| `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
+| `--strict-filters` | no | exit with an error instead of a warning on dead patterns, and on a tool whose path overlaps one that is not exposed | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
 | `--timeout <duration>` | no | spec fetch timeout; also each authorization-server metadata and JWKS fetch in `--http-auth oauth` mode | `30s` |
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
@@ -330,9 +330,8 @@ Notes:
   exposes: a pattern that matches none of them, for example because it names an operation the
   filters exclude or that is omitted as unsupported, is a dead pattern (a warning, or an error under
   `--strict-filters`). For such an operation the warning says it is not exposed, rather than
-  suggesting a similar tool. An operation omitted while the spec is loaded (a cookie parameter,
-  callbacks, a per-operation `servers` override) keeps only its method and path, so only a
-  `METHOD /path` pattern is recognized as naming it. A pattern that matches only tools without an
+  suggesting a similar tool, also when the pattern names an omitted operation by its
+  operationId or tags. A pattern that matches only tools without an
   output schema (for example operations with a `default` response, see above) changes nothing;
   a warning says so, but it is not an error. Startup names the tools that lost their output schema.
 
@@ -527,7 +526,7 @@ preview it.
 | `--spec <url\|file>` | no | OpenAPI spec source, JSON or YAML | required |
 | `--allow <pattern>` | yes | whitelist pattern | `[]` (read-only default applies) |
 | `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
-| `--strict-filters` | no | exit with an error instead of a warning on dead patterns | off |
+| `--strict-filters` | no | exit with an error instead of a warning on dead patterns, and on a tool whose path overlaps one that is not exposed | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
 | `--timeout <duration>` | no | spec fetch timeout | `30s` |
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
@@ -557,6 +556,32 @@ withheld because a response `pattern` has nested quantifiers (see
 `outputSchemaWithheld` with the sentence its description starts with. A tool whose output
 schema `--omit-output-schema` removed ends with `[output schema omitted]` and carries
 `outputSchemaOptedOut: true`.
+
+Every operation of the spec is either a tool or reported (issue #41). Both `tools` and `serve`
+print one summary line, for example `operations not exposed: 1 excluded by --deny, 1 matched by
+no --allow, 2 omitted as not supported`. The `--json` envelope lists every one under
+`data.notExposed`, each with `method`, `path`, `operationId` and `toolName` when it has them,
+`tags`, a `decision` and a `reason`:
+
+| `decision` | When |
+|---|---|
+| `denied` | a `--deny` pattern matches it; `pattern` names the first one |
+| `not-allowed` | `--allow` is given and no pattern matches it, for example an operation without an `operationId` under `--allow '**'` (an operationId glob) |
+| `read-only-default` | no `--allow` is given and it is not a read (`GET`, `HEAD`, `QUERY`) |
+| `omitted` | it is not supported; the reason says why (also listed under `data.omitted`, unchanged) |
+| `withheld` | a pending candidate spec removed it, until `openapi-mcp cache promote` |
+
+`data.overlaps` lists each exposed operation whose path can match the same URL as one that is
+not exposed, so that request authorization refuses those URLs (see
+[security](security.md#request-authorization)); `data.overlapCheckComplete` is `false` when the
+check ran out of its work budget, which is a warning, and an error under `--strict-filters`. The `openapi_mcp_status` tool reports the same counts under
+`notExposedCounts`.
+
+A dead `--allow` or `--deny` pattern that names only an operation omitted as not supported, by
+its operationId, tags, or method and path, says so instead of suggesting another operation. A
+method that only such an operation declares (an OpenAPI 3.2 `SEARCH` with a `servers`
+override) can be named in a pattern. The 512-tool limit counts the tools that are served, after
+operations a pending candidate removed are withheld.
 
 When the exposed operations declare `security` requirements, `tools` prints one `auth:` line
 per referenced `components.securitySchemes` entry naming the credential it expects and the
@@ -732,7 +757,7 @@ openapi-mcp --json doctor
 | `0` | success | |
 | `1` | unexpected error; also the start-up guard for an unsupported platform or Node version | |
 | `2` | usage error | unknown flag, invalid flag value, missing `--base-url`, `--http` without `--http-token-env` |
-| `3` | validation error | invalid spec, `--strict-filters` with a dead pattern, malformed HTTP token, refused egress target |
+| `3` | validation error | invalid spec, `--strict-filters` with a dead pattern or an overlapping tool, malformed HTTP token, refused egress target |
 | `4` | not found | unreadable spec file, missing cache entry, `cache unlock` on an entry without a lock |
 | `5` | conflict | cache lock held by another process, `cache promote --hash` mismatch |
 

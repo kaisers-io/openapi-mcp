@@ -267,6 +267,13 @@ const buildTransformSnapshot = (): ServerSnapshot => {
     omittedReasons: [],
     acceptedContentHash: 'h',
     deadPatternCount: 0,
+    notExposedCounts: {
+      denied: 0,
+      'not-allowed': 0,
+      'read-only-default': 0,
+      omitted: 0,
+      withheld: 0,
+    },
   };
   return {
     toolMode: 'per-operation',

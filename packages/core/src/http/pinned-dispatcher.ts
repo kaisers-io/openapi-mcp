@@ -169,7 +169,11 @@ export type PinnedErrorReason =
 // to an operation other than the tool's own, or a redirect target is not an
 // exposed operation of the API, or leaves the API without the operator's
 // opt-in. Never retried: the same request resolves the same way.
-export type HopRefusal = 'route-refused' | 'redirect-refused' | 'redirect-offsite';
+export type HopRefusal =
+  | 'route-refused'
+  | 'route-overlap'
+  | 'redirect-refused'
+  | 'redirect-offsite';
 
 export type PinnedResponse = {
   kind: 'response';

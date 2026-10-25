@@ -1,5 +1,6 @@
 import {
   buildTools,
+  publicOmission,
   runSpecPipeline,
   sanitizeSpecText,
   summarizeSecurity,
@@ -10,6 +11,7 @@ import type { GeneratedTool } from '@kaisers-io/openapi-mcp-core';
 import { getGlobalOpts, wrapAction } from '../output.ts';
 import {
   deadPatternMessage,
+  exposureReport,
   omissionWarningLines,
   parseSpecPipelineArgs,
   PATH_DISPLAY_MAX,
@@ -88,7 +90,10 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           cmdOpts.strictFilters === true,
         );
         const { built } = optOut;
-        const allOmitted = [...result.spec.omitted, ...built.omitted];
+        const exposure = exposureReport(result, built, cmdOpts.strictFilters === true);
+        const allOmitted = [...result.spec.omitted, ...built.omitted].map((omission) =>
+          publicOmission(omission),
+        );
         const tools: ToolRow[] = built.tools.map(toToolRow);
         // Which credential the exposed operations expect, per referenced
         // security scheme — the operator otherwise has to guess the header.
@@ -109,6 +114,10 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           toolCount: tools.length,
           tools,
           omitted: allOmitted,
+          // Every operation that is not a tool, with its reason (issue #41)
+          notExposed: exposure.notExposed,
+          overlaps: exposure.overlaps,
+          overlapCheckComplete: exposure.overlapCheckComplete,
           deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns],
           security,
         };
@@ -144,6 +153,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
             ...deadMessages,
             ...omissionWarningLines(allOmitted),
             ...optOut.warnings,
+            ...exposure.warnings,
           ],
         };
       });

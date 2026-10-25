@@ -182,3 +182,20 @@ export const templateReadings = (segments: readonly Segment[]): Segment[][] => {
   // Keyed by their tokens, so equal readings count once
   return [...new Map(readings.map((reading) => [JSON.stringify(reading), reading])).values()];
 };
+
+// Percent-decoding for comparison only: an upstream decodes before routing,
+// so `%65xport` is `export`. A malformed sequence is kept as written.
+export const decodeSegment = (segment: string): string => {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+};
+
+// Leading `/` gives an empty first segment; one trailing `/` is ignored, so
+// `/orders/` resolves like `/orders`
+export const splitPath = (path: string): string[] => {
+  const segments = path.split('/');
+  return segments.length > 2 && segments.at(-1) === '' ? segments.slice(0, -1) : segments;
+};

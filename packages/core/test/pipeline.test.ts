@@ -152,11 +152,17 @@ describe('runSpecPipeline — file sources', () => {
       `list_pets_${suffix('GET', '/pets/all')}`,
     ]);
     expect(result.spec.omitted).toEqual([
-      { method: 'TRACE', path: '/admin', reason: 'TRACE operations are never exposed' },
+      {
+        method: 'TRACE',
+        path: '/admin',
+        reason: 'TRACE operations are never exposed',
+        operationId: 'adminTrace',
+      },
       {
         method: 'GET',
         path: '/admin',
         reason: 'per-operation servers overrides are not supported',
+        operationId: 'adminGet',
       },
     ]);
     // The YAML alias resolved to a copy of the anchored schema

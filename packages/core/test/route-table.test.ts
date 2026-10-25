@@ -79,7 +79,8 @@ describe('createRouteTable — no ranking between templates', () => {
   ]);
 
   it('refuses a request two templates share when one of them is excluded', () => {
-    expect(table.authorize('GET', '/users/me', routeKey('GET', '/users/{id}'))).toBe('not-exposed');
+    // The tool's own operation, and one that is not exposed (issue #41)
+    expect(table.authorize('GET', '/users/me', routeKey('GET', '/users/{id}'))).toBe('shared');
     expect(table.authorize('GET', '/users/7', routeKey('GET', '/users/{id}'))).toBeUndefined();
   });
 
@@ -95,6 +96,7 @@ describe('createRouteTable — letter case', () => {
       route('GET', '/Reports/{id}'),
       route('GET', '/reports/all', false),
     ]);
+    // That URL is the other operation by case, not a shared one (issue #41)
     expect(table.authorize('GET', '/Reports/all', routeKey('GET', '/Reports/{id}'))).toBe(
       'not-exposed',
     );
@@ -162,7 +164,7 @@ describe('createRouteTable — an excluded path that canonicalizes onto another'
       route('GET', '/denied'),
       route('GET', '/a%2Fb/%2e%2e/denied', false),
     ]);
-    expect(table.authorize('GET', '/denied', routeKey('GET', '/denied'))).toBe('not-exposed');
+    expect(table.authorize('GET', '/denied', routeKey('GET', '/denied'))).toBe('shared');
     const authorize = hopAuthorizer(
       table,
       new URL('https://api.example.test/'),
@@ -170,7 +172,7 @@ describe('createRouteTable — an excluded path that canonicalizes onto another'
       false,
     );
     expect(authorize(new URL('/denied', 'https://api.example.test'), 'GET', 0)).toBe(
-      'route-refused',
+      'route-overlap',
     );
   });
 });
@@ -195,14 +197,14 @@ describe('readings — dot segments before or after merging slashes', () => {
 
   it('registers an excluded path that resolves to the root', () => {
     const table = createRouteTable([route('GET', '/'), route('GET', '/x/..', false)]);
-    expect(table.authorize('GET', '/', routeKey('GET', '/'))).toBe('not-exposed');
+    expect(table.authorize('GET', '/', routeKey('GET', '/'))).toBe('shared');
     const authorize = hopAuthorizer(
       table,
       new URL('https://api.example.test/'),
       routeKey('GET', '/'),
       false,
     );
-    expect(authorize(new URL('/', 'https://api.example.test'), 'GET', 0)).toBe('route-refused');
+    expect(authorize(new URL('/', 'https://api.example.test'), 'GET', 0)).toBe('route-overlap');
   });
 
   it('registers an excluded path in both orders', () => {
@@ -223,6 +225,22 @@ describe('createRouteTable — HEAD through GET', () => {
       'not-exposed',
     );
     expect(table.authorize('HEAD', '/items/7', routeKey('HEAD', '/items/{id}'))).toBeUndefined();
+  });
+
+  // Review of #41: the GET reading of a HEAD tool's own path is shared
+  it('reports a HEAD tool whose own path an excluded GET template shares', () => {
+    const table = createRouteTable([
+      route('HEAD', '/orders/me'),
+      route('GET', '/orders/{id}', false),
+    ]);
+    expect(table.authorize('HEAD', '/orders/me', routeKey('HEAD', '/orders/me'))).toBe('shared');
+    // A concrete GET of the same path wins, so nothing is refused
+    const withGet = createRouteTable([
+      route('HEAD', '/orders/me'),
+      route('GET', '/orders/me'),
+      route('GET', '/orders/{id}', false),
+    ]);
+    expect(withGet.authorize('HEAD', '/orders/me', routeKey('HEAD', '/orders/me'))).toBeUndefined();
   });
 });
 

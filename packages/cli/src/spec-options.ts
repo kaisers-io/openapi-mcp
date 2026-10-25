@@ -26,6 +26,8 @@ import type {
 import type { CliContext } from './context.ts';
 import { outputSchemaOptOutWarningLines } from './output-schema-opt-out.ts';
 
+export { exposureReport } from './exposure-report.ts';
+
 const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,
   value,
@@ -48,7 +50,11 @@ export const deadPatternMessage = (dead: DeadPattern): string => {
   const scope = dead.flag === 'omit-output-schema' ? 'exposed operation' : 'operation';
   const base = `--${dead.flag} "${raw}" matches no ${scope}`;
   if (dead.notExposed === true) {
-    return `${base}; it names only operations that are filtered out or omitted`;
+    // --allow and --deny see every operation the filters decide on, so for
+    // them only one omitted as not supported is not exposed (issue #41)
+    return dead.flag === 'omit-output-schema'
+      ? `${base}; it names only operations that are filtered out or omitted`
+      : `${base}; it names only operations that are omitted as not supported`;
   }
   return dead.suggestion === undefined
     ? base
@@ -180,7 +186,10 @@ export const registerSpecOptions = (
       collect,
       [] as readonly string[],
     )
-    .option('--strict-filters', 'exit with an error instead of a warning on dead patterns')
+    .option(
+      '--strict-filters',
+      'exit with an error instead of a warning on dead patterns and on tools whose path overlaps an excluded one',
+    )
     .option(
       '--spec-header-env <Header=ENV>',
       'auth header for the spec fetch, value read from env (repeatable)',

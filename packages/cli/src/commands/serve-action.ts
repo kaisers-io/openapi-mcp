@@ -53,6 +53,7 @@ import type { CliContext } from '../context.ts';
 import { emitError, emitWarnings } from '../output.ts';
 import {
   deadPatternMessage,
+  exposureReport,
   omissionWarningLines,
   parseSpecPipelineArgs,
   nullableOption,
@@ -502,8 +503,13 @@ export const runServe = async (
       cmdOpts.strictFilters === true,
     );
     const { built } = optOut;
+    const exposure = exposureReport(result, built, cmdOpts.strictFilters === true);
     // The status tool counts the --omit-output-schema dead patterns too
-    const pipeline = { ...result, deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns] };
+    const pipeline = {
+      ...result,
+      deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns],
+      notExposedCounts: exposure.counts,
+    };
     const snapshot = buildSnapshot(built, pipeline, {
       toolMode: resolveToolMode(requestedToolMode, built.tools.length),
       compactOutputSchemas,
@@ -705,6 +711,7 @@ export const runServe = async (
       ...result.deadPatterns.map((dead) => deadPatternMessage(dead)),
       ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
       ...optOut.warnings,
+      ...exposure.warnings,
       // Exposed operations whose `security` requirement no configured
       // header satisfies would only ever 401 — say so, with the flag that
       // fixes it, before the first call instead of after it.

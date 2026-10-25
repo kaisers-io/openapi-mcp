@@ -60,8 +60,9 @@ export const hopAuthorizer = (
       );
       return verdict ?? (reached ? refused : undefined);
     }
-    if (routes.authorize(method, written, hop === 0 ? bound : undefined, work) !== undefined) {
-      return refused;
+    const own = routes.authorize(method, written, hop === 0 ? bound : undefined, work);
+    if (own !== undefined) {
+      return own === 'shared' ? 'route-overlap' : refused;
     }
     // A reading that leaves the API (an encoded `..` climbing out) is off the
     // API; one that stays must not reach an excluded operation

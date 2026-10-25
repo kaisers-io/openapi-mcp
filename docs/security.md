@@ -314,6 +314,17 @@ reached through a tool's arguments or through a redirect (issue #40):
   a reading that climbs out of the base path counts as leaving the API.
 - Hop 0 must resolve to the tool's own operation. `getItem` with `id: "export"` resolves to
   `GET /items/export`; when that is another operation, the call fails and nothing is sent.
+  When it resolves to the tool's own operation and also to one that is not exposed (two
+  templates that share the URL), the call fails too, and the error says so instead of
+  blaming the arguments.
+- Startup names each exposed tool whose path can match the same URL as an operation that is
+  not exposed (issue #41): `tool listOrderItems (GET /orders/{orderId}/items): a request that
+  also matches GET /orders/{orderId}/{section}, which is not exposed, is refused`. It is found
+  on the templates themselves, letter case and the readings below included, not by trying
+  sample values. Under `--strict-filters` it is an error, as is a check that ran out of its
+  work budget (a hostile spec), since that cannot show there is none. An excluded concrete path inside an
+  exposed template (`/items/export` under `/items/{id}`) is not reported: that one URL is the
+  other operation. `tools --json` lists every such pair under `overlaps`.
 - A `HEAD` request also counts as `GET`, since a server may answer it through its GET
   handler: an excluded GET operation for the path refuses it.
 - A redirect must resolve to an exposed operation with the method the hop is sent with (a

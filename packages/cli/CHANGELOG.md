@@ -134,6 +134,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every operation that is not a tool is reported, with its reason (#41).** Operations left
+  out by `--allow`, `--deny` or the read-only default had no record at all, and an operation
+  without an `operationId` disappeared under `--allow '**'` without a trace. `tools --json`
+  now lists every operation that is not a tool under `notExposed`, with its decision and
+  reason; `tools` and `serve` print one summary line, and `openapi_mcp_status` reports the
+  counts under `notExposedCounts`. `omitted` keeps its shape.
+- **A tool that request authorization refuses for some URLs is named at startup (#41).**
+  When an exposed template and one that is not exposed can match the same URL
+  (`/orders/{orderId}/items` and `/orders/{orderId}/{section}`), those calls are refused,
+  because an upstream that routes in declaration order could reach the excluded one. That
+  stays, but startup now names the pair (an error under `--strict-filters`), `tools --json`
+  lists it under `overlaps`, and the tool error no longer blames the arguments.
+- **Dead patterns that name an omitted operation (#41).** A pattern that names an operation
+  omitted as not supported, by operationId or tag, got a "closest" suggestion for a different
+  operation; it now says the operation is not supported. A `METHOD /path` pattern may name a
+  method only an omitted operation declares (an OpenAPI 3.2 `SEARCH` with a `servers`
+  override), which used to stop the start.
+- **The tool limit counts the tools that are served (#41).** It was checked before
+  operations a pending candidate removed were withheld, so a start could be refused for
+  tools the server would never expose.
 - **An exposed tool could reach an operation the filters exclude (#40).** The request was
   built from the tool's own path template, but its arguments or an upstream redirect could
   turn it into another operation: `getItem` with `id: "export"` sent `GET /items/export`

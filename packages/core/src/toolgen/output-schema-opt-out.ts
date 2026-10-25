@@ -1,6 +1,7 @@
-import { assertKnownMethods, deadPatternsFor, matchesOperation } from '../filter/engine.ts';
+import { assertKnownMethods, deadPatternsWithOmitted, omittedTargets } from '../filter/apply.ts';
+import { matchesOperation } from '../filter/engine.ts';
 import type { DeadPattern } from '../filter/engine.ts';
-import { createMatchBudget, globMatches } from '../filter/pattern.ts';
+import { createMatchBudget } from '../filter/pattern.ts';
 import type { FilterPattern, MatchBudget } from '../filter/pattern.ts';
 import type { NormalizedSpec } from '../spec/normalize.ts';
 import type { GeneratedTool } from './build.ts';
@@ -47,40 +48,24 @@ export const applyOutputSchemaOptOut = (
   }
   // A method is also declared by an operation normalization omitted (an
   // OpenAPI 3.2 `SEARCH` with a `servers` override, say), so naming it is a
-  // dead pattern below rather than a usage error. An omitted name that is not
-  // upper case was never a method a pattern can name.
-  const omittedMethods = spec.omitted.filter(
-    (omission) => omission.method === omission.method.toUpperCase(),
-  );
-  assertKnownMethods(patterns, [...spec.operations, ...omittedMethods]);
+  // dead pattern below rather than a usage error
+  const omitted = omittedTargets(spec.omitted);
+  assertKnownMethods(patterns, [...spec.operations, ...omitted]);
   const optedOut = tools.map((tool) =>
     patterns.some((pattern) => matchesOperation(pattern, tool.operation, budget))
       ? withoutOutputSchema(tool)
       : tool,
   );
   // Every pattern is checked on its own, so one that overlaps an earlier
-  // match is not reported dead
-  const records = tools.map((tool) => tool.operation);
-  const byRaw = new Map(patterns.map((pattern) => [pattern.raw, pattern]));
-  // A pattern naming an operation that is not exposed gets that reason
-  // instead of a suggestion, which would point at an unrelated tool. An
-  // operation normalization omitted keeps only its method and path, so only a
-  // METHOD /path pattern can be matched against it.
-  const namesUnexposed = (pattern: FilterPattern): boolean =>
-    spec.operations.some((op) => matchesOperation(pattern, op, budget)) ||
-    (pattern.kind === 'methodPath' &&
-      spec.omitted.some(
-        (omission) =>
-          omission.method === pattern.method &&
-          globMatches(pattern.compiled, omission.path, budget),
-      ));
-  const deadPatterns = deadPatternsFor(patterns, 'omit-output-schema', records, budget).map(
-    (dead) => {
-      const pattern = byRaw.get(dead.raw);
-      return pattern !== undefined && namesUnexposed(pattern)
-        ? { raw: dead.raw, flag: dead.flag, notExposed: true as const }
-        : dead;
-    },
+  // match is not reported dead. A pattern naming an operation that is not
+  // exposed (filtered out, or omitted with its provenance) gets that reason
+  // instead of a suggestion, which would point at an unrelated tool.
+  const deadPatterns = deadPatternsWithOmitted(
+    patterns,
+    'omit-output-schema',
+    tools.map((tool) => tool.operation),
+    [...spec.operations, ...omitted],
+    budget,
   );
   const ineffectivePatterns = patterns
     .filter((pattern) => {

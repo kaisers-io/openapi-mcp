@@ -134,6 +134,7 @@ const PINNED_OUTCOME: Readonly<Record<PinnedErrorReason, CallOutcomeKind>> = {
   'redirect-write-method': 'response_error',
   'redirect-invalid': 'response_error',
   'route-refused': 'refused',
+  'route-overlap': 'refused',
   'redirect-refused': 'response_error',
   'redirect-offsite': 'response_error',
 };
