@@ -51,13 +51,13 @@ const SPEC = {
 };
 const DENY = [
   '--allow',
-  '**',
+  'path:/**',
   '--deny',
-  'GET /items/export',
+  'route:GET /items/export',
   '--deny',
-  'GET /denied',
+  'route:GET /denied',
   '--deny',
-  'getNotePart',
+  'operationId:getNotePart',
 ];
 
 describe('serve — request authorization (issue #40)', () => {

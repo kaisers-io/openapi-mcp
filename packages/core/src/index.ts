@@ -204,6 +204,7 @@ export type {
 export { closestMatch, matchesOperation } from './filter/engine.ts';
 export { applyFilters } from './filter/apply.ts';
 export type { FilterDecision, NotExposedDecision, NotExposedOperation } from './filter/apply.ts';
+export type { CaseCollision } from './filter/case-collisions.ts';
 export type { DeadPattern, DeadPatternFlag, FilterTarget } from './filter/engine.ts';
 export { applyOutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
 export { createRouteTable, routeEntriesFor, routeKey } from './server/execute/route-table.ts';

@@ -1,10 +1,18 @@
-import { assertKnownMethods, deadPatternsWithOmitted, omittedTargets } from '../filter/apply.ts';
+import {
+  assertKnownMethods,
+  deadPatternsWithOmitted,
+  omittedTargets,
+  targetOf,
+} from '../filter/apply.ts';
+import { caseCollisionsFor } from '../filter/case-collisions.ts';
+import type { CaseCollision } from '../filter/case-collisions.ts';
 import { matchesOperation } from '../filter/engine.ts';
 import type { DeadPattern } from '../filter/engine.ts';
 import { createMatchBudget } from '../filter/pattern.ts';
 import type { FilterPattern, MatchBudget } from '../filter/pattern.ts';
 import type { NormalizedSpec } from '../spec/normalize.ts';
 import type { GeneratedTool } from './build.ts';
+import { assignToolNames } from './naming.ts';
 
 export type OutputSchemaOptOut = {
   tools: readonly GeneratedTool[];
@@ -12,6 +20,7 @@ export type OutputSchemaOptOut = {
   // Patterns that match only tools without an output schema, so they change
   // nothing (review of #13). Not dead: the tools exist.
   ineffectivePatterns: readonly string[];
+  caseCollisions: readonly CaseCollision[];
 };
 
 // The derived output schema and the markers that describe it go; the
@@ -44,18 +53,25 @@ export const applyOutputSchemaOptOut = (
   budget: MatchBudget = createMatchBudget(),
 ): OutputSchemaOptOut => {
   if (patterns.length === 0) {
-    return { tools, deadPatterns: [], ineffectivePatterns: [] };
+    return { tools, deadPatterns: [], ineffectivePatterns: [], caseCollisions: [] };
   }
   // A method is also declared by an operation normalization omitted (an
   // OpenAPI 3.2 `SEARCH` with a `servers` override, say), so naming it is a
   // dead pattern below rather than a usage error
   const omitted = omittedTargets(spec.omitted);
   assertKnownMethods(patterns, [...spec.operations, ...omitted]);
-  const optedOut = tools.map((tool) =>
-    patterns.some((pattern) => matchesOperation(pattern, tool.operation, budget))
-      ? withoutOutputSchema(tool)
-      : tool,
+  // Tool names are assigned on the whole inventory, as the pipeline does
+  const inventory = assignToolNames(spec.operations).map((named) => targetOf(named));
+  const targets = tools.map((tool) =>
+    targetOf({ operation: tool.operation, toolName: tool.toolName }),
   );
+  const optedOut = tools.map((tool, index) => {
+    const target = targets[index];
+    return target !== undefined &&
+      patterns.some((pattern) => matchesOperation(pattern, target, budget))
+      ? withoutOutputSchema(tool)
+      : tool;
+  });
   // Every pattern is checked on its own, so one that overlaps an earlier
   // match is not reported dead. A pattern naming an operation that is not
   // exposed (filtered out, or omitted with its provenance) gets that reason
@@ -63,15 +79,19 @@ export const applyOutputSchemaOptOut = (
   const deadPatterns = deadPatternsWithOmitted(
     patterns,
     'omit-output-schema',
-    tools.map((tool) => tool.operation),
-    [...spec.operations, ...omitted],
+    targets,
+    [...inventory, ...omitted],
     budget,
   );
   const ineffectivePatterns = patterns
     .filter((pattern) => {
-      const matched = tools.filter((tool) => matchesOperation(pattern, tool.operation, budget));
+      const matched = tools.filter((_tool, index) => {
+        const target = targets[index];
+        return target !== undefined && matchesOperation(pattern, target, budget);
+      });
       return matched.length > 0 && matched.every((tool) => tool.outputSchema === undefined);
     })
     .map((pattern) => pattern.raw);
-  return { tools: optedOut, deadPatterns, ineffectivePatterns };
+  const caseCollisions = caseCollisionsFor(patterns, 'omit-output-schema', targets, budget);
+  return { tools: optedOut, deadPatterns, ineffectivePatterns, caseCollisions };
 };

@@ -185,7 +185,7 @@ describe('serve — stdio subprocess E2E', () => {
         // (POST) needs an explicit allow to be callable (this test needs it
         // for the 404 case below).
         '--allow',
-        '**',
+        'path:/**',
       ],
       {
         cwd: fixturesDir,
@@ -310,7 +310,7 @@ describe('serve — stdio subprocess E2E', () => {
         'http://127.0.0.1:1',
         '--trust-spec-updates',
         '--allow',
-        '**',
+        'path:/**',
       ],
       { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
     );
@@ -614,7 +614,7 @@ describe('serve — stdio subprocess E2E', () => {
         '--base-url',
         'http://127.0.0.1:1',
         '--deny',
-        'zzz-no-such-op',
+        'operationId:zzz-no-such-op',
       ],
       { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
     );
@@ -622,7 +622,7 @@ describe('serve — stdio subprocess E2E', () => {
 
     await waitFor(() => stderrLines.some((line) => line.includes('matches no operation')));
     expect(stderrLines.join('\n')).toContain(
-      'openapi-mcp: warning: --deny "zzz-no-such-op" matches no operation',
+      'openapi-mcp: warning: --deny "operationId:zzz-no-such-op" matches no operation',
     );
 
     sendModern(child, 1, 'tools/list');
@@ -680,7 +680,7 @@ describe('serve — stdio subprocess E2E', () => {
         'http://127.0.0.1:1',
         '--strict-filters',
         '--deny',
-        'noSuchOperation',
+        'operationId:noSuchOperation',
       ],
       { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
     );
@@ -1078,7 +1078,7 @@ describe('serve — upstream client behaviour (stdio subprocess)', () => {
     const port = await start();
     const { proc, stdoutLines, stderrLines } = await spawnServe(
       `http://127.0.0.1:${String(port)}/mismatch`,
-      ['--omit-output-schema', 'GET /pets'],
+      ['--omit-output-schema', 'route:GET /pets'],
     );
     sendModern(proc, 1, 'tools/list');
     sendModern(proc, 2, 'tools/call', { name: 'listPets', arguments: {} });

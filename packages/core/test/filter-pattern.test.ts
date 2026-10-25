@@ -15,71 +15,94 @@ import {
 } from '../src/index.ts';
 import type { CompiledGlob, FilterPattern } from '../src/index.ts';
 
-// Every pattern now also carries its `compiled` programme, so exact-object
-// assertions must account for it or they fail to typecheck and to match.
-// `shape` asserts the identifying fields and checks the compiled member
-// separately — the token programme has its own dedicated tests, and restating
-// it inline here would be noise.
-const shape = (raw: string): Omit<FilterPattern, 'compiled'> => {
-  const parsed = parseFilterPattern(raw);
-  expect(parsed.compiled.tokens.length).toBeGreaterThan(0);
-  const { compiled: _compiled, ...rest } = parsed;
+// The fields that identify a parsed pattern; the compiled programme has its
+// own tests below
+const shape = (raw: string): Record<string, unknown> => {
+  const { compiled: _compiled, ...rest } = parseFilterPattern(raw) as FilterPattern & {
+    compiled?: CompiledGlob;
+  };
   return rest;
 };
 
-describe('parseFilterPattern — form detection', () => {
-  it('reads a bare word as an operationId glob', () => {
-    expect(shape('readPets')).toEqual({
-      kind: 'operationId',
-      glob: 'readPets',
-      raw: 'readPets',
-    });
-  });
+const usageMessage = (raw: string): string => {
+  try {
+    parseFilterPattern(raw);
+  } catch (error) {
+    expect((error as OpenapiMcpError).code).toBe('usage');
+    return (error as OpenapiMcpError).message;
+  }
+  return expect.unreachable('expected a usage error');
+};
 
-  it('reads a wildcard word as an operationId glob', () => {
-    expect(shape('read*')).toEqual({
+// Issue #42: every pattern names its selector
+describe('parseFilterPattern — selectors', () => {
+  it('reads each selector', () => {
+    expect(shape('method:delete')).toEqual({
+      kind: 'method',
+      method: 'DELETE',
+      raw: 'method:delete',
+    });
+    expect(shape('path:/orders/**')).toEqual({
+      kind: 'path',
+      glob: '/orders/**',
+      raw: 'path:/orders/**',
+    });
+    expect(shape('route:get /orders/*')).toEqual({
+      kind: 'route',
+      method: 'GET',
+      glob: '/orders/*',
+      raw: 'route:get /orders/*',
+    });
+    expect(shape('operationId:read*')).toEqual({
       kind: 'operationId',
       glob: 'read*',
-      raw: 'read*',
+      raw: 'operationId:read*',
     });
+    expect(shape('name:get_reports')).toEqual({
+      kind: 'name',
+      glob: 'get_reports',
+      raw: 'name:get_reports',
+    });
+    expect(shape('tag:Orders')).toEqual({ kind: 'tag', glob: 'Orders', raw: 'tag:Orders' });
   });
 
-  it('reads the tag: prefix as the tag form', () => {
-    expect(shape('tag:admin*')).toEqual({
-      kind: 'tag',
-      glob: 'admin*',
-      raw: 'tag:admin*',
-    });
+  it('reads a selector keyword regardless of case', () => {
+    expect(parseFilterPattern('OperationID:x').kind).toBe('operationId');
+    expect(parseFilterPattern('TAG:x').kind).toBe('tag');
+    expect(parseFilterPattern('Method:Delete')).toMatchObject({ method: 'DELETE' });
   });
 
-  it('reads METHOD + space + path as the methodPath form', () => {
-    expect(shape('GET /users/**')).toEqual({
-      kind: 'methodPath',
-      method: 'GET',
-      glob: '/users/**',
-      raw: 'GET /users/**',
-    });
+  it('splits at the first colon only, and keeps spaces in a value', () => {
+    expect(shape('tag:a:b')).toEqual({ kind: 'tag', glob: 'a:b', raw: 'tag:a:b' });
+    expect(shape('operationId:orders:read*')).toMatchObject({ glob: 'orders:read*' });
+    expect(shape('tag:Customer Support')).toMatchObject({ glob: 'Customer Support' });
   });
 
   it('compiles each pattern once, carrying the programme on the pattern', () => {
-    // The compiled programme travels WITH the pattern so matching never
-    // recompiles per candidate string
-    const parsed = parseFilterPattern('GET /users/**');
-    expect(parsed.compiled.tokens).toEqual(compileGlob('/users/**').tokens);
+    const parsed = parseFilterPattern('route:GET /users/**');
+    expect(parsed.kind === 'route' && parsed.compiled.tokens).toEqual(
+      compileGlob('/users/**').tokens,
+    );
   });
 
-  it('accepts every exposable HTTP method', () => {
-    for (const method of ['GET', 'PUT', 'POST', 'DELETE', 'PATCH', 'HEAD']) {
-      expect(parseFilterPattern(`${method} /x`).kind).toBe('methodPath');
-    }
+  it('lets "*" cross "/" in identifiers and tags, but not in paths', () => {
+    const operationId = parseFilterPattern('operationId:repos*');
+    const path = parseFilterPattern('path:/repos*');
+    expect(operationId.kind === 'operationId' && operationId.compiled.tokens).toContain(GLOBSTAR);
+    expect(path.kind === 'path' && path.compiled.tokens).toContain(STAR);
   });
 
-  it('keeps a tag glob that itself contains a colon', () => {
-    expect(shape('tag:a:b')).toEqual({ kind: 'tag', glob: 'a:b', raw: 'tag:a:b' });
+  it('accepts a path glob that starts with a wildcard', () => {
+    expect(shape('path:**delete**')).toMatchObject({ kind: 'path', glob: '**delete**' });
   });
 
-  it('does not treat a mid-string "tag:" as the tag form', () => {
-    expect(parseFilterPattern('xtag:admin').kind).toBe('operationId');
+  // OpenAPI 3.2 `additionalOperations` (issue #33): the parser cannot know
+  // which methods the spec declares, so applyFilters checks that instead
+  it('accepts any other method token, in upper case', () => {
+    expect(parseFilterPattern('route:link /users/*')).toMatchObject({ method: 'LINK' });
+    expect(parseFilterPattern('method:version-control')).toMatchObject({
+      method: 'VERSION-CONTROL',
+    });
   });
 });
 
@@ -88,65 +111,55 @@ describe('parseFilterPattern — rejections', () => {
     expect(() => parseFilterPattern('')).toThrow(OpenapiMcpError);
   });
 
-  it('rejects a bare "tag:" with no glob', () => {
-    expect(() => parseFilterPattern('tag:')).toThrow(/needs a tag glob/u);
+  it('names the explicit form for a pattern without a selector', () => {
+    expect(usageMessage('read*')).toContain('write "operationId:read*"');
+    expect(usageMessage('GET /orders/**')).toContain('write "route:GET /orders/**"');
+    expect(usageMessage('get /orders/{id}:cancel')).toContain(
+      'write "route:GET /orders/{id}:cancel"',
+    );
+    expect(usageMessage('**')).toContain('"path:/**" (every operation)');
+    expect(usageMessage('delete')).toContain(
+      '"method:delete" (the method) or "operationId:delete"',
+    );
   });
 
-  it('rejects a method that is not an HTTP token in the methodPath form', () => {
-    try {
-      parseFilterPattern('GE(T /users');
-      expect.unreachable('expected a usage error');
-    } catch (error) {
-      const typed = error as OpenapiMcpError;
-      expect(typed.code).toBe('usage');
-      expect(typed.message).toContain('GET');
+  it('rejects an unknown selector and names the operationId form', () => {
+    expect(usageMessage('orders:read*')).toContain('unknown filter selector');
+    expect(usageMessage('orders:read*')).toContain('"operationId:orders:read*"');
+  });
+
+  it('sanitizes the replacement it shows', () => {
+    expect(usageMessage('read\u001B[31m*')).not.toContain('\u001B');
+  });
+
+  it('rejects a selector without a value', () => {
+    for (const raw of ['tag:', 'operationId:', 'name:', 'method:', 'path:', 'route:']) {
+      expect(() => parseFilterPattern(raw)).toThrow(OpenapiMcpError);
     }
   });
 
-  // OpenAPI 3.2 `additionalOperations` (issue #33): the parser cannot know
-  // which methods the spec declares, so applyFilters checks that instead
-  it('accepts any other upper-case method token', () => {
-    expect(parseFilterPattern('LINK /users/*')).toMatchObject({
-      kind: 'methodPath',
-      method: 'LINK',
-      glob: '/users/*',
-    });
-    expect(parseFilterPattern('VERSION-CONTROL /x')).toMatchObject({ method: 'VERSION-CONTROL' });
+  it('rejects a method that is not an HTTP token, or never exposed', () => {
+    for (const raw of [
+      'method:GE(T',
+      'route:GE(T /users',
+      'method:connect',
+      'method:TRACK',
+      'route:OPTIONS /users',
+      'method:trace',
+    ]) {
+      expect(usageMessage(raw)).toContain('needs an HTTP method');
+    }
   });
 
-  it('rejects CONNECT and TRACK, which are never exposed', () => {
-    expect(() => parseFilterPattern('CONNECT /users')).toThrow(OpenapiMcpError);
-    expect(() => parseFilterPattern('TRACK /users')).toThrow(OpenapiMcpError);
+  it('rejects a path that starts with neither "/" nor "*"', () => {
+    expect(usageMessage('path:users')).toContain('starts with "/" or "*"');
+    expect(usageMessage('route:GET users')).toContain('starts with "/" or "*"');
   });
 
-  it('rejects a lowercase method — the language is case-sensitive', () => {
-    expect(() => parseFilterPattern('get /users')).toThrow(OpenapiMcpError);
-  });
-
-  it('rejects OPTIONS and TRACE, which are never exposed', () => {
-    expect(() => parseFilterPattern('OPTIONS /users')).toThrow(OpenapiMcpError);
-    expect(() => parseFilterPattern('TRACE /users')).toThrow(OpenapiMcpError);
-  });
-
-  it('rejects a methodPath whose path does not start with a slash', () => {
-    expect(() => parseFilterPattern('GET users')).toThrow(/must start with "\/"/u);
-  });
-
-  it('rejects two spaces — exactly one separates method from path (grammar rule 7)', () => {
-    expect(() => parseFilterPattern('GET  /users')).toThrow(OpenapiMcpError);
-  });
-
-  it('rejects a trailing space', () => {
-    expect(() => parseFilterPattern('GET ')).toThrow(OpenapiMcpError);
-  });
-
-  it('never degrades a spaced pattern into an operationId glob (grammar rule 7)', () => {
-    // An operationId containing a space is unreachable by design: silently
-    // parsing "list pets!" as an operationId would surface later as a dead
-    // pattern instead of as the usage error it is
-    expect(() => parseFilterPattern('list pets!')).toThrow(
-      /must start with an upper-case HTTP method/u,
-    );
+  it('rejects a route without exactly one space before its path', () => {
+    for (const raw of ['route:GET', 'route:GET  /users', 'route:GET ', 'route:/users']) {
+      expect(() => parseFilterPattern(raw)).toThrow(OpenapiMcpError);
+    }
   });
 
   it('rejects an over-long pattern', () => {
@@ -156,17 +169,8 @@ describe('parseFilterPattern — rejections', () => {
   });
 
   it('accepts a pattern exactly at the cap', () => {
-    const raw = 'x'.repeat(FILTER_PATTERN_MAX_LENGTH);
+    const raw = `operationId:${'x'.repeat(FILTER_PATTERN_MAX_LENGTH - 'operationId:'.length)}`;
     expect(parseFilterPattern(raw).raw).toBe(raw);
-  });
-
-  it('never echoes the raw pattern value back in an error message', () => {
-    try {
-      parseFilterPattern('SNIFF /x');
-      expect.unreachable('expected a usage error');
-    } catch (error) {
-      expect((error as OpenapiMcpError).message).not.toContain('SNIFF');
-    }
   });
 
   it('freezes the occurrence cap enforced by parseFilterPatterns', () => {
@@ -176,7 +180,7 @@ describe('parseFilterPattern — rejections', () => {
 
 describe('parseFilterPatterns — the list bound', () => {
   const many = (count: number): readonly string[] =>
-    Array.from({ length: count }, (_unused, index) => `op${String(index)}`);
+    Array.from({ length: count }, (_unused, index) => `operationId:op${String(index)}`);
 
   it('returns an empty list for no patterns', () => {
     expect(parseFilterPatterns([])).toEqual([]);
@@ -185,7 +189,7 @@ describe('parseFilterPatterns — the list bound', () => {
   it('parses exactly at the count cap', () => {
     const parsed = parseFilterPatterns(many(FILTER_PATTERN_MAX_COUNT));
     expect(parsed).toHaveLength(FILTER_PATTERN_MAX_COUNT);
-    expect(parsed[0]).toMatchObject({ kind: 'operationId', glob: 'op0', raw: 'op0' });
+    expect(parsed[0]).toMatchObject({ kind: 'operationId', glob: 'op0' });
   });
 
   it('rejects one pattern over the count cap', () => {
@@ -200,24 +204,24 @@ describe('parseFilterPatterns — the list bound', () => {
   });
 
   it('still parses and validates every element', () => {
-    const parsed = parseFilterPatterns(['tag:admin*', 'GET /users/**']);
-    expect(parsed[0]).toMatchObject({ kind: 'tag', glob: 'admin*', raw: 'tag:admin*' });
-    expect(parsed[1]).toMatchObject({
-      kind: 'methodPath',
-      method: 'GET',
-      glob: '/users/**',
-      raw: 'GET /users/**',
-    });
-    expect(() => parseFilterPatterns(['listPets', 'fetch /users'])).toThrow(OpenapiMcpError);
-    expect(() => parseFilterPatterns(['**a'.repeat(11)])).toThrow(/at most 10 wildcards/u);
+    const parsed = parseFilterPatterns(['tag:admin*', 'route:GET /users/**']);
+    expect(parsed[0]).toMatchObject({ kind: 'tag', glob: 'admin*' });
+    expect(parsed[1]).toMatchObject({ kind: 'route', method: 'GET', glob: '/users/**' });
+    expect(() => parseFilterPatterns(['operationId:listPets', 'listPets'])).toThrow(
+      OpenapiMcpError,
+    );
+    expect(() => parseFilterPatterns([`operationId:${'**a'.repeat(11)}`])).toThrow(
+      /at most 10 wildcards/u,
+    );
   });
 });
 
 // The grammar assertions are expressed as BEHAVIOUR rather than as properties
 // of a compiled RegExp source, because there is no RegExp on the production
 // path any more. `match` is the one-line adapter every case below uses.
+// The engine lowers a value before it is matched (issue #42)
 const match = (glob: string, value: string): boolean =>
-  globMatches(compileGlob(glob), value, createMatchBudget());
+  globMatches(compileGlob(glob), value.toLowerCase(), createMatchBudget());
 
 describe('compileGlob — literal handling (grammar rule 5)', () => {
   it('is anchored at both ends', () => {
@@ -287,9 +291,10 @@ describe('compileGlob — wildcards (grammar rules 1, 2, 4)', () => {
     expect(match('readPets', 'readPet')).toBe(false);
   });
 
-  it('is case-sensitive', () => {
-    expect(match('readPets', 'readpets')).toBe(false);
-    expect(match('read*', 'READ_ALL')).toBe(false);
+  it('matches regardless of case', () => {
+    expect(match('readPets', 'READPETS')).toBe(true);
+    expect(match('read*', 'READ_ALL')).toBe(true);
+    expect(match('readPets', 'readPet')).toBe(false);
   });
 
   it('expands "*" within a segment but not across "/"', () => {
@@ -515,9 +520,10 @@ describe('globMatches — differential equivalence with the frozen grammar', () 
     return new RegExp(`^${source}$`, 'u');
   };
 
+  // Both sides in lower case, as the engine matches
   const agree = (glob: string, value: string): void => {
-    expect(globMatches(compileGlob(glob), value, createMatchBudget())).toBe(
-      oracle(glob).test(value),
+    expect(globMatches(compileGlob(glob), value.toLowerCase(), createMatchBudget())).toBe(
+      oracle(glob.toLowerCase()).test(value.toLowerCase()),
     );
   };
 

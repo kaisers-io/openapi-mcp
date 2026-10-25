@@ -53,9 +53,9 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | Flag | Repeatable | Meaning | Default |
 |---|---|---|---|
 | `--spec <url\|file>` | no | OpenAPI spec source, JSON or YAML | required |
-| `--allow <pattern>` | yes | whitelist pattern | `[]` (read-only default applies) |
-| `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
-| `--strict-filters` | no | exit with an error instead of a warning on dead patterns, and on a tool whose path overlaps one that is not exposed | off |
+| `--allow <pattern>` | yes | expose the operations this selector matches, for example `tag:Orders` (see [filtering](filtering.md)) | `[]` (read-only default applies) |
+| `--deny <pattern>` | yes | exclude the operations this selector matches, for example `method:delete`; always wins | `[]` |
+| `--strict-filters` | no | exit with an error instead of a warning on dead patterns, on patterns that match values differing only by case, and on a tool whose path overlaps one that is not exposed | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
 | `--timeout <duration>` | no | spec fetch timeout; also each authorization-server metadata and JWKS fetch in `--http-auth oauth` mode | `30s` |
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
@@ -114,7 +114,7 @@ Notes:
   request is sent with the method exactly as declared. Its semantics are unknown, so it is
   treated like `POST`: the read-only default does not expose it, its annotations are
   destructive, `--retries` never repeats it, and a redirect other than `303` is a tool error.
-  Name it in a filter like any method (`--allow "LINK /orders/*"`). A method that is not upper
+  Name it in a filter like any method (`--allow "method:link"`, `--allow "route:LINK /orders/*"`). A method that is not upper
   case, `CONNECT`, `TRACK`, or a name that has its own Path Item field (such as `GET`) omits the
   operation. A sequential media type (JSON Lines `application/jsonl`, NDJSON
   `application/x-ndjson`, JSON text sequences `application/json-seq`, Server-Sent Events
@@ -325,8 +325,8 @@ Notes:
   described. The MCP specification requires structured results to conform to a declared
   output schema, so declaring none is the conforming way to stop the check.
 
-  The patterns use the [`--allow`/`--deny` syntax](../README.md#filtering) and match the spec's
-  operationId, method and path, or tags, not the tool name. They act only on the tools the server
+  The patterns use the [`--allow`/`--deny` selectors](filtering.md), such as
+  `operationId:getOrder` or `route:GET /orders/**`. They act only on the tools the server
   exposes: a pattern that matches none of them, for example because it names an operation the
   filters exclude or that is omitted as unsupported, is a dead pattern (a warning, or an error under
   `--strict-filters`). For such an operation the warning says it is not exposed, rather than
@@ -402,8 +402,8 @@ openapi-mcp serve \
   --spec https://api.example.com/openapi.json \
   --spec-header-env Authorization=SPEC_TOKEN \
   --header-env Authorization=API_TOKEN \
-  --allow "read*" --allow "tag:orders" \
-  --deny "delete*" \
+  --allow "method:get" --allow "tag:Orders" \
+  --deny "method:delete" \
   --cache-key petstore-prod \
   --ttl 1h \
   --timeout 30s \
@@ -479,7 +479,7 @@ stops `serve` at startup. Operations with identical output schemas share one val
 compiled on its first call instead, before the request is sent: an output schema that cannot
 be compiled then fails that operation's calls with a tool error, and `serve` names it once on
 stderr. Measured on a development machine with a warm spec cache, for the GitHub REST
-description (1,241 operations exposed with `--allow '**'`): about 2 s until `initialize` answers in
+description (1,241 operations exposed with `--allow 'operationId:*'`): about 2 s until `initialize` answers in
 `discover` mode.
 
 Measured `tools/list` sizes (2026-10-24, whole stdio response line, tokens ≈ bytes / 4):
@@ -488,7 +488,7 @@ Measured `tools/list` sizes (2026-10-24, whole stdio response line, tokens ≈ b
 |---|---|---|---|
 | 400 generated `GET` operations | 400 | 334,616 bytes (~84k tokens) | 4,955 bytes (~1.2k tokens) |
 | DigitalOcean (read-only default) | 146 | 127,186 bytes (~32k tokens) | 4,955 bytes |
-| DigitalOcean (`--allow '**'`) | 265 | 355,045 bytes (~89k tokens) | 5,002 bytes |
+| DigitalOcean (`--allow 'operationId:*'`) | 265 | 355,045 bytes (~89k tokens) | 5,002 bytes |
 
 ### Output schema form
 
@@ -524,9 +524,9 @@ preview it.
 | Flag | Repeatable | Meaning | Default |
 |---|---|---|---|
 | `--spec <url\|file>` | no | OpenAPI spec source, JSON or YAML | required |
-| `--allow <pattern>` | yes | whitelist pattern | `[]` (read-only default applies) |
-| `--deny <pattern>` | yes | blacklist pattern, always wins | `[]` |
-| `--strict-filters` | no | exit with an error instead of a warning on dead patterns, and on a tool whose path overlaps one that is not exposed | off |
+| `--allow <pattern>` | yes | expose the operations this selector matches, for example `tag:Orders` (see [filtering](filtering.md)) | `[]` (read-only default applies) |
+| `--deny <pattern>` | yes | exclude the operations this selector matches, for example `method:delete`; always wins | `[]` |
+| `--strict-filters` | no | exit with an error instead of a warning on dead patterns, on patterns that match values differing only by case, and on a tool whose path overlaps one that is not exposed | off |
 | `--spec-header-env <Header=ENV>` | yes | auth header for the spec fetch, value read from env | `[]` |
 | `--timeout <duration>` | no | spec fetch timeout | `30s` |
 | `--ttl <duration>` | no | how long a cached spec is used before it is re-validated at startup (up to `365d`; not a timer, so not bound by the ~24.8-day limit of `--timeout`) | `1h` |
@@ -537,10 +537,10 @@ preview it.
 | `--nullable-response-fields [all\|optional]` | no | admit `null` for object properties in derived output schemas, for specs that omit `nullable`: every property (`all`, also without a value) or only those not listed in `required` (`optional`) (see below) | off |
 | `--omit-output-schema <pattern>` | yes | declare no output schema for the matching exposed tools, for an API whose responses do not match its spec: their results are returned as text, without response-schema validation (`--allow` pattern syntax, see below) | `[]` |
 
-Example (an operationId glob, so it matches only operationIds that start with `read`):
+Example (an operationId glob, regardless of case, so it matches every operationId that starts with `read`):
 
 ```bash
-openapi-mcp tools --spec https://api.example.com/openapi.json --allow "read*"
+openapi-mcp tools --spec https://api.example.com/openapi.json --allow "operationId:read*"
 ```
 
 Output: one line per tool. A tool whose output schema exists only because of
@@ -566,7 +566,7 @@ no --allow, 2 omitted as not supported`. The `--json` envelope lists every one u
 | `decision` | When |
 |---|---|
 | `denied` | a `--deny` pattern matches it; `pattern` names the first one |
-| `not-allowed` | `--allow` is given and no pattern matches it, for example an operation without an `operationId` under `--allow '**'` (an operationId glob) |
+| `not-allowed` | `--allow` is given and no pattern matches it, for example an operation without an `operationId` under `--allow 'operationId:*'` |
 | `read-only-default` | no `--allow` is given and it is not a read (`GET`, `HEAD`, `QUERY`) |
 | `omitted` | it is not supported; the reason says why (also listed under `data.omitted`, unchanged) |
 | `withheld` | a pending candidate spec removed it, until `openapi-mcp cache promote` |
@@ -757,7 +757,7 @@ openapi-mcp --json doctor
 | `0` | success | |
 | `1` | unexpected error; also the start-up guard for an unsupported platform or Node version | |
 | `2` | usage error | unknown flag, invalid flag value, missing `--base-url`, `--http` without `--http-token-env` |
-| `3` | validation error | invalid spec, `--strict-filters` with a dead pattern or an overlapping tool, malformed HTTP token, refused egress target |
+| `3` | validation error | invalid spec, `--strict-filters` with a dead pattern, a case collision or an overlapping tool, malformed HTTP token, refused egress target |
 | `4` | not found | unreadable spec file, missing cache entry, `cache unlock` on an entry without a lock |
 | `5` | conflict | cache lock held by another process, `cache promote --hash` mismatch |
 

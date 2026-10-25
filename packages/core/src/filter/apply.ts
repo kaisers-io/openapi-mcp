@@ -1,6 +1,8 @@
 import { usageError } from '../errors.ts';
 import type { OmittedOperation } from '../spec/normalize.ts';
 import type { NamedOperation } from '../toolgen/naming.ts';
+import { caseCollisionsFor } from './case-collisions.ts';
+import type { CaseCollision } from './case-collisions.ts';
 import { deadPatternsFor, matchesOperation } from './engine.ts';
 import type { DeadPattern, DeadPatternFlag, FilterTarget } from './engine.ts';
 import { STANDARD_FILTER_METHODS, createMatchBudget } from './pattern.ts';
@@ -37,6 +39,8 @@ export type FilterDecision = {
   // The operations the filters leave out, each with its decision
   filteredOut: readonly NotExposedOperation[];
   deadPatterns: readonly DeadPattern[];
+  // Patterns that match values differing only by case (issue #42)
+  caseCollisions: readonly CaseCollision[];
 };
 
 // The omitted operations a pattern can name, by operationId and tags. Only
@@ -45,12 +49,29 @@ export type FilterDecision = {
 // matches no such pattern and declares none.
 export const omittedTargets = (omitted: readonly OmittedOperation[]): FilterTarget[] =>
   omitted.map((omission): FilterTarget => {
-    const { path, operationId, tags = [] } = omission;
+    const { path, operationId, toolName, tags = [] } = omission;
     const method = omission.method === omission.method.toUpperCase() ? omission.method : '';
-    return operationId === undefined ? { method, path, tags } : { method, path, operationId, tags };
+    return {
+      method,
+      path,
+      tags,
+      ...(operationId === undefined ? {} : { operationId }),
+      ...(toolName === undefined ? {} : { toolName }),
+    };
   });
 
-// A "<METHOD> <path>" pattern may name a method outside the standard ones
+// A named operation as a pattern sees it, with its generated tool name
+export const targetOf = (named: NamedOperation): FilterTarget => ({
+  method: named.operation.method,
+  path: named.operation.path,
+  tags: named.operation.tags,
+  toolName: named.toolName,
+  ...(named.operation.operationId === undefined
+    ? {}
+    : { operationId: named.operation.operationId }),
+});
+
+// A "method:" or "route:" pattern may name a method outside the standard ones
 // only when an operation of this spec declares it (OpenAPI 3.2
 // `additionalOperations`), also one omitted as not supported. Anything else
 // is a misspelling, which stays a usage error: a misspelled --deny method
@@ -60,16 +81,16 @@ export const assertKnownMethods = (
   records: readonly { method: string }[],
 ): void => {
   const declared = new Set(records.map((op) => op.method.toUpperCase()));
-  const unknown = patterns.find(
-    (pattern) =>
-      pattern.kind === 'methodPath' &&
+  for (const pattern of patterns) {
+    if (
+      (pattern.kind === 'method' || pattern.kind === 'route') &&
       !STANDARD_FILTER_METHODS.has(pattern.method) &&
-      !declared.has(pattern.method),
-  );
-  if (unknown?.kind === 'methodPath') {
-    throw usageError(
-      `a "<METHOD> <path>" filter pattern names ${unknown.method}, which is not a standard method and no operation in the spec declares`,
-    );
+      !declared.has(pattern.method)
+    ) {
+      throw usageError(
+        `a "${pattern.kind}:" filter pattern names ${pattern.method}, which is not a standard method and no operation in the spec declares`,
+      );
+    }
   }
 };
 
@@ -121,14 +142,15 @@ export const applyFilters = (
   budget: MatchBudget = createMatchBudget(),
   omitted: readonly OmittedOperation[] = [],
 ): FilterDecision => {
-  const records = operations.map((entry) => entry.operation);
+  const records = operations.map((entry) => targetOf(entry));
   const omittedOps = omittedTargets(omitted);
   assertKnownMethods([...allow, ...deny], [...records, ...omittedOps]);
   const exposed: NamedOperation[] = [];
   const filteredOut: NotExposedOperation[] = [];
-  for (const named of operations) {
+  for (const [index, named] of operations.entries()) {
+    const target = records[index] ?? targetOf(named);
     // Rule 1: --deny always wins over --allow, no exceptions
-    const denied = deny.find((pattern) => matchesOperation(pattern, named.operation, budget));
+    const denied = deny.find((pattern) => matchesOperation(pattern, target, budget));
     if (denied !== undefined) {
       filteredOut.push(
         filteredOutRecord(named, 'denied', `excluded by --deny "${denied.raw}"`, denied.raw),
@@ -136,7 +158,7 @@ export const applyFilters = (
     } else if (allow.length > 0) {
       // Rule 2: an explicit allow replaces the default entirely, so a matching
       // write operation present at startup is exposed
-      if (allow.some((pattern) => matchesOperation(pattern, named.operation, budget))) {
+      if (allow.some((pattern) => matchesOperation(pattern, target, budget))) {
         exposed.push(named);
       } else {
         filteredOut.push(filteredOutRecord(named, 'not-allowed', 'matched by no --allow pattern'));
@@ -163,5 +185,9 @@ export const applyFilters = (
     ...deadPatternsWithOmitted(allow, 'allow', records, omittedOps, budget),
     ...deadPatternsWithOmitted(deny, 'deny', records, omittedOps, budget),
   ];
-  return { exposed, filteredOut, deadPatterns };
+  const caseCollisions = [
+    ...caseCollisionsFor(allow, 'allow', records, budget),
+    ...caseCollisionsFor(deny, 'deny', records, budget),
+  ];
+  return { exposed, filteredOut, deadPatterns, caseCollisions };
 };

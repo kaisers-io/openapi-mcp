@@ -235,15 +235,17 @@ contract; see [docs/configuration.md](docs/configuration.md).
 
 ## Filtering
 
-Tool exposure is controlled with repeatable `--allow`/`--deny` patterns, matched against
-three forms (case-sensitive, `*` for a single path segment, `**` for a deep match):
+Tool exposure is controlled with repeatable `--allow`/`--deny` patterns. Each pattern names
+what it selects, and letter case never matters:
 
-- `readPets`, `read*` — operationId.
-- `GET /users/**` — `METHOD /path` (one space between method and path). The method is
-  upper case: a standard one, or one the spec declares under OpenAPI 3.2 `additionalOperations`
-  (such as `LINK`); any other method is a startup error. So if a spec update removes the last
-  operation with such a method, a pattern naming it stops the next start until you remove it.
-- `tag:admin*` — OpenAPI tags.
+| Selector | Selects | Example |
+|---|---|---|
+| `method:` | every operation with this method | `method:delete` |
+| `path:` | every method on matching paths (`*` one segment, `**` any) | `path:/orders/**` |
+| `route:` | method and path together | `route:GET /orders/**` |
+| `operationId:` | the spec's operationId (`*` any characters) | `operationId:*delete*` |
+| `name:` | the tool name the agent sees | `name:get_reports` |
+| `tag:` | the spec's tags | `tag:Orders` |
 
 Rules, no exceptions:
 
@@ -253,6 +255,10 @@ Rules, no exceptions:
 3. No `--allow` given: read-only default — only `GET`/`HEAD` operations, and OpenAPI 3.2
    `QUERY` operations, a read with a request body (minus denied ones).
 
+To never expose a delete, deny the method: `--deny "method:delete"`. Names and paths are a
+weaker signal (`removeOrder` is a `DELETE` too). Every selector, the order of decisions,
+recipes and the migration from the earlier syntax: [`docs/filtering.md`](docs/filtering.md).
+
 The request a tool sends is checked against the same decision before every hop, redirects
 included, so an excluded operation is never reached through a tool's arguments or a redirect
 (see [request authorization](docs/security.md#request-authorization)).
@@ -261,15 +267,16 @@ Every operation that is not a tool is reported with its reason: `tools` and `ser
 summary line, and `openapi-mcp --json tools` lists each one under `notExposed` (see
 [`tools`](docs/configuration.md#tools)).
 
-Pass `--strict-filters` to turn a dead pattern (one that matches nothing) into a startup
-error instead of a warning — useful once a filter set is stable and you want drift to fail
+Pass `--strict-filters` to turn a dead pattern (one that matches nothing), a pattern that
+matches values differing only by case, or a tool whose path overlaps an excluded one into a
+startup error instead of a warning — useful once a filter set is stable and you want drift to fail
 loudly. Full flag reference: [`docs/configuration.md`](docs/configuration.md).
 
-Patterns match the spec's raw operationId, path and tags, not the generated tool name. A tool
-name is the operationId reduced to `[A-Za-z0-9_-]` (at most 64 characters; `repos.get` becomes
+A tool name is the operationId reduced to `[A-Za-z0-9_-]` (at most 64 characters; `repos.get` becomes
 `repos_get`, accented letters become their base letter), or method and path when there is no usable operationId
 (`GET /users/{id}` becomes `get_users_by_id`, and `operation_<hash>` when even those leave no
-letter or digit). Colliding names get a stable hash suffix.
+letter or digit). Colliding names get a stable hash suffix. `name:` matches these names;
+`operationId:`, `path:` and `tag:` match the spec's own values.
 
 ### Large APIs: `--tool-mode discover`
 

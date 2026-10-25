@@ -96,7 +96,7 @@ const opts = {
   trustSpecUpdates: false,
   cacheRoot: '/cache',
   nowMs: 10_000,
-  allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
+  allow: HTTP_METHODS.map((method) => parseFilterPattern(`route:${method.toUpperCase()} /**`)),
 };
 
 const deps = (cacheFs: MemoryCacheFs, fetcher: SpecFetcher): SpecPipelineDeps => ({

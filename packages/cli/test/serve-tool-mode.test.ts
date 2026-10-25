@@ -202,9 +202,9 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
       '--base-url',
       'http://127.0.0.1:9',
       '--allow',
-      'listPets',
+      'operationId:listPets',
       '--allow',
-      'createPet',
+      'operationId:createPet',
       '--tool-mode',
       'discover',
     ]);

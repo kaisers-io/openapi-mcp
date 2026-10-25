@@ -10,7 +10,7 @@ import {
 import type { GeneratedTool } from '@kaisers-io/openapi-mcp-core';
 import { getGlobalOpts, wrapAction } from '../output.ts';
 import {
-  deadPatternMessage,
+  filterMessages,
   exposureReport,
   omissionWarningLines,
   parseSpecPipelineArgs,
@@ -72,7 +72,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
       state.exitCode = await wrapAction(ctx, opts, async () => {
         const args = parseSpecPipelineArgs(cmdOpts, ctx);
         const result = await runSpecPipeline(args.source, args.options, args.deps);
-        const deadMessages = result.deadPatterns.map((dead) => deadPatternMessage(dead));
+        const deadMessages = filterMessages(result);
         if (cmdOpts.strictFilters === true && deadMessages.length > 0) {
           // Dead patterns under --strict-filters must exit 3
           throw validationError(deadMessages.join('\n'));
@@ -119,6 +119,8 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           overlaps: exposure.overlaps,
           overlapCheckComplete: exposure.overlapCheckComplete,
           deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns],
+          // Patterns that match values differing only by case (issue #42)
+          caseCollisions: [...result.caseCollisions, ...optOut.caseCollisions],
           security,
         };
         const nameWidth = tools.reduce((width, tool) => Math.max(width, tool.name.length), 4);

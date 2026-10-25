@@ -86,11 +86,13 @@ authenticated (`--spec-header-env`), unless you pass `--trust-spec-updates`.
 ## Defaults
 
 - **Read-only:** with no `--allow`, only `GET`/`HEAD`/`QUERY` operations become tools.
-  `--allow`/`--deny` take operationId globs (`list*`), `METHOD /path` globs (`GET /users/**`)
-  and `tag:<glob>`; `--deny` always wins, and any `--allow` replaces the read-only default.
+  `--allow`/`--deny` take selectors, matched regardless of case: `method:delete`,
+  `path:/users/**`, `route:GET /users/**`, `operationId:list*`, `name:get_users_by_id` and
+  `tag:<glob>`. `--deny` always wins, and any `--allow` replaces the read-only default. See
+  [filtering](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/filtering.md).
 - **Tool names** are the operationId reduced to `[A-Za-z0-9_-]` (at most 64 characters), or
-  method and path when there is no usable operationId (`get_users_by_id`). Filters match the
-  raw operationId, not the tool name.
+  method and path when there is no usable operationId (`get_users_by_id`). `name:` matches
+  them; `operationId:` matches the spec's raw operationId.
 - **Secrets** come only from environment variables (`--header-env Header=ENV`,
   `--spec-header-env`, `--http-token-env`, `--upstream-oauth-client-*-env`) and are redacted
   from every output.

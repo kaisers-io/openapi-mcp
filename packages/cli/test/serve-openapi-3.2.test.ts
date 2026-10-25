@@ -211,7 +211,7 @@ describe('serve — OpenAPI 3.2 QUERY, querystring and additionalOperations (iss
     'exposes an additionalOperations method when allowed and sends it as declared',
     async () => {
       received.length = 0;
-      const { child, request } = serve(['--allow', 'LINK /orders']);
+      const { child, request } = serve(['--allow', 'route:LINK /orders']);
       try {
         const list = await request(1, 'tools/list', {});
         const tools = list['tools'] as { name: string; annotations?: Record<string, unknown> }[];

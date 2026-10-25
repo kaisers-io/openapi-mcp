@@ -1,5 +1,6 @@
 import { usageError, validationError } from '../errors.ts';
 import { HTTP_METHODS } from '../spec/normalize.ts';
+import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OperationMethod } from '../spec/normalize.ts';
 
 // Patterns are operator input from argv, not spec content, but they are still
@@ -23,8 +24,6 @@ export const FILTER_PATTERN_MAX_WILDCARDS = 10;
 // list, and every caller that has one inherits it here.
 export const FILTER_PATTERN_MAX_COUNT = 128;
 
-const TAG_PREFIX = 'tag:';
-
 // The upper-case form of an exposable method: one of HTTP_METHODS, or a
 // method an OpenAPI 3.2 spec declares under `additionalOperations` (issue
 // #33). The parser cannot know the latter, so applyFilters (engine.ts)
@@ -32,18 +31,22 @@ const TAG_PREFIX = 'tag:';
 // operation: a misspelled method stays a startup error.
 export type FilterMethod = Uppercase<OperationMethod>;
 
+// An explicit selector (issue #42): `method:`, `path:`, `route:`,
+// `operationId:`, `name:` or `tag:`. Every one matches regardless of case.
 // The compiled programme travels with the pattern, so a pattern is compiled
-// exactly once at parse time rather than once per candidate string
+// exactly once at parse time rather than once per candidate string.
+export type FilterNameKind = 'operationId' | 'name' | 'tag';
 export type FilterPattern =
-  | { kind: 'operationId'; glob: string; raw: string; compiled: CompiledGlob }
+  | { kind: 'method'; method: FilterMethod; raw: string }
+  | { kind: 'path'; glob: string; raw: string; compiled: CompiledGlob }
   | {
-      kind: 'methodPath';
+      kind: 'route';
       method: FilterMethod;
       glob: string;
       raw: string;
       compiled: CompiledGlob;
     }
-  | { kind: 'tag'; glob: string; raw: string; compiled: CompiledGlob };
+  | { kind: FilterNameKind; glob: string; raw: string; compiled: CompiledGlob };
 
 export const STANDARD_FILTER_METHODS: ReadonlySet<string> = new Set(
   HTTP_METHODS.map((method) => method.toUpperCase()),
@@ -81,7 +84,13 @@ export type CompiledGlob = {
   hasWildcard: boolean;
 };
 
-export const compileGlob = (glob: string): CompiledGlob => {
+// `segmented`: a path glob, where `*` stays within one segment and `**`
+// crosses them. In an operationId, tool name or tag `*` matches any
+// characters, `/` included (GitHub's operationIds read `repos/get`). The glob
+// is matched regardless of case: it is compiled in lower case, and a value is
+// lowered before it is matched (engine.ts). There is no escape for a literal
+// `*`.
+export const compileGlob = (glob: string, segmented = true, fold = true): CompiledGlob => {
   if (glob.length > FILTER_PATTERN_MAX_LENGTH) {
     throw usageError(`a filter pattern must be at most ${FILTER_PATTERN_MAX_LENGTH} characters`);
   }
@@ -92,7 +101,7 @@ export const compileGlob = (glob: string): CompiledGlob => {
   // the unit the /u-flag RegExp oracle (used as the differential-fuzz
   // reference) works in, so this is what keeps the two representations
   // equivalent.
-  const points = [...glob];
+  const points = [...(fold ? glob.toLowerCase() : glob)];
   const tokens: GlobToken[] = [];
   // Imperative on purpose: a "*" run consumes a variable number of code
   // points in one step (so the index can jump by more than one), and the
@@ -116,7 +125,7 @@ export const compileGlob = (glob: string): CompiledGlob => {
           `a filter pattern may contain at most ${FILTER_PATTERN_MAX_WILDCARDS} wildcards`,
         );
       }
-      tokens.push(end - index === 1 ? STAR : GLOBSTAR);
+      tokens.push(end - index === 1 && segmented ? STAR : GLOBSTAR);
       index = end;
       continue;
     }
@@ -167,10 +176,11 @@ export const compileGlob = (glob: string): CompiledGlob => {
 // Since the tool budget moved after filtering (issue
 // kaisers-io/openapi-mcp-archive#32), filters run over up to
 // SPEC_BUDGETS.maxOperationCount (4096) operations rather than 512. A worst
-// realistic configuration there (256 patterns of all three forms, none matching
-// early, plus the dead-pattern pass) measures 28.9M steps, 14.4% of this cap,
-// so the cap and with it the hostile cut-off time stay unchanged
-// (filter-engine.test.ts pins the headroom).
+// realistic configuration there (256 patterns of four selectors, none
+// matching early, plus the dead-pattern and case-collision passes) measures
+// 18.0M steps, 9% of this cap, since a value the affixes rule out is no
+// longer read whole; the cap and with it the hostile cut-off time stay
+// unchanged (filter-engine.test.ts pins the headroom).
 export const FILTER_MAX_MATCH_STEPS = 200_000_000;
 
 export type MatchBudget = {
@@ -210,15 +220,11 @@ export const globMatches = (
   // or pattern length, so a flat per-call charge would not describe the work
   // performed.
   //
-  // Materializing the code points is O(value length) and happens first.
-  spend(value.length);
-  const points = [...value];
-  if (points.length < minLength) {
-    return false;
-  }
   // A prefix/suffix comparison is bounded by the affix length, so that is what
   // it costs — charged before the comparison rather than after it, so an
-  // exhausted budget stops the work instead of merely reporting it
+  // exhausted budget stops the work instead of merely reporting it. Both run
+  // before the value is materialized, so a value the affixes rule out never
+  // pays for its length (most patterns against most operations).
   if (prefix !== '') {
     spend(prefix.length);
     if (!value.startsWith(prefix)) {
@@ -230,6 +236,12 @@ export const globMatches = (
     if (!value.endsWith(suffix)) {
       return false;
     }
+  }
+  // Materializing the code points is O(value length)
+  spend(value.length);
+  const points = [...value];
+  if (points.length < minLength) {
+    return false;
   }
   if (!hasWildcard) {
     spend(prefix.length);
@@ -298,6 +310,72 @@ export const globMatches = (
   return currentStamp[tokenCount] === points.length;
 };
 
+const SELECTORS = ['method', 'path', 'route', 'operationId', 'name', 'tag'] as const;
+type Selector = (typeof SELECTORS)[number];
+const SELECTOR_LIST = SELECTORS.map((selector) => `${selector}:`).join(', ');
+
+// What a pattern written without a selector most likely meant, as the
+// explicit form. Operator input, so it is shown sanitized and bounded.
+const replacementFor = (raw: string): string => {
+  const space = raw.indexOf(' ');
+  if (space !== -1) {
+    return `"route:${raw.slice(0, space).toUpperCase()}${raw.slice(space)}"`;
+  }
+  if (/^\*+$/u.test(raw)) {
+    return '"path:/**" (every operation) or "operationId:*" (every operationId)';
+  }
+  if (STANDARD_FILTER_METHODS.has(raw.toUpperCase())) {
+    return `"method:${raw.toLowerCase()}" (the method) or "operationId:${raw}"`;
+  }
+  return `"operationId:${raw}"`;
+};
+
+const selectorError = (raw: string, problem: string): Error =>
+  usageError(
+    `${problem}; write ${sanitizeSpecText(replacementFor(raw), FILTER_PATTERN_MAX_LENGTH)}. Selectors: ${SELECTOR_LIST}`,
+  );
+
+const methodOf = (value: string, selector: string): FilterMethod => {
+  const method = value.toUpperCase();
+  if (!isFilterMethod(method)) {
+    throw usageError(
+      `a "${selector}" filter pattern needs an HTTP method: one of ${[...STANDARD_FILTER_METHODS].join(', ')}, or one the spec declares under additionalOperations`,
+    );
+  }
+  return method;
+};
+
+const pathGlobOf = (glob: string, selector: string): string => {
+  if (!glob.startsWith('/') && !glob.startsWith('*')) {
+    throw usageError(
+      `a "${selector}" filter pattern needs a path that starts with "/" or "*", for example "${selector}${selector === 'route:' ? 'GET ' : ''}/orders/**"`,
+    );
+  }
+  return glob;
+};
+
+const parseSelector = (selector: Selector, value: string, raw: string): FilterPattern => {
+  if (selector === 'method') {
+    return { kind: 'method', method: methodOf(value, 'method:'), raw };
+  }
+  if (selector === 'route') {
+    const space = value.indexOf(' ');
+    const glob = pathGlobOf(space === -1 ? '' : value.slice(space + 1), 'route:');
+    const method = methodOf(space === -1 ? value : value.slice(0, space), 'route:');
+    return { kind: 'route', method, glob, raw, compiled: compileGlob(glob) };
+  }
+  if (selector === 'path') {
+    const glob = pathGlobOf(value, 'path:');
+    return { kind: 'path', glob, raw, compiled: compileGlob(glob) };
+  }
+  if (value === '') {
+    throw usageError(
+      `a "${selector}:" filter pattern needs a value, for example "${selector}:Orders*"`,
+    );
+  }
+  return { kind: selector, glob: value, raw, compiled: compileGlob(value, false) };
+};
+
 export const parseFilterPattern = (raw: string): FilterPattern => {
   if (raw === '') {
     throw usageError('a filter pattern must not be empty');
@@ -305,37 +383,20 @@ export const parseFilterPattern = (raw: string): FilterPattern => {
   if (raw.length > FILTER_PATTERN_MAX_LENGTH) {
     throw usageError(`a filter pattern must be at most ${FILTER_PATTERN_MAX_LENGTH} characters`);
   }
-  if (raw.startsWith(TAG_PREFIX)) {
-    const glob = raw.slice(TAG_PREFIX.length);
-    if (glob === '') {
-      throw usageError('a "tag:" filter pattern needs a tag glob, for example "tag:admin*"');
-    }
-    // Compiled once at parse time and CARRIED on the pattern: an unusable glob
-    // is a startup usage error, and matching never recompiles per candidate
-    return { kind: 'tag', glob, raw, compiled: compileGlob(glob) };
+  // Split at the first colon only, so a value may hold more (`tag:a:b`). A
+  // space before any colon is the old `METHOD /path` form, whose path may
+  // contain a colon of its own.
+  const colon = raw.indexOf(':');
+  const space = raw.indexOf(' ');
+  if (colon === -1 || (space !== -1 && space < colon)) {
+    throw selectorError(raw, 'a filter pattern needs a selector');
   }
-  const spaceIndex = raw.indexOf(' ');
-  if (spaceIndex !== -1) {
-    // A space can only mean the "<METHOD> <path-glob>" form: operationIds never
-    // contain one, so this branch reports a precise error rather than silently
-    // degrading a typo into an operationId pattern that matches nothing
-    const method = raw.slice(0, spaceIndex);
-    const glob = raw.slice(spaceIndex + 1);
-    if (!isFilterMethod(method)) {
-      // The raw value is never echoed: it is operator input of unknown shape
-      throw usageError(
-        `a "<METHOD> <path>" filter pattern must start with an upper-case HTTP method: one of ${[...STANDARD_FILTER_METHODS].join(', ')}, or one the spec declares under additionalOperations`,
-      );
-    }
-    if (!glob.startsWith('/')) {
-      throw usageError(
-        'a "<METHOD> <path>" filter pattern needs exactly one space and a path that' +
-          ' must start with "/", for example "GET /users/**"',
-      );
-    }
-    return { kind: 'methodPath', method, glob, raw, compiled: compileGlob(glob) };
+  const keyword = raw.slice(0, colon).toLowerCase();
+  const selector = SELECTORS.find((known) => known.toLowerCase() === keyword);
+  if (selector === undefined) {
+    throw selectorError(raw, 'unknown filter selector');
   }
-  return { kind: 'operationId', glob: raw, raw, compiled: compileGlob(raw) };
+  return parseSelector(selector, raw.slice(colon + 1), raw);
 };
 
 // One flag's worth of patterns. The count cap is checked before a single

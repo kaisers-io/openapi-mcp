@@ -14,6 +14,7 @@ import {
 } from '@kaisers-io/openapi-mcp-core';
 import type {
   BuildToolsResult,
+  CaseCollision,
   DeadPattern,
   FilterPattern,
   NormalizedSpec,
@@ -24,9 +25,11 @@ import type {
   SpecPipelineOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
+import { filterMessages } from './filter-messages.ts';
 import { outputSchemaOptOutWarningLines } from './output-schema-opt-out.ts';
 
 export { exposureReport } from './exposure-report.ts';
+export { caseCollisionMessage, deadPatternMessage, filterMessages } from './filter-messages.ts';
 
 const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,
@@ -40,27 +43,6 @@ export const PATH_DISPLAY_MAX = 512;
 // suggestions, so the whole warning line is bounded
 export const PATTERN_DISPLAY_MAX = 256;
 
-// Example wording: --allow "readPets" matches no operation; closest: readPetById
-// The flag comes from the engine, which knows which list the pattern came from.
-// Shared by `tools` and `serve` so a dead-pattern warning is sanitized and
-// worded identically regardless of which command produced it.
-export const deadPatternMessage = (dead: DeadPattern): string => {
-  const raw = sanitizeSpecText(dead.raw, PATTERN_DISPLAY_MAX);
-  // --omit-output-schema acts on the exposed tools only (issue #13)
-  const scope = dead.flag === 'omit-output-schema' ? 'exposed operation' : 'operation';
-  const base = `--${dead.flag} "${raw}" matches no ${scope}`;
-  if (dead.notExposed === true) {
-    // --allow and --deny see every operation the filters decide on, so for
-    // them only one omitted as not supported is not exposed (issue #41)
-    return dead.flag === 'omit-output-schema'
-      ? `${base}; it names only operations that are filtered out or omitted`
-      : `${base}; it names only operations that are omitted as not supported`;
-  }
-  return dead.suggestion === undefined
-    ? base
-    : `${base}; closest: ${sanitizeSpecText(dead.suggestion, PATTERN_DISPLAY_MAX)}`;
-};
-
 // Omissions (spec-level and toolgen-level) are a non-fatal condition: they
 // belong on the warnings channel, not on stdout. Shared by `tools` and `serve`
 // so both commands sanitize and word an omission warning identically.
@@ -73,6 +55,7 @@ export const omissionWarningLines = (allOmitted: readonly OmittedOperation[]): r
 export type OutputSchemaOptOutResult = {
   built: BuildToolsResult;
   deadPatterns: readonly DeadPattern[];
+  caseCollisions: readonly CaseCollision[];
   warnings: readonly string[];
 };
 
@@ -86,13 +69,14 @@ export const withOutputSchemaOptOut = (
   strictFilters: boolean,
 ): OutputSchemaOptOutResult => {
   const optOut = applyOutputSchemaOptOut(built.tools, patterns, spec);
-  const deadMessages = optOut.deadPatterns.map((dead) => deadPatternMessage(dead));
+  const deadMessages = filterMessages(optOut);
   if (strictFilters && deadMessages.length > 0) {
     throw validationError(deadMessages.join('\n'));
   }
   return {
     built: { ...built, tools: optOut.tools },
     deadPatterns: optOut.deadPatterns,
+    caseCollisions: optOut.caseCollisions,
     warnings: [
       ...deadMessages,
       ...optOut.ineffectivePatterns.map(
@@ -179,16 +163,21 @@ export const registerSpecOptions = (
 ): Command<[], SpecCmdOpts> =>
   command
     .requiredOption('--spec <url|file>', 'OpenAPI spec source, JSON or YAML')
-    .option('--allow <pattern>', 'whitelist pattern (repeatable)', collect, [] as readonly string[])
+    .option(
+      '--allow <pattern>',
+      'expose what this selector matches: method:, path:, route:, operationId:, name: or tag: (repeatable)',
+      collect,
+      [] as readonly string[],
+    )
     .option(
       '--deny <pattern>',
-      'blacklist pattern, always wins (repeatable)',
+      'exclude what this selector matches, always wins (repeatable)',
       collect,
       [] as readonly string[],
     )
     .option(
       '--strict-filters',
-      'exit with an error instead of a warning on dead patterns and on tools whose path overlaps an excluded one',
+      'exit with an error instead of a warning on dead patterns, case collisions and tools whose path overlaps an excluded one',
     )
     .option(
       '--spec-header-env <Header=ENV>',
@@ -215,7 +204,7 @@ export const registerSpecOptions = (
     )
     .option(
       '--omit-output-schema <pattern>',
-      'declare no output schema for matching tools, whose responses do not match the spec: results are returned as text without response-schema validation (repeatable, --allow pattern syntax)',
+      'declare no output schema for matching tools, whose responses do not match the spec: results are returned as text without response-schema validation (repeatable, --allow selectors)',
       collect,
       [] as readonly string[],
     );

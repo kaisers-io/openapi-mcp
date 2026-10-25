@@ -55,7 +55,7 @@ describe('tools command — file specs', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      '**',
+      'path:/**',
     ]);
     expect(code).toBe(EXIT.OK);
     const envelope = JSON.parse(lines[0]!) as {
@@ -88,7 +88,7 @@ describe('tools command — file specs', () => {
       '--spec',
       'shop-3.2.yaml',
       '--allow',
-      '**',
+      'path:/**',
     ]);
     expect(code).toBe(EXIT.OK);
     const { data } = JSON.parse(lines[0]!) as {
@@ -127,7 +127,7 @@ describe('tools command — file specs', () => {
       '--spec',
       'shop-3.2.yaml',
       '--allow',
-      'LINK /orders',
+      'route:LINK /orders',
     ]);
     expect(okCode).toBe(EXIT.OK);
     const { data } = JSON.parse(allowed.lines[0]!) as { data: { tools: { name: string }[] } };
@@ -141,7 +141,7 @@ describe('tools command — file specs', () => {
       '--spec',
       'shop-3.2.yaml',
       '--deny',
-      'LNIK /orders',
+      'route:LNIK /orders',
     ]);
     expect(badCode).toBe(EXIT.USAGE);
     expect(misspelled.errLines.join('\n')).toContain('names LNIK');
@@ -312,7 +312,7 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      'createPet',
+      'operationId:createPet',
     ]);
     expect(code).toBe(EXIT.OK);
     expect(lines.join('\n')).toContain('createPet');
@@ -329,9 +329,9 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      '**',
+      'path:/**',
       '--deny',
-      'createPet',
+      'operationId:createPet',
     ]);
     expect(code).toBe(EXIT.OK);
     expect(lines.join('\n')).toContain('listPets');
@@ -347,9 +347,9 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      'listPets',
+      'operationId:listPets',
       '--allow',
-      'createPet',
+      'operationId:createPet',
     ]);
     expect(code).toBe(EXIT.OK);
     expect(lines.join('\n')).toContain('listPets');
@@ -365,11 +365,11 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      'listPetz',
+      'operationId:listPetz',
     ]);
     expect(code).toBe(EXIT.OK);
     expect(errLines.join('\n')).toContain(
-      'openapi-mcp: warning: --allow "listPetz" matches no operation; closest: listPets',
+      'openapi-mcp: warning: --allow "operationId:listPetz" matches no operation; closest: operationId:listPets',
     );
   });
 
@@ -382,10 +382,12 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--deny',
-      'nothingLikeThis',
+      'operationId:nothingLikeThis',
     ]);
     expect(code).toBe(EXIT.OK);
-    expect(errLines.join('\n')).toContain('--deny "nothingLikeThis" matches no operation');
+    expect(errLines.join('\n')).toContain(
+      '--deny "operationId:nothingLikeThis" matches no operation',
+    );
   });
 
   it('turns a dead pattern into exit 3 under --strict-filters', async () => {
@@ -397,11 +399,11 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      'listPetz',
+      'operationId:listPetz',
       '--strict-filters',
     ]);
     expect(code).toBe(EXIT.VALIDATION);
-    expect(errLines.join('\n')).toContain('closest: listPets');
+    expect(errLines.join('\n')).toContain('closest: operationId:listPets');
   });
 
   it('rejects a malformed pattern with exit 2 before any spec access', async () => {
@@ -416,7 +418,7 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      'GET  /double/space',
+      'route:GET  /double/space',
     ]);
     expect(code).toBe(EXIT.USAGE);
     expect(errLines.join('\n')).not.toContain('should not be read');
@@ -431,7 +433,7 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      'a'.repeat(300),
+      'operationId:a'.repeat(300),
     ]);
     expect(code).toBe(EXIT.USAGE);
   });
@@ -445,7 +447,7 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      '*a'.repeat(20),
+      `operationId:${'*a'.repeat(20)}`,
     ]);
     expect(code).toBe(EXIT.USAGE);
     expect(errLines.join('\n')).toContain('wildcard');
@@ -455,7 +457,7 @@ describe('tools command — filters', () => {
     const { ctx } = fileCtx();
     const many = Array.from({ length: 129 }, (_unused, index) => [
       '--allow',
-      `op${String(index)}`,
+      `operationId:op${String(index)}`,
     ]).flat();
     const code = await run(ctx, [
       'node',
@@ -478,7 +480,7 @@ describe('tools command — filters', () => {
       '--spec',
       'petstore.json',
       '--allow',
-      'listPetz',
+      'operationId:listPetz',
     ]);
     expect(code).toBe(EXIT.OK);
     const envelope = JSON.parse(lines[0]!) as {
@@ -489,9 +491,9 @@ describe('tools command — filters', () => {
       warnings: string[];
     };
     expect(envelope.data.deadPatterns).toEqual([
-      { raw: 'listPetz', flag: 'allow', suggestion: 'listPets' },
+      { raw: 'operationId:listPetz', flag: 'allow', suggestion: 'operationId:listPets' },
     ]);
-    expect(envelope.warnings.join('\n')).toContain('--allow "listPetz"');
+    expect(envelope.warnings.join('\n')).toContain('--allow "operationId:listPetz"');
   });
 });
 
@@ -677,7 +679,7 @@ describe('tools command — toolgen omissions', () => {
       '--spec',
       'https://api.example.com/openapi.json',
       '--allow',
-      '**',
+      'path:/**',
     ]);
     expect(code).toBe(EXIT.OK);
     const envelope = JSON.parse(lines[0]!) as {
@@ -726,7 +728,7 @@ describe('tools command — toolgen omissions', () => {
       '--spec',
       'https://api.example.com/openapi.json',
       '--allow',
-      '**',
+      'path:/**',
     ]);
     expect(code).toBe(EXIT.OK);
     const allOutput = errLines.join('\n');
@@ -755,7 +757,7 @@ describe('tools command — toolgen omissions', () => {
       '--spec',
       'https://api.example.com/openapi.json',
       '--allow',
-      '**',
+      'path:/**',
     ]);
     expect(jsonCode).toBe(EXIT.OK);
     const envelope = JSON.parse(jsonRun.lines[0]!) as { warnings: string[] };
@@ -809,7 +811,7 @@ describe('tools command — --nullable-response-fields (#3)', () => {
   const toolsJson = async (extra: readonly string[]): Promise<Row[]> => {
     const { lines, ctx } = fileCtx();
     const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'petstore.json'];
-    const code = await run(ctx, [...argv, '--allow', '**', ...extra]);
+    const code = await run(ctx, [...argv, '--allow', 'path:/**', ...extra]);
     expect(code).toBe(EXIT.OK);
     return (JSON.parse(lines[0]!) as { data: { tools: Row[] } }).data.tools;
   };
@@ -869,7 +871,7 @@ describe('tools command — --omit-output-schema (#13)', () => {
   ): Promise<{ code: number; rows: Row[]; warnings: string }> => {
     const { lines, ctx } = fileCtx();
     const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'petstore.json'];
-    const code = await run(ctx, [...argv, '--allow', '**', ...extra]);
+    const code = await run(ctx, [...argv, '--allow', 'path:/**', ...extra]);
     const parsed = JSON.parse(lines[0]!) as { data?: { tools: Row[] }; warnings?: string[] };
     return { code, rows: parsed.data?.tools ?? [], warnings: (parsed.warnings ?? []).join('\n') };
   };
@@ -885,7 +887,7 @@ describe('tools command — --omit-output-schema (#13)', () => {
   it('with the flag: the matching tool has no output schema, is marked, and is named on stderr', async () => {
     const { code, rows, warnings } = await toolsJson([
       '--omit-output-schema',
-      'GET /pets',
+      'route:GET /pets',
       '--nullable-response-fields',
     ]);
     expect(code).toBe(EXIT.OK);
@@ -899,43 +901,55 @@ describe('tools command — --omit-output-schema (#13)', () => {
   });
 
   it('does not mark or name a tool that has no output schema anyway', async () => {
-    const { rows, warnings } = await toolsJson(['--omit-output-schema', 'createPet']);
+    const { rows, warnings } = await toolsJson(['--omit-output-schema', 'operationId:createPet']);
     expect(rows.find((row) => row.name === 'createPet')?.outputSchemaOptedOut).toBeUndefined();
     expect(warnings).not.toContain('response-schema validation is off');
     // It is not dead, but it changes nothing, and says so (review of #13)
     expect(warnings).toContain(
-      '--omit-output-schema "createPet" matches only tools without an output schema, so it changes nothing',
+      '--omit-output-schema "operationId:createPet" matches only tools without an output schema, so it changes nothing',
     );
   });
 
   it('marks the tool in human output', async () => {
     const { lines, ctx } = fileCtx();
     const argv = ['node', 'openapi-mcp', 'tools', '--spec', 'petstore.json'];
-    const code = await run(ctx, [...argv, '--omit-output-schema', 'listPets']);
+    const code = await run(ctx, [...argv, '--omit-output-schema', 'operationId:listPets']);
     expect(code).toBe(EXIT.OK);
     expect(lines.join('\n')).toMatch(/listPets .*\[output schema omitted\]/u);
   });
 
   it('warns about a pattern that matches no exposed operation, with a suggestion', async () => {
-    const { code, warnings } = await toolsJson(['--omit-output-schema', 'listPet']);
+    const { code, warnings } = await toolsJson(['--omit-output-schema', 'operationId:listPet']);
     expect(code).toBe(EXIT.OK);
     expect(warnings).toContain(
-      '--omit-output-schema "listPet" matches no exposed operation; closest: listPets',
+      '--omit-output-schema "operationId:listPet" matches no exposed operation; closest: operationId:listPets',
     );
     // An operation the filters exclude is not exposed, so naming it does nothing
-    const denied = await toolsJson(['--deny', 'listPets', '--omit-output-schema', 'listPets']);
+    const denied = await toolsJson([
+      '--deny',
+      'operationId:listPets',
+      '--omit-output-schema',
+      'operationId:listPets',
+    ]);
     expect(denied.warnings).toContain(
-      '--omit-output-schema "listPets" matches no exposed operation; it names only operations that are filtered out or omitted',
+      '--omit-output-schema "operationId:listPets" matches no exposed operation; it names only operations that are filtered out or omitted',
     );
   });
 
   it('turns a dead pattern into exit 3 under --strict-filters', async () => {
     const { lines, ctx } = fileCtx();
     const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'petstore.json'];
-    const code = await run(ctx, [...argv, '--strict-filters', '--omit-output-schema', 'nope']);
+    const code = await run(ctx, [
+      ...argv,
+      '--strict-filters',
+      '--omit-output-schema',
+      'operationId:nope',
+    ]);
     expect(code).toBe(EXIT.VALIDATION);
     const { error } = JSON.parse(lines[0]!) as { error: { message: string } };
-    expect(error.message).toBe('--omit-output-schema "nope" matches no exposed operation');
+    expect(error.message).toBe(
+      '--omit-output-schema "operationId:nope" matches no exposed operation',
+    );
   });
 
   // Review of #13: an operation toolgen leaves out is no tool to opt out
@@ -957,19 +971,21 @@ describe('tools command — --omit-output-schema (#13)', () => {
       Promise.resolve(new Response(specText))) as unknown as CliContext['fetcher'];
     const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'https://api.example.com/x'];
     const lenient = fileCtx({ fetcher });
-    expect(await run(lenient.ctx, [...argv, '--omit-output-schema', 'getBad'])).toBe(EXIT.OK);
+    expect(await run(lenient.ctx, [...argv, '--omit-output-schema', 'operationId:getBad'])).toBe(
+      EXIT.OK,
+    );
     const envelope = JSON.parse(lenient.lines[0]!) as {
       data: { deadPatterns: { raw: string; flag: string }[] };
     };
     expect(envelope.data.deadPatterns).toEqual([
-      { raw: 'getBad', flag: 'omit-output-schema', notExposed: true },
+      { raw: 'operationId:getBad', flag: 'omit-output-schema', notExposed: true },
     ]);
     const strict = fileCtx({ fetcher });
     const code = await run(strict.ctx, [
       ...argv,
       '--strict-filters',
       '--omit-output-schema',
-      'getBad',
+      'operationId:getBad',
     ]);
     expect(code).toBe(EXIT.VALIDATION);
   });
@@ -995,12 +1011,12 @@ describe('tools command — --omit-output-schema (#13)', () => {
       Promise.resolve(new Response(specText))) as unknown as CliContext['fetcher'];
     const { lines, ctx } = fileCtx({ fetcher });
     const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'https://api.example.com/x'];
-    expect(await run(ctx, [...argv, '--omit-output-schema', 'GET /item'])).toBe(EXIT.OK);
+    expect(await run(ctx, [...argv, '--omit-output-schema', 'route:GET /item'])).toBe(EXIT.OK);
     const envelope = JSON.parse(lines[0]!) as {
       data: { deadPatterns: { raw: string; flag: string; notExposed?: true }[] };
     };
     expect(envelope.data.deadPatterns).toEqual([
-      { raw: 'GET /item', flag: 'omit-output-schema', notExposed: true },
+      { raw: 'route:GET /item', flag: 'omit-output-schema', notExposed: true },
     ]);
   });
 

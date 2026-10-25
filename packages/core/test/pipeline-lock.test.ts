@@ -22,7 +22,7 @@ const opts = {
   trustSpecUpdates: false,
   cacheRoot: '/cache',
   nowMs: 1000,
-  allow: HTTP_METHODS.map((method) => parseFilterPattern(`${method.toUpperCase()} /**`)),
+  allow: HTTP_METHODS.map((method) => parseFilterPattern(`route:${method.toUpperCase()} /**`)),
 };
 
 const remoteSpec = (title: string, extraPath?: string): string =>
