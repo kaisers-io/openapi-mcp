@@ -32,7 +32,7 @@ import { hopAuthorizer } from './hop-authorizer.ts';
 import { routeKey } from './route-table.ts';
 import type { RouteTable } from './route-table.ts';
 import { mapResponse } from './response.ts';
-import type { EnvelopeValidator, EnvelopeValidators } from './response.ts';
+import type { EnvelopeValidator, EnvelopeValidators } from './envelope-validators.ts';
 import type { PageInput } from './forwarded-headers.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
 import { PROJECTION_FIELD } from '../../toolgen/projection.ts';

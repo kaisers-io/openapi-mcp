@@ -78,14 +78,14 @@ export {
   compileEnvelopeValidator,
   createEnvelopeCompiler,
   lazyEnvelopeValidators,
-  mapResponse,
-} from './server/execute/response.ts';
+} from './server/execute/envelope-validators.ts';
 export type {
   EnvelopeCompiler,
   EnvelopeValidator,
   EnvelopeValidators,
-  MapResponseOptions,
-} from './server/execute/response.ts';
+} from './server/execute/envelope-validators.ts';
+export { mapResponse } from './server/execute/response.ts';
+export type { MapResponseOptions } from './server/execute/response.ts';
 export { MAX_REDIRECTS, fetchSpec, fetchSpecConditional } from './spec/fetch.ts';
 export type { ConditionalFetchResult, FetchSpecDeps, FetchSpecOptions } from './spec/fetch.ts';
 export { parseSpecText } from './spec/parse.ts';
