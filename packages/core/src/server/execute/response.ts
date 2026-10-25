@@ -25,7 +25,7 @@ import {
 } from './response-media.ts';
 import { markSecretScanned, structuredOutcome, textOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
-import { withheldSuccess } from '../withheld.ts';
+import { markRetryWarned, markSuccessClaim, withheldSuccess } from '../withheld.ts';
 
 // The executor is the SOLE enforcer of {status,contentType,data} envelope
 // conformance — the low-level SDK Server performs no per-tool outputSchema
@@ -224,8 +224,16 @@ const PINNED_ERROR_TEXT: Record<PinnedErrorReason, string> = {
     'the upstream server redirected outside the API base URL, which is not followed unless the server runs with --allow-offsite-redirects; the original request reached the upstream and may have been applied, so do not retry it blindly',
 };
 
-const mapPinnedError = (reason: PinnedErrorReason): ToolCallOutcome =>
-  textOutcome(`tool execution failed: ${PINNED_ERROR_TEXT[reason]}`, true);
+// These texts already warn against a blind retry (issue #25)
+const WARNED_REASONS: ReadonlySet<PinnedErrorReason> = new Set([
+  'redirect-refused',
+  'redirect-offsite',
+]);
+
+const mapPinnedError = (reason: PinnedErrorReason): ToolCallOutcome => {
+  const outcome = textOutcome(`tool execution failed: ${PINNED_ERROR_TEXT[reason]}`, true);
+  return WARNED_REASONS.has(reason) ? markRetryWarned(outcome) : outcome;
+};
 
 // `JSON.parse` throws on malformed JSON; every call site below treats a
 // parse failure as its own fail-closed branch rather than letting the throw
@@ -595,12 +603,18 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
     // upstream REPORTED SUCCESS, so the message must not read like a plain
     // failure — an agent that retries a POST here could apply it twice. The
     // hint is operator-supplied CLI text, never upstream data.
-    return textOutcome(
-      `the upstream reported success (status ${status}), so the request was likely applied; ` +
-        'do not retry it blindly. No structured result is returned: this status is not documented ' +
-        `for the operation, and its output schema assumes the spec's "default" response covers ` +
-        `errors only (${undeclaredSuccessHint})`,
-      true,
+    const reason =
+      'No structured result is returned: this status is not documented ' +
+      `for the operation, and its output schema assumes the spec's "default" response covers ` +
+      `errors only (${undeclaredSuccessHint})`;
+    return markSuccessClaim(
+      textOutcome(
+        `the upstream reported success (status ${status}), so the request was likely applied; ` +
+          `do not retry it blindly. ${reason}`,
+        true,
+      ),
+      `the upstream answered with status ${status} after a redirect or a retry, so the request ` +
+        `may have been applied; do not retry it blindly. ${reason}`,
     );
   }
   if (branch === undefined) {

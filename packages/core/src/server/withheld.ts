@@ -1,3 +1,10 @@
+import {
+  carryEffect,
+  markRetryWarned,
+  markSuccessClaim,
+  rememberedEffect,
+  withEffect,
+} from './effect.ts';
 import { textOutcome } from './result.ts';
 import type { ToolCallOutcome } from './result.ts';
 import { tagOutcome } from './telemetry.ts';
@@ -9,20 +16,42 @@ import { tagOutcome } from './telemetry.ts';
 // blind retry could repeat it.
 export const BOUNDARY_WITHHELD_SUCCESS_TEXT =
   'the upstream call succeeded, but its result was withheld because it contained a registered secret; the action has likely taken effect, so do not retry it blindly';
+// A result after a redirect or a retry proves nothing about the write
+// itself (issue #25), so it is withheld without claiming success
+export const BOUNDARY_WITHHELD_UNCERTAIN_TEXT =
+  'the tool call returned a result, but it was withheld because it contained a registered secret; the request may have reached the upstream and been applied, so do not retry it blindly';
 export const BOUNDARY_WITHHELD_ERROR_TEXT =
   'the tool call failed, and its error details were withheld because they contained a registered secret';
 
-export const withheld = (outcome: ToolCallOutcome): ToolCallOutcome =>
-  tagOutcome(
-    textOutcome(
-      outcome.isError ? BOUNDARY_WITHHELD_ERROR_TEXT : BOUNDARY_WITHHELD_SUCCESS_TEXT,
-      true,
-    ),
-    'secret_withheld',
+// The effect survives the withholding (issue #25): a withheld success is a
+// reported success, a withheld error keeps what the executor recorded
+export const withheld = (outcome: ToolCallOutcome): ToolCallOutcome => {
+  if (!outcome.isError) {
+    // A 2xx after a redirect or a retry is no proof the write succeeded
+    if (rememberedEffect(outcome) === 'outcome_unknown') {
+      const uncertain = textOutcome(BOUNDARY_WITHHELD_UNCERTAIN_TEXT, true);
+      return markRetryWarned(
+        withEffect(tagOutcome(uncertain, 'secret_withheld'), 'outcome_unknown'),
+      );
+    }
+    return withheldSuccess();
+  }
+  return carryEffect(
+    outcome,
+    tagOutcome(textOutcome(BOUNDARY_WITHHELD_ERROR_TEXT, true), 'secret_withheld'),
   );
+};
 
 // For a 2xx body the executor itself refuses to return (execute/response.ts):
 // every such path is a success, so the same success wording applies. Tagged
 // so the call log reports `secret_withheld`, not `response_error`.
-export const withheldSuccess = (): ToolCallOutcome =>
-  tagOutcome(textOutcome(BOUNDARY_WITHHELD_SUCCESS_TEXT, true), 'secret_withheld');
+export const withheldSuccess = (): ToolCallOutcome => {
+  const outcome = tagOutcome(textOutcome(BOUNDARY_WITHHELD_SUCCESS_TEXT, true), 'secret_withheld');
+  return markSuccessClaim(
+    withEffect(outcome, 'upstream_reported_success'),
+    BOUNDARY_WITHHELD_UNCERTAIN_TEXT,
+  );
+};
+
+// The response mapper marks the texts it already writes with this warning
+export { markRetryWarned, markSuccessClaim } from './effect.ts';

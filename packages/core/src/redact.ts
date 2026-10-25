@@ -5,8 +5,18 @@ import type { Span } from './redact-match.ts';
 
 const MAX_SECRETS = 64; // Bound construction cost
 const MAX_SECRET_LENGTH = 8192; // Bound per-needle scan cost
-const MIN_VARIANT_LENGTH = 8; // Encoding variants only for 8+ char secrets
+const MIN_VARIANT_LENGTH = 8; // Encoding variants (except JSON escaping) only for 8+ char secrets
 const REDACTED = '[redacted]';
+
+// The JSON-string-escaped forms of a secret (issue #46). For a short secret
+// they are needles only when they differ from the raw value: then they
+// contain an escape (`\"`, `\\`, `\n`, `\u0001`, `\/`) that the raw value
+// does not. That can also match the same escape in a body without the
+// secret, which redacts more, never less (fail-closed).
+const jsonVariantsOf = (secret: string): string[] => {
+  const json = JSON.stringify(secret).slice(1, -1);
+  return [json, json.replaceAll('/', String.raw`\/`)].filter((form) => form !== secret);
+};
 
 // The literal needles for one secret: the raw value, plus (for 8+ chars) the
 // bounded encoded forms an upstream plausibly echoes it in — standard
@@ -25,15 +35,14 @@ const REDACTED = '[redacted]';
 // forms that collapse to the raw value.
 const variantsOf = (secret: string): string[] => {
   if (secret.length < MIN_VARIANT_LENGTH) {
-    return [secret];
+    return [secret, ...jsonVariantsOf(secret)];
   }
   const std = Buffer.from(secret, 'utf8').toString('base64');
   const url = std.replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
   const pct = encodeURIComponent(secret);
   const pctLower = pct.replaceAll(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase());
   const form = new URLSearchParams([['', secret]]).toString().slice(1);
-  const json = JSON.stringify(secret).slice(1, -1);
-  return [secret, std, url, pct, pctLower, form, json, json.replaceAll('/', String.raw`\/`)];
+  return [secret, std, url, pct, pctLower, form, ...jsonVariantsOf(secret)];
 };
 
 // RFC 9110 §5.6.2 `token` (the auth-scheme) followed by whitespace and ONE

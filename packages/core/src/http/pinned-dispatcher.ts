@@ -188,6 +188,10 @@ export type PinnedResponse = {
   // The URL of the hop that produced this response (after redirects), so
   // a relative `Location`/`Link` target resolves against the right base.
   url: string;
+  // Set when this response answers a redirected hop: its status says
+  // nothing about the original request, which already got a redirect
+  // (issue #25)
+  redirected?: true;
 };
 
 export type PinnedOutcome =
@@ -200,6 +204,10 @@ export type PinnedOutcome =
       // line) arrived — the request may not have reached the upstream at
       // all, so an idempotent retry cannot observe a partial response.
       beforeResponse?: true;
+      // True only when the refusal is certain to come before any request
+      // left this process: an egress or route refusal of the first hop
+      // (issue #25). A failure that may come after sending never sets it.
+      notSent?: true;
     };
 
 export type HopHeaders = {
@@ -524,12 +532,14 @@ export const pinnedRequest = async (
     const policy: PinnedPolicy = { allowPrivateNetwork: opts.allowPrivateNetwork, trusted };
     // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
     const sync = validateHopUrlSync(url, policy) ?? opts.checkHop?.(url);
+    // Refused before this hop is sent; only the first hop means nothing was
+    const unsent = hop === 0 ? ({ notSent: true } as const) : {};
     if (sync !== undefined) {
-      return { kind: 'error', reason: 'egress', detail: sync };
+      return { kind: 'error', reason: 'egress', detail: sync, ...unsent };
     }
     const refusal = opts.authorizeHop?.(url, method, hop);
     if (refusal !== undefined) {
-      return { kind: 'error', reason: refusal };
+      return { kind: 'error', reason: refusal, ...unsent };
     }
     // A pooled Agent is shared with other calls: it is never closed or
     // destroyed here — an exceptional path aborts only this request (via
@@ -572,11 +582,14 @@ export const pinnedRequest = async (
       if (signal.aborted) {
         return { kind: 'error', reason: isCancel(getAbortWinner(), opts.signal) };
       }
+      const reason = classifyFetchError(error);
+      // A pinned DNS refusal stops the connection, so nothing was sent
       return {
         kind: 'error',
-        reason: classifyFetchError(error),
+        reason,
         detail: describeCause(error),
         beforeResponse: true,
+        ...(reason === 'egress' ? unsent : {}),
       };
     }
     // Threaded through the try/catch/finally below on purpose: the finally
@@ -622,6 +635,7 @@ export const pinnedRequest = async (
         bodyBytes,
         headers: captureResponseHeaders(response.headers),
         url: url.href,
+        ...(hop > 0 ? { redirected: true as const } : {}),
       };
     } catch (error) {
       exceptional = true;

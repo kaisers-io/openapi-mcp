@@ -176,6 +176,23 @@ Notes:
   headers are never read. `Link` is not forwarded as a raw URL. A value that contains a
   configured secret is dropped. On a `429` or `503`, a valid `Retry-After` is also reported
   as `_meta["openapi-mcp/upstreamRetryAfterMs"]`.
+- Effect of a failed call (issue #25): every tool error of an API call carries
+  `_meta["openapi-mcp/effect"]`, which states what this server knows about the call's effect.
+  It is evidence, not a transactional guarantee.
+
+  | Value | When |
+  |---|---|
+  | `not_sent` | refused before any request left the server: invalid arguments, request authorization, egress, the rate limit, a full queue, a failed first OAuth2 token |
+  | `upstream_rejected` | the call sent one request, and the upstream answered it with a `4xx` |
+  | `upstream_reported_success` | the call sent one request, the upstream answered it with a `2xx`, but the result could not be returned (it did not match the declared schema, was not valid JSON, or contained a secret) |
+  | `outcome_unknown` | everything else: a timeout, a lost connection, an oversized response, a redirect, a `5xx`, and any call that sent more than one attempt |
+
+  A first request answered `401` and sent again with a fresh OAuth2 token does not count: it
+  was not authorized, so it had no effect, and the request sent again decides the value.
+
+  For a write (any method other than `GET`, `HEAD` and `QUERY`), the text of an
+  `outcome_unknown` or `upstream_reported_success` error ends with a warning that the request
+  may have been applied and must not be retried blindly. Messages for reads are unchanged.
 - Pagination: a `GET` tool is paginated when it has a query parameter named `cursor`,
   `page_token`/`pageToken`, `after`, `starting_after` or `page`, or when it declares a `Link`
   response header. Size or position parameters alone (`limit`, `offset`, `per_page`,

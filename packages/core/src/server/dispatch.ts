@@ -7,6 +7,7 @@ import type { CallObserver, CallTelemetry } from './telemetry.ts';
 import type { TraceContext } from './trace.ts';
 import type { ServerSnapshot, SnapshotTool } from './types.ts';
 import { runDiscoveryTool } from './discovery-route.ts';
+import { executeWithEffect, withEffect } from './effect.ts';
 import { validateAndExecute } from './validation.ts';
 import { withheld } from './withheld.ts';
 
@@ -71,7 +72,7 @@ const scanForSecretSafely = (redactor: Redactor, value: unknown): boolean => {
   }
 };
 
-const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOutcome => {
+const scanAndRedact = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOutcome => {
   if (
     (outcome.structuredContent !== undefined &&
       !wasSecretScanned(outcome.structuredContent, redactor) &&
@@ -102,6 +103,14 @@ const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCall
   });
 };
 
+// The last step for every outcome: the internal effect note (issue #25) has
+// served its purpose and does not leave the dispatcher
+const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOutcome => {
+  const scanned = scanAndRedact(outcome, redactor);
+  const { effectNote: _note, ...finished } = scanned;
+  return carryOutcomeTag(scanned, finished);
+};
+
 const routeExecutor = (
   deps: DispatcherDeps,
   tool: SnapshotTool,
@@ -116,7 +125,9 @@ const routeExecutor = (
       return runDiscoveryTool(deps, tool, data, request);
     }
     case 'upstream': {
-      return deps.executor(tool, data, request.signal, request.trace, request.report);
+      return executeWithEffect(tool, () =>
+        deps.executor(tool, data, request.signal, request.trace, request.report),
+      );
     }
   }
 };
@@ -153,10 +164,13 @@ const createUnobservedDispatcher = (
         return {
           kind: 'outcome',
           outcome: finalizeOutcome(
-            retryableErrorOutcome('rate limit exceeded — too many tool calls', {
-              error: 'rate_limited',
-              retryAfterMs,
-            }),
+            withEffect(
+              retryableErrorOutcome('rate limit exceeded — too many tool calls', {
+                error: 'rate_limited',
+                retryAfterMs,
+              }),
+              'not_sent',
+            ),
             deps.redactor,
           ),
         };

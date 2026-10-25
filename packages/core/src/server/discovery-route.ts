@@ -1,5 +1,6 @@
 import type { CallRequest, DispatcherDeps } from './dispatch.ts';
 import { describeOperation, lookupOperation, unknownOperationOutcome } from './discovery.ts';
+import { executeWithEffect } from './effect.ts';
 import type { CallInput } from './discovery-schemas.ts';
 import { textOutcome } from './result.ts';
 import type { ToolCallOutcome } from './result.ts';
@@ -36,7 +37,7 @@ const callOperation = (
           report({ ...telemetry, tool: target.name });
         };
   return validateAndExecute(target, input.arguments, (targetData) =>
-    deps.executor(target, targetData, signal, trace, reportTarget),
+    executeWithEffect(target, () => deps.executor(target, targetData, signal, trace, reportTarget)),
   );
 };
 

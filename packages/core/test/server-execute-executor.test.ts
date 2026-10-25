@@ -600,6 +600,7 @@ describe('createExecutor — cleartext gate', () => {
 const OVERLOADED_META = {
   'openapi-mcp/error': 'overloaded',
   'openapi-mcp/retryAfterMs': 1000,
+  'openapi-mcp/effect': 'not_sent',
 };
 
 describe('createExecutor — global concurrency queue', () => {
@@ -725,6 +726,9 @@ describe('createExecutor — global concurrency queue', () => {
     const queuedOutcome = await queued;
     expect(queuedOutcome.isError).toBe(true);
     expect(queuedOutcome.content[0]?.text).toMatch(/cancelled/u);
+    // Cancelled while queued: nothing was sent, so no retry warning (#25)
+    expect(queuedOutcome.meta?.['openapi-mcp/effect']).toBe('not_sent');
+    expect(queuedOutcome.content[0]?.text).not.toContain('do not retry');
     gated.releaseOne();
     await first;
     await flush();
@@ -1394,7 +1398,10 @@ describe('createExecutor — forwarded upstream response headers', () => {
         }),
     );
     expect(outcome.isError).toBe(true);
-    expect(outcome.meta).toEqual({ 'openapi-mcp/upstreamRetryAfterMs': 3000 });
+    expect(outcome.meta).toEqual({
+      'openapi-mcp/upstreamRetryAfterMs': 3000,
+      'openapi-mcp/effect': 'upstream_rejected',
+    });
     expect(outcome.content.at(-1)?.text).toBe('headers:\nretry-after: 3');
   });
 
@@ -2351,7 +2358,10 @@ describe('createExecutor — optional retries for retry-safe requests', () => {
     const outcome = await run(pingOp, deps, 3);
     expect(outcome.isError).toBe(true);
     expect(calls).toHaveLength(1);
-    expect(outcome.meta).toEqual({ 'openapi-mcp/upstreamRetryAfterMs': 10_000 });
+    expect(outcome.meta).toEqual({
+      'openapi-mcp/upstreamRetryAfterMs': 10_000,
+      'openapi-mcp/effect': 'outcome_unknown',
+    });
   });
 
   it('returns cancelled, with no further attempt, when the caller aborts during backoff', async () => {

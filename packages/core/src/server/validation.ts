@@ -3,6 +3,7 @@ import { textOutcome } from './result.ts';
 import { tagOutcome } from './telemetry.ts';
 import type { ToolCallOutcome } from './result.ts';
 import type { SnapshotTool } from './types.ts';
+import { withEffect } from './effect.ts';
 
 // Argument validation for a tool call, the redacted rendering of its
 // failures, and the guarded executor call that follows. Moved out of
@@ -134,14 +135,15 @@ export const validateAndExecute = async (
   execute: (data: unknown) => Promise<ToolCallOutcome>,
 ): Promise<ToolCallOutcome> => {
   const attempt = await attemptParse(tool, args);
+  // Refused before the executor runs: nothing was sent (issue #25)
   if (attempt.threw) {
     // See `PARSE_THREW_OUTCOME` above — a rejection here must never reach the
     // executor and must never surface the thrown value.
-    return PARSE_THREW_OUTCOME;
+    return withEffect(PARSE_THREW_OUTCOME, 'not_sent');
   }
   const { parsed } = attempt;
   if (!parsed.success) {
-    return redactedValidationOutcome(parsed.error.issues);
+    return withEffect(redactedValidationOutcome(parsed.error.issues), 'not_sent');
   }
   return runGuarded(() => execute(parsed.data));
 };
