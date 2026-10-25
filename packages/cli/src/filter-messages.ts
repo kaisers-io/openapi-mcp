@@ -5,7 +5,7 @@ import type { CaseCollision, DeadPattern } from '@kaisers-io/openapi-mcp-core';
 const PATH_DISPLAY_MAX = 512;
 const PATTERN_DISPLAY_MAX = 256;
 
-// Example wording: --allow "readPets" matches no operation; closest: readPetById
+// Example: --allow "operationId:readPets" matches no operation; closest: operationId:readPetById
 // The flag comes from the engine, which knows which list the pattern came from.
 // Shared by `tools` and `serve` so a dead-pattern warning is sanitized and
 // worded identically regardless of which command produced it.

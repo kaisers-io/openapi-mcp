@@ -149,6 +149,19 @@ describe('selectors (issue #42)', () => {
     expect(matchesOperation(parseFilterPattern('path:/orders'), target)).toBe(true);
   });
 
+  // Review of #45: a suggestion is itself a pattern the parser accepts
+  it('suggests only values whose full selector fits the pattern limit', () => {
+    // `operationId:` plus 244 characters is exactly the 256-character limit
+    const pattern = `operationId:${'a'.repeat(244)}`;
+    const fits = `${'a'.repeat(243)}b`;
+    const [dead] = decide([record('get', '/a', fits)], [pattern]).deadPatterns;
+    expect(dead?.suggestion).toBe(`operationId:${fits}`);
+    expect(() => parseFilterPattern(dead?.suggestion ?? '')).not.toThrow();
+    const tooLong = `${'a'.repeat(244)}b`;
+    const [none] = decide([record('get', '/a', tooLong)], [pattern]).deadPatterns;
+    expect(none?.suggestion).toBeUndefined();
+  });
+
   it('counts lowering against the match budget', () => {
     const budget = createMatchBudget(10);
     expect(() =>
@@ -200,6 +213,14 @@ describe('case collisions (issue #42)', () => {
         operations: ['GET /orders/export', 'GET /Orders/export'],
       },
     ]);
+  });
+
+  // Review of #45: ignoring case adds nothing to a pattern that takes every
+  // spelling as written too
+  it('does not report a pattern that matches every spelling case-sensitively too', () => {
+    expect(decide(operations, ['path:/**', 'operationId:*', 'tag:*']).caseCollisions).toEqual([]);
+    expect(decide(operations, ['path:/*rders/export']).caseCollisions).toEqual([]);
+    expect(decide(operations, ['path:/orders/*']).caseCollisions).toHaveLength(1);
   });
 
   it('does not report one spelling shared by many operations, or another method', () => {

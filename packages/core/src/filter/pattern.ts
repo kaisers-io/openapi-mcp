@@ -90,7 +90,7 @@ export type CompiledGlob = {
 // is matched regardless of case: it is compiled in lower case, and a value is
 // lowered before it is matched (engine.ts). There is no escape for a literal
 // `*`.
-export const compileGlob = (glob: string, segmented = true): CompiledGlob => {
+export const compileGlob = (glob: string, segmented = true, fold = true): CompiledGlob => {
   if (glob.length > FILTER_PATTERN_MAX_LENGTH) {
     throw usageError(`a filter pattern must be at most ${FILTER_PATTERN_MAX_LENGTH} characters`);
   }
@@ -101,7 +101,7 @@ export const compileGlob = (glob: string, segmented = true): CompiledGlob => {
   // the unit the /u-flag RegExp oracle (used as the differential-fuzz
   // reference) works in, so this is what keeps the two representations
   // equivalent.
-  const points = [...glob.toLowerCase()];
+  const points = [...(fold ? glob.toLowerCase() : glob)];
   const tokens: GlobToken[] = [];
   // Imperative on purpose: a "*" run consumes a variable number of code
   // points in one step (so the index can jump by more than one), and the

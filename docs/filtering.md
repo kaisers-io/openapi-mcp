@@ -144,7 +144,8 @@ alike. When a pattern matches values that differ only by case, startup names the
 ```
 
 The operator may have meant only one of them. Spell out the operation you want, or exclude the
-other one.
+other one. A pattern that takes every spelling as written anyway, such as `path:/**`, is not
+reported: ignoring case adds nothing there.
 
 ## Overlapping paths
 

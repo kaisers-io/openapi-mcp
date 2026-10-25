@@ -91,6 +91,51 @@ describe('docs/filtering.md', () => {
     }
   });
 
+  // Review of #45: every document that shows a pattern, the README shipped
+  // in the npm package included, uses the selector syntax
+  it('uses selectors in every document that shows a pattern', () => {
+    for (const relative of [
+      '../../../README.md',
+      '../README.md',
+      '../../../docs/configuration.md',
+      '../../../docs/security.md',
+      '../../../docs/overlays.md',
+    ]) {
+      const text = readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf8');
+      const shown = [
+        ...text.matchAll(/--(?:allow|deny|omit-output-schema)[ =]["'](?<pattern>[^"']+)["']/gu),
+      ].map((match) => match.groups?.['pattern'] ?? '');
+      // Selector examples in backticks parse, and no `METHOD /path` glob is
+      // left from the earlier syntax (an operation named as `GET /x` is fine)
+      shown.push(
+        ...[
+          ...text.matchAll(/`(?<pattern>(?:method|path|route|operationId|name|tag):[^`]+)`/gu),
+        ].map((match) => match.groups?.['pattern'] ?? ''),
+      );
+      expect({
+        relative,
+        bare: /`(?:GET|POST|PUT|DELETE|PATCH) \/[^`]*\*[^`]*`/u.test(text),
+      }).toEqual({
+        relative,
+        bare: false,
+      });
+      for (const raw of shown) {
+        expect({
+          relative,
+          raw,
+          parses: (() => {
+            try {
+              parseFilterPattern(raw);
+              return true;
+            } catch {
+              return false;
+            }
+          })(),
+        }).toEqual({ relative, raw, parses: true });
+      }
+    }
+  });
+
   it('exposes the tools its example table names', async () => {
     expect(await toolsFor([])).toEqual(READS);
     expect(await toolsFor(['--allow', 'tag:Orders'])).toEqual(ORDERS);

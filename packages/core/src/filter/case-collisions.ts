@@ -1,8 +1,8 @@
 import { selectedValues } from './engine.ts';
 import type { DeadPatternFlag, FilterTarget } from './engine.ts';
 import { validationError } from '../errors.ts';
-import { FILTER_WORK_BUDGET_EXCEEDED_MESSAGE, globMatches } from './pattern.ts';
-import type { FilterPattern, MatchBudget } from './pattern.ts';
+import { FILTER_WORK_BUDGET_EXCEEDED_MESSAGE, compileGlob, globMatches } from './pattern.ts';
+import type { CompiledGlob, FilterPattern, MatchBudget } from './pattern.ts';
 
 // Selectors match regardless of case (issue #42), so a pattern can select
 // operations whose operationIds, tool names, tags or paths differ only by
@@ -61,6 +61,15 @@ export const caseCollisionsFor = (
     cache.set(attribute, known);
     return known;
   };
+  // The pattern's glob as written, matched case-sensitively
+  const written = new Map<FilterPattern, CompiledGlob>();
+  const exact = (pattern: Exclude<FilterPattern, { kind: 'method' }>): CompiledGlob => {
+    const known =
+      written.get(pattern) ??
+      compileGlob(pattern.glob, pattern.kind === 'path' || pattern.kind === 'route', false);
+    written.set(pattern, known);
+    return known;
+  };
   return patterns.flatMap((pattern) => {
     if (pattern.kind === 'method') {
       return [];
@@ -77,7 +86,12 @@ export const caseCollisionsFor = (
         );
         return kept.length === 0 ? [] : [{ value, kept }];
       });
-      if (matched.length < 2) {
+      // Reported only when matching regardless of case adds a spelling: a
+      // pattern that takes every one as written too (`path:/**`) is fine
+      if (
+        matched.length < 2 ||
+        matched.every((entry) => globMatches(exact(pattern), entry.value, budget))
+      ) {
         return [];
       }
       return [

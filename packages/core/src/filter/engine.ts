@@ -1,6 +1,11 @@
 import { validationError } from '../errors.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
-import { FILTER_WORK_BUDGET_EXCEEDED_MESSAGE, createMatchBudget, globMatches } from './pattern.ts';
+import {
+  FILTER_PATTERN_MAX_LENGTH,
+  FILTER_WORK_BUDGET_EXCEEDED_MESSAGE,
+  createMatchBudget,
+  globMatches,
+} from './pattern.ts';
 import type { FilterPattern, MatchBudget } from './pattern.ts';
 
 // Suggestions are advisory: a pattern or candidate longer than this is skipped
@@ -56,14 +61,18 @@ const sameValues = (left: readonly string[], right: readonly string[]): boolean 
 // keeps the values it was made from, so a target changed since is lowered
 // again rather than matched by its old values.
 const folded = (op: FilterTarget, attribute: Attribute, budget: MatchBudget): readonly string[] => {
-  const source =
-    attribute === 'tags' ? [...op.tags] : [op[attribute]].filter((value) => value !== undefined);
   const cache = foldedTargets.get(op) ?? new Map<Attribute, Lowered>();
   foldedTargets.set(op, cache);
   const known = cache.get(attribute);
-  if (known !== undefined && sameValues(known.source, source)) {
+  // Compared without copying, as this runs once per pattern and operation
+  if (
+    known !== undefined &&
+    (attribute === 'tags' ? sameValues(known.source, op.tags) : known.source[0] === op[attribute])
+  ) {
     return known.lowered;
   }
+  const source =
+    attribute === 'tags' ? [...op.tags] : [op[attribute]].filter((value) => value !== undefined);
   spendSteps(
     budget,
     source.reduce((sum, value) => sum + value.length, 0),
@@ -259,16 +268,28 @@ export const deadPatternsFor = (
   flag: DeadPatternFlag,
   operations: readonly FilterTarget[],
   budget: MatchBudget,
-): readonly DeadPattern[] =>
-  patterns
+): readonly DeadPattern[] => {
+  // The candidates depend only on the selector, so they are built once per kind
+  const spaces = new Map<FilterPattern['kind'], ReadonlyMap<string, string>>();
+  return patterns
     .filter(
       (pattern) => !operations.some((operation) => matchesOperation(pattern, operation, budget)),
     )
     .map((pattern) => {
-      const candidates = candidateSpace(pattern, operations);
-      const closest = closestMatch(suggestionInput(pattern), [...candidates.keys()], budget);
+      const candidates = spaces.get(pattern.kind) ?? candidateSpace(pattern, operations);
+      spaces.set(pattern.kind, candidates);
+      // A suggestion must itself be a pattern the parser accepts
+      const usable = [...candidates].filter(
+        ([, value]) => `${pattern.kind}:${value}`.length <= FILTER_PATTERN_MAX_LENGTH,
+      );
+      const closest = closestMatch(
+        suggestionInput(pattern),
+        usable.map(([lower]) => lower),
+        budget,
+      );
       const value = closest === undefined ? undefined : candidates.get(closest);
       return value === undefined
         ? { raw: pattern.raw, flag }
         : { raw: pattern.raw, flag, suggestion: `${pattern.kind}:${value}` };
     });
+};
