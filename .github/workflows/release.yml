@@ -288,6 +288,57 @@ jobs:
         # repository visibility; the first step of this job does.
         run: npm publish --ignore-scripts --provenance
 
+  # The package as npm serves it, installed from the registry on every supported platform and driven
+  # through the same smoke as CI (scripts/smoke-cli.sh). On Windows that includes a spec given as an
+  # absolute drive path (`C:\...\spec.json`), which replaces the manual check CONTRIBUTING.md used to
+  # ask for. It runs after the package is public, so it cannot stop a release; a failure here is the
+  # signal to deprecate the version and ship a fix. Read-only, no secrets, no npm identity.
+  verify-published:
+    needs: publish
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # Only scripts/smoke-cli.sh is used from the checkout; nothing is built.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: .node-version, package-manager-cache: false }
+      - name: Wait until the registry serves this version
+        # npm reports "may take a few minutes to become available" after a publish (about 2 minutes
+        # for 0.5.0). `TAG` goes through env, never spliced into the script.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          for attempt in $(seq 1 40); do
+            if [ "$(npm view "@kaisers-io/openapi-mcp@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+              echo "registry serves $VERSION"
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "::error::the registry did not serve $VERSION within 20 minutes" >&2
+          exit 1
+      - name: Smoke-test the published package
+        # The install is this release's own package, just published by the job above.
+        env:
+          TAG: ${{ github.ref_name }}
+        run: | # zizmor: ignore[adhoc-packages]
+          set -euo pipefail
+          npm install -g --ignore-scripts "@kaisers-io/openapi-mcp@${TAG#v}"
+          test "$(openapi-mcp --version)" = "${TAG#v}"
+          bash scripts/smoke-cli.sh
+
   # The GitHub release entry. Separate from `publish` on purpose: creating one needs `contents: write`,
   # and the publish job is deliberately the narrowest thing in this repository — it holds
   # `id-token: write`, runs no repository-controlled code, and installs nothing. Handing it write
