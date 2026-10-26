@@ -52,6 +52,22 @@ describe('qualifyTools (#16)', () => {
     expect(qualifiedName('shop', 'listOrders')).toBe('shop_listOrders');
   });
 
+  // Review of #16: a shortened name and one that already looks like it
+  it('resolves names that only collide once qualified', () => {
+    const long = 'x'.repeat(64);
+    const lookalike = qualifiedName('shop', long).slice('shop_'.length);
+    const built = qualifyTools(buildTools([op(long), op(lookalike)], options), 'shop');
+    const names = built.tools.map((tool) => tool.toolName);
+    expect(new Set(names).size).toBe(2);
+    for (const name of names) {
+      expect(name.length).toBeLessThanOrEqual(64);
+      expect(name.startsWith('shop_')).toBe(true);
+    }
+    // The same on every start
+    const again = qualifyTools(buildTools([op(long), op(lookalike)], options), 'shop');
+    expect(again.tools.map((tool) => tool.toolName)).toStrictEqual(names);
+  });
+
   it('reads the API back from the part before the first underscore', () => {
     expect(apiOfToolName('github_repos_get')).toBe('github');
     expect(apiOfToolName('my-shop_orders_list')).toBe('my-shop');

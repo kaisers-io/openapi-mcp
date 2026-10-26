@@ -19,16 +19,37 @@ export const RESERVED_API_NAMES: ReadonlySet<string> = new Set([
   'call',
 ]);
 
+const capped = (full: string, hashLength: number): string => {
+  const suffix = `_${createHash('sha256').update(full).digest('hex').slice(0, hashLength)}`;
+  return `${full.slice(0, TOOL_NAME_MAX_LENGTH - suffix.length)}${suffix}`;
+};
+
 // `<api>_<name>`, within the 64-character compatibility cap: a longer one
 // keeps its start and ends with a hash of the full name, so it stays unique
 // and the same on every start (review of #16)
 export const qualifiedName = (api: string, toolName: string): string => {
   const full = `${api}_${toolName}`;
-  if (full.length <= TOOL_NAME_MAX_LENGTH) {
-    return full;
+  return full.length <= TOOL_NAME_MAX_LENGTH ? full : capped(full, 8);
+};
+
+// The qualified names of one API's tools, unique: two names that end up the
+// same (a shortened one and one that already looked like it) both take a
+// longer hash of their full name, until none is left twice (review of #16)
+const uniqueNames = (api: string, toolNames: readonly string[]): string[] => {
+  let names = toolNames.map((toolName) => qualifiedName(api, toolName));
+  for (let hashLength = 12; hashLength <= 32; hashLength += 4) {
+    const counts = new Map<string, number>();
+    for (const name of names) {
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    if (names.every((name) => counts.get(name) === 1)) {
+      return names;
+    }
+    names = names.map((name, index) =>
+      counts.get(name) === 1 ? name : capped(`${api}_${toolNames[index] ?? ''}`, hashLength),
+    );
   }
-  const suffix = `_${createHash('sha256').update(full).digest('hex').slice(0, 8)}`;
-  return `${full.slice(0, TOOL_NAME_MAX_LENGTH - suffix.length)}${suffix}`;
+  throw new Error(`the tool names of the API "${api}" cannot be made unique`);
 };
 
 // The API a qualified name belongs to
@@ -40,16 +61,22 @@ const renamed = (tool: GeneratedTool, toolName: string): GeneratedTool =>
 export const qualifyTools = <Built extends BuildToolsResult | DeferredToolsResult>(
   built: Built,
   api: string,
-): Built => ({
-  ...built,
-  tools: built.tools.map((tool) => {
-    const toolName = qualifiedName(api, tool.toolName);
-    return 'complete' in tool
-      ? {
-          ...tool,
-          toolName,
-          complete: (seen?: WeakSet<object>) => renamed(tool.complete(seen), toolName),
-        }
-      : renamed(tool, toolName);
-  }),
-});
+): Built => {
+  const names = uniqueNames(
+    api,
+    built.tools.map((tool) => tool.toolName),
+  );
+  return {
+    ...built,
+    tools: built.tools.map((tool, index) => {
+      const toolName = names[index] ?? qualifiedName(api, tool.toolName);
+      return 'complete' in tool
+        ? {
+            ...tool,
+            toolName,
+            complete: (seen?: WeakSet<object>) => renamed(tool.complete(seen), toolName),
+          }
+        : renamed(tool, toolName);
+    }),
+  };
+};
