@@ -18,6 +18,7 @@ import { outputFieldsOf } from './output-fields.ts';
 import { presentedOutputSchema } from './wire-tools.ts';
 import type { OutputSchemaForm } from './wire-tools.ts';
 import { withEffect } from './effect.ts';
+import { withoutDefaultDialect } from './tool-list.ts';
 
 // Discovery tool mode (issue kaisers-io/openapi-mcp-archive#38): instead of one
 // MCP tool per operation, tools/list carries three package-authored tools that
@@ -58,7 +59,8 @@ export const AUTO_DISCOVER_DEFINITION_BYTES = 40_000;
 
 type DefinedTool = { toolName: string; description: string; wireSchema: unknown };
 
-// The UTF-8 bytes of the definitions a model sees for these tools
+// The UTF-8 bytes of the definitions a model sees for these tools, as a
+// current client lists them (without the default `$schema`)
 export const definitionBytes = (tools: readonly DefinedTool[]): number =>
   tools.reduce(
     (sum, tool) =>
@@ -67,7 +69,7 @@ export const definitionBytes = (tools: readonly DefinedTool[]): number =>
         JSON.stringify({
           name: tool.toolName,
           description: tool.description,
-          inputSchema: tool.wireSchema,
+          inputSchema: withoutDefaultDialect(tool.wireSchema),
         }),
       ),
     0,

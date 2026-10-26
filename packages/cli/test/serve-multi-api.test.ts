@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { qualifiedName } from '@kaisers-io/openapi-mcp-core';
+import { AUTO_DISCOVER_DEFINITION_BYTES, qualifiedName } from '@kaisers-io/openapi-mcp-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startServe, startUpstream, withServe } from './filter-harness.ts';
 import type { Upstream } from './filter-harness.ts';
@@ -351,6 +351,67 @@ describe('serve — several APIs (#16)', () => {
         (tool) => tool !== 'openapi_mcp_status' && tool !== `names_${lookalike}`,
       ),
     );
+  });
+
+  // Review of #61: auto sizes the definitions with their qualified names,
+  // as the host lists them
+  it('sizes the tool definitions for auto with their qualified names', async () => {
+    const name = 'a'.repeat(32);
+    const paths = Object.fromEntries(
+      Array.from({ length: 64 }, (_unused, index) => [
+        `/items${String(index)}`,
+        {
+          get: {
+            operationId: `listItems${String(index)}`,
+            description: 'x'.repeat(494),
+            responses: ok,
+          },
+        },
+      ]),
+    );
+    writeFileSync(
+      join(home, 'sized.json'),
+      JSON.stringify({ openapi: '3.1.0', info: { title: 'Sized', version: '1' }, paths }),
+    );
+    const flags = (mode: string) => [
+      '--api',
+      `${name}=${join(home, 'sized.json')}`,
+      '--base-url',
+      `${name}=${upstream.url}/sized`,
+      '--enable',
+      `${name}=trust-spec-updates`,
+      '--tool-mode',
+      mode,
+    ];
+    const listed = await withServe(flags('per-operation'), home, async (session) => {
+      const reply = await session.request('tools/list', {});
+      return (reply.result?.['tools'] ?? []) as {
+        name: string;
+        description: string;
+        inputSchema: unknown;
+      }[];
+    });
+    const operations = listed.filter((tool) => tool.name !== 'openapi_mcp_status');
+    const qualifiedBytes = operations.reduce(
+      (sum, tool) =>
+        sum +
+        Buffer.byteLength(
+          JSON.stringify({
+            name: tool.name,
+            description: tool.description,
+            inputSchema: tool.inputSchema,
+          }),
+        ),
+      0,
+    );
+    // Precondition: only the qualified names cross the threshold
+    expect(operations).toHaveLength(64);
+    expect(qualifiedBytes).toBeGreaterThan(AUTO_DISCOVER_DEFINITION_BYTES);
+    expect(qualifiedBytes - 64 * (name.length + 1)).toBeLessThanOrEqual(
+      AUTO_DISCOVER_DEFINITION_BYTES,
+    );
+    const tools = await withServe(flags('auto'), home, (session) => session.listTools());
+    expect(tools).toContain('call_operation');
   });
 
   it('refuses more secrets than one server can redact, naming each API', async () => {

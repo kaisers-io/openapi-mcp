@@ -223,6 +223,10 @@ describe('chooseToolMode', () => {
     expect(definitionBytes([{ ...tool, outputSchema: { type: 'string' } } as typeof tool])).toBe(
       expected,
     );
+    const dialect = 'https://json-schema.org/draft/2020-12/schema';
+    expect(definitionBytes([{ ...tool, wireSchema: { $schema: dialect, type: 'object' } }])).toBe(
+      expected,
+    );
   });
 });
 

@@ -545,6 +545,21 @@ const loadApi = async (
 const withApi = (name: string | undefined, lines: readonly string[]): string[] =>
   name === undefined ? [...lines] : lines.map((line) => `${name}: ${line}`);
 
+// Several APIs (issue #16): every tool is named `<api>_<name>`, decided over
+// every operation of the spec, so filters never move a name to another
+// operation
+const qualified = <Built extends Parameters<typeof qualifyTools>[0]>(
+  api: LoadedApi,
+  built: Built,
+): Built =>
+  api.name === undefined
+    ? built
+    : qualifyTools(
+        built,
+        api.name,
+        assignToolNames(api.result.spec.operations).map((named) => named.toolName),
+      );
+
 // One API, finished for the chosen tool mode (phase 3): its tools, its
 // reports, and the executor configuration of its own calls (the redactor
 // and the validators are shared and set later)
@@ -560,18 +575,9 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
           cmdOpts.strictFilters === true,
         );
   const exposure = exposureReport(result, optOut.built, cmdOpts.strictFilters === true);
-  // Several APIs (issue #16): every tool is named `<api>_<name>`, after the
-  // opt-out and the exposure report, so their selectors and reports use the
-  // API's own names; decided over every operation, so filters never move a
-  // name to another operation
-  const built =
-    name === undefined
-      ? optOut.built
-      : qualifyTools(
-          optOut.built,
-          name,
-          assignToolNames(result.spec.operations).map((named) => named.toolName),
-        );
+  // After the opt-out and the exposure report, so their selectors and
+  // reports use the API's own names
+  const built = qualified(api, optOut.built);
 
   // Resolve + validate the API base URL: --base-url (trusted, address
   // check skipped) else the spec-derived candidate (untrusted — a
@@ -764,7 +770,12 @@ const prepareServe = async (
     for (const api of loaded) {
       api.completed = completeTools(api.generated);
     }
-    return definitionBytes(loaded.flatMap((api) => api.completed?.tools ?? []));
+    // Sized as the host lists them, with their qualified names (review of #61)
+    return definitionBytes(
+      loaded.flatMap((api) =>
+        api.completed === undefined ? [] : qualified(api, api.completed).tools,
+      ),
+    );
   });
   const { toolMode } = choice;
   if (choice.reason !== undefined) {
