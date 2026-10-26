@@ -51,3 +51,33 @@ export const pageTools = <T>(
     ...(end < tools.length ? { nextCursor: encodeCursor(contentHash, end) } : {}),
   };
 };
+
+// Issue #49: from MCP revision 2025-11-25 on, a schema without `$schema` is
+// JSON Schema 2020-12, so the keyword on every listed input and output schema
+// says nothing a client does not already assume (3% of the DigitalOcean list,
+// more for small tools). An earlier revision defines no default dialect and
+// keeps it. Only the 2020-12 value is dropped; revisions are dates, so they
+// compare as strings.
+const DEFAULT_DIALECT = 'https://json-schema.org/draft/2020-12/schema';
+const DEFAULT_DIALECT_SINCE = '2025-11-25';
+
+export const hasDefaultDialect = (protocolVersion?: string): boolean =>
+  protocolVersion !== undefined && protocolVersion >= DEFAULT_DIALECT_SINCE;
+
+const withoutDefaultDialect = (schema: unknown): unknown => {
+  if (schema === null || typeof schema !== 'object' || !('$schema' in schema)) {
+    return schema;
+  }
+  const { $schema: dialect, ...rest } = schema as Record<string, unknown>;
+  return dialect === DEFAULT_DIALECT ? rest : schema;
+};
+
+export const listedTool = <T extends { inputSchema: unknown; outputSchema?: unknown }>(
+  tool: T,
+): T => ({
+  ...tool,
+  inputSchema: withoutDefaultDialect(tool.inputSchema),
+  ...(tool.outputSchema === undefined
+    ? {}
+    : { outputSchema: withoutDefaultDialect(tool.outputSchema) }),
+});

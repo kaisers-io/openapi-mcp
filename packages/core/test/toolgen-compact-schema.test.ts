@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { factorRepeatedSubschemas } from '../src/toolgen/compact-schema.ts';
+import { factorRepeatedSubschemas, withoutDescriptions } from '../src/toolgen/compact-schema.ts';
 import { compactOutputSchema } from '../src/toolgen/output-schema.ts';
 import { compileEnvelopeValidator } from '../src/index.ts';
 import type { EnvelopeValidator } from '../src/index.ts';
@@ -163,5 +163,70 @@ describe('compactOutputSchema', () => {
       expect(properties['data']).toEqual({ $ref: '#/$defs/d0' });
     }
     expect(inline(compact, compact['$defs'] as Node)).toEqual(schema);
+  });
+});
+
+// --no-output-schema-descriptions (issue #49)
+describe('withoutDescriptions', () => {
+  const schema = {
+    description: 'root',
+    type: 'object',
+    properties: {
+      description: { type: 'string', description: 'a field named description' },
+      tags: { type: 'array', items: { type: 'string', description: 'tag' } },
+      kind: { enum: [{ description: 'a value, not a keyword' }], description: 'kind' },
+      extra: { additionalProperties: { type: 'string', description: 'x' } },
+      either: { anyOf: [{ type: 'string', description: 'y' }, { type: 'null' }] },
+    },
+    required: ['description'],
+    $defs: { thing: { type: 'string', description: 'z' } },
+    default: { description: 'kept' },
+  };
+
+  it('drops the keyword at every schema position and nothing else', () => {
+    expect(withoutDescriptions(schema)).toStrictEqual({
+      type: 'object',
+      properties: {
+        description: { type: 'string' },
+        tags: { type: 'array', items: { type: 'string' } },
+        kind: { enum: [{ description: 'a value, not a keyword' }] },
+        extra: { additionalProperties: { type: 'string' } },
+        either: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+      },
+      required: ['description'],
+      $defs: { thing: { type: 'string' } },
+      default: { description: 'kept' },
+    });
+    expect(withoutDescriptions('not a schema')).toBe('not a schema');
+  });
+
+  // Review of #49: envelopes share their response schemas, and so do the copies
+  it('strips a shared subschema once', () => {
+    const shared = {
+      type: 'object',
+      description: 'shared',
+      properties: { id: { type: 'string' } },
+    };
+    const first = withoutDescriptions({ properties: { a: shared } }) as {
+      properties: { a: unknown };
+    };
+    const second = withoutDescriptions({ items: shared }) as { items: unknown };
+    expect(first.properties.a).toBe(second.items);
+  });
+
+  it('accepts and rejects exactly the same values', () => {
+    const full = compileEnvelopeValidator(schema) as EnvelopeValidator;
+    const bare = compileEnvelopeValidator(
+      withoutDescriptions(schema) as Record<string, unknown>,
+    ) as EnvelopeValidator;
+    for (const value of [
+      { description: 'x', tags: ['a'] },
+      { description: 1 },
+      { tags: [2] },
+      { description: 'x', kind: { description: 'a value, not a keyword' } },
+      { description: 'x', extra: { a: 1 } },
+    ]) {
+      expect(bare(value)).toBe(full(value));
+    }
   });
 });

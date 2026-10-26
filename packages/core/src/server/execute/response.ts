@@ -62,6 +62,8 @@ export type MapResponseOptions = {
   fields?: readonly string[];
   // The tool accepts `_fields`: a truncated result then says so.
   projectable?: boolean;
+  // GET, HEAD or QUERY: only then may a hint suggest calling again.
+  safeMethod?: boolean;
 };
 
 // Fixed, reason-keyed text — never the PinnedOutcome's own `detail` string,
@@ -267,6 +269,10 @@ export const jsonPreview = (value: unknown, maxBytes: number, sizeHint = Infinit
 // exactly that kind of string. Measured in characters (sanitizeSpecText's
 // own contract), matching how DISPLAY_TEXT_MAX is consumed everywhere else.
 const ERROR_EXCERPT_MAX = DISPLAY_TEXT_MAX;
+// A body that is not JSON is mostly an HTML error page: its first kilobyte
+// holds the message, the rest is markup the agent pays for (an HTML 500
+// measured 8,235 bytes, issue #49). A JSON error body keeps the full budget.
+const NON_JSON_ERROR_EXCERPT_MAX = 1024;
 
 // Keeps mapResponse locally fail-closed: scanForSecret's contract
 // (redact.ts) explicitly documents that a pathologically deep
@@ -310,17 +316,19 @@ const mapHttpError = (
   // through to the string-redacted excerpt below, which could still echo
   // the escaped form verbatim).
   const essence = mediaEssence(contentType);
+  let excerptMax = NON_JSON_ERROR_EXCERPT_MAX;
   if (essence !== undefined && isJsonEssence(essence)) {
     const attempt = tryParseJson(decoded.ok);
     if (attempt.ok && scanSafely(redactor, attempt.value)) {
       return textOutcome(`upstream request failed with status ${status}`, true);
     }
+    excerptMax = attempt.ok ? ERROR_EXCERPT_MAX : NON_JSON_ERROR_EXCERPT_MAX;
   }
   // Redact BEFORE truncating: sanitizeSpecText's own truncation runs AFTER
   // this redaction, over the already-secret-free text, so a secret cannot
   // be split across the excerpt boundary and leak a surviving fragment.
   const redacted = redactor.redactString(decoded.ok);
-  const excerpt = sanitizeSpecText(redacted, ERROR_EXCERPT_MAX);
+  const excerpt = sanitizeSpecText(redacted, excerptMax);
   if (scanSafely(redactor, excerpt)) {
     return textOutcome(`upstream request failed with status ${status}`, true);
   }
@@ -684,7 +692,7 @@ const mapBody = (
 export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
   const { outcome } = opts;
   if (outcome.kind === 'error' || opts.baseUrl === undefined) {
-    return withProjectionHint(mapBody(opts, {}), opts);
+    return withTruncationHint(mapBody(opts, {}), opts);
   }
   const forwarded = forwardableHeaders({
     headers: outcome.headers,
@@ -717,26 +725,28 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
     upstreamRetryAfterMs(outcome.status, outcome.headers, nowMs),
     textHint,
   );
-  return withProjectionHint(decorated, opts);
+  return withTruncationHint(decorated, opts);
 };
 
-// A truncated result of a projectable tool tells the model how to ask for
-// less, rather than leaving it with a cut-off body.
-const withProjectionHint = (outcome: ToolCallOutcome, opts: MapResponseOptions): ToolCallOutcome =>
-  opts.projectable === true &&
-  opts.fields === undefined &&
-  outcome.content[0]?.text?.endsWith(TRUNCATION_MARKER) === true
+// A truncated result says what was cut and, for a read that takes `_fields`,
+// how to ask for less (issue #49). Only a safe method is told to call again:
+// repeating a write to see the rest of its answer could apply it twice.
+const TRUNCATED_HINT_TEXT = '(the response text above was truncated at the size limit)';
+const TRUNCATED_HINT_STRUCTURED =
+  '(only this text copy is truncated; structuredContent has the complete result)';
+
+const truncationHint = (outcome: ToolCallOutcome, opts: MapResponseOptions): string => {
+  const structured = outcome.structuredContent !== undefined;
+  if (opts.projectable === true && opts.fields === undefined && opts.safeMethod === true) {
+    return structured ? PROJECTION_HINT_STRUCTURED : PROJECTION_HINT_TEXT;
+  }
+  return structured ? TRUNCATED_HINT_STRUCTURED : TRUNCATED_HINT_TEXT;
+};
+
+const withTruncationHint = (outcome: ToolCallOutcome, opts: MapResponseOptions): ToolCallOutcome =>
+  !outcome.isError && outcome.content[0]?.text?.endsWith(TRUNCATION_MARKER) === true
     ? {
         ...outcome,
-        content: [
-          ...outcome.content,
-          {
-            type: 'text',
-            text:
-              outcome.structuredContent === undefined
-                ? PROJECTION_HINT_TEXT
-                : PROJECTION_HINT_STRUCTURED,
-          },
-        ],
+        content: [...outcome.content, { type: 'text', text: truncationHint(outcome, opts) }],
       }
     : outcome;

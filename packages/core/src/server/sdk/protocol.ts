@@ -10,7 +10,7 @@ import { createDispatcher } from '../dispatch.ts';
 import type { CallRequest, DispatcherDeps } from '../dispatch.ts';
 import type { ToolCallOutcome } from '../result.ts';
 import { PROJECTION_GUIDE } from '../../toolgen/projection.ts';
-import { pageTools } from '../tool-list.ts';
+import { hasDefaultDialect, listedTool, pageTools } from '../tool-list.ts';
 import { traceContextFromMeta } from '../trace.ts';
 import type { ServerSnapshot } from '../types.ts';
 
@@ -201,8 +201,12 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
     if ('invalidCursor' in page) {
       throw new ProtocolError(ProtocolErrorCode.InvalidParams, 'invalid tools/list cursor');
     }
+    const tools = page.tools.map((tool) => tool.wireTool as unknown as Tool);
     return {
-      tools: page.tools.map((tool) => tool.wireTool as unknown as Tool),
+      // oxlint-disable-next-line typescript/no-deprecated -- the 2025-era negotiated revision, which this accessor still reports
+      tools: hasDefaultDialect(server.getNegotiatedProtocolVersion())
+        ? tools.map((tool) => listedTool(tool))
+        : tools,
       ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
     };
   });

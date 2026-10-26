@@ -1,6 +1,6 @@
 import { SPEC_BUDGETS } from '../spec/budgets.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
-import { sanitizeSpecText } from '../spec/sanitize.ts';
+import { sanitizeSpecText, stripMarkdownLinks } from '../spec/sanitize.ts';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -13,6 +13,47 @@ const MAX_ERROR_ENTRIES = 20;
 const isErrorStatus = (key: string): boolean => {
   const code = Number(key);
   return Number.isInteger(code) && code >= 400 && code < 600;
+};
+
+// An error entry that only restates what its status means anyway ("401:
+// Unauthorized", "404: The resource was not found.", "500: Server error.")
+// tells the agent nothing it does not learn from the status at call time, and
+// a spec repeats it on almost every operation: 8% of the visible tool list for
+// DigitalOcean (issue #49). It is generic when every word is filler or a word
+// of that status's own meaning. Any other word ("Validation failed", "409:
+// authentication required"), any number ("Rate limit: 100 requests") or a
+// status not listed here keeps it, in any script.
+const FILLER_WORDS = 'a an the is was has been not no resource resources error errors request';
+const STATUS_WORDS: Readonly<Record<string, string>> = {
+  '400': 'bad invalid',
+  '401': 'unauthorized unauthorised authentication authenticated required requires',
+  '403': 'forbidden allowed permission denied access',
+  '404': 'found',
+  '405': 'method allowed',
+  '409': 'conflict',
+  '410': 'gone',
+  '413': 'payload entity too large',
+  '415': 'unsupported media type',
+  '422': 'unprocessable entity',
+  '429': 'too many requests rate limit exceeded api',
+  '500': 'internal server',
+  '502': 'bad gateway',
+  '503': 'service unavailable',
+  '504': 'gateway timeout',
+};
+const GENERIC_WORDS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
+  Object.entries(STATUS_WORDS).map(([status, words]) => [
+    status,
+    new Set(`${FILLER_WORDS} ${words}`.split(' ')),
+  ]),
+);
+
+const isGenericError = (status: string, description: string): boolean => {
+  const words = GENERIC_WORDS.get(status);
+  return (
+    words !== undefined &&
+    (description.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).every((word) => words.has(word))
+  );
 };
 
 // Response descriptions are RAW dereferenced spec text: normalizeSpec only
@@ -32,12 +73,14 @@ const documentedErrors = (responses: Record<string, unknown>): string[] =>
   Object.entries(responses)
     .filter(([status]) => isErrorStatus(status))
     .slice(0, MAX_ERROR_ENTRIES)
-    .map(([status, response]) => {
+    .flatMap(([status, response]) => {
       const description =
         isRecord(response) && typeof response['description'] === 'string'
           ? response['description']
           : undefined;
-      return description === undefined ? status : `${status}: ${description}`;
+      return description === undefined || isGenericError(status, description)
+        ? []
+        : [`${status}: ${description}`];
     });
 
 // `note` is fixed server text (never spec text) about the tool itself, e.g.
@@ -60,5 +103,5 @@ export const composeDescription = (operation: OperationRecord, note?: string): s
     operation.description === operation.summary ? undefined : operation.description,
     errors.length > 0 ? `Errors: ${errors.join('; ')}` : undefined,
   ].filter((part): part is string => part !== undefined);
-  return sanitizeSpecText(parts.join(' '), SPEC_BUDGETS.maxTextLength);
+  return sanitizeSpecText(stripMarkdownLinks(parts.join(' ')), SPEC_BUDGETS.maxTextLength);
 };

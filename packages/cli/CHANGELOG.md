@@ -38,12 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   REST description), and calling an operation needs only its `inputSchema`; the server still
   validates every result against the output schema. A describe result without it carries
   `outputSchemaOmitted: true`. Pass `include_output_schema: true` to get it. Operations that
-  accept `_fields` (`--response-projection`) still return it by default, because their field
-  paths come from it. A client that relied on `outputSchema` in every describe result must
-  now ask for it.
+  accept `_fields` (`--response-projection`) list their result fields instead, as
+  `outputFields` with `<pointer>: <type>` lines (#49): 12 to 20 KB per GitHub describe
+  response instead of 44 to 154 KB. A client that relied on `outputSchema` in every describe
+  result must now ask for it.
 
 ### Added
 
+- **`--no-output-schema-descriptions` (#49).** Output schemas are shown without their
+  `description` keywords, which are about half their size: the GitHub `tools/list` above
+  shrinks by 39%. Off by default, since the model then no longer sees what a result field
+  means. Validation is unchanged.
 - **Uploads by file name (#29).** With `serve --uploads`, a binary request field (a
   multipart file part, an octet-stream or an image body) also takes `{"file": "<name>"}`.
   The server reads that file from `~/.kaisers-io/openapi-mcp/uploads/<api>/` and sends its
@@ -161,6 +166,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Documented: less memory for large specs (#59).** `NODE_OPTIONS=--max-semi-space-size=8`
+  lowers peak memory for the GitHub REST description from 297 to 189 MB (`discover`) with
+  latency unchanged. The server does not set it itself, because restarting with the flag costs
+  30 to 70 ms on every start; see [`docs/configuration.md`](docs/configuration.md).
+- **Fewer tokens per session and per call (#49).** Measured with the GitHub REST description
+  (`--allow tag:repos`, 201 tools) and DigitalOcean (265 tools); the name, description and
+  input schema of every tool shrink by 7.6% and 12.9% for a client on MCP 2025-11-25, and by
+  4.8% and 8.3% for an older one. Every parameter, required field and parameter description
+  is unchanged.
+  - A documented error that only restates its status (`401: Unauthorized`, `404: The
+    resource was not found.`, `500: Server error.`) is left out of the tool description.
+    Specific ones such as `422: Validation failed` stay.
+  - A markdown link in a description keeps its text and drops the URL. A description with
+    any code (a backtick or a `~~~` fence) is left whole, since there the link syntax can
+    be the request format.
+  - Listed schemas leave out `$schema` when the negotiated MCP revision makes JSON Schema
+    2020-12 the default (2025-11-25 and later). The `data` part of an output schema never
+    carries it, since 2020-12 allows it only at a resource root.
+  - An upstream error body that is not JSON (an HTML error page) is shown up to 1 KB instead
+    of 8 KB. JSON error bodies keep the full 8 KB.
+  - An argument error names the unknown keys (`(root): unrecognized_keys per_page`) and the
+    expected type (`id: invalid_type (expected string)`). Only the caller's own key names,
+    capped and sanitized, and a type from a fixed list; never a value.
+  - Every truncated result says that it was cut. Only a `GET`, `HEAD` or `QUERY` is told to
+    call again with `_fields`; a write was told so before, which could apply it twice.
 - **Large results return faster (#48).** The text preview of a schema-validated result is
   built from only as much of the result as fits in it, instead of serializing all of it. A
   1 MB result takes about 13% less time per call. The preview is byte-identical.

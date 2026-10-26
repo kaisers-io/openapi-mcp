@@ -94,6 +94,10 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       '--output-schema <form>',
       'how output schemas are shown to the host: inline (every subschema written out) or defs (repeated subschemas once under "$defs", referenced with "$ref"); validation is the same either way',
       'inline',
+    )
+    .option(
+      '--no-output-schema-descriptions',
+      'show output schemas without their field descriptions, which are most of their size; validation is the same either way',
     );
   // `.option()` chained onto a Command whose Opts type already carries
   // SpecCmdOpts's own index signature does not narrow any further through

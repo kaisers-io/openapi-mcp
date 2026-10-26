@@ -94,6 +94,7 @@ Start an MCP server (stdio by default) exposing tools generated from an OpenAPI 
 | `--response-projection` | no | offer an optional `_fields` argument (JSON Pointers) on tools with a JSON response | off |
 | `--allow-offsite-redirects` | no | follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply, and a later hop back onto the API is checked again — see [security](security.md#request-authorization) | off |
 | `--output-schema <form>` | no | how output schemas are shown to the host: `inline` or `defs` (repeated subschemas once under `$defs`) — see [Output schema form](#output-schema-form) | `inline` |
+| `--no-output-schema-descriptions` | no | show output schemas without their field descriptions — see [Output schema form](#output-schema-form) | descriptions shown |
 | `--tools-page-size <n>` | no | page `tools/list` with `n` tools per page (1–512); only for MCP hosts that follow `nextCursor` | off (all tools in one response) |
 
 Notes:
@@ -269,11 +270,13 @@ Notes:
   against the tool's output schema first, and only the selected values are checked for
   secrets. The grammar is explained once, in the server instructions; each tool's schema
   carries only a one-line description, and its output schema gains one `projection`
-  branch. A truncated result of such a tool tells the model to use `_fields`; when the
-  result is structured, the hint says that only the text copy is cut and
-  `structuredContent` is complete. Cost: `tools/list` grows by about 30% (measured: the
-  petstore fixture 907 → 1,174 bytes; 100 JSON GET operations 83,681 → 110,481 bytes),
-  paid in every session, which is why it is opt-in.
+  branch. A truncated result of such a tool tells the model to use `_fields`, but only
+  for `GET`, `HEAD` and `QUERY`: repeating a write to see the rest of its answer could
+  apply it twice. When the result is structured, the hint says that only the text copy is
+  cut and `structuredContent` is complete; every other truncated result says it was cut.
+  Cost: `tools/list` grows by about 30% (measured: the petstore fixture 907 → 1,174 bytes;
+  100 JSON GET operations 83,681 → 110,481 bytes), paid in every session, which is why it is
+  opt-in.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly
@@ -281,6 +284,24 @@ Notes:
   (about 640 MB with the defaults of `10MB` and `16`). For a tool with an output schema, the
   text copy of a structured result is capped at 8 KB, with a `…[truncated]` marker. The full
   data is in `structuredContent`.
+- Memory for large specs: Node's young generation sizes the peak memory of `serve` more than
+  the spec does. With a spec the size of GitHub's REST description, set
+  `NODE_OPTIONS=--max-semi-space-size=8` in the server entry's environment, for example
+  `"env": { "NODE_OPTIONS": "--max-semi-space-size=8" }`. Measured with Node 24 and a warm
+  cache (#59); peak memory is the resident set size, default → 8 MB:
+
+  | Scenario | Peak memory, macOS | Peak memory, Linux | Startup | Per call |
+  |---|---|---|---|---|
+  | GitHub, `discover` | 297 → 189 MB | 215 → 169 MB | unchanged (macOS), −6% to −9% (Linux) | unchanged |
+  | GitHub, `--allow tag:repos` | 292 → 227 MB | 296 → 227 MB | +5% (macOS), −6% (Linux) | unchanged |
+  | DigitalOcean, default | 108 → 102 MB | 112 → 105 MB | unchanged | unchanged |
+  | 1 MB results, 8 in flight | 550 → 465 MB | not measured | | −4% throughput (macOS) |
+
+  Per call, the median latency for 1 KB, 50 KB and 1 MB results and the throughput of 1 KB
+  results stay within noise. Below 4 MB, startup of large specs gets slower (+8% at 2 MB,
+  +22% at 1 MB on Linux). The server does not set it itself: Node reads it only at process
+  start, and a restart with the flag costs 30 to 70 ms on every start while saving only 4 to
+  7 MB for small and medium specs.
 - `--default-response-is-error` is opt-in. Without it, an operation that documents a
   `default` response gets no output schema, because `default` may cover an undocumented
   success status. With it, only the explicitly documented `2xx` responses form the output
@@ -465,9 +486,12 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
     output schemas are most of a definition, and calling an operation needs only its
     `inputSchema`. An omitted one is marked `outputSchemaOmitted: true`;
     `include_output_schema: true` returns it. Operations that accept `_fields`
-    (`--response-projection`) return it unless `include_output_schema` is `false`, because
-    their field paths come from it. The server validates every result against the output
-    schema either way.
+    (`--response-projection`) list their result fields instead, as `outputFields`: one
+    entry per success response, with up to 150 `<pointer>: <type>` lines, every top-level
+    field before a nested one and two levels deep (`truncated: true` when cut). For the
+    GitHub REST description a whole describe response is 12 to 20 KB instead of 44 to 154 KB.
+    `include_output_schema: false` leaves the list out too. The server validates every
+    result against the output schema either way.
   - `call_operation` `{ name, arguments }` calls it. `arguments` is validated by that
     operation's own schema, with the same error messages, rate limit, redaction and upstream
     request as a direct call. Omit `arguments` for an operation without inputs; `null` is
@@ -532,6 +556,18 @@ Measured for the GitHub REST description with `--allow tag:repos` (201 tools): t
 `tools/list` stdio response shrinks from 1,977,625 to 1,541,314 bytes (−22%), its output
 schemas by 28%. How much a spec gains depends on how often its schemas repeat inside one
 response.
+
+`--no-output-schema-descriptions` leaves out the `description` keyword of every output
+schema, in `tools/list` and in `describe_operation`. Field descriptions, and the examples
+folded into them, are about half of an output schema: the GitHub `tools/list` above shrinks
+from 1,935,526 to 1,180,515 bytes (−39%). Only the keyword goes; a field named
+`description` stays, and validation is unchanged. It helps only when the client shows output
+schemas to the model, and the model then no longer sees what a result field means, so it is
+off by default. It combines with `--output-schema defs`.
+
+Every listed schema also leaves out its `$schema` keyword when the client negotiated MCP
+revision 2025-11-25 or later, which makes JSON Schema 2020-12 the default dialect. An earlier
+revision defines no default and keeps it.
 
 ### Image responses
 

@@ -127,6 +127,7 @@ const snapshotFor = (
     operations?: readonly NamedOperation[];
     nullableResponseFields?: boolean;
     compactOutputSchemas?: boolean;
+    bareOutputSchemas?: boolean;
   } = {},
 ): ServerSnapshot => {
   const { exposed } = applyFilters(
@@ -142,6 +143,7 @@ const snapshotFor = (
   return buildSnapshot(built, PIPELINE, {
     ...(toolMode === undefined ? {} : { toolMode }),
     ...(toolgen.compactOutputSchemas === true ? { compactOutputSchemas: true } : {}),
+    ...(toolgen.bareOutputSchemas === true ? { bareOutputSchemas: true } : {}),
   });
 };
 
@@ -324,7 +326,9 @@ describe('dispatcher — discover mode', () => {
     expect(brief.structuredContent).not.toHaveProperty('outputSchema');
   });
 
-  it('describe_operation keeps the output schema of an operation that accepts _fields (#9)', async () => {
+  // Issue #49: the full output schema was 44 to 154 KB per GitHub operation;
+  // the field paths `_fields` needs are a few percent of that
+  it('describe_operation lists the result fields of an operation that accepts _fields', async () => {
     const { exposed } = applyFilters(OPERATIONS, [parseFilterPattern('path:/**')], []);
     const built = buildTools(exposed, {
       reservedHeaders: SYSTEM_HEADERS,
@@ -335,7 +339,18 @@ describe('dispatcher — discover mode', () => {
     const byDefault = outcomeOf(
       await dispatcher.call(call('describe_operation', { name: 'listThings' })),
     );
-    expect(byDefault.structuredContent).toHaveProperty('outputSchema');
+    expect(byDefault.structuredContent).not.toHaveProperty('outputSchema');
+    expect(byDefault.structuredContent).toMatchObject({
+      outputSchemaOmitted: true,
+      outputFields: [{ status: 200, contentType: 'application/json' }],
+    });
+    const requested = outcomeOf(
+      await dispatcher.call(
+        call('describe_operation', { name: 'listThings', include_output_schema: true }),
+      ),
+    );
+    expect(requested.structuredContent).toHaveProperty('outputSchema');
+    expect(requested.structuredContent).not.toHaveProperty('outputFields');
     const declined = outcomeOf(
       await dispatcher.call(
         call('describe_operation', { name: 'listThings', include_output_schema: false }),
@@ -343,6 +358,7 @@ describe('dispatcher — discover mode', () => {
     );
     expect(declined.structuredContent).toMatchObject({ outputSchemaOmitted: true });
     expect(declined.structuredContent).not.toHaveProperty('outputSchema');
+    expect(declined.structuredContent).not.toHaveProperty('outputFields');
   });
 
   // Issue #9: --output-schema defs
@@ -422,6 +438,60 @@ describe('dispatcher — discover mode', () => {
       );
       const described = outcome.structuredContent as { outputSchema?: Record<string, unknown> };
       expect(described.outputSchema?.['$defs']).toBeDefined();
+    });
+  });
+
+  // Issue #49: --no-output-schema-descriptions
+  describe('output schemas without descriptions', () => {
+    const hasDescription = (schema: unknown): boolean =>
+      JSON.stringify(schema).includes('"description"');
+    const operations = [
+      op('getCustomer', {
+        method: 'get',
+        path: '/customers/{id}',
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+        responses: {
+          '200': {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { name: { type: 'string', description: 'Full name' } },
+                },
+              },
+            },
+          },
+        },
+      }),
+    ];
+
+    it('lists them bare under per-operation, alone and with the compact form', () => {
+      for (const compactOutputSchemas of [false, true]) {
+        const bare = snapshotFor(
+          'per-operation',
+          {},
+          { operations, bareOutputSchemas: true, compactOutputSchemas },
+        );
+        const shown = snapshotFor('per-operation', {}, { operations, compactOutputSchemas });
+        expect(hasDescription(bare.toolsByName['getCustomer']?.wireTool.outputSchema)).toBe(false);
+        expect(hasDescription(shown.toolsByName['getCustomer']?.wireTool.outputSchema)).toBe(true);
+        expect(bare.bareOutputSchemas).toBe(true);
+      }
+    });
+
+    it('describes them bare under discover, and keeps the inline form for validation', async () => {
+      const snapshot = snapshotFor('discover', {}, { operations, bareOutputSchemas: true });
+      const outcome = outcomeOf(
+        await dispatcherFor(snapshot).call(
+          call('describe_operation', { name: 'getCustomer', include_output_schema: true }),
+        ),
+      );
+      const described = outcome.structuredContent as { outputSchema?: Record<string, unknown> };
+      expect(described.outputSchema).toBeDefined();
+      expect(hasDescription(described.outputSchema)).toBe(false);
+      expect(
+        hasDescription(snapshot.operationsByName['getCustomer']?.resolve().wireTool.outputSchema),
+      ).toBe(true);
     });
   });
 
@@ -541,7 +611,9 @@ describe('dispatcher — discover mode', () => {
       ),
     );
     expect(outcome.isError).toBe(true);
-    expect(textOf(outcome)).toBe('invalid tool arguments:\narguments: invalid_type');
+    expect(textOf(outcome)).toBe(
+      'invalid tool arguments:\narguments: invalid_type (expected object)',
+    );
     expect(executor).not.toHaveBeenCalled();
   });
 

@@ -334,6 +334,26 @@ describe('mapResponse — HTTP error status (>=400)', () => {
     expect(text).not.toContain(secret);
   });
 
+  // Issue #49: an HTML error page is mostly markup; a JSON error body is the
+  // API's own explanation and keeps the full budget
+  it('caps a non-JSON error body at 1 KB and keeps a JSON one up to the display budget', () => {
+    const prefix = 'upstream request failed with status 500: ';
+    const errorText = (status: number, contentType: string, body: string): string => {
+      const outcome = response(status, contentType, body);
+      return isError(mapResponse(defaultOpts({ outcome })));
+    };
+    const html = `<html><body><h1>Internal Server Error</h1>${'<p>x</p>'.repeat(2000)}</body></html>`;
+    const page = errorText(500, 'text/html', html);
+    expect(page).toHaveLength(prefix.length + 1024);
+    expect(page).toContain('<h1>Internal Server Error</h1>');
+    const json = JSON.stringify({ message: 'Validation failed', detail: 'y'.repeat(6000) });
+    expect(errorText(422, 'application/json', json)).toBe(
+      `upstream request failed with status 422: ${json}`,
+    );
+    // A body that claims JSON but does not parse is treated as text
+    expect(errorText(500, 'application/json', `{${html}`)).toHaveLength(prefix.length + 1024);
+  });
+
   it('a non-401/403 error with an empty body reports only the status', () => {
     const outcome = response(502, 'text/plain', '');
     const text = isError(mapResponse(defaultOpts({ outcome })));
@@ -350,12 +370,12 @@ describe('mapResponse — HTTP error status (>=400)', () => {
 
   it('redacts a secret BEFORE truncating so it never leaks a straddling fragment', () => {
     const secret = 'sk-boundary-secret-0123456789';
-    // SanitizeSpecText's cut point for a DISPLAY_TEXT_MAX (8192) excerpt is
-    // (8192 - TRUNCATION_MARKER.length) = 8180 characters. Padding of 8170
+    // SanitizeSpecText's cut point for a 1024-character non-JSON excerpt is
+    // (1024 - TRUNCATION_MARKER.length) = 1012 characters. Padding of 1002
     // 'x' chars puts the secret's first 10 characters INSIDE that cut point
     // and its last 20 characters past it — a genuine straddle. If truncation
     // ran before redaction, the surviving "sk-boundar" prefix would leak.
-    const padding = 'x'.repeat(8170);
+    const padding = 'x'.repeat(1002);
     const body = `${padding}${secret}`;
     const outcome = response(500, 'text/plain', body);
     const redactor = createRedactor([secret]);

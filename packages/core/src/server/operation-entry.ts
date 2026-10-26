@@ -11,6 +11,10 @@ import type { ConvertMemo } from '../toolgen/schema.ts';
 import { deepFreeze } from '../freeze.ts';
 import type { OperationEntry, SnapshotTool, ToolMode, WireTool } from './types.ts';
 import { presentedOutputSchema, runtimeOperationOf, runtimeToolOf, titleOf } from './wire-tools.ts';
+import type { OutputSchemaForm } from './wire-tools.ts';
+
+// The schema as built; describe_operation presents its own form on demand
+const INLINE: OutputSchemaForm = { compact: false, descriptions: true };
 
 // The snapshot's entries for exposed operations (see OperationEntry).
 
@@ -66,7 +70,7 @@ export const deferredEntry = (
   };
 };
 
-const wireToolOf = (generated: GeneratedTool, compact: boolean): WireTool => {
+const wireToolOf = (generated: GeneratedTool, form: OutputSchemaForm): WireTool => {
   const title = titleOf(generated);
   return {
     name: generated.toolName,
@@ -75,7 +79,7 @@ const wireToolOf = (generated: GeneratedTool, compact: boolean): WireTool => {
     inputSchema: generated.wireSchema,
     ...(generated.outputSchema === undefined
       ? {}
-      : { outputSchema: presentedOutputSchema(generated.outputSchema, compact) }),
+      : { outputSchema: presentedOutputSchema(generated.outputSchema, form) }),
     annotations: generated.annotations,
   };
 };
@@ -96,11 +100,11 @@ const isDeferred = (built: BuildToolsResult | DeferredToolsResult): built is Def
   built.tools.some((tool) => 'complete' in tool);
 
 // One operation as a tool, with its schemas checked
-const snapshotToolOf = (generated: GeneratedTool, compact: boolean): SnapshotTool => {
+const snapshotToolOf = (generated: GeneratedTool, form: OutputSchemaForm): SnapshotTool => {
   const tool: SnapshotTool = {
     kind: 'upstream',
     name: generated.toolName,
-    wireTool: wireToolOf(generated, compact),
+    wireTool: wireToolOf(generated, form),
     inputSchema: generated.inputSchema,
     generated: runtimeToolOf(generated),
   };
@@ -118,12 +122,13 @@ export const entriesOf = (
   toolMode: ToolMode,
   options: {
     compactOutputSchemas?: boolean;
+    bareOutputSchemas?: boolean;
     onDeferredError?: (toolName: string, error: unknown) => void;
   },
 ): { entries: OperationEntry[]; tools: SnapshotTool[] } => {
   if (toolMode === 'discover' && isDeferred(built)) {
     // Describe_operation presents a compact schema itself
-    const toTool = (generated: GeneratedTool): SnapshotTool => snapshotToolOf(generated, false);
+    const toTool = (generated: GeneratedTool): SnapshotTool => snapshotToolOf(generated, INLINE);
     // One memo for every first use, and one freeze walk at startup
     const shared = { memo: createConvertMemo(), seen: new WeakSet<object>() };
     return {
@@ -135,8 +140,12 @@ export const entriesOf = (
     };
   }
   const complete = isDeferred(built) ? completeTools(built) : built;
-  const compact = options.compactOutputSchemas === true && toolMode === 'per-operation';
-  const tools = complete.tools.map((generated) => snapshotToolOf(generated, compact));
+  const listed = toolMode === 'per-operation';
+  const form = {
+    compact: listed && options.compactOutputSchemas === true,
+    descriptions: !listed || options.bareOutputSchemas !== true,
+  };
+  const tools = complete.tools.map((generated) => snapshotToolOf(generated, form));
   return {
     entries: complete.tools.map((generated, index) =>
       resolvedEntry(generated, tools[index] as SnapshotTool),

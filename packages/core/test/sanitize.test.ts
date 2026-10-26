@@ -4,6 +4,7 @@ import {
   TRUNCATION_MARKER,
   sanitizeDisplayText,
   sanitizeSpecText,
+  stripMarkdownLinks,
 } from '../src/index.ts';
 
 describe('sanitizeSpecText', () => {
@@ -115,5 +116,44 @@ describe('sanitizeDisplayText', () => {
     expect(
       [...out].every((ch) => ch.codePointAt(0)! < 0xd8_00 || ch.codePointAt(0)! > 0xdf_ff),
     ).toBe(true);
+  });
+});
+
+// Issue #49: documentation URLs cost tokens the agent can rarely use
+describe('stripMarkdownLinks', () => {
+  it('keeps the text of links and images and drops the URL', () => {
+    expect(
+      stripMarkdownLinks(
+        'See "[Creating a repo](https://docs.example.test/repos#create)" and ![logo](/logo.png).',
+      ),
+    ).toBe('See "Creating a repo" and logo.');
+  });
+
+  // Review of #49: inside code the syntax can be the request format itself
+  it('leaves links in code spans, code fences and escaped brackets alone', () => {
+    for (const text of [
+      'For link rendering, send `[label](https://example.com)`.',
+      'Send ``a `[x](https://a.example.test)` b``.',
+      '```\n[x](https://a.example.test)\n```',
+      '~~~markdown\n[label](https://example.test)\n~~~',
+      '\\` is a literal backtick. Send `[label](https://example.test)`.',
+      'See [docs](https://docs.example.test) and send `[a](b)`.',
+      'A literal \\[x](https://a.example.test).',
+    ]) {
+      expect(stripMarkdownLinks(text)).toBe(text);
+    }
+  });
+
+  it('leaves brackets that are not links alone', () => {
+    for (const text of ['a [b] (c)', '[x](has space)', 'arr[0](1', '[a](b(c))']) {
+      expect(stripMarkdownLinks(text)).toBe(text);
+    }
+  });
+
+  it('stays linear on hostile input', () => {
+    const hostile = `${'[('.repeat(20_000)}${'[a]('.repeat(20_000)}`;
+    const started = performance.now();
+    stripMarkdownLinks(hostile);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });
