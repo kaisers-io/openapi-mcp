@@ -159,6 +159,23 @@ describe('response mismatch diagnostics (#24)', () => {
     const across = mismatchOf(outcome);
     expect(across).toMatchObject({ keyword: 'required' });
     expect(across).not.toHaveProperty('path');
+    // Review of #24: a secret spelled by two consecutive names drops it too
+    const split = {
+      type: 'object',
+      properties: { xSECRETV: { type: 'object', properties: {}, required: ['ALUE123y'] } },
+    };
+    const splitSchema = envelopeOf(split);
+    const splitOutcome = mapResponse({
+      outcome: response(JSON.stringify({ xSECRETV: {} })),
+      validator: compileEnvelopeValidator(splitSchema),
+      outputSchema: splitSchema,
+      redactor: createRedactor(['SECRETVALUE123']),
+      maxTextBytes: 4096,
+      diagnose: true,
+    });
+    const splitSecret = mismatchOf(splitOutcome);
+    expect(splitSecret).toMatchObject({ keyword: 'required' });
+    expect(splitSecret).not.toHaveProperty('path');
     // Review of #24: a secret matching the escaped spelling drops it too
     const slashed = { type: 'object', properties: {}, required: ['abc/def'] };
     const slashedSchema = envelopeOf(slashed);
@@ -257,8 +274,16 @@ describe('response mismatch diagnostics (#24)', () => {
       type: 'object',
       properties: { value: { oneOf: [{ type: 'string' }, { type: 'boolean' }] } },
     };
-    expect(refuse(envelopeOf(union), JSON.stringify({ value: 3 })).mismatch).toMatchObject({
+    const { mismatch } = refuse(envelopeOf(union), JSON.stringify({ value: 3 }));
+    // Review of #24: the union, not its first branch's `type`
+    expect(mismatch).toStrictEqual({ category: 'schema', keyword: 'oneOf', path: '/value' });
+    const anyOf = {
+      type: 'object',
+      properties: { value: { anyOf: [{ type: 'string' }, { type: 'integer' }] } },
+    };
+    expect(refuse(envelopeOf(anyOf), JSON.stringify({ value: true })).mismatch).toStrictEqual({
       category: 'schema',
+      keyword: 'anyOf',
       path: '/value',
     });
   });

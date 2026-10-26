@@ -147,8 +147,6 @@ export const observeCalls =
     return result;
   };
 
-// One JSON line (for stderr) per call. Every string field is sanitized and
-// redacted; numbers and the closed `outcome` vocabulary pass as-is.
 // Every string once more through the log's own sanitizing and redaction
 const mismatchFields = (
   mismatch: SchemaMismatch,
@@ -160,6 +158,8 @@ const mismatchFields = (
     ),
   );
 
+// One JSON line (for stderr) per call. Every string field is sanitized and
+// redacted; numbers and the closed `outcome` vocabulary pass as-is.
 export const formatCallLog = (record: CallRecord, redactor: Redactor, ts: Date): string => {
   const text = (value: string): string => redactor.redactString(sanitizeSpecText(value, 256));
   return JSON.stringify({

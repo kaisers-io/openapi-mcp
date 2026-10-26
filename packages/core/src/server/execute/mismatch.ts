@@ -149,9 +149,11 @@ const shownPointer = (
 ): string | undefined => {
   const joined = steps.map((step) => `/${step ?? '*'}`).join('');
   const escaped = steps.map((step) => `/${step === undefined ? '*' : escapeToken(step)}`).join('');
-  // Any change by redaction (in either spelling) or by sanitizing would make
+  // Without separators too: a secret split over two names (review of #24)
+  const concatenated = steps.map((step) => step ?? '').join('');
+  // Any change by redaction (in any spelling) or by sanitizing would make
   // the pointer name another property, so it drops the path (review of #24)
-  const unchanged = [joined, escaped].every(
+  const unchanged = [joined, escaped, concatenated].every(
     (form) => redactor.redactString(form) === form && sanitizeSpecText(form, form.length) === form,
   );
   return unchanged && escaped.length <= MAX_PATH ? escaped : undefined;
@@ -208,9 +210,23 @@ export const describeMismatch = (
   // A oneOf collects one error per branch it tried, so the list is as long as
   // the envelope has branches; the selected branch is searched for, never cut
   // off (review of #24)
-  const direct = errors.find(
+  const first = errors.find(
     (candidate) => candidate.schemaPath === prefix || candidate.schemaPath.startsWith(`${prefix}/`),
   );
+  // A failed union lists each branch's error before its own; the outermost
+  // union around the first error explains the refusal, not its first branch
+  // (review of #24)
+  const direct =
+    first === undefined
+      ? undefined
+      : (errors
+          .filter(
+            (candidate) =>
+              (candidate.keyword === 'anyOf' || candidate.keyword === 'oneOf') &&
+              candidate.schemaPath.startsWith(`${prefix}/`) &&
+              first.schemaPath.startsWith(`${candidate.schemaPath}/`),
+          )
+          .toSorted((left, right) => left.schemaPath.length - right.schemaPath.length)[0] ?? first);
   // Through a `$ref`, Ajv reports the schema path inside `$defs`: the keyword
   // and the types still hold, the location does not. Other branches fail on
   // their `status` const before they reach a reference.

@@ -15,8 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`/owner/email`, `/items/*/id`) and, for a type failure, the expected and observed JSON
   types. The location comes from the spec's property names only, never from the response:
   added keys, indexes and values never appear, a path is never cut, and one that contains a
-  configured secret is left out. Clients see no difference, and without `--log json` nothing is computed;
-  measured on 100 KiB and 1 MiB responses, the time per call stays within noise.
+  configured secret is left out. Clients see no difference, and without `--log json` nothing is
+  computed; measured on 100 KiB and 1 MiB responses, the time per call stays within noise.
 
 ## [0.5.0] - 2026-10-26
 
