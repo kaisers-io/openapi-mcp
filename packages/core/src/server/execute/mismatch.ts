@@ -148,17 +148,13 @@ const shownPointer = (
   redactor: Redactor,
 ): string | undefined => {
   const joined = steps.map((step) => `/${step ?? '*'}`).join('');
-  if (redactor.redactString(joined) !== joined) {
-    return undefined;
-  }
-  const escaped = redactor.redactString(
-    steps.map((step) => `/${step === undefined ? '*' : escapeToken(step)}`).join(''),
+  const escaped = steps.map((step) => `/${step === undefined ? '*' : escapeToken(step)}`).join('');
+  // Any change by redaction (in either spelling) or by sanitizing would make
+  // the pointer name another property, so it drops the path (review of #24)
+  const unchanged = [joined, escaped].every(
+    (form) => redactor.redactString(form) === form && sanitizeSpecText(form, form.length) === form,
   );
-  // A name with control characters or edge whitespace would come out as
-  // another property's name, so it drops the path instead (review of #24)
-  return sanitizeSpecText(escaped, escaped.length) !== escaped || escaped.length > MAX_PATH
-    ? undefined
-    : escaped;
+  return unchanged && escaped.length <= MAX_PATH ? escaped : undefined;
 };
 
 const jsonTypeOf = (value: unknown): string => {

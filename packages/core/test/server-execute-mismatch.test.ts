@@ -159,6 +159,20 @@ describe('response mismatch diagnostics (#24)', () => {
     const across = mismatchOf(outcome);
     expect(across).toMatchObject({ keyword: 'required' });
     expect(across).not.toHaveProperty('path');
+    // Review of #24: a secret matching the escaped spelling drops it too
+    const slashed = { type: 'object', properties: {}, required: ['abc/def'] };
+    const slashedSchema = envelopeOf(slashed);
+    const slashedOutcome = mapResponse({
+      outcome: response('{}'),
+      validator: compileEnvelopeValidator(slashedSchema),
+      outputSchema: slashedSchema,
+      redactor: createRedactor(['abc~1def']),
+      maxTextBytes: 4096,
+      diagnose: true,
+    });
+    const escapedSecret = mismatchOf(slashedOutcome);
+    expect(escapedSecret).toMatchObject({ keyword: 'required' });
+    expect(escapedSecret).not.toHaveProperty('path');
   });
 
   // Review of #24: a secret longer than any cut is redacted whole first
