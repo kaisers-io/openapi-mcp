@@ -42,7 +42,10 @@ if command -v cygpath > /dev/null; then
     [A-Za-z]:\\*) ;;
     *) echo "drive path smoke FAILED: $NATIVE is not a drive path" >&2; exit 1 ;;
   esac
-  OUT="$(MSYS_NO_PATHCONV=1 openapi-mcp --json tools --spec "$NATIVE")"
+  if ! OUT="$(MSYS_NO_PATHCONV=1 openapi-mcp --json tools --spec "$NATIVE")"; then
+    echo "drive path smoke FAILED: $OUT" >&2
+    exit 1
+  fi
   node -e '
     const o = JSON.parse(process.argv[1]);
     if (!o.ok || o.data.toolCount !== 1) {

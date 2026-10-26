@@ -335,7 +335,15 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: | # zizmor: ignore[adhoc-packages]
           set -euo pipefail
-          npm install -g --ignore-scripts "@kaisers-io/openapi-mcp@${TAG#v}"
+          # `npm view` above reads the full package document, `npm install` the abbreviated one,
+          # which the registry's CDN caches separately: retry briefly instead of reporting a lag
+          # as a broken release
+          PKG="@kaisers-io/openapi-mcp@${TAG#v}"
+          for attempt in 1 2 3 4 5; do
+            if npm install -g --ignore-scripts --prefer-online "$PKG"; then break; fi
+            if [ "$attempt" = 5 ]; then exit 1; fi
+            sleep 30
+          done
           test "$(openapi-mcp --version)" = "${TAG#v}"
           bash scripts/smoke-cli.sh
 
