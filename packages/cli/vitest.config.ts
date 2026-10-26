@@ -1,6 +1,6 @@
 import { configDefaults, defineConfig } from 'vitest/config';
 import { sharedTestConfig } from '../../vitest.shared.ts';
-import { SUBPROCESS_E2E_FILES } from './test/subprocess-budget.ts';
+import { REAL_SPEC_FILE, SUBPROCESS_E2E_FILES } from './test/subprocess-budget.ts';
 
 export default defineConfig({
   test: {
@@ -8,6 +8,7 @@ export default defineConfig({
     name: '@kaisers-io/openapi-mcp',
     // The suites that spawn the CLI run in their own project, after this one
     // (vitest.e2e.config.ts)
-    exclude: [...configDefaults.exclude, ...SUBPROCESS_E2E_FILES],
+    // The real-spec filter suite runs on its own (vitest.real-specs.config.ts)
+    exclude: [...configDefaults.exclude, ...SUBPROCESS_E2E_FILES, REAL_SPEC_FILE],
   },
 });

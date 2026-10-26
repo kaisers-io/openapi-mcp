@@ -34,6 +34,7 @@ export const SUBPROCESS_E2E_FILES = [
   'test/coverage-subprocess.test.ts',
   'test/docs-overlays.test.ts',
   'test/serve.test.ts',
+  'test/serve-filter-matrix.test.ts',
   'test/serve-http.test.ts',
   'test/serve-http-oauth.test.ts',
   'test/serve-image.test.ts',
@@ -44,6 +45,10 @@ export const SUBPROCESS_E2E_FILES = [
   'test/serve-upload.test.ts',
   'test/serve-write-effect.test.ts',
 ];
+
+// The filters against real, large specs: its own project and CI job
+// (vitest.real-specs.config.ts), never part of `pnpm test`
+export const REAL_SPEC_FILE = 'test/filters-real-specs.test.ts';
 
 // Test files that start a child process but stay in the unit project, each
 // with the reason it fits the 5 s default. Paths are relative to the

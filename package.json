@@ -17,6 +17,7 @@
     "bench:baseline": "node scripts/bench/run.ts --out scripts/bench/baseline.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:real-specs": "vitest run --config packages/cli/vitest.real-specs.config.ts",
     "build": "pnpm -r run build",
     "versions": "node scripts/versions/run.ts",
     "check": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test:coverage"

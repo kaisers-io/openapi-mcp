@@ -42,6 +42,7 @@ Run the full check. It must pass:
 
 ```bash
 pnpm check        # lint + format check + typecheck + tests with coverage
+pnpm test:real-specs  # --allow/--deny against the real GitHub, Stripe and DigitalOcean specs
 ```
 
 If you changed what ends up in the bundle, also run `pnpm build` and
@@ -54,6 +55,9 @@ If you changed what ends up in the bundle, also run `pnpm build` and
 - **`ci` / check**: `pnpm check` on Ubuntu, on the dev pin and on both Node floors (24.11.0 and
   22.19.0), and the same matrix on macOS.
 - **`ci` / windows**: `pnpm test` on Windows, on every pull request and on `main`.
+- **`ci` / filters-real-specs**: `pnpm test:real-specs` on Linux, macOS and Windows: the filters
+  against the real GitHub, Stripe and DigitalOcean specs, downloaded from commit-pinned URLs and
+  checked by sha256.
 - **Coverage floors.** `pnpm check` runs the tests with coverage, including the lines that only run
   inside spawned `openapi-mcp` processes. `vitest.config.ts` sets an aggregate floor, a floor for
   every file, and stricter floors for the cache and the commands.

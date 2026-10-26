@@ -198,3 +198,23 @@ replacement:
 | `--allow "**"` | `--allow "operationId:*"` for the same operations, or `--allow "path:/**"` to include operations without an operationId |
 | `--allow "read*"` | `--allow "operationId:read*"`, or `--allow "method:get"` if a method was meant |
 | `--allow "tag:Orders"` | unchanged |
+
+## How the filters are tested
+
+Every pull request runs the filters end to end, through the real CLI over MCP stdio, on Linux,
+macOS and Windows, in both tool modes, against a local API that records every request:
+
+- `packages/cli/test/serve-filter-matrix.test.ts` covers every selector, letter case, glob
+  boundaries (`/orders/**` against `/orders**`), a tag with a space, an operationId with `/`,
+  generated tool names, Unicode without normalization (`tag:STRASSE` does not select `Straße`),
+  deny over allow, the read-only default, and arguments that try to leave their operation. For
+  each configuration the expected tools are written by hand: exactly those are offered, every
+  other operation is refused by name and by a case variant with zero requests sent, and every
+  offered one reaches the API with its own method and path.
+- `packages/cli/test/filters-real-specs.test.ts` does the same against the GitHub, Stripe and
+  DigitalOcean specs. The expectation is a predicate over the raw spec, never the filter code; an
+  operation the predicate expects but the server does not offer must be one startup reports as
+  omitted, and those are pinned by count and hash.
+
+A declared `HEAD` operation is offered when the filters allow it, but its calls are refused while
+the `GET` on the same path is excluded: a `HEAD` request reads what that `GET` returns.
