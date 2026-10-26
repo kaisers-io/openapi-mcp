@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Several APIs behind one server (#16).** `serve --api <name>=<source>` declares one API, and
+  can be repeated; every per-API option then starts with the API's name (`--allow
+  github=tag:repos`, `--header-env shop=Authorization=SHOP_TOKEN`), switches are set with
+  `--enable <name>=<switch>`, and an unnamed `--deny` applies to every API. Tools are named
+  `<api>_<name>`. Each API keeps its own base URL, credentials, OAuth, egress policy, filters and
+  routes; its credentials go only to URLs under its own base URL, also on a shared origin.
+  Overlapping base URLs, a shared cache namespace and a spec that fails to load stop the start.
+  `--spec` works exactly as before. See [Several APIs](docs/configuration.md#several-apis).
+
 - **The call log says why a response was refused (#24).** With `--log json`, a response that
   does not match the operation's output schema adds a `mismatch` record to its log line: the
   category, the failing keyword, the location in the response data

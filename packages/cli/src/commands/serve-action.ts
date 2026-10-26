@@ -22,9 +22,11 @@ import {
   createRouteTable,
   createRedactor,
   createStreamableHttpServer,
+  apiOfToolName,
   EXIT,
   isValidBearerToken,
   parseSpecSource,
+  qualifyTools,
   resolveToolMode,
   runSpecPipeline,
   SPEC_BUDGETS,
@@ -47,12 +49,15 @@ import type {
 } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
 import {
+  apiViews,
+  assertSeparateApis,
+  combinedContentHash,
   parseImageResponseMode,
   resolveApiConfig,
   resolveImageResponses,
   resolveUploadOptions,
 } from '../api-options.ts';
-import type { ApiCmdOpts } from '../api-options.ts';
+import type { ApiCmdOpts, Occurrence } from '../api-options.ts';
 import { resolveTokenUrl } from '../oauth-options.ts';
 import type { CliContext } from '../context.ts';
 import { emitError, emitWarnings } from '../output.ts';
@@ -235,6 +240,9 @@ export type ServeCmdOpts = SpecCmdOpts &
     imageResponses: string;
     imageDirMaxBytes: string;
     uploads?: boolean;
+    // Several APIs (issue #16, multi-api.ts)
+    api?: string[];
+    enable?: string[];
   };
 
 type HttpAuthConfig =
@@ -437,35 +445,32 @@ export const resolveHttpConfig = (
 // tools before the snapshot, the reports) are released once it returns,
 // instead of living in the suspended frame of runServe for the whole
 // session (issue #47).
-const prepareServe = async (
-  command: ServeCommand,
+// One API's spec, loaded and built (phase 1): enough to count its tools, so
+// the tool mode can be decided over every API before anything else
+type LoadedApi = {
+  // Undefined for the single API of `--spec`
+  name: string | undefined;
+  cmdOpts: ServeCmdOpts;
+  apiConfig: ReturnType<typeof resolveApiConfig>;
+  args: ReturnType<typeof parseSpecPipelineArgs>;
+  result: Awaited<ReturnType<typeof runSpecPipeline>>;
+  filterWarnings: string[];
+  uploads: Awaited<ReturnType<typeof resolveUploadOptions>>;
+  generated: ReturnType<typeof buildToolsDeferred>;
+};
+
+const loadApi = async (
+  name: string | undefined,
   cmdOpts: ServeCmdOpts,
   ctx: CliContext,
-  onExecutor: (close: () => Promise<void>) => void,
-) => {
-  // HTTP-specific options are validated FIRST — BEFORE any spec/cache/
-  // network processing — so a bad --port or --http-token-env fails
-  // fast with NO side effects (no spec fetch, no cache write). This
-  // matches "validated once at CLI startup" rather than discovering
-  // the mistake only after paying for a spec fetch.
-  const httpConfig = resolveHttpConfig(command, cmdOpts, ctx);
-  if (cmdOpts.log !== undefined && cmdOpts.log !== 'json') {
-    throw usageError(`invalid --log "${cmdOpts.log}" — the only supported format is "json"`);
-  }
-  const logJson = cmdOpts.log === 'json';
-  const toolsPageSize = parseToolsPageSize(cmdOpts.toolsPageSize);
-  const paging = toolsPageSize === undefined ? {} : { toolsPageSize };
+  requestedToolMode: RequestedToolMode,
+  httpConfig: HttpConfig | undefined,
+): Promise<LoadedApi> => {
   // Resolved BEFORE buildTools (below): its reservedHeaderNames must be
   // unioned into buildTools' reservedHeaders so a spec header parameter
   // colliding with a configured auth header name is dropped from the
-  // tool's input schema, not merely rejected later at call time. Also
-  // validated fast, before any spec/cache/network processing, matching
-  // the httpConfig check just above.
+  // tool's input schema, not merely rejected later at call time.
   const apiConfig = resolveApiConfig(cmdOpts, ctx);
-  const requestedToolMode = parseToolMode(cmdOpts.toolMode);
-  // Usage errors first, before any spec or network work
-  parseImageResponseMode(cmdOpts.imageResponses);
-  const compactOutputSchemas = parseOutputSchemaForm(cmdOpts.outputSchema);
   const args = parseSpecPipelineArgs(cmdOpts, ctx);
   // The exposed-set budget follows the tool mode: one tool per operation
   // keeps the 512-tool budget; discover (and auto, which only ever picks
@@ -488,13 +493,8 @@ const prepareServe = async (
   // straight into a thrown error's message.
   const filterWarnings = filterMessages(result);
   if (cmdOpts.strictFilters === true && filterWarnings.length > 0) {
-    throw validationError(filterWarnings.join('\n'));
+    throw validationError(withApi(name, filterWarnings).join('\n'));
   }
-  // Union: a spec header parameter named e.g. "X-Api-Key" is dropped from
-  // the tool's input schema when that same name is configured as an
-  // operator auth header (--header/--header-env) — SYSTEM_HEADERS alone
-  // would let it reappear as a caller-settable input, silently colliding
-  // with the credential the executor injects.
   // Before the tools are built: their binary fields name this folder
   const uploads = await resolveUploadOptions({
     enabled: cmdOpts.uploads === true,
@@ -507,11 +507,19 @@ const prepareServe = async (
     now: ctx.now(),
   });
   if (uploads !== undefined && uploads.deleted > 0) {
-    emitWarnings(ctx, [
-      `--uploads: removed ${String(uploads.deleted)} file(s) older than 24 hours from ${uploads.folder.path}`,
-    ]);
+    emitWarnings(
+      ctx,
+      withApi(name, [
+        `--uploads: removed ${String(uploads.deleted)} file(s) older than 24 hours from ${uploads.folder.path}`,
+      ]),
+    );
   }
-  const generated = buildToolsDeferred(result.namedOperations, {
+  // Union: a spec header parameter named e.g. "X-Api-Key" is dropped from
+  // the tool's input schema when that same name is configured as an
+  // operator auth header (--header/--header-env) — SYSTEM_HEADERS alone
+  // would let it reappear as a caller-settable input, silently colliding
+  // with the credential the executor injects.
+  const deferred = buildToolsDeferred(result.namedOperations, {
     reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
     openapiVersion: result.spec.openapiVersion,
     projection: cmdOpts.responseProjection === true,
@@ -519,37 +527,38 @@ const prepareServe = async (
     defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
     ...nullableOption(cmdOpts.nullableResponseFields),
   });
-  const toolMode = resolveToolMode(requestedToolMode, generated.tools.length);
+  // Several APIs (issue #16): every tool is named `<api>_<name>`
+  const generated = name === undefined ? deferred : qualifyTools(deferred, name);
+  return { name, cmdOpts, apiConfig, args, result, filterWarnings, uploads, generated };
+};
+
+// Several APIs (issue #16): every line says which API it is about
+const withApi = (name: string | undefined, lines: readonly string[]): string[] =>
+  name === undefined ? [...lines] : lines.map((line) => `${name}: ${line}`);
+
+// One API, finished for the chosen tool mode (phase 3): its tools, its
+// reports, and the executor configuration of its own calls (the redactor
+// and the validators are shared and set later)
+const finishApi = async (
+  api: LoadedApi,
+  toolMode: 'per-operation' | 'discover',
+  ctx: CliContext,
+) => {
+  const { name, cmdOpts, apiConfig, args, result } = api;
   // Under discover, each operation's output side is built on first use
   // (issue #47): nothing at startup lists it. --omit-output-schema needs
   // every tool's output schema to report its patterns, so it builds them now.
   const deferOutput = toolMode === 'discover' && args.filters.omitOutputSchema.length === 0;
   const optOut = deferOutput
-    ? { built: generated, deadPatterns: [], warnings: [] }
+    ? { built: api.generated, deadPatterns: [], warnings: [] }
     : withOutputSchemaOptOut(
-        completeTools(generated),
+        completeTools(api.generated),
         args.filters.omitOutputSchema,
         result.spec,
         cmdOpts.strictFilters === true,
       );
   const { built } = optOut;
   const exposure = exposureReport(result, built, cmdOpts.strictFilters === true);
-  // The status tool counts the --omit-output-schema dead patterns too
-  const pipeline = {
-    ...result,
-    deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns],
-    notExposedCounts: exposure.counts,
-  };
-  const snapshot = buildSnapshot(built, pipeline, {
-    toolMode,
-    compactOutputSchemas,
-    bareOutputSchemas: !cmdOpts.outputSchemaDescriptions,
-    onDeferredError: (toolName, error) => {
-      emitWarnings(ctx, [
-        `tool "${toolName}" has an output side that cannot be built, so describing or calling it fails: ${describeCause(error)}`,
-      ]);
-    },
-  });
 
   // Resolve + validate the API base URL: --base-url (trusted, address
   // check skipped) else the spec-derived candidate (untrusted — a
@@ -596,18 +605,201 @@ const prepareServe = async (
         AbortSignal.timeout(args.options.timeoutMs),
       );
     } catch (error) {
-      throw validationError(`the OAuth token URL is refused: ${describeCause(error)}`);
+      throw validationError(
+        withApi(name, [`the OAuth token URL is refused: ${describeCause(error)}`]).join('\n'),
+      );
     }
   }
+  const configuredHeaderNames = new Set(
+    [...apiConfig.staticHeaders, ...apiConfig.secretHeaders].map((header) =>
+      header.name.toLowerCase(),
+    ),
+  );
+  // Startup diagnostics — cache staleness, a pending candidate, dead
+  // patterns under non-strict mode (e.g. a mistyped --deny silently
+  // failing open), and omitted operations — go to stderr, sanitized
+  // and framed through the SAME emitWarnings() path `tools` uses via
+  // emit(), never raw. Full parity with `tools`' warnings array.
+  const warnings = withApi(name, [
+    ...result.warnings,
+    ...api.filterWarnings,
+    ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
+    ...optOut.warnings,
+    ...exposure.warnings,
+    // Exposed operations whose `security` requirement no configured
+    // header satisfies would only ever 401 — say so, with the flag that
+    // fixes it, before the first call instead of after it.
+    ...unsatisfiedSecurityWarnings(
+      result.spec,
+      built.tools.map((tool) => tool.operation),
+      { headerNames: configuredHeaderNames, oauthClientCredentials: oauth !== undefined },
+    ),
+  ]);
+  return {
+    api,
+    built,
+    exposure,
+    // The status tool counts the --omit-output-schema dead patterns too
+    pipeline: {
+      ...result,
+      deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns],
+      notExposedCounts: exposure.counts,
+    },
+    resolvedBase,
+    allowPrivateNetwork,
+    tokenUrl,
+    warnings,
+  };
+};
+
+type FinishedApi = Awaited<ReturnType<typeof finishApi>>;
+
+// Hosts add their own prefix to a tool name and accept 64 characters at most
+// (Claude Code: mcp__<server>__<tool>; Cursor: 60 for server and tool name):
+// a qualified per-operation name longer than this leaves too little room
+const QUALIFIED_NAME_WARN_LENGTH = 50;
+
+const sumCounts = (counts: readonly Record<string, number>[]): Record<string, number> =>
+  counts.reduce<Record<string, number>>((sum, entry) => {
+    for (const [key, value] of Object.entries(entry)) {
+      sum[key] = (sum[key] ?? 0) + value;
+    }
+    return sum;
+  }, {});
+
+const prepareServe = async (
+  command: ServeCommand,
+  cmdOpts: ServeCmdOpts,
+  ctx: CliContext,
+  occurrences: readonly Occurrence[],
+  onExecutor: (close: () => Promise<void>) => void,
+) => {
+  // HTTP-specific options are validated FIRST — BEFORE any spec/cache/
+  // network processing — so a bad --port or --http-token-env fails
+  // fast with NO side effects (no spec fetch, no cache write). This
+  // matches "validated once at CLI startup" rather than discovering
+  // the mistake only after paying for a spec fetch.
+  const httpConfig = resolveHttpConfig(command, cmdOpts, ctx);
+  if (cmdOpts.log !== undefined && cmdOpts.log !== 'json') {
+    throw usageError(`invalid --log "${cmdOpts.log}" — the only supported format is "json"`);
+  }
+  const logJson = cmdOpts.log === 'json';
+  const toolsPageSize = parseToolsPageSize(cmdOpts.toolsPageSize);
+  const paging = toolsPageSize === undefined ? {} : { toolsPageSize };
+  const requestedToolMode = parseToolMode(cmdOpts.toolMode);
+  // Usage errors first, before any spec or network work
+  parseImageResponseMode(cmdOpts.imageResponses);
+  const compactOutputSchemas = parseOutputSchemaForm(cmdOpts.outputSchema);
+  // Several APIs (issue #16), every option split by its API; or the one
+  // API of --spec, exactly as before
+  const views = apiViews(cmdOpts, occurrences, optionDefaults(command));
+  if (views === undefined && (cmdOpts.spec as string | undefined) === undefined) {
+    throw usageError(
+      "required option '--spec <url|file>' not specified (or --api <name>=<source>)",
+    );
+  }
+  const declared = views ?? [{ name: undefined, source: cmdOpts.spec, options: cmdOpts }];
+  // Every API's options are validated before any spec or network work
+  for (const view of declared) {
+    resolveApiConfig(view.options, ctx);
+    parseSpecPipelineArgs(view.options, ctx);
+  }
+  const loaded: LoadedApi[] = [];
+  for (const view of declared) {
+    loaded.push(await loadApi(view.name, view.options, ctx, requestedToolMode, httpConfig));
+  }
+  const toolCount = loaded.reduce((sum, api) => sum + api.generated.tools.length, 0);
+  const budget =
+    requestedToolMode === 'per-operation'
+      ? SPEC_BUDGETS.maxToolCount
+      : SPEC_BUDGETS.maxDiscoverToolCount;
+  if (views !== undefined && toolCount > budget) {
+    throw validationError(
+      `${String(toolCount)} tools would be exposed by all APIs together — exceeds the ${String(budget)}-tool budget; narrow them with --allow or --deny`,
+    );
+  }
+  const toolMode = resolveToolMode(requestedToolMode, toolCount);
+  const finished: FinishedApi[] = [];
+  for (const api of loaded) {
+    finished.push(await finishApi(api, toolMode, ctx));
+  }
+  const multi = views !== undefined;
+  if (multi) {
+    assertSeparateApis(
+      finished.map(({ api, resolvedBase }) => ({
+        name: String(api.name),
+        namespace: `${api.result.displaySource}\n${api.args.options.cacheKey ?? ''}`,
+        base: resolvedBase.url,
+      })),
+    );
+  }
+  const [first] = finished as [FinishedApi, ...FinishedApi[]];
+  // Every API is built in the same mode, so their tools are all complete or
+  // all deferred
+  const built = {
+    tools: finished.flatMap((api) => api.built.tools as readonly unknown[]),
+    omitted: finished.flatMap((api) => api.built.omitted),
+  } as unknown as typeof first.built;
+  const pipeline = multi
+    ? {
+        spec: {
+          title: finished.map((api) => String(api.api.name)).join(', '),
+          specVersion: '',
+          omitted: finished.flatMap((api) => api.pipeline.spec.omitted),
+        },
+        contentHash: combinedContentHash(
+          finished.map((api) => ({ name: String(api.api.name), hash: api.pipeline.contentHash })),
+        ),
+        displaySource: finished.map((api) => String(api.api.name)).join(', '),
+        deadPatterns: finished.flatMap((api) => api.pipeline.deadPatterns),
+        withheldOperations: finished.flatMap((api) => api.pipeline.withheldOperations ?? []),
+        notExposedCounts: sumCounts(
+          finished.map((api) => api.exposure.counts),
+        ) as typeof first.exposure.counts,
+        cacheLock: finished.find((api) => api.pipeline.cacheLock !== undefined)?.pipeline.cacheLock,
+        apis: finished.map((api) => ({
+          name: String(api.api.name),
+          specTitle: api.pipeline.spec.title,
+          specVersion: api.pipeline.spec.specVersion,
+          displaySource: api.pipeline.displaySource,
+          toolCount: api.built.tools.length,
+          omittedCount:
+            api.pipeline.spec.omitted.length +
+            api.built.omitted.length +
+            (api.pipeline.withheldOperations?.length ?? 0),
+          acceptedContentHash: api.pipeline.contentHash,
+          deadPatternCount: api.pipeline.deadPatterns.length,
+          notExposedCounts: api.exposure.counts,
+        })),
+      }
+    : first.pipeline;
+  const snapshot = buildSnapshot(built, pipeline, {
+    toolMode,
+    compactOutputSchemas,
+    bareOutputSchemas: !cmdOpts.outputSchemaDescriptions,
+    ...(multi
+      ? {
+          apiNames: finished.map((api) => String(api.api.name)) as [string, ...string[]],
+        }
+      : {}),
+    onDeferredError: (toolName, error) => {
+      emitWarnings(ctx, [
+        `tool "${toolName}" has an output side that cannot be built, so describing or calling it fails: ${describeCause(error)}`,
+      ]);
+    },
+  });
 
   // One redactor for the whole process: every resolved secret this
   // server ever holds — the spec-fetch auth header values, the API
-  // --header/--header-env values, and the HTTP bearer token (if any) —
-  // feeds it, so a secret echoed anywhere (an upstream error body, the
-  // dispatch boundary, a startup diagnostic) is scrubbed uniformly.
+  // --header/--header-env values of every API, and the HTTP bearer token
+  // (if any) — feeds it, so a secret echoed anywhere (an upstream error
+  // body, the dispatch boundary, a startup diagnostic) is scrubbed
+  // uniformly, also when one API echoes another's.
   const redactor = createRedactor([
-    ...args.options.specHeaders.map((header) => header.value),
-    ...apiConfig.secretValues,
+    ...finished.flatMap(({ api }) => [
+      ...api.args.options.specHeaders.map((header) => header.value),
+      ...api.apiConfig.secretValues,
+    ]),
     ...(httpConfig?.auth.kind === 'static' ? [httpConfig.auth.token] : []),
   ]);
 
@@ -656,6 +848,94 @@ const prepareServe = async (
     validators = new Map<string, EnvelopeValidator | undefined>(validatorEntries);
   }
 
+  const configs = new Map<string | undefined, ExecutorConfig>();
+  for (const api of finished) {
+    configs.set(
+      api.api.name,
+      await executorConfigOf(api, cmdOpts, ctx, httpConfig, redactor, validators, multi),
+    );
+  }
+  const firstConfig = configs.get(first.api.name) as ExecutorConfig;
+  // ONE executor instance, shared by the stdio AND HTTP branches below and
+  // by every API, so the global outbound-concurrency semaphore is
+  // genuinely shared. With several APIs each call uses its own API's
+  // configuration (base URL, headers, OAuth, egress, routes).
+  const executor = createExecutor(firstConfig, {
+    transport: ctx.transport,
+    ...(multi
+      ? {
+          configFor: (tool) => {
+            const config = configs.get(apiOfToolName(tool.name));
+            if (config === undefined) {
+              throw new Error('a tool of no declared API');
+            }
+            return config;
+          },
+        }
+      : {}),
+  });
+  onExecutor(() => executor.close());
+  // Call counters always feed openapi_mcp_status; the per-call JSON line
+  // is written only with --log json, and only to stderr (stdout is
+  // MCP-JSON-only).
+  const callStats = createCallStats();
+  const onCall: CallObserver = (record) => {
+    callStats.record(record);
+    if (logJson) {
+      const line = formatCallLog(record, redactor, new Date(ctx.now()));
+      ctx.errLine(line);
+    }
+  };
+  const dispatcherDeps = {
+    onCall,
+    // --rate-limit is one window for every API
+    limiter: createRateLimiter(first.api.apiConfig.rateLimit),
+    now: ctx.now,
+    executor,
+    metaExecutor: createMetaExecutor({ stats: callStats }),
+    redactor,
+  };
+  const longNames =
+    multi && snapshot.toolMode === 'per-operation'
+      ? snapshot.operations.filter((entry) => entry.name.length > QUALIFIED_NAME_WARN_LENGTH)
+      : [];
+  emitWarnings(ctx, [
+    ...finished.flatMap((api) => api.warnings),
+    ...(longNames.length === 0
+      ? []
+      : [
+          `${String(longNames.length)} tool name(s) are longer than ${String(QUALIFIED_NAME_WARN_LENGTH)} characters (e.g. "${longNames[0]?.name ?? ''}"); hosts add their own prefix and accept 64, so use shorter API names or --tool-mode discover`,
+        ]),
+    ...(httpConfig === undefined ? [] : noRequiredScopeWarning(httpConfig)),
+    ...[discoverApprovalWarning(snapshot.toolMode, snapshot.operations)].filter(
+      (line): line is string => line !== undefined,
+    ),
+  ]);
+  return {
+    httpConfig,
+    snapshot,
+    dispatcherDeps,
+    paging,
+    // Inbound OAuth (issuer discovery, JWKS) follows --allow-private-network
+    // with one API; with several there is no single setting, so it stays off
+    allowPrivateNetwork: multi ? false : first.allowPrivateNetwork,
+    timeoutMs: first.api.args.options.timeoutMs,
+  };
+};
+
+// The executor configuration of one API's calls
+const executorConfigOf = async (
+  finished: FinishedApi,
+  cmdOpts: ServeCmdOpts,
+  ctx: CliContext,
+  httpConfig: HttpConfig | undefined,
+  redactor: ReturnType<typeof createRedactor>,
+  validators: EnvelopeValidators,
+  multi: boolean,
+): Promise<ExecutorConfig> => {
+  const { api, exposure, resolvedBase, allowPrivateNetwork, tokenUrl } = finished;
+  const { apiConfig, args, uploads } = api;
+  const { oauth } = apiConfig;
   const images = await resolveImageResponses({
     mode: cmdOpts.imageResponses,
     dirMaxBytes: cmdOpts.imageDirMaxBytes,
@@ -665,14 +945,14 @@ const prepareServe = async (
     ...(args.options.cacheKey === undefined ? {} : { cacheKey: args.options.cacheKey }),
     ...(httpConfig === undefined ? {} : { httpHost: httpConfig.hostname }),
   });
-  const executorConfig: ExecutorConfig = {
-    // `--log json` also says why a response was refused (issue #24)
-    ...(logJson ? { diagnoseMismatches: true } : {}),
+  return {
     baseUrl: resolvedBase.url.toString(),
     baseTrusted: resolvedBase.trusted,
     // Issue #40: every hop is checked against every operation of the spec
     routes: createRouteTable(exposure.routeEntries, exposure.routes),
-    allowOffsiteRedirects: cmdOpts.allowOffsiteRedirects === true,
+    allowOffsiteRedirects: api.cmdOpts.allowOffsiteRedirects === true,
+    // Several APIs (issue #16): credentials only go to the API's own base URL
+    ...(multi ? { credentialScope: 'api' as const } : {}),
     allowPrivateNetwork,
     allowInsecureHttp: apiConfig.allowInsecureHttp,
     secretHeaders: apiConfig.secretHeaders,
@@ -689,8 +969,8 @@ const prepareServe = async (
       maxBodyBytes: apiConfig.maxResponseBytes,
     },
     // Global outbound-concurrency cap (--max-concurrency), shared by
-    // stdio + HTTP because `createExecutor` is constructed exactly ONCE
-    // below; up to 4x as many calls may queue for a slot.
+    // stdio + HTTP and by every API because `createExecutor` is
+    // constructed exactly ONCE; up to 4x as many calls may queue for a slot.
     maxConcurrent: apiConfig.maxConcurrency,
     retries: apiConfig.retries,
     propagateTraceContext: apiConfig.propagateTraceContext,
@@ -723,73 +1003,22 @@ const prepareServe = async (
           },
         }),
   };
-  // ONE executor instance, shared by the stdio AND HTTP branches below,
-  // so the global outbound-concurrency semaphore is genuinely shared.
-  const executor = createExecutor(executorConfig, { transport: ctx.transport });
-  onExecutor(() => executor.close());
-  // Call counters always feed openapi_mcp_status; the per-call JSON line
-  // is written only with --log json, and only to stderr (stdout is
-  // MCP-JSON-only).
-  const callStats = createCallStats();
-  const onCall: CallObserver = (record) => {
-    callStats.record(record);
-    if (logJson) {
-      const line = formatCallLog(record, redactor, new Date(ctx.now()));
-      ctx.errLine(line);
-    }
-  };
-  const dispatcherDeps = {
-    onCall,
-    limiter: createRateLimiter(apiConfig.rateLimit),
-    now: ctx.now,
-    executor,
-    metaExecutor: createMetaExecutor({ stats: callStats }),
-    redactor,
-  };
-  const configuredHeaderNames = new Set(
-    [...apiConfig.staticHeaders, ...apiConfig.secretHeaders].map((header) =>
-      header.name.toLowerCase(),
-    ),
-  );
-  // Startup diagnostics — cache staleness, a pending candidate, dead
-  // patterns under non-strict mode (e.g. a mistyped --deny silently
-  // failing open), and omitted operations — go to stderr, sanitized
-  // and framed through the SAME emitWarnings() path `tools` uses via
-  // emit(), never raw. Full parity with `tools`' warnings array.
-  emitWarnings(ctx, [
-    ...result.warnings,
-    ...filterWarnings,
-    ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
-    ...optOut.warnings,
-    ...exposure.warnings,
-    // Exposed operations whose `security` requirement no configured
-    // header satisfies would only ever 401 — say so, with the flag that
-    // fixes it, before the first call instead of after it.
-    ...unsatisfiedSecurityWarnings(
-      result.spec,
-      built.tools.map((tool) => tool.operation),
-      { headerNames: configuredHeaderNames, oauthClientCredentials: oauth !== undefined },
-    ),
-    ...(httpConfig === undefined ? [] : noRequiredScopeWarning(httpConfig)),
-    ...[discoverApprovalWarning(snapshot.toolMode, snapshot.operations)].filter(
-      (line): line is string => line !== undefined,
-    ),
-  ]);
-  return {
-    httpConfig,
-    snapshot,
-    dispatcherDeps,
-    paging,
-    allowPrivateNetwork,
-    timeoutMs: args.options.timeoutMs,
-  };
 };
+
+// Commander's default of each option an API may set for itself
+const optionDefaults = (command: ServeCommand): Record<string, unknown> =>
+  Object.fromEntries(
+    (
+      command as unknown as { options: { attributeName: () => string; defaultValue: unknown }[] }
+    ).options.map((option) => [option.attributeName(), option.defaultValue]),
+  );
 
 export const runServe = async (
   command: ServeCommand,
   cmdOpts: ServeCmdOpts,
   ctx: CliContext,
   state: RunState,
+  occurrences: readonly Occurrence[] = [],
 ): Promise<void> => {
   // Serve NEVER uses wrapAction and NEVER respects the global --json
   // flag for its own error path: wrapAction's JSON envelope writes to
@@ -803,7 +1032,7 @@ export const runServe = async (
   let closeExecutor: (() => Promise<void>) | undefined;
   try {
     const { httpConfig, snapshot, dispatcherDeps, paging, allowPrivateNetwork, timeoutMs } =
-      await prepareServe(command, cmdOpts, ctx, (close) => {
+      await prepareServe(command, cmdOpts, ctx, occurrences, (close) => {
         closeExecutor = close;
       });
     if (httpConfig === undefined) {

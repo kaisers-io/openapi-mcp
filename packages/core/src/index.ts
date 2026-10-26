@@ -208,6 +208,7 @@ export type { FilterDecision, NotExposedDecision, NotExposedOperation } from './
 export type { CaseCollision } from './filter/case-collisions.ts';
 export type { DeadPattern, DeadPatternFlag, FilterTarget } from './filter/engine.ts';
 export { applyOutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
+export { API_NAME_PATTERN, apiOfToolName, qualifiedName, qualifyTools } from './toolgen/qualify.ts';
 export {
   compileRoutes,
   createRouteTable,
