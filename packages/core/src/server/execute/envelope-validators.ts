@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import Ajv2020Module from 'ajv/dist/2020.js';
-import type { Options, ValidateFunction } from 'ajv/dist/2020.js';
+import type { ErrorObject, Options, ValidateFunction } from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
+
+export type { ErrorObject } from 'ajv/dist/2020.js';
 
 // The per-tool output validators the executor checks every response envelope
 // against (see mapResponse in response.ts).
@@ -27,7 +29,13 @@ const unwrapDefault = <Unwrapped>(moduleValue: unknown): Unwrapped => {
 const Ajv2020 = unwrapDefault<AjvConstructor>(Ajv2020Module);
 const addFormats = unwrapDefault<(ajv: AjvInstance) => unknown>(addFormatsModule);
 
-export type EnvelopeValidator = (envelope: unknown) => boolean;
+// `onErrors` sees Ajv's errors of a failed validation, synchronously, before
+// the shared compiled function validates anything else (issue #24): the
+// errors of one call can never reach another.
+export type EnvelopeValidator = (
+  envelope: unknown,
+  onErrors?: (errors: readonly ErrorObject[]) => void,
+) => boolean;
 
 export type EnvelopeCompiler = (
   outputSchema: Record<string, unknown> | undefined,
@@ -81,7 +89,13 @@ export const createEnvelopeCompiler = (): EnvelopeCompiler => {
       compiled.set(key, validate);
     }
     const shared = validate;
-    return (envelope: unknown): boolean => shared(envelope) === true;
+    return (envelope, onErrors): boolean => {
+      const valid = shared(envelope) === true;
+      if (!valid && onErrors !== undefined) {
+        onErrors(shared.errors ?? []);
+      }
+      return valid;
+    };
   };
 };
 

@@ -24,6 +24,11 @@ import { markSecretScanned, structuredOutcome, textOutcome } from '../result.ts'
 import type { ToolCallOutcome } from '../result.ts';
 import { markRetryWarned, markSuccessClaim, withheldSuccess } from '../withheld.ts';
 import type { EnvelopeValidator } from './envelope-validators.ts';
+import { describeMismatch, mismatchOf, withMismatch } from './mismatch.ts';
+import type { MismatchCategory, SchemaMismatch } from './mismatch.ts';
+
+// The executor reads the reason a response was refused (issue #24)
+export { mismatchOf } from './mismatch.ts';
 
 // The executor is the SOLE enforcer of {status,contentType,data} envelope
 // conformance — the low-level SDK Server performs no per-tool outputSchema
@@ -64,6 +69,9 @@ export type MapResponseOptions = {
   projectable?: boolean;
   // GET, HEAD or QUERY: only then may a hint suggest calling again.
   safeMethod?: boolean;
+  // `--log json`: say why a response was refused, for the call log only
+  // (issue #24). Off, nothing is computed.
+  diagnose?: boolean;
 };
 
 // Fixed, reason-keyed text — never the PinnedOutcome's own `detail` string,
@@ -130,6 +138,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 type OutputBranch = {
   status: number;
   contentType: string;
+  // Its position in the envelope's oneOf
+  index: number;
 };
 
 // Reads the `oneOf` branches straight off the generated outputSchema shape
@@ -140,7 +150,7 @@ const branchesOf = (outputSchema: Record<string, unknown>): readonly OutputBranc
   if (!Array.isArray(oneOf)) {
     return [];
   }
-  return oneOf.flatMap((branch): OutputBranch[] => {
+  return oneOf.flatMap((branch: unknown, index): OutputBranch[] => {
     if (!isRecord(branch) || !isRecord(branch['properties'])) {
       return [];
     }
@@ -153,7 +163,7 @@ const branchesOf = (outputSchema: Record<string, unknown>): readonly OutputBranc
     const statusConst = statusProp['const'];
     const contentTypeConst = contentTypeProp['const'];
     return typeof statusConst === 'number' && typeof contentTypeConst === 'string'
-      ? [{ status: statusConst, contentType: contentTypeConst }]
+      ? [{ status: statusConst, contentType: contentTypeConst, index }]
       : [];
   });
 };
@@ -438,6 +448,37 @@ export const envelopeHasSecret = (
   return scanSafely(redactor, rawJson) || scanSafely(redactor, rest);
 };
 
+// Validates the envelope; with `diagnose`, a refusal also says why, for the
+// call log (issue #24). Reading the errors can never change the result.
+const checkEnvelope = (
+  envelope: Record<string, unknown>,
+  validator: EnvelopeValidator,
+  branch: number,
+  diagnose: { redactor: Redactor } | undefined,
+): { valid: true } | { valid: false; mismatch?: SchemaMismatch } => {
+  let mismatch: SchemaMismatch | undefined;
+  const valid = validator(
+    envelope,
+    diagnose === undefined
+      ? undefined
+      : (errors) => {
+          try {
+            mismatch = describeMismatch(errors, branch, envelope, diagnose.redactor);
+          } catch {
+            mismatch = { category: 'schema' };
+          }
+        },
+  );
+  return valid ? { valid } : { valid, ...(mismatch === undefined ? {} : { mismatch }) };
+};
+
+// A refusal the call log can explain with a category alone
+const refused = (
+  outcome: ToolCallOutcome,
+  diagnose: boolean | undefined,
+  category: MismatchCategory,
+): ToolCallOutcome => (diagnose === true ? withMismatch(outcome, { category }) : outcome);
+
 // `_fields` on a tool with an outputSchema: the FULL envelope is still
 // validated against the strict schema first (upstream data must match the
 // spec whatever is selected), then the selection replaces `data` with
@@ -448,15 +489,19 @@ const projectEnvelope = (
   envelope: Record<string, unknown>,
   data: unknown,
   fields: readonly string[],
-  validator: EnvelopeValidator,
+  check: () => ReturnType<typeof checkEnvelope>,
   redactor: Redactor,
   maxTextBytes: number,
 ): ToolCallOutcome => {
   const { status } = envelope;
-  if (!validator(envelope)) {
-    return textOutcome(
-      `upstream response for status ${String(status)} did not match the tool's declared output schema`,
-      true,
+  const checked = check();
+  if (!checked.valid) {
+    return withMismatch(
+      textOutcome(
+        `upstream response for status ${String(status)} did not match the tool's declared output schema`,
+        true,
+      ),
+      checked.mismatch,
     );
   }
   const { data: _full, ...rest } = envelope;
@@ -529,7 +574,7 @@ type SchemaSuccessOptions = Omit<MapResponseOptions, 'outcome' | 'outputSchema' 
 
 const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   const { status, contentType, bodyBytes, outputSchema, validator, redactor } = opts;
-  const { undeclaredSuccessHint, maxTextBytes, forwarded, page, fields } = opts;
+  const { undeclaredSuccessHint, maxTextBytes, forwarded, page, fields, diagnose } = opts;
   const essence = mediaEssence(contentType);
   const branch = essence === undefined ? undefined : findBranch(outputSchema, status, essence);
   if (
@@ -548,10 +593,14 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
       `for the operation, and its output schema assumes the spec's "default" response covers ` +
       `errors only (${undeclaredSuccessHint})`;
     return markSuccessClaim(
-      textOutcome(
-        `the upstream reported success (status ${status}), so the request was likely applied; ` +
-          `do not retry it blindly. ${reason}`,
-        true,
+      refused(
+        textOutcome(
+          `the upstream reported success (status ${status}), so the request was likely applied; ` +
+            `do not retry it blindly. ${reason}`,
+          true,
+        ),
+        diagnose,
+        'unmatched_branch',
       ),
       `the upstream answered with status ${status} after a redirect or a retry, so the request ` +
         `may have been applied; do not retry it blindly. ${reason}`,
@@ -562,28 +611,44 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
     // unsupported-media-type message above.
     const observed =
       essence === undefined ? '(missing)' : sanitizeSpecText(redactor.redactString(essence), 128);
-    return textOutcome(
-      `upstream response for status ${status} did not match a declared output branch (media type ${observed})`,
-      true,
+    return refused(
+      textOutcome(
+        `upstream response for status ${status} did not match a declared output branch (media type ${observed})`,
+        true,
+      ),
+      diagnose,
+      'unmatched_branch',
     );
   }
   const decoded = decodeUtf8(bodyBytes);
   if ('error' in decoded) {
-    return textOutcome('upstream response body was not valid UTF-8 text', true);
+    return refused(
+      textOutcome('upstream response body was not valid UTF-8 text', true),
+      diagnose,
+      'invalid_utf8',
+    );
   }
   // A sequential media type (OpenAPI 3.2, issue #33) is read as the array
   // of its items, which the branch's `data` schema describes
   const sequence = sequenceKind(branch.contentType.toLowerCase());
   const items = sequence === undefined ? undefined : parseSequence(decoded.ok, sequence);
   if (sequence !== undefined && items === undefined) {
-    return textOutcome(
-      `upstream response for status ${status} was not a valid ${branch.contentType} sequence`,
-      true,
+    return refused(
+      textOutcome(
+        `upstream response for status ${status} was not a valid ${branch.contentType} sequence`,
+        true,
+      ),
+      diagnose,
+      'invalid_sequence',
     );
   }
   const parseAttempt = items === undefined ? tryParseJson(decoded.ok) : { ok: true, value: items };
   if (!parseAttempt.ok) {
-    return textOutcome(`upstream response for status ${status} was not valid JSON`, true);
+    return refused(
+      textOutcome(`upstream response for status ${status} was not valid JSON`, true),
+      diagnose,
+      'invalid_json',
+    );
   }
   // Forwarded headers join the envelope (an optional `headers` property the
   // generated outputSchema declares), so the validator below covers them.
@@ -595,8 +660,10 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
     ...(Object.keys(forwarded).length === 0 ? {} : { headers: { ...forwarded } }),
     ...(page === undefined ? {} : { pagination: page(parseAttempt.value) }),
   };
+  const check = (): ReturnType<typeof checkEnvelope> =>
+    checkEnvelope(envelope, validator, branch.index, diagnose === true ? { redactor } : undefined);
   if (fields !== undefined) {
-    return projectEnvelope(envelope, parseAttempt.value, fields, validator, redactor, maxTextBytes);
+    return projectEnvelope(envelope, parseAttempt.value, fields, check, redactor, maxTextBytes);
   }
   // A secret anywhere in the structured data downgrades to a generic
   // isError — never a redacted-but-successful structuredContent. The
@@ -605,12 +672,17 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   if (envelopeHasSecret(redactor, decoded.ok, envelope)) {
     return withheldSuccess();
   }
-  if (!validator(envelope)) {
+  const checked = check();
+  if (!checked.valid) {
     // Never forward raw ajv errors — they can embed offending instance
-    // values. A status-only summary is safe to return verbatim.
-    return textOutcome(
-      `upstream response for status ${status} did not match the tool's declared output schema`,
-      true,
+    // values. A status-only summary is safe to return verbatim; the reason
+    // goes to the operator's call log only.
+    return withMismatch(
+      textOutcome(
+        `upstream response for status ${status} did not match the tool's declared output schema`,
+        true,
+      ),
+      checked.mismatch,
     );
   }
   // The dispatch boundary would otherwise repeat the full tree scan above.
@@ -719,11 +791,15 @@ export const mapResponse = (opts: MapResponseOptions): ToolCallOutcome => {
     page !== undefined && !mapped.isError && mapped.structuredContent === undefined
       ? page()
       : undefined;
-  const decorated = decorateTextOutcome(
-    mapped,
-    forwarded,
-    upstreamRetryAfterMs(outcome.status, outcome.headers, nowMs),
-    textHint,
+  // Decorating builds a new outcome; the reason for a refusal goes along
+  const decorated = withMismatch(
+    decorateTextOutcome(
+      mapped,
+      forwarded,
+      upstreamRetryAfterMs(outcome.status, outcome.headers, nowMs),
+      textHint,
+    ),
+    mismatchOf(mapped),
   );
   return withTruncationHint(decorated, opts);
 };

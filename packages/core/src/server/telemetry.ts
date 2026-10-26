@@ -2,6 +2,7 @@ import type { Redactor } from '../redact.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { CallRequest } from './dispatch.ts';
 import type { DispatchResult, ToolCallOutcome } from './result.ts';
+import type { SchemaMismatch } from './execute/mismatch.ts';
 
 // Opt-in per-call observability: one record per tools/call (dispatcher),
 // carrying WHAT happened and how long it took — never arguments, header
@@ -52,6 +53,9 @@ export type CallTelemetry = {
   // Upstream API requests sent for this call: 1 + retries, plus the
   // requests of a 401 token replay (--upstream-oauth-*), if one was made.
   attempts?: number;
+  // Why the response was refused (`--log json` only, issue #24): built from
+  // the schema and JSON type names, never from response data
+  mismatch?: SchemaMismatch;
 };
 
 export type CallRecord = CallTelemetry & {
@@ -145,6 +149,17 @@ export const observeCalls =
 
 // One JSON line (for stderr) per call. Every string field is sanitized and
 // redacted; numbers and the closed `outcome` vocabulary pass as-is.
+// Every string once more through the log's own sanitizing and redaction
+const mismatchFields = (
+  mismatch: SchemaMismatch,
+  text: (value: string) => string,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(mismatch).flatMap(([key, value]) =>
+      typeof value === 'string' ? [[key, text(value)]] : [],
+    ),
+  );
+
 export const formatCallLog = (record: CallRecord, redactor: Redactor, ts: Date): string => {
   const text = (value: string): string => redactor.redactString(sanitizeSpecText(value, 256));
   return JSON.stringify({
@@ -160,6 +175,7 @@ export const formatCallLog = (record: CallRecord, redactor: Redactor, ts: Date):
     ...(record.queuedMs === undefined ? {} : { queuedMs: record.queuedMs }),
     ...(record.upstreamMs === undefined ? {} : { upstreamMs: record.upstreamMs }),
     ...(record.attempts === undefined ? {} : { attempts: record.attempts }),
+    ...(record.mismatch === undefined ? {} : { mismatch: mismatchFields(record.mismatch, text) }),
   });
 };
 
