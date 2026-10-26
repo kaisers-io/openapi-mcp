@@ -98,12 +98,12 @@ const ANY_ELEMENT: ReadonlySet<string> = new Set([
   'contains',
 ]);
 
-// The data pointer a schema path below `data` leads to, or undefined when
-// the path passes anything that does not prove a data location (`$ref`,
-// `$defs`, `dependentSchemas`, an unknown keyword). `tokens` ends just
-// before the failing keyword.
-const dataPointer = (tokens: readonly string[], redactor: Redactor): string | undefined => {
-  const steps: string[] = [];
+// The steps a schema path below `data` takes into the data: a property name,
+// or undefined for any element. Undefined as a whole when the path passes
+// anything that does not lead into the data (`$defs`, `dependentSchemas`, an
+// unknown keyword). `tokens` ends just before the failing keyword.
+const schemaSteps = (tokens: readonly string[]): (string | undefined)[] | undefined => {
+  const steps: (string | undefined)[] = [];
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index] ?? '';
     if (token === 'properties') {
@@ -111,21 +111,48 @@ const dataPointer = (tokens: readonly string[], redactor: Redactor): string | un
       if (name === undefined || index + 1 >= tokens.length) {
         return undefined;
       }
-      steps.push(escapeToken(safeName(name, redactor)));
+      steps.push(name);
       index += 1;
     } else if (token === 'prefixItems' || token === 'patternProperties') {
       // The operand is an index or a pattern, never shown
-      steps.push('*');
+      steps.push(undefined);
       index += 1;
     } else if (ANY_ELEMENT.has(token)) {
-      steps.push('*');
+      steps.push(undefined);
     } else if (SKIP_OPERAND.has(token)) {
       index += 1;
     } else if (!NO_STEP.has(token)) {
       return undefined;
     }
   }
-  const pointer = steps.map((step) => `/${step}`).join('');
+  return steps;
+};
+
+// The pointer is shown only when the schema's steps lead exactly where the
+// failure is: a `$ref` to another schema in the same branch would otherwise
+// name the referenced location instead (review of #24). The instance path is
+// compared, never shown.
+const dataPointer = (
+  tokens: readonly string[],
+  instancePath: string,
+  redactor: Redactor,
+): string | undefined => {
+  const steps = schemaSteps(tokens);
+  const instance = instancePath
+    .split('/')
+    .slice(2)
+    .map((raw) => raw.replaceAll('~1', '/').replaceAll('~0', '~'));
+  if (
+    steps === undefined ||
+    (instancePath !== '/data' && !instancePath.startsWith('/data/')) ||
+    steps.length !== instance.length ||
+    steps.some((step, index) => step !== undefined && step !== instance[index])
+  ) {
+    return undefined;
+  }
+  const pointer = steps
+    .map((step) => `/${step === undefined ? '*' : escapeToken(safeName(step, redactor))}`)
+    .join('');
   return pointer.length > MAX_PATH ? undefined : pointer;
 };
 
@@ -197,7 +224,7 @@ export const describeMismatch = (
   }
   const keyword = KEYWORDS.has(error.keyword) ? error.keyword : 'other';
   const tokens = error.schemaPath.slice(prefix.length).split('/').slice(1, -1);
-  let path = direct === undefined ? undefined : dataPointer(tokens, redactor);
+  let path = direct === undefined ? undefined : dataPointer(tokens, error.instancePath, redactor);
   const missing = error.params['missingProperty'];
   if (path !== undefined && keyword === 'required') {
     // The required list is the schema's own, so the name is spec text

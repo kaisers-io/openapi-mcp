@@ -206,6 +206,21 @@ describe('response mismatch diagnostics (#24)', () => {
     expect(mismatch).not.toHaveProperty('path');
   });
 
+  // Review of #24: a reference to a schema elsewhere in the same branch must
+  // not name the referenced location
+  it('gives no path for a $ref into the same branch', () => {
+    const data = {
+      type: 'object',
+      properties: {
+        a: { type: 'string' },
+        b: { $ref: '#/oneOf/0/properties/data/properties/a' },
+      },
+    };
+    const { mismatch } = refuse(envelopeOf(data), JSON.stringify({ b: 1 }));
+    expect(mismatch).toMatchObject({ keyword: 'type', expected: 'string', observed: 'integer' });
+    expect(mismatch).not.toHaveProperty('path');
+  });
+
   it('reports a failed union as its keyword', () => {
     const union = {
       type: 'object',
