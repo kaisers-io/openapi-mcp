@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   definition takes 646 bytes, so 64 operations take about 40 KB; 20 of 278 configurations with
   at most 64 operations took more, up to 439 KB. Above 64 operations nothing changes. `serve`
   prints which rule picked `discover`; `--tool-mode per-operation` keeps one tool per operation.
+- **Open objects are listed as `additionalProperties: true` (#70).** Input and output schemas
+  wrote an object that allows undeclared properties as `additionalProperties: {}`, which the MCP
+  Inspector's `--strict` check reports as a schema that accepts anything by accident. Both mean
+  the same; validation is unchanged.
 
 ## [0.5.0] - 2026-10-26
 

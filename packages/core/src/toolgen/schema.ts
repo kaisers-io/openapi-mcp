@@ -1425,6 +1425,20 @@ export const withConvertMemo = <Value>(
   }
 };
 
+// z.toJSONSchema with an open object's `additionalProperties` written as
+// `true`: zod emits `{}`, a schema with no keyword that MCP clients flag as
+// accepting anything by accident (the MCP Inspector's --strict check). Both
+// mean "any undeclared property" (JSON Schema Core 2020-12 §4.3.2).
+export const toWireJsonSchema = (schema: z.ZodType) =>
+  z.toJSONSchema(schema, {
+    override: ({ jsonSchema }) => {
+      const extra = jsonSchema.additionalProperties;
+      if (isRecord(extra) && Object.keys(extra).length === 0) {
+        jsonSchema.additionalProperties = true;
+      }
+    },
+  });
+
 // z.toJSONSchema of one Zod schema instance, once per build. Callers must not
 // mutate the result: it is shared by every tool whose schema converted to the
 // same instance (the server snapshot freezes it).

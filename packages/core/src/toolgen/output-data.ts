@@ -1,7 +1,12 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import { sequenceKind } from './media-type.ts';
-import { convertSchema, memoizedJsonSchema, UNSAFE_PATTERN_REASON } from './schema.ts';
+import {
+  convertSchema,
+  memoizedJsonSchema,
+  toWireJsonSchema,
+  UNSAFE_PATTERN_REASON,
+} from './schema.ts';
 
 // The `data` part of a derived output schema (output-schema.ts): one
 // response Media Type Object as JSON Schema.
@@ -22,7 +27,7 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
     // the zod schema alive (#47). `$schema` goes too: JSON Schema 2020-12
     // allows it only at a resource root, and `data` sits inside the
     // envelope (it cost 3 KB per GitHub tool list, issue #49).
-    const { $schema: _dialect, ...data } = z.toJSONSchema(schema);
+    const { $schema: _dialect, ...data } = toWireJsonSchema(schema);
     return data;
   } catch {
     // Defensive: our schemas are representable (proven upstream); fail
