@@ -239,6 +239,11 @@ export type PinnedRequestOptions = {
   // the hop is refused, or undefined to send it. Kept apart from checkHop so
   // a refused route is never reported as an egress refusal.
   authorizeHop?: (url: URL, method: string, hop: number) => HopRefusal | undefined;
+  // Where the request's credentials may go, beyond the original origin
+  // (issue #16): a hop outside this scope, and every hop after it, is sent
+  // without them, as a hop to another origin is. Absent, the origin alone
+  // decides.
+  credentialScope?: (url: URL) => boolean;
 };
 
 // Typed via undici's own fetch, never Node's global fetch (dual-package
@@ -548,8 +553,12 @@ export const pinnedRequest = async (
     const agent =
       deps.agents?.acquire(url.origin, policy) ??
       createPinnedAgent(policy, (hostname) => deps.resolve(hostname, signal));
-    // MONOTONIC: once the chain has left the original origin, it never
-    // regains credentials, even bouncing back to the original origin later.
+    // MONOTONIC: once the chain has left the original origin (or the
+    // credential scope), it never regains credentials, even bouncing back
+    // later.
+    if (opts.credentialScope !== undefined && !opts.credentialScope(url)) {
+      crossed = true;
+    }
     const onOriginalOrigin = url.origin === originalOrigin && !crossed;
     const hopHeaders = onOriginalOrigin
       ? opts.headers.sameOriginHeaders

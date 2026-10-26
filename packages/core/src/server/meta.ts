@@ -23,6 +23,7 @@ export const createMetaExecutor =
       // (kaisers-io/openapi-mcp-archive#65) and documented as surfaced here, so
       // it is passed through when present.
       ...(meta.cacheLock === undefined ? {} : { cacheLock: meta.cacheLock }),
+      ...(meta.apis === undefined ? {} : { apis: meta.apis }),
       ...(options.stats === undefined ? {} : { calls: options.stats.summary() }),
     };
     return Promise.resolve(structuredOutcome(JSON.stringify(payload), payload));

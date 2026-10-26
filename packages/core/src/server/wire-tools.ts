@@ -89,14 +89,40 @@ export const META_OUTPUT_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
+// With several APIs (issue #16) the status also lists each one. Only then:
+// a single API's tools/list stays byte-identical.
+const API_SUMMARY_SCHEMA = {
+  type: 'object',
+  properties: {
+    name: { type: 'string' },
+    specTitle: { type: 'string' },
+    specVersion: { type: 'string' },
+    displaySource: { type: 'string' },
+    toolCount: { type: 'integer' },
+    omittedCount: { type: 'integer' },
+    acceptedContentHash: { type: 'string' },
+    deadPatternCount: { type: 'integer' },
+    notExposedCounts: { type: 'object', additionalProperties: { type: 'integer' } },
+  },
+  required: ['name', 'specTitle', 'specVersion', 'displaySource', 'toolCount'],
+  additionalProperties: false,
+};
+const MULTI_API_OUTPUT_SCHEMA: Record<string, unknown> = {
+  ...META_OUTPUT_SCHEMA,
+  properties: {
+    ...(META_OUTPUT_SCHEMA['properties'] as Record<string, unknown>),
+    apis: { type: 'array', items: API_SUMMARY_SCHEMA },
+  },
+};
+
 export const META_INPUT_SCHEMA = z.strictObject({});
 
-export const metaWireTool = (): WireTool => ({
+export const metaWireTool = (multiApi = false): WireTool => ({
   name: META_TOOL_NAME,
   title: 'Server status',
   description: 'Server spec, tools, omissions and exposure counts; not spec-derived.',
   inputSchema: z.toJSONSchema(META_INPUT_SCHEMA),
-  outputSchema: META_OUTPUT_SCHEMA,
+  outputSchema: multiApi ? MULTI_API_OUTPUT_SCHEMA : META_OUTPUT_SCHEMA,
   // Not the OpenAPI-method heuristic (this is our own tool, not a wrapped
   // operation): explicitly read-only and NOT open-world — it only reads local
   // process state, it never talks to an external system.

@@ -11,18 +11,14 @@ import type { MatchWork, RouteTable } from './route-table.ts';
 // (see pathReadings), and the base is matched in each of its own readings and
 // regardless of case: a reading that lands on the API must not reach an
 // excluded operation, and one that leaves it is off the API.
-export const hopAuthorizer = (
-  routes: RouteTable,
-  base: URL,
-  bound: string,
-  allowOffsiteRedirects: boolean,
-): ((url: URL, method: string, hop: number) => HopRefusal | undefined) => {
+// The path of a URL relative to the base, or undefined when it is off the
+// API. The base is matched in each of its own readings and regardless of case.
+const relativeToBase = (base: URL): ((path: string) => string | undefined) => {
   const trimmed = base.pathname.endsWith('/') ? base.pathname.slice(0, -1) : base.pathname;
   const bases = [
     ...new Set([trimmed, ...pathReadings(trimmed).map((path) => (path === '/' ? '' : path))]),
   ];
-  // The path relative to the base, or undefined when it is off the API
-  const relativeTo = (path: string): string | undefined => {
+  return (path: string): string | undefined => {
     const lower = path.toLowerCase();
     const prefix =
       bases.find((candidate) => path === candidate || path.startsWith(`${candidate}/`)) ??
@@ -36,6 +32,26 @@ export const hopAuthorizer = (
     const relative = path.slice(prefix.length);
     return relative === '' ? '/' : relative;
   };
+};
+
+// Whether a URL lies on the API: the base origin, and every reading of its
+// path within the base path. With several APIs (issue #16), an API's
+// credentials go only there, so another API on the same origin never gets
+// them.
+export const withinApi = (base: URL): ((url: URL) => boolean) => {
+  const relativeTo = relativeToBase(base);
+  return (url) =>
+    url.origin === base.origin &&
+    pathReadings(url.pathname).every((path) => relativeTo(path) !== undefined);
+};
+
+export const hopAuthorizer = (
+  routes: RouteTable,
+  base: URL,
+  bound: string,
+  allowOffsiteRedirects: boolean,
+): ((url: URL, method: string, hop: number) => HopRefusal | undefined) => {
+  const relativeTo = relativeToBase(base);
   return (url, method, hop) => {
     const work: MatchWork = { remaining: ROUTE_MATCH_BUDGET };
     const refused = hop === 0 ? 'route-refused' : 'redirect-refused';

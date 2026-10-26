@@ -129,11 +129,19 @@ export type RuntimeRedactor = Redactor & {
   // is exhausted — the caller must then not use the secret (fail closed).
   // `retainUntilMs` is when the secret stops being a usable credential
   // (its expiry); only then may it be dropped to make room for a new one.
-  registerRuntimeSecret: (secret: string, retainUntilMs: number, nowMs: number) => void;
-  // Marks a registered runtime secret as REPLACED: its owner has a newer
+  // `owner` identifies the registering token source (one per API); a
+  // secret registered by several stays live until each has retired it.
+  registerRuntimeSecret: (
+    secret: string,
+    retainUntilMs: number,
+    nowMs: number,
+    owner?: object,
+  ) => void;
+  // Marks a registered runtime secret as REPLACED for `owner`: it has a newer
   // credential and will never send this one again. It stays redacted, but
-  // may be evicted to make room once the budget is full.
-  retireRuntimeSecret: (secret: string) => void;
+  // may be evicted to make room once no owner still uses it and the budget
+  // is full.
+  retireRuntimeSecret: (secret: string, owner?: object) => void;
 };
 
 // Bounds the runtime registrations held at once. An entry past its
@@ -162,7 +170,13 @@ const needlesOf = (secret: string): string[] => {
   return needles;
 };
 
-type RuntimeSecret = { needles: readonly string[]; retainUntilMs: number; retired: boolean };
+// `owners` still send it: with several APIs (issue #16) two token sources
+// can be issued the same token, and one replacing it must not retire it for
+// the other. Retired once no owner is left.
+type RuntimeSecret = { needles: readonly string[]; retainUntilMs: number; owners: Set<object> };
+
+// The owner of a registration that names none
+const SOLE_OWNER = {};
 
 export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor => {
   if (rawSecrets.length > MAX_SECRETS) {
@@ -184,7 +198,12 @@ export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor =
     return createMatcher([...needles].toSorted((first, second) => second.length - first.length));
   };
   let findSpans = build();
-  const registerRuntimeSecret = (secret: string, retainUntilMs: number, nowMs: number): void => {
+  const registerRuntimeSecret = (
+    secret: string,
+    retainUntilMs: number,
+    nowMs: number,
+    owner: object = SOLE_OWNER,
+  ): void => {
     const needles = needlesOf(secret);
     for (const [value, entry] of runtime) {
       if (entry.retainUntilMs <= nowMs) {
@@ -194,7 +213,7 @@ export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor =
     if (!runtime.has(secret) && runtime.size >= MAX_RUNTIME_SECRETS) {
       // Map iteration is insertion order: the first retired entry is the
       // oldest replaced credential.
-      const oldestRetired = [...runtime].find(([, entry]) => entry.retired)?.[0];
+      const oldestRetired = [...runtime].find(([, entry]) => entry.owners.size === 0)?.[0];
       if (oldestRetired === undefined) {
         // Rebuild anyway: expired entries may have been pruned above.
         findSpans = build();
@@ -202,19 +221,16 @@ export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor =
       }
       runtime.delete(oldestRetired);
     }
-    const previous = runtime.get(secret)?.retainUntilMs ?? retainUntilMs;
+    const existing = runtime.get(secret);
     runtime.set(secret, {
       needles,
-      retainUntilMs: Math.max(previous, retainUntilMs),
-      retired: false,
+      retainUntilMs: Math.max(existing?.retainUntilMs ?? retainUntilMs, retainUntilMs),
+      owners: new Set([...(existing?.owners ?? []), owner]),
     });
     findSpans = build();
   };
-  const retireRuntimeSecret = (secret: string): void => {
-    const entry = runtime.get(secret);
-    if (entry !== undefined) {
-      entry.retired = true;
-    }
+  const retireRuntimeSecret = (secret: string, owner: object = SOLE_OWNER): void => {
+    runtime.get(secret)?.owners.delete(owner);
   };
   // `value` is unbounded untrusted text (a response body, a request, etc.):
   // one matcher pass over it, then one join — a clean value is returned

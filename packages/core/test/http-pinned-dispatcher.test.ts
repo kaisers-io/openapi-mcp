@@ -441,6 +441,42 @@ describe('pinnedRequest', () => {
     }
   });
 
+  // Issue #16: with several APIs on one origin, a redirect out of an API's
+  // credential scope strips its credentials, and they never come back
+  it('strips credentials on a same-origin redirect out of the credential scope, for good', async () => {
+    const server = await startFlexServer((req, res) => {
+      const next: Record<string, string> = { '/a/start': '/b/other', '/b/other': '/a/back' };
+      const location = next[req.url ?? ''];
+      if (location !== undefined) {
+        res.writeHead(302, { location });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('ok');
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/a/start`),
+        buildOpts({ credentialScope: (url) => url.pathname.startsWith('/a/') }),
+        buildDeps(),
+      );
+      expect(outcome.kind).toBe('response');
+      expect(server.requests.map((request) => request.url)).toStrictEqual([
+        '/a/start',
+        '/b/other',
+        '/a/back',
+      ]);
+      expect(server.requests.map((request) => request.headers['authorization'])).toStrictEqual([
+        'Bearer secret-token',
+        undefined,
+        undefined,
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('strips to crossOriginHeaders on a cross-origin redirect — no auth/tool headers reach the foreign origin', async () => {
     const foreign = await startFlexServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/plain' });

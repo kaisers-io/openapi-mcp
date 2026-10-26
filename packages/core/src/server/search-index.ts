@@ -272,7 +272,9 @@ export const searchOperations = (index: SearchIndex, data: unknown): ToolCallOut
     // (a filtered listing in name order).
     .filter(
       ({ entry, score }) =>
-        (scores === undefined || score > 0) && passesFilters(entry, input.method, tagKeys),
+        (scores === undefined || score > 0) &&
+        passesFilters(entry, input.method, tagKeys) &&
+        (input.api === undefined || entry.name.startsWith(`${input.api}_`)),
     )
     // Deterministic: score descending, then name by code point.
     .toSorted(

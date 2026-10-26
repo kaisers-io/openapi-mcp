@@ -141,5 +141,12 @@ export const SEARCH_OUTPUT_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
-export type SearchInput = z.infer<typeof SEARCH_INPUT_SCHEMA>;
+// With several APIs (issue #16) a search can name one; only then, so a
+// single API's tools/list stays byte-identical
+export const multiApiSearchInputSchema = (apiNames: readonly [string, ...string[]]) =>
+  SEARCH_INPUT_SCHEMA.extend({
+    api: z.enum(apiNames).optional().describe('Only operations of this API.'),
+  });
+
+export type SearchInput = z.infer<typeof SEARCH_INPUT_SCHEMA> & { api?: string };
 export type DescribeInput = z.infer<typeof DESCRIBE_INPUT_SCHEMA>;

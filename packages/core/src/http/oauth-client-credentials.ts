@@ -161,6 +161,9 @@ export const createClientCredentialsSource = (
   config: ClientCredentialsConfig,
   transport: PinnedDeps,
 ): TokenSource => {
+  // This source's tokens in the shared redactor: another source (another
+  // API, issue #16) issued the same token keeps it registered
+  const owner = {};
   const form: [string, string][] = [['grant_type', 'client_credentials']];
   if (config.scopes.length > 0) {
     // RFC 6749 §3.3: space-delimited scope list.
@@ -215,7 +218,7 @@ export const createClientCredentialsSource = (
         ? issuedAtMs + UNKNOWN_LIFETIME_RETAIN_MS
         : issuedAtMs + lifetime + RETAIN_GRACE_MS;
     try {
-      config.redactor.registerRuntimeSecret(token, retainUntilMs, config.now());
+      config.redactor.registerRuntimeSecret(token, retainUntilMs, config.now(), owner);
     } catch {
       // Unredactable (or the budget is spent): never use it.
       return failure('the access token could not be registered for redaction');
@@ -230,7 +233,7 @@ export const createClientCredentialsSource = (
     // so the redactor may let it go first when its budget runs out (it
     // stays redacted until then).
     if (lastIssued !== undefined && lastIssued !== token) {
-      config.redactor.retireRuntimeSecret(lastIssued);
+      config.redactor.retireRuntimeSecret(lastIssued, owner);
     }
     lastIssued = token;
     cached = { token, refreshAtMs };
