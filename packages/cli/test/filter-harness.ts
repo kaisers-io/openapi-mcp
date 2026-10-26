@@ -13,7 +13,15 @@ import { SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 // a process that exits or an upstream failure rejects, so a broken server can
 // never make a refusal test pass.
 
-export type UpstreamRequest = { method: string; url: string };
+export type UpstreamRequest = {
+  method: string;
+  url: string;
+  // The request's Authorization header, for credential isolation checks
+  authorization?: string;
+};
+
+// A redirect for a request path, or undefined for the default 200 `{}`
+export type Redirects = Readonly<Record<string, string>>;
 
 export type Upstream = {
   url: string;
@@ -21,11 +29,22 @@ export type Upstream = {
   close: () => Promise<void>;
 };
 
-export const startUpstream = async (): Promise<Upstream> => {
+export const startUpstream = async (redirects: Redirects = {}): Promise<Upstream> => {
   const requests: UpstreamRequest[] = [];
   const server = createServer((req, res) => {
-    requests.push({ method: req.method ?? '', url: req.url ?? '' });
+    const { authorization } = req.headers;
+    requests.push({
+      method: req.method ?? '',
+      url: req.url ?? '',
+      ...(authorization === undefined ? {} : { authorization }),
+    });
     req.resume();
+    const location = redirects[req.url ?? ''];
+    if (location !== undefined) {
+      res.writeHead(302, { location });
+      res.end();
+      return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end('{}');
   });
@@ -109,7 +128,8 @@ type Pending = { resolve: (message: RpcMessage) => void; reject: (error: Error) 
 export const startServe = async (args: readonly string[], home: string): Promise<McpSession> => {
   const child: ChildProcessWithoutNullStreams = spawn(
     process.execPath,
-    [CLI_ENTRY, 'serve', '--trust-spec-updates', ...args],
+    // With several APIs a switch names its API (--enable), so the caller sets it
+    [CLI_ENTRY, 'serve', ...(args.includes('--api') ? [] : ['--trust-spec-updates']), ...args],
     { env: { ...process.env, HOME: home, USERPROFILE: home }, shell: false },
   );
   const pending = new Map<number, Pending>();

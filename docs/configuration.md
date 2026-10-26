@@ -582,6 +582,71 @@ Every listed schema also leaves out its `$schema` keyword when the client negoti
 revision 2025-11-25 or later, which makes JSON Schema 2020-12 the default dialect. An earlier
 revision defines no default and keeps it.
 
+### Several APIs
+
+One `serve` can serve several APIs. Declare each with `--api <name>=<source>` instead of
+`--spec`; a name is 1 to 32 lower-case letters, digits or `-`, starting with a letter. Every
+per-API option then starts with the API's name and `=`, and exactly that one prefix is read:
+the rest is the value as for a single API.
+
+```json
+"args": ["serve",
+  "--api", "github=https://raw.githubusercontent.com/github/rest-api-description/<commit>/descriptions/api.github.com/api.github.com.json",
+  "--header-env", "github=Authorization=GITHUB_TOKEN",
+  "--allow", "github=tag:repos",
+  "--api", "shop=https://shop.example.test/openapi.yaml",
+  "--header-env", "shop=Authorization=SHOP_TOKEN",
+  "--allow", "shop=path:/orders/**",
+  "--enable", "shop=trust-spec-updates",
+  "--deny", "method:delete",
+  "--tool-mode", "discover"]
+```
+
+- **Per API:** `--allow`, `--deny`, `--spec-header-env`, `--cache-key`, `--ttl`,
+  `--nullable-response-fields` (`shop=all`), `--omit-output-schema`, `--base-url`,
+  `--header-env`, `--header` and every `--upstream-oauth-*`. Switches are turned on with
+  `--enable <name>=<switch>`: `allow-private-network`, `allow-insecure-http`,
+  `allow-offsite-redirects`, `trust-spec-updates`, `default-response-is-error`.
+- **For every API:** a `--deny` without a name applies to all of them; it can only narrow.
+  Any other per-API option without a name is a usage error, as are a bare per-API switch, a
+  name no `--api` declares, the same per-API option twice for one API, and `--spec` together
+  with `--api`.
+- **Global**, once per server: `--tool-mode`, `--rate-limit`, `--max-concurrency`,
+  `--max-response-bytes`, `--request-timeout`, `--retries`, `--timeout`, `--strict-filters`,
+  `--log`, `--response-projection`, the output schema options, the image and upload options,
+  `--tools-page-size` and the HTTP options. `--max-concurrency` and `--rate-limit` are shared
+  by all APIs.
+- **Tool names** are `<api>_<name>`, for example `github_repos_get`; `name:` selectors use the
+  API's own names (`--allow github=name:repos_get`). A qualified name stays within 64
+  characters: a longer one keeps its start and ends with a hash of the full name. Names are
+  decided over every operation of the spec, so a name keeps naming the same operation however
+  the spec is ordered and whatever the filters expose; a name that fits wins over a shortened
+  one that lands on it. The API names
+  `openapi`, `search`, `describe` and `call` are reserved, since they could form this
+  server's own tool names. The common hosts rewrite `.` in tool names
+  to `_` and one of them drops a tool whose rewritten name collides, which is why `_` is used.
+  Hosts also add their own prefix and accept 64 characters (Cursor 60 for server and tool name
+  together), so in `per-operation` mode `serve` warns when a name is longer than 50 characters.
+  In `discover` mode the names are arguments of `call_operation`, not tool names, and
+  `search_operations` takes an `api` to search one API.
+- **Isolation:** each API keeps its own base URL, headers, OAuth token source, egress policy,
+  filters and routes. An API's credentials go only to URLs under its own base URL, also on a
+  shared origin: a redirect into another API's base path is refused unless the API enables
+  `allow-offsite-redirects`, and even then it is sent without the API's credentials. Base URLs
+  that overlap (one within another) and two APIs with the same spec and cache key are startup
+  errors. Shared caches and overlapping `--base-url` values are refused before any spec or
+  cache is touched; a base URL that comes from a spec, once it is loaded. One redactor knows
+  the secrets of every API, so all APIs together may configure at most 64 secret values (header
+  values, spec fetch headers and the HTTP bearer token).
+- **Startup:** if any spec fails to load, `serve` does not start. The tool budget (512 tools
+  per operation, 4,096 with `discover`) counts the tools of all APIs together; each API is
+  also held to it on its own, counting its operations before omissions (see #67). At most 32
+  APIs can be declared. `--tool-mode auto` decides on the total.
+- **Status:** `openapi_mcp_status` reports the sums and, under `apis`, each API's title,
+  version, source, tool count, omissions and hash.
+- **Not shared:** inbound OAuth (`--http-auth oauth`) does not follow any API's
+  `allow-private-network`; with several APIs its issuer must be public.
+
 ### Image responses
 
 `--image-responses <mode>` decides what happens to a `2xx` image from the upstream. The

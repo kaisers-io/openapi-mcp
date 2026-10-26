@@ -28,7 +28,7 @@ import type { TraceContext } from '../trace.ts';
 import type { SnapshotTool } from '../types.ts';
 import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
-import { hopAuthorizer } from './hop-authorizer.ts';
+import { hopAuthorizer, withinApi } from './hop-authorizer.ts';
 import { routeKey } from './route-table.ts';
 import type { RouteTable } from './route-table.ts';
 import { mapResponse, mismatchOf } from './response.ts';
@@ -73,6 +73,10 @@ export type ExecutorConfig = {
   routes?: RouteTable;
   // --allow-offsite-redirects: follow a redirect off the API base URL
   allowOffsiteRedirects?: boolean;
+  // Where credentials may go (issue #16): `origin` (the default) sends them
+  // to every hop on the base origin; `api` only to hops within the base URL,
+  // so with several APIs on one origin none receives another's.
+  credentialScope?: 'origin' | 'api';
   allowPrivateNetwork: boolean;
   allowInsecureHttp: boolean;
   secretHeaders: { name: string; value: string; envVar: string }[];
@@ -124,6 +128,11 @@ export type ExecutorConfig = {
 export type ExecutorDeps = {
   // { fetch, resolve, timeoutSignal } — the narrow project-owned interface.
   transport: PinnedDeps;
+  // Several APIs behind one server (issue #16): the configuration of the API
+  // a tool belongs to (base URL, headers, OAuth, egress, routes). The
+  // admission queue, the agent pool and the call budget stay the ones of
+  // `config`, shared by every API. Absent, every tool uses `config`.
+  configFor?: (tool: SnapshotTool) => ExecutorConfig;
   // Retry clock/sleep/jitter, injectable for tests.
   retry?: Partial<RetryDeps>;
   // Clock (ms) used to charge the queue wait against the call's time
@@ -620,6 +629,7 @@ const runUpstreamCall = async (
       ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
       baseTrusted: config.baseTrusted,
       ...(authorizeHop === undefined ? {} : { authorizeHop }),
+      ...(config.credentialScope === 'api' ? { credentialScope: withinApi(base) } : {}),
       allowPrivateNetwork: config.allowPrivateNetwork,
       timeoutMs: callTimeoutMs,
       maxResponseBytes: config.maxResponseBytes,
@@ -866,7 +876,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
         1,
       );
       const outcome = await runUpstreamCall(
-        config,
+        deps.configFor?.(tool) ?? config,
         transport,
         retryDeps,
         tool,

@@ -81,4 +81,26 @@ describe('createRedactor — registerRuntimeSecret', () => {
       '[redacted] live-runtime-token-1',
     );
   });
+
+  // Issue #16: two token sources (two APIs) can be issued the same token
+  it('keeps a secret live while another owner still uses it', () => {
+    const redactor = createRedactor([]);
+    const [first, second] = [{}, {}];
+    for (let index = 0; index < 255; index += 1) {
+      redactor.registerRuntimeSecret(`live-runtime-token-${String(index)}`, 1000, 0);
+    }
+    redactor.registerRuntimeSecret('shared-runtime-token', 1000, 0, first);
+    redactor.registerRuntimeSecret('shared-runtime-token', 1000, 0, second);
+    // The first owner replaced it, the second still sends it: not evictable
+    redactor.retireRuntimeSecret('shared-runtime-token', first);
+    expect(() => redactor.registerRuntimeSecret('newer-runtime-token', 1000, 0, first)).toThrow(
+      /too many unexpired runtime secrets/u,
+    );
+    expect(redactor.redactString('shared-runtime-token')).toBe('[redacted]');
+    // Once both have retired it, it may make room
+    redactor.retireRuntimeSecret('shared-runtime-token', second);
+    redactor.registerRuntimeSecret('newer-runtime-token', 1000, 0, first);
+    expect(redactor.redactString('shared-runtime-token')).toBe('shared-runtime-token');
+    expect(redactor.redactString('newer-runtime-token')).toBe('[redacted]');
+  });
 });

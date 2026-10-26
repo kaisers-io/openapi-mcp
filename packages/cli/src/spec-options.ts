@@ -160,9 +160,17 @@ const SPEC_FETCH_PRIVATE_NETWORK_HELP =
 export const registerSpecOptions = (
   command: Command,
   allowPrivateNetworkHelp: string = SPEC_FETCH_PRIVATE_NETWORK_HELP,
+  // `serve` also takes several APIs through --api (issue #16), and checks
+  // that one of the two is given itself
+  specRequired = true,
 ): Command<[], SpecCmdOpts> =>
-  command
-    .requiredOption('--spec <url|file>', 'OpenAPI spec source, JSON or YAML')
+  (specRequired
+    ? command.requiredOption('--spec <url|file>', 'OpenAPI spec source, JSON or YAML')
+    : command.option(
+        '--spec <url|file>',
+        'OpenAPI spec source, JSON or YAML (or several APIs with --api)',
+      )
+  )
     .option(
       '--allow <pattern>',
       'expose what this selector matches: method:, path:, route:, operationId:, name: or tag: (repeatable)',
@@ -207,7 +215,7 @@ export const registerSpecOptions = (
       'declare no output schema for matching tools, whose responses do not match the spec: results are returned as text without response-schema validation (repeatable, --allow selectors)',
       collect,
       [] as readonly string[],
-    );
+    ) as unknown as Command<[], SpecCmdOpts>;
 
 const NULLABLE_FIELD_SCOPES: readonly NullableFieldScope[] = ['all', 'optional'];
 

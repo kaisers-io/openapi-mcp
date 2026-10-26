@@ -8,6 +8,7 @@ import {
   DESCRIBE_INPUT_SCHEMA,
   DESCRIBE_OUTPUT_SCHEMA,
   REFLECTED_NAME_MAX,
+  multiApiSearchInputSchema,
   SEARCH_INPUT_SCHEMA,
   SEARCH_OUTPUT_SCHEMA,
 } from './discovery-schemas.ts';
@@ -119,11 +120,21 @@ const discoveryTool = (
 // Package-authored, static text: no description below interpolates anything
 // from the spec (the same rule as the server instructions in protocol.ts).
 // Only call_operation's annotations depend on the exposed set.
-export const buildDiscoveryTools = (operations: readonly OperationEntry[]): SnapshotTool[] => [
-  discoveryTool(SEARCH_TOOL_NAME, 'search', SEARCH_INPUT_SCHEMA, {
+const searchSchemaFor = (apiNames?: readonly [string, ...string[]]): z.ZodType =>
+  apiNames === undefined ? SEARCH_INPUT_SCHEMA : multiApiSearchInputSchema(apiNames);
+
+// `apiNames`: several APIs behind one server (issue #16), so a search can
+// name one of them
+export const buildDiscoveryTools = (
+  operations: readonly OperationEntry[],
+  apiNames?: readonly [string, ...string[]],
+): SnapshotTool[] => [
+  discoveryTool(SEARCH_TOOL_NAME, 'search', searchSchemaFor(apiNames), {
     description:
-      "Search this API's operations by keyword. Returns operation names (best match first) to pass to describe_operation and call_operation. Only operations this server exposes are searchable.",
-    inputSchema: z.toJSONSchema(SEARCH_INPUT_SCHEMA),
+      apiNames === undefined
+        ? "Search this API's operations by keyword. Returns operation names (best match first) to pass to describe_operation and call_operation. Only operations this server exposes are searchable."
+        : "Search the operations of this server's APIs by keyword. Returns operation names, each starting with its API's name (best match first), to pass to describe_operation and call_operation. Only operations this server exposes are searchable.",
+    inputSchema: z.toJSONSchema(searchSchemaFor(apiNames)),
     outputSchema: SEARCH_OUTPUT_SCHEMA,
     // Reads the in-memory index only; it never reaches the API.
     annotations: { readOnlyHint: true, openWorldHint: false },

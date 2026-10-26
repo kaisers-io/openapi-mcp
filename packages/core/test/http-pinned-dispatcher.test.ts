@@ -441,6 +441,42 @@ describe('pinnedRequest', () => {
     }
   });
 
+  // Issue #16: with several APIs on one origin, a redirect out of an API's
+  // credential scope strips its credentials, and they never come back
+  it('strips credentials on a same-origin redirect out of the credential scope, for good', async () => {
+    const server = await startFlexServer((req, res) => {
+      const next: Record<string, string> = { '/a/start': '/b/other', '/b/other': '/a/back' };
+      const location = next[req.url ?? ''];
+      if (location !== undefined) {
+        res.writeHead(302, { location });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('ok');
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://origin.test:${server.port}/a/start`),
+        buildOpts({ credentialScope: (url) => url.pathname.startsWith('/a/') }),
+        buildDeps(),
+      );
+      expect(outcome.kind).toBe('response');
+      expect(server.requests.map((request) => request.url)).toStrictEqual([
+        '/a/start',
+        '/b/other',
+        '/a/back',
+      ]);
+      expect(server.requests.map((request) => request.headers['authorization'])).toStrictEqual([
+        'Bearer secret-token',
+        undefined,
+        undefined,
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
   it('strips to crossOriginHeaders on a cross-origin redirect — no auth/tool headers reach the foreign origin', async () => {
     const foreign = await startFlexServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/plain' });
@@ -1469,49 +1505,92 @@ describe('pinnedRequest — same-origin redirects and 303 See Other', () => {
     }
   });
 
-  it('trusts only the base origin until the chain leaves it: original -> foreign -> original', async () => {
-    // A recording pool hands out permissive Agents so every hop can connect
-    // to loopback; what is asserted is the trust policy each hop
-    // ASKED for — the pool key that decides which DNS policy applies.
-    const policies: { origin: string; trusted: boolean }[] = [];
+  // Issue #16: an API's credential scope does not change who is trusted
+  it.each([
+    ['without a credential scope', undefined],
+    ['with a credential scope', () => true],
+  ])(
+    'trusts only the base origin until the chain leaves it: original -> foreign -> original, %s',
+    async (_label, credentialScope) => {
+      // A recording pool hands out permissive Agents so every hop can connect
+      // to loopback; what is asserted is the trust policy each hop
+      // ASKED for — the pool key that decides which DNS policy applies.
+      const policies: { origin: string; trusted: boolean }[] = [];
+      const agents = {
+        acquire: (origin: string, policy: PinnedPolicy) => {
+          policies.push({ origin, trusted: policy.trusted });
+          return loopbackAgent();
+        },
+        size: () => 0,
+        close: () => Promise.resolve(),
+      };
+      let originPort = 0;
+      const foreign = await startFlexServer((_req, res) => {
+        res.writeHead(302, { location: `http://origin.test:${originPort}/back` });
+        res.end();
+      });
+      const origin = await startFlexServer((req, res) => {
+        if (req.url === '/v1') {
+          res.writeHead(301, { location: '/v1/' });
+        } else if (req.url === '/v1/') {
+          res.writeHead(302, { location: `http://foreign.test:${foreign.port}/` });
+        } else {
+          res.writeHead(200);
+        }
+        res.end();
+      });
+      originPort = origin.port;
+      try {
+        const outcome = await pinnedRequest(
+          new URL(`http://origin.test:${origin.port}/v1`),
+          trustedPrivate(credentialScope === undefined ? {} : { credentialScope }),
+          buildDeps({ agents }),
+        );
+        expect(outcome).toMatchObject({ kind: 'response', status: 200 });
+        expect(policies.map((entry) => entry.trusted)).toEqual([true, true, false, false]);
+        // Credentials were stripped from the return hop as well.
+        expect(origin.requests.map((req) => req.url)).toEqual(['/v1', '/v1/', '/back']);
+        expect(origin.requests[2]?.headers['authorization']).toBeUndefined();
+      } finally {
+        await origin.close();
+        await foreign.close();
+      }
+    },
+  );
+
+  // Review of #16: leaving the credential scope strips credentials for good,
+  // but keeps the trust of the base origin, which never changed
+  it('keeps the base origin trusted after a same-origin hop out of the credential scope', async () => {
+    const policies: boolean[] = [];
     const agents = {
-      acquire: (origin: string, policy: PinnedPolicy) => {
-        policies.push({ origin, trusted: policy.trusted });
+      acquire: (_origin: string, policy: PinnedPolicy) => {
+        policies.push(policy.trusted);
         return loopbackAgent();
       },
       size: () => 0,
       close: () => Promise.resolve(),
     };
-    let originPort = 0;
-    const foreign = await startFlexServer((_req, res) => {
-      res.writeHead(302, { location: `http://origin.test:${originPort}/back` });
+    const server = await startFlexServer((req, res) => {
+      const next: Record<string, string> = { '/shop/start': '/other', '/other': '/shop/back' };
+      const location = next[req.url ?? ''];
+      res.writeHead(location === undefined ? 200 : 302, location === undefined ? {} : { location });
       res.end();
     });
-    const origin = await startFlexServer((req, res) => {
-      if (req.url === '/v1') {
-        res.writeHead(301, { location: '/v1/' });
-      } else if (req.url === '/v1/') {
-        res.writeHead(302, { location: `http://foreign.test:${foreign.port}/` });
-      } else {
-        res.writeHead(200);
-      }
-      res.end();
-    });
-    originPort = origin.port;
     try {
       const outcome = await pinnedRequest(
-        new URL(`http://origin.test:${origin.port}/v1`),
-        trustedPrivate(),
+        new URL(`http://origin.test:${server.port}/shop/start`),
+        trustedPrivate({ credentialScope: (url) => url.pathname.startsWith('/shop/') }),
         buildDeps({ agents }),
       );
       expect(outcome).toMatchObject({ kind: 'response', status: 200 });
-      expect(policies.map((entry) => entry.trusted)).toEqual([true, true, false, false]);
-      // Credentials were stripped from the return hop as well.
-      expect(origin.requests.map((req) => req.url)).toEqual(['/v1', '/v1/', '/back']);
-      expect(origin.requests[2]?.headers['authorization']).toBeUndefined();
+      expect(policies).toEqual([true, true, true]);
+      expect(server.requests.map((req) => req.headers['authorization'])).toEqual([
+        'Bearer secret-token',
+        undefined,
+        undefined,
+      ]);
     } finally {
-      await origin.close();
-      await foreign.close();
+      await server.close();
     }
   });
 

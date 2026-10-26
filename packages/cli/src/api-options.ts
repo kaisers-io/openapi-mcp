@@ -17,6 +17,13 @@ import type { OAuthCmdOpts, ResolvedOAuthConfig } from './oauth-options.ts';
 // The image options belong to the API side too (#14)
 export { parseImageResponseMode, resolveImageResponses } from './image-options.ts';
 export { resolveUploadOptions } from './upload-options.ts';
+export {
+  apiViews,
+  assertSeparateBases,
+  assertSeparateNamespaces,
+  combinedContentHash,
+} from './multi-api.ts';
+export type { Occurrence } from './multi-api.ts';
 
 const collect = (value: string, previous: readonly string[]): readonly string[] => [
   ...previous,

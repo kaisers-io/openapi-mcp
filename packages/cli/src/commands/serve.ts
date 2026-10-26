@@ -3,6 +3,8 @@ import { AUTO_DISCOVER_THRESHOLD } from '@kaisers-io/openapi-mcp-core';
 import { DEFAULT_IMAGE_DIR_MAX_BYTES } from '../image-options.ts';
 import { registerApiOptions } from '../api-options.ts';
 import { emitError } from '../output.ts';
+import { CAPTURED_FLAGS } from '../multi-api.ts';
+import type { Occurrence } from '../multi-api.ts';
 import { registerSpecOptions } from '../spec-options.ts';
 import type { runServe as RunServe, ServeCmdOpts } from './serve-action.ts';
 import type { CommandRegistrar } from './registry.ts';
@@ -25,8 +27,19 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     registerSpecOptions(
       program.command('serve'),
       'permit private/loopback addresses for spec fetch redirects, for API requests to a spec-derived origin or redirect, and for the --upstream-oauth-* token URL (never cloud-metadata)',
+      false,
     ),
   )
+    .option(
+      '--api <name=source>',
+      'serve several APIs: one spec per name (repeatable); every per-API option then starts with <name>=',
+      collect,
+    )
+    .option(
+      '--enable <name=switch>',
+      'with --api: turn a per-API switch on for one API, e.g. shop=allow-private-network (repeatable)',
+      collect,
+    )
     .description(
       'start an MCP server (stdio by default) exposing tools generated from an OpenAPI spec',
     )
@@ -106,6 +119,14 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
   // itself parses --http/--port/--http-token-env identically either way.
   // The cast below restores the accumulated shape explicitly, matching
   // SpecCmdOpts's own "hand-written mirror" idiom in spec-options.ts.
+  // Commander keeps one value of a scalar option; with several APIs every
+  // occurrence counts (multi-api.ts), so each is recorded as it is parsed
+  const occurrences: Occurrence[] = [];
+  for (const flag of CAPTURED_FLAGS) {
+    command.on(`option:${flag.slice(2)}`, (value: unknown) => {
+      occurrences.push({ flag, value });
+    });
+  }
   (command as unknown as Command<[], ServeCmdOpts>).action(async (cmdOpts: ServeCmdOpts) => {
     // A missing chunk (broken install) takes serve's own error path: plain
     // text on stderr regardless of --json, stdout stays MCP-only
@@ -116,6 +137,6 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       state.exitCode = emitError(ctx, { json: false, verbose: false }, error);
       return;
     }
-    await runServe(command, cmdOpts, ctx, state);
+    await runServe(command, cmdOpts, ctx, state, occurrences);
   });
 };

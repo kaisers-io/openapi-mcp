@@ -2494,3 +2494,76 @@ describe('createExecutor — default response treated as error (kaisers-io/opena
     expect(outcome.content[0]?.text).toContain('404');
   });
 });
+
+// Issue #16: one executor serves several APIs; each tool's call uses its
+// API's configuration, while the admission queue stays shared
+describe('createExecutor — one configuration per API', () => {
+  const snapshot = buildToolSnapshot([idPathOp, pingOp]);
+  const getThing = snapshot.toolsByName['getThing'] as SnapshotTool;
+  const pingThing = snapshot.toolsByName['pingThing'] as SnapshotTool;
+  const validators = validatorsFor(snapshot);
+  const shop = baseConfig({
+    baseUrl: 'https://shop.example.test/v1',
+    staticHeaders: [{ name: 'x-api', value: 'shop' }],
+    validators,
+  });
+  const crm = baseConfig({
+    baseUrl: 'https://crm.example.test',
+    staticHeaders: [{ name: 'x-api', value: 'crm' }],
+    validators,
+  });
+
+  it('sends each tool to its own API, with its own headers', async () => {
+    const { deps, calls } = recordingTransport(() => jsonResponse(200, { id: 1 }));
+    const executor = createExecutor(baseConfig({ validators }), {
+      ...deps,
+      configFor: (tool) => (tool.name === 'getThing' ? shop : crm),
+    });
+    await executor(getThing, { id: '1' }, freshSignal());
+    await executor(pingThing, {}, freshSignal());
+    expect(calls.map((call) => [call.url, call.init.headers?.['x-api']])).toStrictEqual([
+      ['https://shop.example.test/v1/things/1', 'shop'],
+      ['https://crm.example.test/ping', 'crm'],
+    ]);
+  });
+
+  it('shares one admission queue across the APIs', async () => {
+    const release = Promise.withResolvers<Response>();
+    const { deps, calls } = recordingTransport(() => release.promise);
+    const executor = createExecutor(baseConfig({ validators, maxConcurrent: 1, maxQueued: 0 }), {
+      ...deps,
+      configFor: (tool) => (tool.name === 'getThing' ? shop : crm),
+    });
+    const first = executor(getThing, { id: '1' }, freshSignal());
+    // The other API's call finds the one shared slot taken
+    const second = await executor(pingThing, {}, freshSignal());
+    expect(second.isError).toBe(true);
+    expect(second.content[0]?.text).toContain('too many upstream requests');
+    release.resolve(jsonResponse(200, { id: 1 }));
+    await first;
+    expect(calls).toHaveLength(1);
+  });
+
+  it('keeps an API credential within its base URL when the scope is the API', async () => {
+    const { deps, calls } = recordingTransport((call) =>
+      call.url === 'https://api.example.test/shop/things/1'
+        ? new Response(undefined, { status: 302, headers: { location: '/crm/things/1' } })
+        : jsonResponse(200, { id: 1 }),
+    );
+    const scoped = baseConfig({
+      baseUrl: 'https://api.example.test/shop',
+      secretHeaders: [
+        { name: 'authorization', value: 'Bearer example-token-not-a-secret', envVar: 'SHOP_TOKEN' },
+      ],
+      allowOffsiteRedirects: true,
+      credentialScope: 'api',
+      validators,
+    });
+    const executor = createExecutor(scoped, deps);
+    await executor(getThing, { id: '1' }, freshSignal());
+    expect(calls.map((call) => [call.url, call.init.headers?.['authorization']])).toStrictEqual([
+      ['https://api.example.test/shop/things/1', 'Bearer example-token-not-a-secret'],
+      ['https://api.example.test/crm/things/1', undefined],
+    ]);
+  });
+});

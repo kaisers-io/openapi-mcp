@@ -13,7 +13,7 @@ import {
 } from './wire-tools.ts';
 import { buildDiscoveryTools } from './discovery.ts';
 import { buildSearchIndex } from './search-index.ts';
-import type { MetaSummary, ServerSnapshot, SnapshotTool, ToolMode } from './types.ts';
+import type { ApiSummary, MetaSummary, ServerSnapshot, SnapshotTool, ToolMode } from './types.ts';
 
 export { META_TOOL_NAME } from './wire-tools.ts';
 
@@ -60,6 +60,9 @@ export type SnapshotPipelineInput = {
   // it only the omitted and withheld ones are counted.
   notExposedCounts?: MetaSummary['notExposedCounts'] | undefined;
   cacheLock?: 'held' | 'stale' | undefined;
+  // Several APIs behind one server (issue #16): each one, with the fields
+  // above as their sums
+  apis?: readonly ApiSummary[] | undefined;
 };
 
 export type SnapshotOptions = {
@@ -72,6 +75,9 @@ export type SnapshotOptions = {
   compactOutputSchemas?: boolean;
   // --no-output-schema-descriptions (issue #49), shown the same way
   bareOutputSchemas?: boolean;
+  // Several APIs behind one server (issue #16): their names, so a search can
+  // name one; every tool name starts with `<api>_`
+  apiNames?: readonly [string, ...string[]];
   // Under `discover`, sees an operation whose output side fails to build on
   // first use (the call or description that needed it gets a tool error)
   onDeferredError?: (toolName: string, error: unknown) => void;
@@ -89,7 +95,7 @@ export const buildSnapshot = (
   const metaTool: SnapshotTool = {
     kind: 'meta',
     name: META_TOOL_NAME,
-    wireTool: metaWireTool(),
+    wireTool: metaWireTool(pipeline.apis !== undefined),
     inputSchema: META_INPUT_SCHEMA,
   };
   // Meta tool first, then the upstream tools sorted by name: the tools/list
@@ -101,7 +107,7 @@ export const buildSnapshot = (
   const sortedEntries = entries.toSorted(byToolName);
   const all =
     toolMode === 'discover'
-      ? [metaTool, ...buildDiscoveryTools(sortedEntries)]
+      ? [metaTool, ...buildDiscoveryTools(sortedEntries, options.apiNames)]
       : [metaTool, ...upstreamTools.toSorted(byToolName)];
   // Two separate namespaces under `discover`: an operation that happens to
   // be named `call_operation` is reached as call_operation's `name` argument
@@ -144,6 +150,16 @@ export const buildSnapshot = (
       withheld: pipeline.withheldOperations?.length ?? 0,
     },
     ...(pipeline.cacheLock === undefined ? {} : { cacheLock: pipeline.cacheLock }),
+    ...(pipeline.apis === undefined
+      ? {}
+      : {
+          apis: pipeline.apis.map((api) => ({
+            ...api,
+            specTitle: sanitizeSpecText(api.specTitle, PATH_DISPLAY_MAX),
+            specVersion: sanitizeSpecText(api.specVersion, PATH_DISPLAY_MAX),
+            displaySource: sanitizeSpecText(api.displaySource, PATH_DISPLAY_MAX),
+          })),
+        }),
   };
   return deepFreeze({
     toolMode,

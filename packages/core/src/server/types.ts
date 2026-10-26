@@ -84,6 +84,20 @@ export type OperationEntry = {
 // spec-derived text (a path segment, an unrepresentable-parameter name in a
 // `reason` string, or a local absolute file path) that normalizeSpec never
 // touches.
+// One API of several behind one server (issue #16), as the status tool
+// reports it
+export type ApiSummary = {
+  readonly name: string;
+  readonly specTitle: string;
+  readonly specVersion: string;
+  readonly displaySource: string;
+  readonly toolCount: number;
+  readonly omittedCount: number;
+  readonly acceptedContentHash: string;
+  readonly deadPatternCount: number;
+  readonly notExposedCounts: NotExposedCounts;
+};
+
 export type MetaSummary = {
   readonly specTitle: string;
   readonly specVersion: string;
@@ -96,6 +110,8 @@ export type MetaSummary = {
   readonly notExposedCounts: NotExposedCounts;
   // See META_OUTPUT_SCHEMA in snapshot.ts
   readonly cacheLock?: 'held' | 'stale';
+  // With several APIs (issue #16): each one; the fields above are their sums
+  readonly apis?: readonly ApiSummary[];
 };
 
 export type ServerSnapshot = {
