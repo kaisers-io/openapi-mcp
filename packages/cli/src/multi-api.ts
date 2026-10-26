@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
-import { API_NAME_PATTERN, pathReadings, usageError } from '@kaisers-io/openapi-mcp-core';
+import {
+  API_NAME_PATTERN,
+  pathReadings,
+  RESERVED_API_NAMES,
+  usageError,
+} from '@kaisers-io/openapi-mcp-core';
 
 // Several APIs behind one `serve` (issue #16). `--api <name>=<source>` declares
 // one; every per-API option then starts with `<name>=`, and exactly that one
@@ -79,6 +84,11 @@ const declarationsOf = (raw: readonly string[]): { name: string; source: string 
       );
     }
     const [name, source] = parts;
+    if (RESERVED_API_NAMES.has(name)) {
+      throw usageError(
+        `--api name "${name}" is reserved: its tool names could collide with this server's own tools`,
+      );
+    }
     if (seen.has(name)) {
       throw usageError(`--api names "${name}" twice`);
     }

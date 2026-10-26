@@ -617,7 +617,10 @@ the rest is the value as for a single API.
   `--tools-page-size` and the HTTP options. `--max-concurrency` and `--rate-limit` are shared
   by all APIs.
 - **Tool names** are `<api>_<name>`, for example `github_repos_get`; `name:` selectors use the
-  API's own names (`--allow github=name:repos_get`). The common hosts rewrite `.` in tool names
+  API's own names (`--allow github=name:repos_get`). A qualified name stays within 64
+  characters: a longer one keeps its start and ends with a hash of the full name. The API names
+  `openapi`, `search`, `describe` and `call` are reserved, since they could form this
+  server's own tool names. The common hosts rewrite `.` in tool names
   to `_` and one of them drops a tool whose rewritten name collides, which is why `_` is used.
   Hosts also add their own prefix and accept 64 characters (Cursor 60 for server and tool name
   together), so in `per-operation` mode `serve` warns when a name is longer than 50 characters.

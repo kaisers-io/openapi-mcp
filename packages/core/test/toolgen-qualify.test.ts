@@ -4,6 +4,7 @@ import {
   apiOfToolName,
   buildTools,
   buildToolsDeferred,
+  qualifiedName,
   qualifyTools,
   SYSTEM_HEADERS,
 } from '../src/index.ts';
@@ -37,6 +38,18 @@ describe('qualifyTools (#16)', () => {
     expect(completed?.toolName).toBe('github_repos_get');
     expect(completed?.outputSchema).toBeDefined();
     expect(Object.isFrozen(completed)).toBe(true);
+  });
+
+  // Review of #16: hosts accept 64 characters
+  it('keeps a qualified name within 64 characters, unique and stable', () => {
+    const long = 'x'.repeat(64);
+    const first = qualifiedName('shop', long);
+    expect(first).toHaveLength(64);
+    expect(first.startsWith('shop_xxx')).toBe(true);
+    expect(qualifiedName('shop', long)).toBe(first);
+    expect(qualifiedName('shop', `${'x'.repeat(63)}y`)).not.toBe(first);
+    expect(apiOfToolName(first)).toBe('shop');
+    expect(qualifiedName('shop', 'listOrders')).toBe('shop_listOrders');
   });
 
   it('reads the API back from the part before the first underscore', () => {
