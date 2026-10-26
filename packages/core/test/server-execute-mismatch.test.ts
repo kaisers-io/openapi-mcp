@@ -135,13 +135,30 @@ describe('response mismatch diagnostics (#24)', () => {
     }
   });
 
-  it('redacts a configured secret used as a property name in the spec, before cutting it', () => {
+  // Review of #24: a path is never cut, so no cut can leave part of a secret;
+  // a configured secret in a spec name, also one spanning two names, drops it
+  it('leaves out a path that contains a configured secret, also across two names', () => {
     const name = `${'x'.repeat(50)}${SECRET}`;
     const named = { type: 'object', properties: { [name]: { type: 'string' } }, required: [name] };
-    const { mismatch } = refuse(envelopeOf(named), '{}');
-    expect(mismatch).toMatchObject({ keyword: 'required' });
-    expect(JSON.stringify(mismatch)).not.toContain(SECRET.slice(0, 8));
-    expect(mismatch?.path?.length).toBeLessThanOrEqual(65);
+    const inName = refuse(envelopeOf(named), '{}').mismatch;
+    expect(inName).toMatchObject({ keyword: 'required' });
+    expect(inName).not.toHaveProperty('path');
+    const [head, tail] = ['prefix', 's'.repeat(100)];
+    const spanning = {
+      type: 'object',
+      properties: { [head]: { type: 'object', properties: {}, required: [tail] } },
+    };
+    const outcome = mapResponse({
+      outcome: response(JSON.stringify({ [head]: {} })),
+      validator: compileEnvelopeValidator(envelopeOf(spanning)),
+      outputSchema: envelopeOf(spanning),
+      redactor: createRedactor([`${head}/${tail}`]),
+      maxTextBytes: 4096,
+      diagnose: true,
+    });
+    const across = mismatchOf(outcome);
+    expect(across).toMatchObject({ keyword: 'required' });
+    expect(across).not.toHaveProperty('path');
   });
 
   // Review of #24: a secret longer than any cut is redacted whole first

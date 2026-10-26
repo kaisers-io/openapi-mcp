@@ -63,7 +63,6 @@ const JSON_TYPES: ReadonlySet<string> = new Set([
   'null',
 ]);
 
-const MAX_SEGMENT = 64;
 const MAX_PATH = 256;
 
 // A schema path segment as written (Ajv escapes it as a URI fragment of a
@@ -74,15 +73,6 @@ const decodeSegment = (raw: string): string | undefined => {
   } catch {
     return undefined;
   }
-};
-
-// Redacted whole before anything is cut, so a cut can never leave part of a
-// secret; once more after control characters are stripped, which could join
-// one (review of #24)
-const safeName = (name: string, redactor: Redactor): string => {
-  const whole = redactor.redactString(name);
-  const cleaned = redactor.redactString(sanitizeSpecText(whole, whole.length));
-  return sanitizeSpecText(cleaned, MAX_SEGMENT);
 };
 
 const escapeToken = (name: string): string => name.replaceAll('~', '~0').replaceAll('/', '~1');
@@ -128,32 +118,45 @@ const schemaSteps = (tokens: readonly string[]): (string | undefined)[] | undefi
   return steps;
 };
 
-// The pointer is shown only when the schema's steps lead exactly where the
-// failure is: a `$ref` to another schema in the same branch would otherwise
-// name the referenced location instead (review of #24). The instance path is
+// The steps are kept only when they lead exactly where the failure is: a
+// `$ref` to another schema in the same branch would otherwise name the
+// referenced location instead (review of #24). The instance path is
 // compared, never shown.
-const dataPointer = (
+const verifiedSteps = (
   tokens: readonly string[],
   instancePath: string,
-  redactor: Redactor,
-): string | undefined => {
+): (string | undefined)[] | undefined => {
   const steps = schemaSteps(tokens);
   const instance = instancePath
     .split('/')
     .slice(2)
     .map((raw) => raw.replaceAll('~1', '/').replaceAll('~0', '~'));
-  if (
-    steps === undefined ||
+  return steps === undefined ||
     (instancePath !== '/data' && !instancePath.startsWith('/data/')) ||
     steps.length !== instance.length ||
     steps.some((step, index) => step !== undefined && step !== instance[index])
-  ) {
+    ? undefined
+    : steps;
+};
+
+// The pointer as shown, or undefined. Never cut: a cut could leave part of a
+// secret the redactor no longer recognizes, also one spanning two names
+// (review of #24). The whole pointer is redacted, before and after control
+// characters are stripped; a configured secret across names, or a pointer
+// still too long, drops the path.
+const shownPointer = (
+  steps: readonly (string | undefined)[],
+  redactor: Redactor,
+): string | undefined => {
+  const joined = steps.map((step) => `/${step ?? '*'}`).join('');
+  if (redactor.redactString(joined) !== joined) {
     return undefined;
   }
-  const pointer = steps
-    .map((step) => `/${step === undefined ? '*' : escapeToken(safeName(step, redactor))}`)
-    .join('');
-  return pointer.length > MAX_PATH ? undefined : pointer;
+  const escaped = redactor.redactString(
+    steps.map((step) => `/${step === undefined ? '*' : escapeToken(step)}`).join(''),
+  );
+  const shown = redactor.redactString(sanitizeSpecText(escaped, escaped.length));
+  return shown.length > MAX_PATH ? undefined : shown;
 };
 
 const jsonTypeOf = (value: unknown): string => {
@@ -224,19 +227,17 @@ export const describeMismatch = (
   }
   const keyword = KEYWORDS.has(error.keyword) ? error.keyword : 'other';
   const tokens = error.schemaPath.slice(prefix.length).split('/').slice(1, -1);
-  let path = direct === undefined ? undefined : dataPointer(tokens, error.instancePath, redactor);
+  let steps = direct === undefined ? undefined : verifiedSteps(tokens, error.instancePath);
   const missing = error.params['missingProperty'];
-  if (path !== undefined && keyword === 'required') {
+  if (steps !== undefined && keyword === 'required') {
     // The required list is the schema's own, so the name is spec text
-    path =
-      typeof missing === 'string'
-        ? `${path}/${escapeToken(safeName(missing, redactor))}`
-        : undefined;
+    steps = typeof missing === 'string' ? [...steps, missing] : undefined;
   }
+  const path = steps === undefined ? undefined : shownPointer(steps, redactor);
   return {
     category: 'schema',
     keyword,
-    ...(path === undefined || path.length > MAX_PATH ? {} : { path }),
+    ...(path === undefined ? {} : { path }),
     ...(keyword === 'type' ? typesOf(error, envelope) : {}),
   };
 };

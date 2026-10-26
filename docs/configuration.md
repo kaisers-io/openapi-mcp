@@ -262,8 +262,9 @@ Notes:
   `category` is `schema`, `empty_body`, `invalid_json`, `invalid_utf8`, `invalid_sequence` or
   `unmatched_branch` (a status or media type the spec does not document). `path` points
   into the response data and is built from the spec's property names only: an array
-  element is `*`, and a key the response added, an index or a value never appears. Through
-  a `$ref` the location cannot be proven, so `path` is left out. `expected` and `observed`
+  element is `*`, and a key the response added, an index or a value never appears. `path`
+  is left out where the location cannot be proven (through a `$ref`), where it contains a
+  configured secret, and where it is longer than 256 characters; it is never cut. `expected` and `observed`
   are JSON type names, given only for a `type` failure. The client still gets the same
   message, and without `--log json` nothing is computed.
   Whether or not `--log` is set, `openapi_mcp_status` reports process-local counters under
