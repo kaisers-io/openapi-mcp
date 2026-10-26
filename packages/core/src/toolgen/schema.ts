@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { SPEC_BUDGETS } from '../spec/budgets.ts';
-import { sanitizeSpecText } from '../spec/sanitize.ts';
+import { sanitizeSpecText, stripMarkdownLinks } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import { hasNestedQuantifier } from './pattern-safety.ts';
 
@@ -445,7 +445,7 @@ const alternativesMessage = (alternatives: readonly (readonly string[])[]): stri
 // description plus example only.
 const describeText = (node: Record<string, unknown>): string | undefined => {
   const parts = [
-    typeof node['description'] === 'string' ? node['description'] : undefined,
+    typeof node['description'] === 'string' ? stripMarkdownLinks(node['description']) : undefined,
     node['example'] === undefined ? undefined : `example: ${JSON.stringify(node['example'])}`,
   ].filter((part): part is string => part !== undefined);
   if (parts.length === 0) {

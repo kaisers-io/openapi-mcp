@@ -103,6 +103,9 @@ export type ServerSnapshot = {
   // --output-schema defs (issue #9): output schemas are shown in their
   // compact `$defs` form (see presentedOutputSchema).
   readonly compactOutputSchemas?: true;
+  // --no-output-schema-descriptions (issue #49): output schemas are shown
+  // without their `description` keywords.
+  readonly bareOutputSchemas?: true;
   // What tools/list returns and tools/call can name. Under `per-operation`
   // this is the meta tool followed by every operation; under `discover` it is
   // the meta tool and the three discovery tools only, so an operation's own

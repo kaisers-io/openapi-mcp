@@ -38,12 +38,12 @@ describe('composeDescription', () => {
         summary: 'Create',
         responses: {
           '201': { description: 'created' },
-          '404': { description: 'not found' },
-          '500': { description: 'server error' },
+          '404': { description: 'no such thing id' },
+          '500': { description: 'storage quota reached' },
         },
       }),
     );
-    expect(text).toBe('Create Errors: 404: not found; 500: server error');
+    expect(text).toBe('Create Errors: 404: no such thing id; 500: storage quota reached');
   });
 
   it('does not leave a trailing space when a deprecated operation has no summary, description, or documented errors', () => {
@@ -84,10 +84,53 @@ describe('composeDescription', () => {
     expect(composeDescription(op())).toBe('');
   });
 
-  it('falls back to the bare status code for a documented error with no description text', () => {
+  it('leaves out a documented error with no description text', () => {
     const text = composeDescription(
       op({ summary: 'Create', responses: { '404': {}, '500': { description: 123 } } }),
     );
-    expect(text).toBe('Create Errors: 404; 500');
+    expect(text).toBe('Create');
+  });
+
+  // Issue #49: an entry that only restates its status costs tokens on every
+  // operation and tells the agent nothing the status does not
+  it('leaves out errors that only restate their status, and keeps specific ones', () => {
+    const text = composeDescription(
+      op({
+        summary: 'Create',
+        responses: {
+          '401': { description: 'Unauthorized' },
+          '404': { description: 'The resource was not found.' },
+          '409': { description: 'Conflict' },
+          '422': { description: 'Validation failed, or the endpoint has been spammed.' },
+          '429': { description: 'API Rate limit exceeded' },
+          '500': { description: 'Server error.' },
+          '503': { description: 'Service unavailable' },
+        },
+      }),
+    );
+    expect(text).toBe('Create Errors: 422: Validation failed, or the endpoint has been spammed.');
+    expect(
+      composeDescription(
+        op({ summary: 'Create', responses: { '422': { description: 'Limit Reached' } } }),
+      ),
+    ).toBe('Create Errors: 422: Limit Reached');
+    // Review of #49: a number, a word in another script, a word another
+    // status would own, or an unlisted status is information
+    expect(
+      composeDescription(
+        op({
+          summary: 'Create',
+          responses: {
+            '413': { description: 'Payload exceeded 1048576' },
+            '429': { description: 'Rate limit: 100 requests' },
+            '404': { description: '見つかりません' },
+            '409': { description: 'Resource authentication required' },
+            '418': { description: 'Error' },
+          },
+        }),
+      ),
+    ).toBe(
+      'Create Errors: 404: 見つかりません; 409: Resource authentication required; 413: Payload exceeded 1048576; 418: Error; 429: Rate limit: 100 requests',
+    );
   });
 });

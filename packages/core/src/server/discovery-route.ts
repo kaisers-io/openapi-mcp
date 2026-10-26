@@ -56,11 +56,10 @@ export const runDiscoveryTool = (
     }
     case 'describe': {
       return Promise.resolve(
-        describeOperation(
-          deps.snapshot.operationsByName,
-          data,
-          deps.snapshot.compactOutputSchemas === true,
-        ),
+        describeOperation(deps.snapshot.operationsByName, data, {
+          compact: deps.snapshot.compactOutputSchemas === true,
+          descriptions: deps.snapshot.bareOutputSchemas !== true,
+        }),
       );
     }
     case 'call': {

@@ -231,6 +231,7 @@ export type ServeCmdOpts = SpecCmdOpts &
     allowOffsiteRedirects?: boolean;
     toolMode: string;
     outputSchema: string;
+    outputSchemaDescriptions: boolean;
     imageResponses: string;
     imageDirMaxBytes: string;
     uploads?: boolean;
@@ -542,6 +543,7 @@ const prepareServe = async (
   const snapshot = buildSnapshot(built, pipeline, {
     toolMode,
     compactOutputSchemas,
+    bareOutputSchemas: !cmdOpts.outputSchemaDescriptions,
     onDeferredError: (toolName, error) => {
       emitWarnings(ctx, [
         `tool "${toolName}" has an output side that cannot be built, so describing or calling it fails: ${describeCause(error)}`,

@@ -4,6 +4,7 @@ import {
   TRUNCATION_MARKER,
   sanitizeDisplayText,
   sanitizeSpecText,
+  stripMarkdownLinks,
 } from '../src/index.ts';
 
 describe('sanitizeSpecText', () => {
@@ -115,5 +116,29 @@ describe('sanitizeDisplayText', () => {
     expect(
       [...out].every((ch) => ch.codePointAt(0)! < 0xd8_00 || ch.codePointAt(0)! > 0xdf_ff),
     ).toBe(true);
+  });
+});
+
+// Issue #49: documentation URLs cost tokens the agent can rarely use
+describe('stripMarkdownLinks', () => {
+  it('keeps the text of links and images and drops the URL', () => {
+    expect(
+      stripMarkdownLinks(
+        'See "[Creating a repo](https://docs.example.test/repos#create)" and ![logo](/logo.png).',
+      ),
+    ).toBe('See "Creating a repo" and logo.');
+  });
+
+  it('leaves brackets that are not links alone', () => {
+    for (const text of ['a [b] (c)', '[x](has space)', 'arr[0](1', '[a](b(c))']) {
+      expect(stripMarkdownLinks(text)).toBe(text);
+    }
+  });
+
+  it('stays linear on hostile input', () => {
+    const hostile = `${'[('.repeat(20_000)}${'[a]('.repeat(20_000)}`;
+    const started = performance.now();
+    stripMarkdownLinks(hostile);
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });

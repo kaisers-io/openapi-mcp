@@ -19,8 +19,11 @@ export const isSequenceContentType = (contentType: string): boolean =>
 const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
   try {
     // A shallow copy drops zod's hidden `~standard` property, which keeps
-    // the zod schema alive (#47)
-    return { ...z.toJSONSchema(schema) };
+    // the zod schema alive (#47). `$schema` goes too: JSON Schema 2020-12
+    // allows it only at a resource root, and `data` sits inside the
+    // envelope (it cost 3 KB per GitHub tool list, issue #49).
+    const { $schema: _dialect, ...data } = z.toJSONSchema(schema);
+    return data;
   } catch {
     // Defensive: our schemas are representable (proven upstream); fail
     // closed rather than emit a nonconforming outputSchema.

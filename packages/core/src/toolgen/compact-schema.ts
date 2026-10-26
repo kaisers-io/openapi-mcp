@@ -221,3 +221,49 @@ export const factorRepeatedSubschemas = (
     candidates = kept;
   }
 };
+
+// --no-output-schema-descriptions (issue #49): the same schema without its
+// `description` keywords, which were 49% of the GitHub output schemas. Only
+// the keyword is dropped: a property NAMED `description` is a key of a
+// `properties` map and stays, and values under `enum`, `const`, `default`
+// or `examples` are never walked. Validation is unchanged, since
+// `description` is an annotation.
+const SCHEMA_MAPS: ReadonlySet<string> = new Set([...MAP, '$defs', 'definitions']);
+
+const mapValues = (value: unknown, each: (entry: unknown) => unknown): unknown =>
+  isRecord(value)
+    ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, each(entry)]))
+    : value;
+
+// Generated envelopes share their response schemas, so one stripped copy
+// per shared node: copying every envelope's tree retained 45 MB for 100
+// tools sharing one 5,000-field response (review of #49)
+const stripped = new WeakMap<Node, Node>();
+
+export const withoutDescriptions = (schema: unknown): unknown => {
+  if (!isRecord(schema)) {
+    return schema;
+  }
+  const known = stripped.get(schema);
+  if (known !== undefined) {
+    return known;
+  }
+  const copy = Object.fromEntries(
+    Object.entries(schema)
+      .filter(([key]) => key !== 'description')
+      .map(([key, value]) => {
+        if (SINGLE.has(key)) {
+          return [key, withoutDescriptions(value)];
+        }
+        if (LIST.has(key) && Array.isArray(value)) {
+          return [key, value.map((entry: unknown) => withoutDescriptions(entry))];
+        }
+        if (SCHEMA_MAPS.has(key)) {
+          return [key, mapValues(value, withoutDescriptions)];
+        }
+        return [key, value];
+      }),
+  );
+  stripped.set(schema, copy);
+  return copy;
+};

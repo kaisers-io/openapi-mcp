@@ -34,6 +34,10 @@ const MAX_RENDERED_LENGTH = 2048;
 type ZodIssueLike = {
   path: readonly (string | number | symbol)[];
   code: string;
+  // For unrecognized_keys: the caller's own extra keys
+  keys?: readonly string[];
+  // For invalid_type: the schema's type name
+  expected?: string;
 };
 
 // A path SEGMENT can itself be caller-controlled (a dynamic object key from
@@ -43,6 +47,38 @@ type ZodIssueLike = {
 // caller-supplied data, not just spec text).
 const renderPathSegment = (segment: string | number | symbol): string =>
   sanitizeSpecText(String(segment), MAX_PATH_SEGMENT_LENGTH);
+
+// Issue #49: "(root): unrecognized_keys" or "per_page: invalid_type" left the
+// agent guessing which key or which type, at the cost of another describe
+// call. The detail added is the caller's own key names, capped and sanitized
+// like path segments, and a type name from this closed list. Never a value.
+const EXPECTED_TYPES: ReadonlySet<string> = new Set([
+  'string',
+  'number',
+  'int',
+  'boolean',
+  'object',
+  'array',
+  'null',
+]);
+const MAX_REPORTED_KEYS = 5;
+
+const issueDetail = (issue: ZodIssueLike): string => {
+  if (issue.code === 'unrecognized_keys' && issue.keys !== undefined) {
+    const shown = issue.keys.slice(0, MAX_REPORTED_KEYS).map((key) => renderPathSegment(key));
+    const more =
+      issue.keys.length > shown.length ? ` (+${issue.keys.length - shown.length} more)` : '';
+    return ` ${shown.join(', ')}${more}`;
+  }
+  if (
+    issue.code === 'invalid_type' &&
+    issue.expected !== undefined &&
+    EXPECTED_TYPES.has(issue.expected)
+  ) {
+    return ` (expected ${issue.expected})`;
+  }
+  return '';
+};
 
 // Capped PATHS and CODES only. NEVER `issue.message` (Zod 4's own default
 // messages can embed a rendering of the received value — e.g. an enum
@@ -60,7 +96,7 @@ const redactedValidationOutcome = (issues: readonly ZodIssueLike[]): ToolCallOut
   const capped = issues.slice(0, MAX_ISSUE_COUNT);
   const lines = capped.map((issue) => {
     const path = issue.path.map(renderPathSegment).join('.') || '(root)';
-    return `${path}: ${issue.code}`;
+    return `${path}: ${issue.code}${issueDetail(issue)}`;
   });
   // The overflow note goes on its OWN line, never appended to the last
   // rendered issue's line: each of the (up to MAX_ISSUE_COUNT) issue lines

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { SPEC_BUDGETS } from '../spec/budgets.ts';
 import { declaresJsonSuccess, PROJECTION_FIELD, PROJECTION_FIELDS_SCHEMA } from './projection.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
-import { sanitizeSpecText } from '../spec/sanitize.ts';
+import { sanitizeSpecText, stripMarkdownLinks } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import {
   FORM_URLENCODED,
@@ -235,7 +235,9 @@ const querystringField = (
   const required = param['required'] === true;
   const schema =
     typeof param['description'] === 'string'
-      ? converted.ok.describe(sanitizeSpecText(param['description'], SPEC_BUDGETS.maxTextLength))
+      ? converted.ok.describe(
+          sanitizeSpecText(stripMarkdownLinks(param['description']), SPEC_BUDGETS.maxTextLength),
+        )
       : converted.ok;
   return {
     ok: {
@@ -328,7 +330,9 @@ export const paramFields = (
     }
     const schema =
       typeof param['description'] === 'string'
-        ? converted.ok.describe(sanitizeSpecText(param['description'], SPEC_BUDGETS.maxTextLength))
+        ? converted.ok.describe(
+            sanitizeSpecText(stripMarkdownLinks(param['description']), SPEC_BUDGETS.maxTextLength),
+          )
         : converted.ok;
     const required = location === 'path' ? true : param['required'] === true;
     const mapping: FieldMapping = ((): FieldMapping => {

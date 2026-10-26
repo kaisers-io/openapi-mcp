@@ -280,6 +280,25 @@ describe('_fields on a tool without an outputSchema', () => {
     expect(outcome.content.at(-1)?.text).toBe(PROJECTION_HINT_STRUCTURED);
     expect(PROJECTION_HINT_STRUCTURED).toContain('structuredContent has the complete result');
   });
+
+  // Issue #49: repeating a write to see the rest of its answer could apply it twice
+  it('never tells the model to call a write again, and still says what was cut', async () => {
+    const createItems = (withSchema: boolean): NamedOperation => {
+      const read = listItems(withSchema);
+      return { ...read, operation: { ...read.operation, method: 'post' } };
+    };
+    const text = await callWith(createItems(false), wide(100), {});
+    expect(text.outcome.content.at(-1)?.text).toBe(
+      '(the response text above was truncated at the size limit)',
+    );
+    const structured = await callWith(createItems(true), wide(100), {});
+    expect(structured.outcome.content.at(-1)?.text).toBe(
+      '(only this text copy is truncated; structuredContent has the complete result)',
+    );
+    for (const { outcome } of [text, structured]) {
+      expect(JSON.stringify(outcome.content)).not.toContain('call again');
+    }
+  });
 });
 
 describe('_fields availability', () => {

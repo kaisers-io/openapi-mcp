@@ -744,6 +744,7 @@ const runUpstreamCall = async (
       // and is never mapped onto the request (buildRequest only reads mapped
       // fields).
       ...(generated.projection === true ? { projectable: true } : {}),
+      safeMethod: isSafeMethod(method),
       ...(generated.projection === true && Array.isArray(data[PROJECTION_FIELD])
         ? { fields: data[PROJECTION_FIELD] as string[] }
         : {}),

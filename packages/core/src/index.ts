@@ -28,6 +28,7 @@ export {
   TRUNCATION_MARKER,
   sanitizeDisplayText,
   sanitizeSpecText,
+  stripMarkdownLinks,
 } from './spec/sanitize.ts';
 export {
   displayCells,

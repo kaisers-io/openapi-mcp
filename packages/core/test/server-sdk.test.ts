@@ -10,6 +10,7 @@ import {
 } from '../src/index.ts';
 import type { NamedOperation, ToolExecutor } from '../src/index.ts';
 import { createProtocolSession, TOOLS_LIST_CACHE_HINT } from '../src/server/sdk/protocol.ts';
+import { listedTool } from '../src/server/tool-list.ts';
 
 // A neutral redactor: this suite never exercises redaction itself.
 const NOOP_REDACTOR = createRedactor([]);
@@ -325,8 +326,11 @@ describe('createProtocolSession — InMemory integration', () => {
     expect(expected?.outputSchema).toBeDefined(); // Guard: the fixture must actually carry one
     // Full deep-equal (not per-field checks): a sabotage that drops or
     // re-derives ANY field — including `outputSchema` — must fail this
-    // assertion.
-    expect(wireTool).toEqual(expected);
+    // assertion. The client negotiates a revision whose default dialect is
+    // 2020-12, so only the root `$schema` is left out (issue #49).
+    expect(expected?.inputSchema).toHaveProperty('$schema');
+    expect(wireTool?.inputSchema).not.toHaveProperty('$schema');
+    expect(wireTool).toEqual(expected === undefined ? undefined : listedTool(expected));
   });
 
   it('passes the REAL request signal through to the executor — cancelling the client-side request aborts the exact signal the executor received', async () => {

@@ -427,7 +427,7 @@ describe('createDispatcher', () => {
     expect(text).not.toContain('SECRET-VALUE-abc');
   });
 
-  it('redacts a validation failure to the EXACT permitted output — path + code only, never `message`', async () => {
+  it('redacts a validation failure to the EXACT permitted output — path, code and expected type only, never `message`', async () => {
     // `id` itself is the INVALID field here (not `note`, which was always
     // valid in the old fixture — a secret in an already-valid field could
     // never leak via ANY redaction bug, which is why that version of this
@@ -453,10 +453,38 @@ describe('createDispatcher', () => {
     expect(result).toEqual({
       kind: 'outcome',
       outcome: {
-        ...textOutcome('invalid tool arguments:\nid: invalid_type', true),
+        ...textOutcome('invalid tool arguments:\nid: invalid_type (expected string)', true),
         meta: { 'openapi-mcp/effect': 'not_sent' },
       },
     });
+  });
+
+  // Issue #49: the agent learns which keys were wrong, as keys only: capped,
+  // sanitized, at most five, and never a submitted value
+  it('names unrecognized keys, sanitized and capped, without their values', async () => {
+    const dispatcher = createDispatcher({
+      snapshot: buildTestSnapshot(),
+      limiter: alwaysPermitLimiter(),
+      now: () => 0,
+      executor: noopExecutor,
+      metaExecutor: createMetaExecutor(),
+      redactor: NOOP_REDACTOR,
+    });
+    const hostile = `evil${String.fromCodePoint(0x20_2e)}${'k'.repeat(100)}`;
+    const extra = Object.fromEntries(
+      ['per_page', hostile, 'b', 'c', 'd', 'e'].map((key) => [key, 'value-must-not-show']),
+    );
+    const result = await dispatcher.call({
+      name: 'createThing',
+      arguments: { id: 'x', ...extra },
+      signal: noSignal,
+    });
+    const text = result.kind === 'outcome' ? (result.outcome.content[0]?.text ?? '') : '';
+    expect(text).toMatch(
+      /^\(root\): unrecognized_keys per_page, evilk+…\[truncated\], b, c, d \(\+1 more\)$/mu,
+    );
+    expect(text).not.toContain('value-must-not-show');
+    expect(text).not.toContain(String.fromCodePoint(0x20_2e));
   });
 
   it("documents that an enum mismatch's own submitted value never appears in the output either — non-binding defense-in-depth; the exact-output test above is the BINDING redaction guard", async () => {
@@ -599,7 +627,8 @@ describe('createDispatcher', () => {
     // text after "invalid_type" breaks the `$` anchor), and `renderedLines`
     // would be 19, not 20 — the baseline could never pass. See the impl
     // comment in `redactedValidationOutcome`.
-    const renderedLines = (text.match(/^field\d+: invalid_type$/gmu) ?? []).length;
+    const renderedLines = (text.match(/^field\d+: invalid_type \(expected string\)$/gmu) ?? [])
+      .length;
     expect(renderedLines).toBe(20);
     expect(text).toMatch(/^\(\+1 more\)$/mu); // The overflow note, on its OWN line
     expect(text).not.toContain('field20:');

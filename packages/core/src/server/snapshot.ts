@@ -70,6 +70,8 @@ export type SnapshotOptions = {
   // `discover` describe_operation computes it on demand, so startup does not
   // pay for operations nobody describes.
   compactOutputSchemas?: boolean;
+  // --no-output-schema-descriptions (issue #49), shown the same way
+  bareOutputSchemas?: boolean;
   // Under `discover`, sees an operation whose output side fails to build on
   // first use (the call or description that needed it gets a tool error)
   onDeferredError?: (toolName: string, error: unknown) => void;
@@ -82,6 +84,7 @@ export const buildSnapshot = (
 ): ServerSnapshot => {
   const toolMode = options.toolMode ?? 'per-operation';
   const compact = options.compactOutputSchemas === true;
+  const bare = options.bareOutputSchemas === true;
   const { entries, tools: upstreamTools } = entriesOf(built, toolMode, options);
   const metaTool: SnapshotTool = {
     kind: 'meta',
@@ -145,6 +148,7 @@ export const buildSnapshot = (
   return deepFreeze({
     toolMode,
     ...(compact ? { compactOutputSchemas: true as const } : {}),
+    ...(bare ? { bareOutputSchemas: true as const } : {}),
     tools: all,
     toolsByName,
     operations: entries,

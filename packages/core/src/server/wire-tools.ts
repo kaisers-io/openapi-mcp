@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { OperationRecord } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { GeneratedTool } from '../toolgen/build.ts';
+import { withoutDescriptions } from '../toolgen/compact-schema.ts';
 import { compactOutputSchema } from '../toolgen/output-schema.ts';
 import { deriveAccept } from './execute/accept.ts';
 import type { RuntimeTool, WireTool } from './types.ts';
@@ -142,21 +143,34 @@ export const byToolName = (
 
 // The outputSchema a host is shown (tools/list, describe_operation): under
 // --output-schema defs (issue #9) its repeated subschemas once under `$defs`,
-// computed once per schema object. Under per-operation the executor compiles
-// this form too (it validates the listed wire tool); under discover it keeps
-// the inline one. Both accept exactly the same values.
-const compacted = new WeakMap<Record<string, unknown>, Record<string, unknown>>();
+// and under --no-output-schema-descriptions (issue #49) without its
+// `description` keywords; computed once per schema object and form. Under
+// per-operation the executor compiles this form too (it validates the listed
+// wire tool); under discover it keeps the inline one. Every form accepts
+// exactly the same values.
+export type OutputSchemaForm = { compact: boolean; descriptions: boolean };
+
+const presented = new Map<string, WeakMap<Record<string, unknown>, Record<string, unknown>>>();
 export const presentedOutputSchema = (
   outputSchema: Record<string, unknown>,
-  compact: boolean,
+  form: OutputSchemaForm,
 ): Record<string, unknown> => {
-  if (!compact) {
+  if (!form.compact && form.descriptions) {
     return outputSchema;
   }
-  let presented = compacted.get(outputSchema);
-  if (presented === undefined) {
-    presented = compactOutputSchema(outputSchema);
-    compacted.set(outputSchema, presented);
+  const key = `${String(form.compact)}:${String(form.descriptions)}`;
+  let cache = presented.get(key);
+  if (cache === undefined) {
+    cache = new WeakMap();
+    presented.set(key, cache);
   }
-  return presented;
+  let shown = cache.get(outputSchema);
+  if (shown === undefined) {
+    const bare = form.descriptions
+      ? outputSchema
+      : (withoutDescriptions(outputSchema) as Record<string, unknown>);
+    shown = form.compact ? compactOutputSchema(bare) : bare;
+    cache.set(outputSchema, shown);
+  }
+  return shown;
 };

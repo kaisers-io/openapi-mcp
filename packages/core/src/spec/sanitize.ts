@@ -36,6 +36,15 @@ export const sanitizeSpecText = (raw: string, maxLength: number): string => {
   return truncate(cleaned, maxLength);
 };
 
+// A markdown link `[text](url)` or image `![text](url)` keeps only its text:
+// the agent can rarely open a documentation URL, and the URLs were 5.7% of
+// the visible GitHub tool list (issue #49). Bounded quantifiers and no nested
+// repetition keep the scan linear in the text length.
+const MARKDOWN_LINK_RE = /!?\[(?<text>[^[\]\n]{0,256})\]\([^()\s]{0,2048}\)/gu;
+
+export const stripMarkdownLinks = (text: string): string =>
+  text.replaceAll(MARKDOWN_LINK_RE, '$<text>');
+
 // Line-preserving variant for human display surfaces. Multi-line error messages
 // (Ajv validation output, stack traces) lose their structure under
 // sanitizeSpecText, which collapses every line terminator to a space. Newlines

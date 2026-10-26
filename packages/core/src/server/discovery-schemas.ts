@@ -80,6 +80,7 @@ export const DESCRIBE_OUTPUT_SCHEMA: Record<string, unknown> = {
     description: { type: 'string' },
     inputSchema: { type: 'object' },
     outputSchema: { type: 'object' },
+    outputFields: { type: 'array' },
     annotations: { type: 'object' },
   },
   required: ['name', 'description', 'inputSchema', 'annotations'],
