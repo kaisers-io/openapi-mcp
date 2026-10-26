@@ -160,6 +160,16 @@ describe('assertSeparateApis (#16)', () => {
     ).toThrow('overlap');
   });
 
+  // Review of #16: the check uses the readings the credential scope uses
+  it('refuses a base URL that overlaps another only once decoded', () => {
+    expect(() =>
+      assertSeparateApis([
+        api('a', 'https://api.example.test/shop%2Fv1'),
+        api('b', 'https://api.example.test/shop/v1'),
+      ]),
+    ).toThrow('overlap');
+  });
+
   it('refuses two APIs in one cache namespace', () => {
     expect(() =>
       assertSeparateApis([

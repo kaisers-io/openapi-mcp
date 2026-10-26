@@ -1,4 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -24,7 +27,24 @@ const SHOP = {
     },
     '/orders/{orderId}': {
       parameters: [param('orderId')],
-      get: { operationId: 'getOrder', responses: ok },
+      // The upstream answers `{}`, which this schema refuses
+      get: {
+        operationId: 'getOrder',
+        responses: {
+          '200': {
+            description: 'ok',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['id'],
+                  properties: { id: { type: 'string' } },
+                },
+              },
+            },
+          },
+        },
+      },
       delete: { operationId: 'deleteOrder', responses: ok },
     },
     // Answered with a redirect into the CRM's base path
@@ -193,6 +213,78 @@ describe('serve — several APIs (#16)', () => {
       { method: 'GET', url: '/shop/jump', authorization: SHOP_TOKEN },
       { method: 'GET', url: '/crm/contacts' },
     ]);
+  });
+
+  // Review of #16: --omit-output-schema selectors use the API's own names,
+  // and --log json still says why a response was refused
+  it('applies --omit-output-schema by the API’s own names, and logs a mismatch', async () => {
+    upstream.requests.length = 0;
+    const extra = ['--allow', 'shop=path:/**', '--log', 'json', '--strict-filters'];
+    await withServe(
+      args([...extra, '--omit-output-schema', 'shop=name:listOrders']),
+      home,
+      async (session) => {
+        const listed = await session.request('tools/list', {});
+        const tools = (listed.result?.['tools'] ?? []) as {
+          name: string;
+          outputSchema?: unknown;
+        }[];
+        const byName = new Map(tools.map((tool) => [tool.name, tool]));
+        expect(byName.get('shop_listOrders')?.outputSchema).toBeUndefined();
+        expect(byName.get('shop_getOrder')?.outputSchema).toBeDefined();
+        const reply = await session.callTool('shop_getOrder', { orderId: 'o-1' });
+        expect(reply).toMatchObject({ isError: true });
+        expect(session.stderr()).toContain('"mismatch":{"category":"schema","keyword":"required"');
+      },
+    );
+  });
+
+  // Review of #16: the query string is part of a spec's cache identity, so
+  // two versions of one URL are two APIs, not a conflict
+  it('serves two specs that differ only by their query string', async () => {
+    const specs = createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(req.url?.endsWith('v=2') === true ? CRM : SHOP));
+    });
+    specs.listen(0, '127.0.0.1');
+    await once(specs, 'listening');
+    const { port } = specs.address() as AddressInfo;
+    const source = `http://127.0.0.1:${String(port)}/openapi`;
+    try {
+      const sources: Readonly<Record<string, string>> = {
+        [`shop=${join(home, 'shop.json')}`]: `shop=${source}?v=1`,
+        [`crm=${join(home, 'crm.json')}`]: `crm=${source}?v=2`,
+      };
+      const both = args().map((value) => sources[value] ?? value);
+      await withServe(both, home, async (session) => {
+        const tools = await session.listTools();
+        expect(tools).toContain('shop_listOrders');
+        expect(tools).toContain('crm_listContacts');
+      });
+    } finally {
+      specs.closeAllConnections();
+      specs.close();
+    }
+  });
+
+  it('logs a mismatch with a single API too', async () => {
+    await withServe(
+      [
+        '--spec',
+        join(home, 'shop.json'),
+        '--base-url',
+        `${upstream.url}/shop`,
+        '--allow-private-network',
+        '--allow-insecure-http',
+        '--log',
+        'json',
+      ],
+      home,
+      async (session) => {
+        await session.callTool('getOrder', { orderId: 'o-1' });
+        expect(session.stderr()).toContain('"mismatch":{"category":"schema","keyword":"required"');
+      },
+    );
   });
 
   it.each([

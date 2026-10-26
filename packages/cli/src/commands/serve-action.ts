@@ -8,6 +8,8 @@ import {
   assertAllowedRedirectTarget,
   buildSnapshot,
   buildToolsDeferred,
+  cacheNamespace,
+  canonicalSourceOf,
   completeTools,
   createClientCredentialsSource,
   createEnvelopeCompiler,
@@ -527,9 +529,7 @@ const loadApi = async (
     defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
     ...nullableOption(cmdOpts.nullableResponseFields),
   });
-  // Several APIs (issue #16): every tool is named `<api>_<name>`
-  const generated = name === undefined ? deferred : qualifyTools(deferred, name);
-  return { name, cmdOpts, apiConfig, args, result, filterWarnings, uploads, generated };
+  return { name, cmdOpts, apiConfig, args, result, filterWarnings, uploads, generated: deferred };
 };
 
 // Several APIs (issue #16): every line says which API it is about
@@ -557,8 +557,11 @@ const finishApi = async (
         result.spec,
         cmdOpts.strictFilters === true,
       );
-  const { built } = optOut;
-  const exposure = exposureReport(result, built, cmdOpts.strictFilters === true);
+  const exposure = exposureReport(result, optOut.built, cmdOpts.strictFilters === true);
+  // Several APIs (issue #16): every tool is named `<api>_<name>`, after the
+  // opt-out and the exposure report, so their selectors and reports use the
+  // API's own names
+  const built = name === undefined ? optOut.built : qualifyTools(optOut.built, name);
 
   // Resolve + validate the API base URL: --base-url (trusted, address
   // check skipped) else the spec-derived candidate (untrusted — a
@@ -654,6 +657,13 @@ const finishApi = async (
 
 type FinishedApi = Awaited<ReturnType<typeof finishApi>>;
 
+// The cache's own namespace of an API: its source (query string included)
+// and cache key
+const namespaceOf = (api: LoadedApi, ctx: CliContext): string => {
+  const source = canonicalSourceOf(parseSpecSource(api.args.source, { cwd: ctx.cwd() }));
+  return cacheNamespace(source, api.args.options.cacheKey);
+};
+
 // Hosts add their own prefix to a tool name and accept 64 characters at most
 // (Claude Code: mcp__<server>__<tool>; Cursor: 60 for server and tool name):
 // a qualified per-operation name longer than this leaves too little room
@@ -728,7 +738,7 @@ const prepareServe = async (
     assertSeparateApis(
       finished.map(({ api, resolvedBase }) => ({
         name: String(api.name),
-        namespace: `${api.result.displaySource}\n${api.args.options.cacheKey ?? ''}`,
+        namespace: namespaceOf(api, ctx),
         base: resolvedBase.url,
       })),
     );
@@ -972,6 +982,8 @@ const executorConfigOf = async (
     // stdio + HTTP and by every API because `createExecutor` is
     // constructed exactly ONCE; up to 4x as many calls may queue for a slot.
     maxConcurrent: apiConfig.maxConcurrency,
+    // `--log json` also says why a response was refused (issue #24)
+    ...(cmdOpts.log === 'json' ? { diagnoseMismatches: true } : {}),
     retries: apiConfig.retries,
     propagateTraceContext: apiConfig.propagateTraceContext,
     validators,

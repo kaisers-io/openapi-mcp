@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { API_NAME_PATTERN, usageError } from '@kaisers-io/openapi-mcp-core';
+import { API_NAME_PATTERN, usageError, withinApi } from '@kaisers-io/openapi-mcp-core';
 
 // Several APIs behind one `serve` (issue #16). `--api <name>=<source>` declares
 // one; every per-API option then starts with `<name>=`, and exactly that one
@@ -200,9 +200,10 @@ export const combinedContentHash = (apis: readonly { name: string; hash: string 
     .update(apis.map((api) => `${api.name}:${api.hash}`).join('\n'))
     .digest('hex');
 
-const basePath = (url: URL): string => `${url.pathname.replace(/\/$/u, '').toLowerCase()}/`;
-const within = (inner: URL, outer: URL): boolean =>
-  inner.origin === outer.origin && basePath(inner).startsWith(basePath(outer));
+// The same test the credential scope applies (every reading of the path, in
+// any letter case), so `/shop%2Fv1` and `/shop/v1` overlap here as they would
+// at call time (review of #16)
+const within = (inner: URL, outer: URL): boolean => withinApi(outer)(inner);
 
 // No two APIs may share a cache namespace (different credentials would share
 // an authenticated entry), and no base URL may lie within another's, since
