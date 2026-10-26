@@ -141,8 +141,10 @@ edit version numbers by hand:
    than the one npm serves as `latest`. The `publish` job then waits for approval in the
    `npm-publish` environment, publishes to npm with a provenance attestation, and the `announce`
    job creates the GitHub release from the version's changelog section.
-4. Smoke-test the published package on Windows with an absolute drive path
-   (`openapi-mcp tools --spec C:\path\to\spec.json`).
+4. The `verify-published` job waits until npm serves the version, installs it from the registry
+   on Linux, macOS and Windows, and runs `scripts/smoke-cli.sh` against it; on Windows that
+   includes a spec given as an absolute drive path. A failure there cannot stop the release, which
+   is already public: deprecate the version and ship a fix.
 
 ### What the release guards cover, and what they do not
 

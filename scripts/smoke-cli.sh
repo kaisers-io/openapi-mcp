@@ -33,6 +33,29 @@ node -e '
   console.log("tools smoke OK — generated:", o.data.tools.map((t) => t.name).join(", "));
 ' "$OUT"
 
+# Windows: the same spec as an absolute drive path with backslashes (`C:\...\tmp.x`), the form a
+# user writes in a host config. Git Bash would rewrite a POSIX path on its own, so `cygpath -w`
+# gives the native spelling and MSYS_NO_PATHCONV keeps bash from touching it.
+if command -v cygpath > /dev/null; then
+  NATIVE="$(cygpath -w "$SPEC")"
+  case "$NATIVE" in
+    [A-Za-z]:\\*) ;;
+    *) echo "drive path smoke FAILED: $NATIVE is not a drive path" >&2; exit 1 ;;
+  esac
+  if ! OUT="$(MSYS_NO_PATHCONV=1 openapi-mcp --json tools --spec "$NATIVE")"; then
+    echo "drive path smoke FAILED: $OUT" >&2
+    exit 1
+  fi
+  node -e '
+    const o = JSON.parse(process.argv[1]);
+    if (!o.ok || o.data.toolCount !== 1) {
+      console.error("drive path smoke FAILED:", JSON.stringify(o));
+      process.exit(1);
+    }
+    console.log("drive path smoke OK —", process.argv[2]);
+  ' "$OUT" "$NATIVE"
+fi
+
 # `serve` runs from a chunk the bin imports only when the action starts (issue
 # kaisers-io/openapi-mcp-archive#91): start it over stdio and require an `initialize` answer, so a
 # chunk missing from the tarball fails here.
