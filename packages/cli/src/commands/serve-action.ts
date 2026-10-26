@@ -666,6 +666,8 @@ const prepareServe = async (
     ...(httpConfig === undefined ? {} : { httpHost: httpConfig.hostname }),
   });
   const executorConfig: ExecutorConfig = {
+    // `--log json` also says why a response was refused (issue #24)
+    ...(logJson ? { diagnoseMismatches: true } : {}),
     baseUrl: resolvedBase.url.toString(),
     baseTrusted: resolvedBase.trusted,
     // Issue #40: every hop is checked against every operation of the spec
