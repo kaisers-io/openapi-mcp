@@ -1,0 +1,9 @@
+{
+  "name": "openapi-mcp-inspector-check",
+  "private": true,
+  "description": "Pins the MCP Inspector CLI for the interoperability check in CI (scripts/inspector/run.sh); kept out of the workspace lockfile",
+  "type": "module",
+  "devDependencies": {
+    "@modelcontextprotocol/inspector": "2.11.0"
+  }
+}

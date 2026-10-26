@@ -32,3 +32,12 @@ updates:
       # this together with the engines range.
       - dependency-name: '@types/node'
         update-types: ['version-update:semver-major']
+  # The MCP Inspector for the interoperability check (scripts/inspector), in its own npm lockfile
+  - package-ecosystem: npm
+    directory: /scripts/inspector
+    schedule: { interval: weekly }
+    cooldown: { default-days: 7 }
+    commit-message: { prefix: ci }
+    groups:
+      inspector:
+        patterns: ['*']
