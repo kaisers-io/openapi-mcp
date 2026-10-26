@@ -871,7 +871,7 @@ openapi-mcp --json doctor
 {
   "ok": true,
   "data": {
-    "cliVersion": "0.4.1",
+    "cliVersion": "0.5.0",
     "nodeVersion": "24.12.0",
     "appRoot": "/Users/you/.kaisers-io/openapi-mcp",
     "cacheRoot": "/Users/you/.kaisers-io/openapi-mcp/cache",
