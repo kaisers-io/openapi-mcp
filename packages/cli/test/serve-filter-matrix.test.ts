@@ -207,6 +207,11 @@ const CASES: readonly {
     expected: [...ORDERS, 'billing_invoices_list'],
   },
   {
+    title: 'several --deny add up',
+    args: ['--allow', 'tag:Orders', '--deny', 'method:delete', '--deny', 'method:patch'],
+    expected: without(ORDERS, ['deleteOrder', 'updateOrder']),
+  },
+  {
     title: 'an operationId glob in the middle',
     args: ['--allow', 'operationId:*order*'],
     expected: ORDERS,
@@ -435,7 +440,7 @@ describe('serve — --allow and --deny end to end', () => {
       expect(session.stderr()).toContain('tag:Nothing');
     });
     await expect(startServe(serveArgs([...dead, '--strict-filters']), home)).rejects.toThrow(
-      /serve exited/u,
+      /serve exited \(code 3[\s\S]*"tag:Nothing" matches no operation/u,
     );
   });
 });
