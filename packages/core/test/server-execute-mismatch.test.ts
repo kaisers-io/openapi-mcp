@@ -286,6 +286,7 @@ describe('response mismatch diagnostics (#24)', () => {
     const notUtf8 = response(new Uint8Array([0xff, 0xfe]));
     expect(categoryOf(notUtf8)).toStrictEqual({ category: 'invalid_utf8' });
     expect(categoryOf(response('{}', 201))).toStrictEqual({ category: 'unmatched_branch' });
+    expect(categoryOf(response(''))).toStrictEqual({ category: 'empty_body' });
     expect(categoryOf(response('{}', 200, 'text/csv'))).toStrictEqual({
       category: 'unmatched_branch',
     });
@@ -305,6 +306,34 @@ describe('response mismatch diagnostics (#24)', () => {
     const off = refuse(schema, body, { diagnose: false });
     expect(off.mismatch).toBeUndefined();
     expect(off.outcome).toStrictEqual(on.outcome);
+  });
+
+  // Review of #24: every earlier branch adds an error; the selected one's
+  // explanation must not be cut off behind them
+  it('finds the selected branch behind many others', () => {
+    const branches = Array.from({ length: 65 }, (_unused, index) => ({
+      type: 'object',
+      properties: {
+        status: { const: 200 + index },
+        contentType: { const: 'application/json' },
+        data: { type: 'object', properties: { id: { type: 'string' } } },
+      },
+      required: ['status', 'contentType', 'data'],
+    }));
+    const outputSchema = { type: 'object', oneOf: branches };
+    const outcome = mapResponse({
+      outcome: response(JSON.stringify({ id: 1 }), 264),
+      validator: compileEnvelopeValidator(outputSchema),
+      outputSchema,
+      redactor: createRedactor([]),
+      maxTextBytes: 4096,
+      diagnose: true,
+    });
+    expect(mismatchOf(outcome)).toMatchObject({
+      keyword: 'type',
+      path: '/id',
+      observed: 'integer',
+    });
   });
 
   it('keeps each call to a shared validator to its own errors', () => {

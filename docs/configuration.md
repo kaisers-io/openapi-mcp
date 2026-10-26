@@ -259,7 +259,7 @@ Notes:
   When a response is refused because it does not match the operation's output schema, the
   line also says why, under `mismatch`, so the spec can be fixed where it is wrong:
   `{"category":"schema","keyword":"type","path":"/owner/email","expected":"string","observed":"null"}`.
-  `category` is `schema`, `invalid_json`, `invalid_utf8`, `invalid_sequence` or
+  `category` is `schema`, `empty_body`, `invalid_json`, `invalid_utf8`, `invalid_sequence` or
   `unmatched_branch` (a status or media type the spec does not document). `path` points
   into the response data and is built from the spec's property names only: an array
   element is `*`, and a key the response added, an index or a value never appears. Through

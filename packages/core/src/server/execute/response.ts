@@ -739,7 +739,11 @@ const mapBody = (
     // envelope for a tool that declared one. An empty sequence is the empty
     // array of its items (RFC 7464 §2.2 allows zero records), which the
     // branch's `data` schema still validates.
-    return textOutcome(`upstream response for status ${status} had no body to validate`, true);
+    return refused(
+      textOutcome(`upstream response for status ${status} had no body to validate`, true),
+      opts.diagnose,
+      'empty_body',
+    );
   }
   if (opts.outputSchema === undefined) {
     // Contract violation: the caller must always pass outputSchema alongside

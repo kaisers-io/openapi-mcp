@@ -12,6 +12,7 @@ import type { ErrorObject } from './envelope-validators.ts';
 
 export type MismatchCategory =
   | 'schema'
+  | 'empty_body'
   | 'invalid_json'
   | 'invalid_utf8'
   | 'invalid_sequence'
@@ -62,8 +63,6 @@ const JSON_TYPES: ReadonlySet<string> = new Set([
   'null',
 ]);
 
-// Ajv reads at most this many errors; a oneOf can collect one per branch
-const MAX_ERRORS = 64;
 const MAX_SEGMENT = 64;
 const MAX_PATH = 256;
 
@@ -178,8 +177,10 @@ export const describeMismatch = (
   redactor: Redactor,
 ): SchemaMismatch => {
   const prefix = `#/oneOf/${String(branch)}/properties/data`;
-  const bounded = errors.slice(0, MAX_ERRORS);
-  const direct = bounded.find(
+  // A oneOf collects one error per branch it tried, so the list is as long as
+  // the envelope has branches; the selected branch is searched for, never cut
+  // off (review of #24)
+  const direct = errors.find(
     (candidate) => candidate.schemaPath === prefix || candidate.schemaPath.startsWith(`${prefix}/`),
   );
   // Through a `$ref`, Ajv reports the schema path inside `$defs`: the keyword
@@ -187,7 +188,7 @@ export const describeMismatch = (
   // their `status` const before they reach a reference.
   const error =
     direct ??
-    bounded.find(
+    errors.find(
       (candidate) =>
         candidate.instancePath.startsWith('/data') && !candidate.schemaPath.startsWith('#/oneOf/'),
     );
