@@ -229,11 +229,11 @@ const overlap = (first: URL, second: URL): boolean =>
     readingsOf(second).some((other) => one.startsWith(other) || other.startsWith(one)),
   );
 
-// No two APIs may share a cache namespace (different credentials would share
-// an authenticated entry), and no base URL may lie within another's, since
-// credentials are scoped to an API's base URL
-export const assertSeparateApis = (
-  apis: readonly { name: string; namespace: string; base: URL }[],
+// No two APIs may share a cache namespace: different credentials would share
+// an authenticated entry. Checked before any spec is loaded, so neither can
+// touch the other's cache first (review of #16).
+export const assertSeparateNamespaces = (
+  apis: readonly { name: string; namespace: string }[],
 ): void => {
   const namespaces = new Map<string, string>();
   for (const api of apis) {
@@ -245,6 +245,11 @@ export const assertSeparateApis = (
     }
     namespaces.set(api.namespace, api.name);
   }
+};
+
+// No base URL may lie within another's, since credentials are scoped to an
+// API's base URL
+export const assertSeparateBases = (apis: readonly { name: string; base: URL }[]): void => {
   for (const [index, first] of apis.entries()) {
     for (const second of apis.slice(index + 1)) {
       if (overlap(first.base, second.base)) {

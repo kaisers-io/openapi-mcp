@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { apiViews, assertSeparateApis, combinedContentHash, MAX_APIS } from '../src/multi-api.ts';
+import {
+  apiViews,
+  assertSeparateBases,
+  assertSeparateNamespaces,
+  combinedContentHash,
+  MAX_APIS,
+} from '../src/multi-api.ts';
 import type { Occurrence } from '../src/multi-api.ts';
 
 // Several APIs behind one serve (issue #16): splitting the options by API
@@ -130,16 +136,12 @@ describe('apiViews (#16)', () => {
   });
 });
 
-describe('assertSeparateApis (#16)', () => {
-  const api = (name: string, url: string, namespace = name) => ({
-    name,
-    namespace,
-    base: new URL(url),
-  });
+describe('assertSeparateBases and assertSeparateNamespaces (#16)', () => {
+  const api = (name: string, url: string) => ({ name, base: new URL(url) });
 
   it('accepts APIs on separate paths of one origin', () => {
     expect(() =>
-      assertSeparateApis([
+      assertSeparateBases([
         api('a', 'https://api.example.test/a'),
         api('b', 'https://api.example.test/b'),
         api('c', 'https://other.example.test/'),
@@ -149,13 +151,13 @@ describe('assertSeparateApis (#16)', () => {
 
   it('refuses an overlapping base URL, in any letter case', () => {
     expect(() =>
-      assertSeparateApis([
+      assertSeparateBases([
         api('a', 'https://api.example.test/'),
         api('b', 'https://api.example.test/b'),
       ]),
     ).toThrow('the base URLs of the APIs "a" and "b" overlap');
     expect(() =>
-      assertSeparateApis([
+      assertSeparateBases([
         api('a', 'https://api.example.test/V1/shop'),
         api('b', 'https://api.example.test/v1'),
       ]),
@@ -165,7 +167,7 @@ describe('assertSeparateApis (#16)', () => {
   // Review of #16: the check uses the readings the credential scope uses
   it('refuses a base URL that overlaps another only once decoded', () => {
     expect(() =>
-      assertSeparateApis([
+      assertSeparateBases([
         api('a', 'https://api.example.test/shop%2Fv1'),
         api('b', 'https://api.example.test/shop/v1'),
       ]),
@@ -173,13 +175,13 @@ describe('assertSeparateApis (#16)', () => {
     // Nested once both are decoded, though neither contains every reading
     // of the other
     expect(() =>
-      assertSeparateApis([
+      assertSeparateBases([
         api('a', 'https://api.example.test/shop%2Fv1'),
         api('b', 'https://api.example.test/shop/v1%2Fsub'),
       ]),
     ).toThrow('overlap');
     expect(() =>
-      assertSeparateApis([
+      assertSeparateBases([
         api('a', 'https://api.example.test/shop%2Fv1'),
         api('b', 'https://api.example.test/shop/v2'),
       ]),
@@ -188,11 +190,17 @@ describe('assertSeparateApis (#16)', () => {
 
   it('refuses two APIs in one cache namespace', () => {
     expect(() =>
-      assertSeparateApis([
-        api('a', 'https://a.example.test/', 'same'),
-        api('b', 'https://b.example.test/', 'same'),
+      assertSeparateNamespaces([
+        { name: 'a', namespace: 'same' },
+        { name: 'b', namespace: 'same' },
       ]),
     ).toThrow('load the same spec with the same cache key');
+    expect(() =>
+      assertSeparateNamespaces([
+        { name: 'a', namespace: 'one' },
+        { name: 'b', namespace: 'two' },
+      ]),
+    ).not.toThrow();
   });
 });
 

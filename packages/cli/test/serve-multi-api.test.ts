@@ -288,6 +288,54 @@ describe('serve — several APIs (#16)', () => {
     ]);
   });
 
+  // Review of #16: checked before any spec is loaded, so neither API can
+  // touch the other's cache entry first
+  it('refuses two APIs on one cache entry before loading either', async () => {
+    const shared = [
+      '--api',
+      `shop=${join(home, 'shop.json')}`,
+      '--api',
+      `again=${join(home, 'shop.json')}`,
+      '--enable',
+      'shop=trust-spec-updates',
+      '--enable',
+      'again=trust-spec-updates',
+    ];
+    const start = startServe(shared, home);
+    await expect(start).rejects.toThrow('load the same spec with the same cache key');
+  });
+
+  it('refuses more secrets than one server can redact, naming each API', async () => {
+    const names = Array.from({ length: 22 }, (_unused, index) => `X-Key-${String(index)}`);
+    for (const [index] of names.entries()) {
+      process.env[`MULTI_KEY_${String(index)}`] = `multi-key-${String(index)}-example-not-a-secret`;
+    }
+    const keysOf = (name: string): string[] =>
+      names.flatMap((header, index) => [
+        '--header-env',
+        `${name}=${header}=MULTI_KEY_${String(index)}`,
+      ]);
+    const apisWithKeys: string[] = [];
+    for (const name of ['a', 'b', 'c']) {
+      apisWithKeys.push(
+        '--api',
+        `${name}=${join(home, name === 'a' ? 'shop.json' : 'crm.json')}`,
+        '--cache-key',
+        `${name}=${name}`,
+        ...keysOf(name),
+      );
+    }
+    try {
+      await expect(startServe(apisWithKeys, home)).rejects.toThrow(
+        'all APIs together configure 66 secret values (a: 22, b: 22, c: 22)',
+      );
+    } finally {
+      for (const [index] of names.entries()) {
+        delete process.env[`MULTI_KEY_${String(index)}`];
+      }
+    }
+  });
+
   it('logs a mismatch with a single API too', async () => {
     await withServe(
       [

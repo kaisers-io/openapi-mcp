@@ -9,7 +9,7 @@ export {
   validationError,
 } from './errors.ts';
 export type { ExitCode, RenderedError } from './errors.ts';
-export { createRedactor } from './redact.ts';
+export { createRedactor, MAX_REDACTED_SECRETS } from './redact.ts';
 export type { Redactor, RuntimeRedactor } from './redact.ts';
 export {
   MAX_AGE_DURATION_MS,

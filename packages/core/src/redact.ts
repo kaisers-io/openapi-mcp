@@ -4,6 +4,8 @@ import { createMatcher, replaceSpans } from './redact-match.ts';
 import type { Span } from './redact-match.ts';
 
 const MAX_SECRETS = 64; // Bound construction cost
+// For a caller that adds up the secrets of several sources (issue #16)
+export const MAX_REDACTED_SECRETS = MAX_SECRETS;
 const MAX_SECRET_LENGTH = 8192; // Bound per-needle scan cost
 const MIN_VARIANT_LENGTH = 8; // Encoding variants (except JSON escaping) only for 8+ char secrets
 const REDACTED = '[redacted]';

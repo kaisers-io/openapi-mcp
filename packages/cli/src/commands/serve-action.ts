@@ -14,6 +14,7 @@ import {
   createClientCredentialsSource,
   createEnvelopeCompiler,
   lazyEnvelopeValidators,
+  MAX_REDACTED_SECRETS,
   discoverApprovalWarning,
   createExecutor,
   createCallStats,
@@ -52,7 +53,8 @@ import type {
 import pkg from '../../package.json' with { type: 'json' };
 import {
   apiViews,
-  assertSeparateApis,
+  assertSeparateBases,
+  assertSeparateNamespaces,
   combinedContentHash,
   parseImageResponseMode,
   resolveApiConfig,
@@ -649,13 +651,6 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
 
 type FinishedApi = Awaited<ReturnType<typeof finishApi>>;
 
-// The cache's own namespace of an API: its source (query string included)
-// and cache key
-const namespaceOf = (api: LoadedApi, ctx: CliContext): string => {
-  const source = canonicalSourceOf(parseSpecSource(api.args.source, { cwd: ctx.cwd() }));
-  return cacheNamespace(source, api.args.options.cacheKey);
-};
-
 // Hosts add their own prefix to a tool name and accept 64 characters at most
 // (Claude Code: mcp__<server>__<tool>; Cursor: 60 for server and tool name):
 // a qualified per-operation name longer than this leaves too little room
@@ -701,10 +696,30 @@ const prepareServe = async (
     );
   }
   const declared = views ?? [{ name: undefined, source: cmdOpts.spec, options: cmdOpts }];
-  // Every API's options are validated before any spec or network work
-  for (const view of declared) {
-    resolveApiConfig(view.options, ctx);
-    parseSpecPipelineArgs(view.options, ctx);
+  // Every API's options are validated before any spec or network work, and
+  // their caches are checked to be separate before any of them is touched
+  const namespaces = declared.map((view) => {
+    const viewConfig = resolveApiConfig(view.options, ctx);
+    const viewArgs = parseSpecPipelineArgs(view.options, ctx);
+    const source = canonicalSourceOf(parseSpecSource(viewArgs.source, { cwd: ctx.cwd() }));
+    return {
+      name: String(view.name),
+      namespace: cacheNamespace(source, viewArgs.options.cacheKey),
+      secrets: [
+        ...viewArgs.options.specHeaders.map((header) => header.value),
+        ...viewConfig.secretValues,
+      ].length,
+    };
+  });
+  if (views !== undefined) {
+    assertSeparateNamespaces(namespaces);
+    // One redactor holds the secrets of every API
+    const secrets = namespaces.reduce((sum, api) => sum + api.secrets, 0);
+    if (secrets > MAX_REDACTED_SECRETS) {
+      throw usageError(
+        `all APIs together configure ${String(secrets)} secret values (${namespaces.map((api) => `${api.name}: ${String(api.secrets)}`).join(', ')}); one server holds at most ${String(MAX_REDACTED_SECRETS)}`,
+      );
+    }
   }
   const loaded: LoadedApi[] = [];
   for (const view of declared) {
@@ -735,12 +750,8 @@ const prepareServe = async (
   }
   const multi = views !== undefined;
   if (multi) {
-    assertSeparateApis(
-      finished.map(({ api, resolvedBase }) => ({
-        name: String(api.name),
-        namespace: namespaceOf(api, ctx),
-        base: resolvedBase.url,
-      })),
+    assertSeparateBases(
+      finished.map(({ api, resolvedBase }) => ({ name: String(api.name), base: resolvedBase.url })),
     );
   }
   const [first] = finished as [FinishedApi, ...FinishedApi[]];
