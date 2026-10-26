@@ -32,24 +32,21 @@ export const qualifiedName = (api: string, toolName: string): string => {
   return full.length <= TOOL_NAME_MAX_LENGTH ? full : capped(full, 8);
 };
 
-// The qualified names of one API's tools, unique: two names that end up the
-// same (a shortened one and one that already looked like it) both take a
-// longer hash of their full name, until none is left twice (review of #16)
+// The qualified names of one API's tools, unique by construction: names are
+// taken in spec order, and one already taken (a shortened name and one that
+// already looked like it) becomes a hash of its full name and a counter, the
+// first that is free. Always terminates; the same spec gives the same names
+// (review of #16).
 const uniqueNames = (api: string, toolNames: readonly string[]): string[] => {
-  let names = toolNames.map((toolName) => qualifiedName(api, toolName));
-  for (let hashLength = 12; hashLength <= 32; hashLength += 4) {
-    const counts = new Map<string, number>();
-    for (const name of names) {
-      counts.set(name, (counts.get(name) ?? 0) + 1);
+  const taken = new Set<string>();
+  return toolNames.map((toolName) => {
+    let name = qualifiedName(api, toolName);
+    for (let attempt = 1; taken.has(name); attempt += 1) {
+      name = capped(`${api}_${toolName}#${String(attempt)}`, 12);
     }
-    if (names.every((name) => counts.get(name) === 1)) {
-      return names;
-    }
-    names = names.map((name, index) =>
-      counts.get(name) === 1 ? name : capped(`${api}_${toolNames[index] ?? ''}`, hashLength),
-    );
-  }
-  throw new Error(`the tool names of the API "${api}" cannot be made unique`);
+    taken.add(name);
+    return name;
+  });
 };
 
 // The API a qualified name belongs to

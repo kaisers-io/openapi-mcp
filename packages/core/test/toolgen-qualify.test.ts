@@ -68,6 +68,31 @@ describe('qualifyTools (#16)', () => {
     expect(again.tools.map((tool) => tool.toolName)).toStrictEqual(names);
   });
 
+  // Review of #16: names crafted to collide at every step still end unique
+  it('stays unique against names crafted to collide again and again', () => {
+    const long = 'x'.repeat(64);
+    const crafted = [long];
+    for (let round = 0; round < 6; round += 1) {
+      const built = qualifyTools(
+        buildTools(
+          crafted.map((name) => op(name)),
+          options,
+        ),
+        'shop',
+      );
+      const last = built.tools.at(-1)?.toolName ?? '';
+      crafted.push(last.slice('shop_'.length));
+    }
+    const names = qualifyTools(
+      buildTools(
+        crafted.map((name) => op(name)),
+        options,
+      ),
+      'shop',
+    ).tools.map((tool) => tool.toolName);
+    expect(new Set(names).size).toBe(crafted.length);
+  });
+
   it('reads the API back from the part before the first underscore', () => {
     expect(apiOfToolName('github_repos_get')).toBe('github');
     expect(apiOfToolName('my-shop_orders_list')).toBe('my-shop');
