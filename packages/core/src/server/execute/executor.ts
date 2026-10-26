@@ -31,7 +31,7 @@ import type { OutboundBudgets } from './request.ts';
 import { hopAuthorizer } from './hop-authorizer.ts';
 import { routeKey } from './route-table.ts';
 import type { RouteTable } from './route-table.ts';
-import { mapResponse } from './response.ts';
+import { mapResponse, mismatchOf } from './response.ts';
 import { imageOutcome, isImageResponse } from './image-result.ts';
 import { decorateResponseOutcome } from './forwarded-headers.ts';
 import { resolveUploads } from './uploads.ts';
@@ -109,6 +109,9 @@ export type ExecutorConfig = {
   images?: ImageResponses;
   // --uploads (#29): a binary field may name a file in this folder
   uploads?: Uploads;
+  // `--log json` (issue #24): a refused response also says why, in the
+  // call log only
+  diagnoseMismatches?: boolean;
   oauth?: {
     tokens: {
       getToken: () => Promise<{ ok: string } | { error: string }>;
@@ -745,6 +748,7 @@ const runUpstreamCall = async (
       // fields).
       ...(generated.projection === true ? { projectable: true } : {}),
       safeMethod: isSafeMethod(method),
+      ...(config.diagnoseMismatches === true ? { diagnose: true } : {}),
       ...(generated.projection === true && Array.isArray(data[PROJECTION_FIELD])
         ? { fields: data[PROJECTION_FIELD] as string[] }
         : {}),
@@ -778,12 +782,14 @@ const runUpstreamCall = async (
           Date.now(),
         )
       : mapRest();
+  const mismatch = mismatchOf(mapped);
   report({
     outcome: classifyUpstream(outcome, mapped),
     method,
     pathTemplate: generated.operation.path,
     upstreamMs,
     attempts,
+    ...(mismatch === undefined ? {} : { mismatch }),
     ...(outcome.kind === 'response'
       ? { status: outcome.status, responseBytes: outcome.bodyBytes.byteLength }
       : {}),

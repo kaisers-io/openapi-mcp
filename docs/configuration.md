@@ -256,6 +256,19 @@ Notes:
   `Retry-After` waits between them; `attempts` says how many requests were sent (a `401`
   token replay included). Arguments,
   header values, filled URLs and bodies are never logged, and every string is redacted.
+  When a response is refused because it does not match the operation's output schema, the
+  line also says why, under `mismatch`, so the spec can be fixed where it is wrong:
+  `{"category":"schema","keyword":"type","path":"/owner/email","expected":"string","observed":"null"}`.
+  `category` is `schema`, `empty_body`, `invalid_json`, `invalid_utf8`, `invalid_sequence` or
+  `unmatched_branch` (a status or media type the spec does not document). `path` points
+  into the response data and is built from the spec's property names only: an array
+  element is `*`, and a key the response added, an index or a value never appears. `path`
+  is left out where the location cannot be proven (through a `$ref`), where it contains a
+  configured secret, and where it is longer than 256 characters; it is never cut. With
+  `--output-schema defs` most repeated subschemas sit behind a `$ref`, so `path` is mostly
+  absent there. `expected` and `observed` are JSON type names, given only for a `type`
+  failure. A failed union is reported as its `anyOf` or `oneOf`. The client still gets the
+  same message, and without `--log json` nothing is computed.
   Whether or not `--log` is set, `openapi_mcp_status` reports process-local counters under
   `calls`: the total, counts by outcome, and p50/p95 of `upstreamMs` over the last 512 calls.
   These counters are visible to every client of the server: over `--http` with several
