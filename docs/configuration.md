@@ -510,8 +510,12 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
     request as a direct call. Omit `arguments` for an operation without inputs; `null` is
     rejected (`arguments: invalid_type`).
     Up to 4096 operations may be exposed.
-- `auto`: `discover` when more than 64 operations are exposed after filtering, otherwise
-  `per-operation`.
+- `auto`: `discover` when more than 64 operations are exposed after filtering, or when the tool
+  definitions a model sees (name, description and input schema, without the output schema)
+  take more than 40,000 bytes; otherwise `per-operation`. `serve` prints which rule picked
+  `discover`. The size rule catches small specs with very large schemas: over 194 public specs
+  a median definition takes 646 bytes, so 64 operations take about 40 KB, and 20 of 278
+  configurations with at most 64 operations took more, up to 439 KB.
 
 `--allow`/`--deny` and the read-only default apply unchanged: an operation they exclude is
 neither searchable nor callable (`call_operation` reports it as an unknown operation).

@@ -279,6 +279,73 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
     }
   }, 40_000);
 
+  // Issue #61: few operations with large input schemas also switch auto to
+  // discover, and serve says why
+  it('switches auto to discover when few operations have large tool definitions', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'openapi-mcp-wide-spec-'));
+    try {
+      const properties = Object.fromEntries(
+        Array.from({ length: 400 }, (_unused, index) => [
+          `field${String(index)}`,
+          { type: 'string', description: `Field number ${String(index)} of the order` },
+        ]),
+      );
+      const paths = Object.fromEntries(
+        Array.from({ length: 3 }, (_unused, index) => [
+          `/orders${String(index)}`,
+          {
+            post: {
+              operationId: `createOrder${String(index)}`,
+              requestBody: {
+                required: true,
+                content: { 'application/json': { schema: { type: 'object', properties } } },
+              },
+              responses: { '200': { description: 'ok' } },
+            },
+          },
+        ]),
+      );
+      const specPath = join(dir, 'wide.json');
+      await writeFile(
+        specPath,
+        JSON.stringify({ openapi: '3.1.0', info: { title: 'wide', version: '1' }, paths }),
+      );
+      const base = ['--spec', specPath, '--base-url', 'http://127.0.0.1:9', '--allow', 'path:/**'];
+      for (const [mode, count] of [
+        ['auto', 4],
+        ['per-operation', 4],
+      ] as const) {
+        const proc = await spawnServe([...base, '--tool-mode', mode]);
+        const { request, stderr } = session(proc);
+        const list = await request('tools/list');
+        const names = ((list.result?.['tools'] ?? []) as { name: string }[]).map(
+          (tool) => tool.name,
+        );
+        expect(names).toHaveLength(count);
+        if (mode === 'auto') {
+          expect(names).toContain('call_operation');
+          expect(stderr.join('')).toContain(
+            '--tool-mode auto: discover, since the tool definitions',
+          );
+          const described = await request('tools/call', {
+            name: 'describe_operation',
+            arguments: { name: 'createOrder1' },
+          });
+          expect(JSON.stringify(described.result)).toContain('field399');
+        } else {
+          expect(names).toContain('createOrder0');
+          expect(stderr.join('')).not.toContain('--tool-mode auto');
+        }
+        proc.kill('SIGTERM');
+        await exitOf(proc);
+        await rm(tempHome as string, { recursive: true, force: true });
+      }
+      tempHome = undefined;
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 40_000);
+
   it('rejects an unknown --tool-mode as a usage error before any spec work', async () => {
     const proc = await spawnServe(['--spec', 'does-not-exist.json', '--tool-mode', 'dynamic']);
     let stderr = '';

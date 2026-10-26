@@ -267,7 +267,10 @@ export type {
   WireSchema,
 } from './toolgen/index.ts';
 export {
+  AUTO_DISCOVER_DEFINITION_BYTES,
   AUTO_DISCOVER_THRESHOLD,
+  chooseToolMode,
+  definitionBytes,
   BOUNDARY_WITHHELD_ERROR_TEXT,
   BOUNDARY_WITHHELD_SUCCESS_TEXT,
   buildSnapshot,

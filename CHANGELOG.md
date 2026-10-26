@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configured secret is left out. Clients see no difference, and without `--log json` nothing is
   computed; measured on 100 KiB and 1 MiB responses, the time per call stays within noise.
 
+### Changed
+
+- **`--tool-mode auto` also decides by the size of the tool definitions (#61).** At or below 64
+  operations, `auto` now picks `discover` when the definitions a model sees (name, description
+  and input schema) take more than 40,000 bytes. Measured over 194 public specs, a median
+  definition takes 646 bytes, so 64 operations take about 40 KB; 20 of 278 configurations with
+  at most 64 operations took more, up to 439 KB. Above 64 operations nothing changes. `serve`
+  prints which rule picked `discover`; `--tool-mode per-operation` keeps one tool per operation.
+
 ## [0.5.0] - 2026-10-26
 
 ### BREAKING

@@ -31,7 +31,10 @@ import {
   parseSpecSource,
   qualifyTools,
   assignToolNames,
-  resolveToolMode,
+  AUTO_DISCOVER_DEFINITION_BYTES,
+  AUTO_DISCOVER_THRESHOLD,
+  chooseToolMode,
+  definitionBytes,
   runSpecPipeline,
   SPEC_BUDGETS,
   serveStdioSession,
@@ -462,6 +465,9 @@ type LoadedApi = {
   filterWarnings: string[];
   uploads: Awaited<ReturnType<typeof resolveUploadOptions>>;
   generated: ReturnType<typeof buildToolsDeferred>;
+  // Built in full when `--tool-mode auto` sizes the tool definitions; reused
+  // in either mode, never built twice (issue #61)
+  completed?: ReturnType<typeof completeTools>;
 };
 
 const loadApi = async (
@@ -544,14 +550,15 @@ const withApi = (name: string | undefined, lines: readonly string[]): string[] =
 // and the validators are shared and set later)
 const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) => {
   const { name, cmdOpts, apiConfig, args, result } = api;
-  const optOut = deferOutput
-    ? { built: api.generated, deadPatterns: [], warnings: [] }
-    : withOutputSchemaOptOut(
-        completeTools(api.generated),
-        args.filters.omitOutputSchema,
-        result.spec,
-        cmdOpts.strictFilters === true,
-      );
+  const optOut =
+    deferOutput && api.completed === undefined
+      ? { built: api.generated, deadPatterns: [], warnings: [] }
+      : withOutputSchemaOptOut(
+          api.completed ?? completeTools(api.generated),
+          args.filters.omitOutputSchema,
+          result.spec,
+          cmdOpts.strictFilters === true,
+        );
   const exposure = exposureReport(result, optOut.built, cmdOpts.strictFilters === true);
   // Several APIs (issue #16): every tool is named `<api>_<name>`, after the
   // opt-out and the exposure report, so their selectors and reports use the
@@ -753,7 +760,20 @@ const prepareServe = async (
       `${String(toolCount)} tools would be exposed by all APIs together — exceeds the ${String(budget)}-tool budget; narrow them with --allow or --deny`,
     );
   }
-  const toolMode = resolveToolMode(requestedToolMode, toolCount);
+  const choice = chooseToolMode(requestedToolMode, toolCount, () => {
+    for (const api of loaded) {
+      api.completed = completeTools(api.generated);
+    }
+    return definitionBytes(loaded.flatMap((api) => api.completed?.tools ?? []));
+  });
+  const { toolMode } = choice;
+  if (choice.reason !== undefined) {
+    emitWarnings(ctx, [
+      choice.reason === 'count'
+        ? `--tool-mode auto: discover, since ${String(toolCount)} operations are exposed (more than ${String(AUTO_DISCOVER_THRESHOLD)})`
+        : `--tool-mode auto: discover, since the tool definitions take more than ${String(AUTO_DISCOVER_DEFINITION_BYTES)} bytes; --tool-mode per-operation keeps one tool per operation`,
+    ]);
+  }
   // Under discover, each operation's output side is built on first use
   // (issue #47): nothing at startup lists it. --omit-output-schema needs
   // every tool's output schema to report its patterns, so it builds them now,
