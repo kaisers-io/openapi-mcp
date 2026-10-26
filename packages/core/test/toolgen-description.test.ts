@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composeDescription } from '../src/index.ts';
+import { buildTools, composeDescription, SYSTEM_HEADERS } from '../src/index.ts';
 import type { OperationRecord } from '../src/index.ts';
 
 const RLO = String.fromCodePoint(0x20_2e); // Right-to-Left Override — never paste raw
@@ -132,5 +132,54 @@ describe('composeDescription', () => {
     ).toBe(
       'Create Errors: 404: 見つかりません; 409: Resource authentication required; 413: Payload exceeded 1048576; 418: Error; 429: Rate limit: 100 requests',
     );
+  });
+});
+
+// Review of #49: what reaches the client keeps code examples whole, in the
+// tool description and in a body property's description; a text without
+// code keeps only the text of its links
+describe('markdown links in built tools', () => {
+  it('leaves a text with code whole and shortens links elsewhere', () => {
+    const example = 'send `[label](https://example.test)` to render a link';
+    const summary = `Create a note. For link rendering, ${example}. See [docs](https://docs.example.test).`;
+    const { tools } = buildTools(
+      [
+        {
+          toolName: 'createNote',
+          operation: {
+            method: 'post',
+            path: '/notes',
+            tags: [],
+            deprecated: false,
+            summary,
+            parameters: [],
+            requestBody: {
+              required: true,
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      body: { type: 'string', description: `Markdown; ${example}.` },
+                      title: {
+                        type: 'string',
+                        description: 'Shown in [lists](https://docs.example.test/lists).',
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            responses: { '204': { description: 'created' } },
+          },
+        },
+      ],
+      { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' },
+    );
+    const [tool] = tools;
+    expect(tool?.description).toBe(summary);
+    const wire = JSON.stringify(tool?.wireSchema);
+    expect(wire).toContain(`Markdown; ${example}.`);
+    expect(wire).toContain('"Shown in lists."');
   });
 });

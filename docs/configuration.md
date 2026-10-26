@@ -273,9 +273,10 @@ Notes:
   branch. A truncated result of such a tool tells the model to use `_fields`, but only
   for `GET`, `HEAD` and `QUERY`: repeating a write to see the rest of its answer could
   apply it twice. When the result is structured, the hint says that only the text copy is
-  cut and `structuredContent` is complete; every other truncated result says it was cut. Cost: `tools/list` grows by about 30% (measured: the
-  petstore fixture 907 → 1,174 bytes; 100 JSON GET operations 83,681 → 110,481 bytes),
-  paid in every session, which is why it is opt-in.
+  cut and `structuredContent` is complete; every other truncated result says it was cut.
+  Cost: `tools/list` grows by about 30% (measured: the petstore fixture 907 → 1,174 bytes;
+  100 JSON GET operations 83,681 → 110,481 bytes), paid in every session, which is why it is
+  opt-in.
 - Memory: each in-flight call may buffer up to `--max-response-bytes` of decompressed body.
   While a JSON result is processed, the call briefly holds a few copies of it: the bytes, the
   decoded text, and the parsed value that the MCP SDK then serializes. Plan for roughly
@@ -286,15 +287,15 @@ Notes:
 - Memory for large specs: Node's young generation sizes the peak memory of `serve` more than
   the spec does. With a spec the size of GitHub's REST description, set
   `NODE_OPTIONS=--max-semi-space-size=8` in the server entry's environment, for example
-  `"env": { "NODE_OPTIONS": "--max-semi-space-size=8" }`. Measured on macOS (Node 24, warm
-  cache) and Linux (#59):
+  `"env": { "NODE_OPTIONS": "--max-semi-space-size=8" }`. Measured with Node 24 and a warm
+  cache (#59); peak memory is the resident set size, default → 8 MB:
 
-  | Scenario | Peak memory, default → 8 MB | Startup | Per call |
-  |---|---|---|---|
-  | GitHub, `discover` | 297 → 189 MB | unchanged | unchanged |
-  | GitHub, `--allow tag:repos` | 292 → 227 MB | +5% (macOS) to −6% (Linux) | unchanged |
-  | DigitalOcean, default | 108 → 102 MB | unchanged | unchanged |
-  | 1 MB results, 8 in flight | 550 → 465 MB | | −4% throughput |
+  | Scenario | Peak memory, macOS | Peak memory, Linux | Startup | Per call |
+  |---|---|---|---|---|
+  | GitHub, `discover` | 297 → 189 MB | 215 → 169 MB | unchanged (macOS), −6% to −9% (Linux) | unchanged |
+  | GitHub, `--allow tag:repos` | 292 → 227 MB | 296 → 227 MB | +5% (macOS), −6% (Linux) | unchanged |
+  | DigitalOcean, default | 108 → 102 MB | 112 → 105 MB | unchanged | unchanged |
+  | 1 MB results, 8 in flight | 550 → 465 MB | not measured | | −4% throughput (macOS) |
 
   Per call, the median latency for 1 KB, 50 KB and 1 MB results and the throughput of 1 KB
   results stay within noise. Below 4 MB, startup of large specs gets slower (+8% at 2 MB,
@@ -488,7 +489,7 @@ openapi-mcp serve --spec https://api.example.com/openapi.json \
     (`--response-projection`) list their result fields instead, as `outputFields`: one
     entry per success response, with up to 150 `<pointer>: <type>` lines, every top-level
     field before a nested one and two levels deep (`truncated: true` when cut). For the
-    GitHub REST description a whole describe response is 11 to 19 KB instead of 44 to 154 KB.
+    GitHub REST description a whole describe response is 12 to 20 KB instead of 44 to 154 KB.
     `include_output_schema: false` leaves the list out too. The server validates every
     result against the output schema either way.
   - `call_operation` `{ name, arguments }` calls it. `arguments` is validated by that
@@ -559,7 +560,7 @@ response.
 `--no-output-schema-descriptions` leaves out the `description` keyword of every output
 schema, in `tools/list` and in `describe_operation`. Field descriptions, and the examples
 folded into them, are about half of an output schema: the GitHub `tools/list` above shrinks
-from 1,926,421 to 1,171,824 bytes (−39%). Only the keyword goes; a field named
+from 1,935,526 to 1,180,515 bytes (−39%). Only the keyword goes; a field named
 `description` stays, and validation is unchanged. It helps only when the client shows output
 schemas to the model, and the model then no longer sees what a result field means, so it is
 off by default. It combines with `--output-schema defs`.

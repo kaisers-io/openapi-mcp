@@ -39,9 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   validates every result against the output schema. A describe result without it carries
   `outputSchemaOmitted: true`. Pass `include_output_schema: true` to get it. Operations that
   accept `_fields` (`--response-projection`) list their result fields instead, as
-  `outputFields` with `<pointer>: <type>` lines (#49): 11 to 19 KB per GitHub describe response instead
-  of 44 to 154 KB. A client that relied on `outputSchema` in every describe result must now
-  ask for it.
+  `outputFields` with `<pointer>: <type>` lines (#49): 12 to 20 KB per GitHub describe
+  response instead of 44 to 154 KB. A client that relied on `outputSchema` in every describe
+  result must now ask for it.
 
 ### Added
 
@@ -172,13 +172,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   30 to 70 ms on every start; see [`docs/configuration.md`](docs/configuration.md).
 - **Fewer tokens per session and per call (#49).** Measured with the GitHub REST description
   (`--allow tag:repos`, 201 tools) and DigitalOcean (265 tools); the name, description and
-  input schema of every tool shrink by 9.8% and 13.2% for a client on MCP 2025-11-25, and by
-  6.9% and 8.6% for an older one. Every parameter, required field and parameter description
+  input schema of every tool shrink by 7.6% and 12.9% for a client on MCP 2025-11-25, and by
+  4.8% and 8.3% for an older one. Every parameter, required field and parameter description
   is unchanged.
   - A documented error that only restates its status (`401: Unauthorized`, `404: The
     resource was not found.`, `500: Server error.`) is left out of the tool description.
     Specific ones such as `422: Validation failed` stay.
-  - A markdown link in a description keeps its text and drops the URL.
+  - A markdown link in a description keeps its text and drops the URL. A description with
+    any code (a backtick or a `~~~` fence) is left whole, since there the link syntax can
+    be the request format.
   - Listed schemas leave out `$schema` when the negotiated MCP revision makes JSON Schema
     2020-12 the default (2025-11-25 and later). The `data` part of an output schema never
     carries it, since 2020-12 allows it only at a resource root.

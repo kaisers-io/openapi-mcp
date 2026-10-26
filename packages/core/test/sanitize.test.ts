@@ -129,6 +129,21 @@ describe('stripMarkdownLinks', () => {
     ).toBe('See "Creating a repo" and logo.');
   });
 
+  // Review of #49: inside code the syntax can be the request format itself
+  it('leaves links in code spans, code fences and escaped brackets alone', () => {
+    for (const text of [
+      'For link rendering, send `[label](https://example.com)`.',
+      'Send ``a `[x](https://a.example.test)` b``.',
+      '```\n[x](https://a.example.test)\n```',
+      '~~~markdown\n[label](https://example.test)\n~~~',
+      '\\` is a literal backtick. Send `[label](https://example.test)`.',
+      'See [docs](https://docs.example.test) and send `[a](b)`.',
+      'A literal \\[x](https://a.example.test).',
+    ]) {
+      expect(stripMarkdownLinks(text)).toBe(text);
+    }
+  });
+
   it('leaves brackets that are not links alone', () => {
     for (const text of ['a [b] (c)', '[x](has space)', 'arr[0](1', '[a](b(c))']) {
       expect(stripMarkdownLinks(text)).toBe(text);
