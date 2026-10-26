@@ -64,7 +64,7 @@ const DEFAULT_DIALECT_SINCE = '2025-11-25';
 export const hasDefaultDialect = (protocolVersion?: string): boolean =>
   protocolVersion !== undefined && protocolVersion >= DEFAULT_DIALECT_SINCE;
 
-const withoutDefaultDialect = (schema: unknown): unknown => {
+export const withoutDefaultDialect = (schema: unknown): unknown => {
   if (schema === null || typeof schema !== 'object' || !('$schema' in schema)) {
     return schema;
   }

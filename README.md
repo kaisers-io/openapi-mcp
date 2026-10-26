@@ -285,7 +285,8 @@ the model up front — about 30k tokens for DigitalOcean's read-only operations.
 `--tool-mode discover` the server lists three tools instead — `search_operations`,
 `describe_operation`, `call_operation` — and `tools/list` stays under 5 KB however many
 operations are exposed (up to 4096). Filters, validation and redaction apply exactly as for a
-direct call. `--tool-mode auto` picks `discover` above 64 exposed operations. Details and
+direct call. `--tool-mode auto` picks `discover` above 64 exposed operations, or when the tool definitions
+take more than 40,000 bytes. Details and
 trade-offs: [Tool modes](docs/configuration.md#tool-modes).
 
 ## Secrets

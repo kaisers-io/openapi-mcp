@@ -1,5 +1,8 @@
 import type { Command } from '@commander-js/extra-typings';
-import { AUTO_DISCOVER_THRESHOLD } from '@kaisers-io/openapi-mcp-core';
+import {
+  AUTO_DISCOVER_DEFINITION_BYTES,
+  AUTO_DISCOVER_THRESHOLD,
+} from '@kaisers-io/openapi-mcp-core';
 import { DEFAULT_IMAGE_DIR_MAX_BYTES } from '../image-options.ts';
 import { registerApiOptions } from '../api-options.ts';
 import { emitError } from '../output.ts';
@@ -86,7 +89,7 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
     )
     .option(
       '--tool-mode <mode>',
-      `per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above ${String(AUTO_DISCOVER_THRESHOLD)} operations)`,
+      `per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above ${String(AUTO_DISCOVER_THRESHOLD)} operations or ${String(AUTO_DISCOVER_DEFINITION_BYTES / 1000)} KB of tool definitions)`,
       'per-operation',
     )
     .option(

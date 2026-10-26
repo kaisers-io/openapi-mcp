@@ -15,6 +15,9 @@ import {
   mapResponse,
   parseFilterPattern,
   resolveToolMode,
+  chooseToolMode,
+  definitionBytes,
+  AUTO_DISCOVER_DEFINITION_BYTES,
   SYSTEM_HEADERS,
   textOutcome,
 } from '../src/index.ts';
@@ -187,6 +190,43 @@ describe('resolveToolMode', () => {
     expect(resolveToolMode('discover', 1)).toBe('discover');
     expect(resolveToolMode('auto', 64)).toBe('per-operation');
     expect(resolveToolMode('auto', 65)).toBe('discover');
+  });
+});
+
+// Issue #61: auto also counts the bytes of the definitions a model sees
+describe('chooseToolMode', () => {
+  it('switches auto by count first, and by definition size at or below the count threshold', () => {
+    const never = () => {
+      throw new Error('sized although the count decided');
+    };
+    expect(chooseToolMode('per-operation', 1, never)).toStrictEqual({ toolMode: 'per-operation' });
+    expect(chooseToolMode('discover', 1, never)).toStrictEqual({ toolMode: 'discover' });
+    expect(chooseToolMode('auto', 65, never)).toStrictEqual({
+      toolMode: 'discover',
+      reason: 'count',
+    });
+    expect(chooseToolMode('auto', 64, () => AUTO_DISCOVER_DEFINITION_BYTES)).toStrictEqual({
+      toolMode: 'per-operation',
+    });
+    expect(chooseToolMode('auto', 2, () => AUTO_DISCOVER_DEFINITION_BYTES + 1)).toStrictEqual({
+      toolMode: 'discover',
+      reason: 'size',
+    });
+  });
+
+  it('counts the UTF-8 bytes of name, description and input schema only', () => {
+    const tool = { toolName: 'getPet', description: 'Hündin', wireSchema: { type: 'object' } };
+    const expected = Buffer.byteLength(
+      JSON.stringify({ name: 'getPet', description: 'Hündin', inputSchema: { type: 'object' } }),
+    );
+    expect(definitionBytes([tool, tool])).toBe(2 * expected);
+    expect(definitionBytes([{ ...tool, outputSchema: { type: 'string' } } as typeof tool])).toBe(
+      expected,
+    );
+    const dialect = 'https://json-schema.org/draft/2020-12/schema';
+    expect(definitionBytes([{ ...tool, wireSchema: { $schema: dialect, type: 'object' } }])).toBe(
+      expected,
+    );
   });
 });
 

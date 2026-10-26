@@ -18,6 +18,7 @@ import { outputFieldsOf } from './output-fields.ts';
 import { presentedOutputSchema } from './wire-tools.ts';
 import type { OutputSchemaForm } from './wire-tools.ts';
 import { withEffect } from './effect.ts';
+import { withoutDefaultDialect } from './tool-list.ts';
 
 // Discovery tool mode (issue kaisers-io/openapi-mcp-archive#38): instead of one
 // MCP tool per operation, tools/list carries three package-authored tools that
@@ -47,12 +48,54 @@ export const AUTO_DISCOVER_THRESHOLD = 64;
 export const TOOL_MODES = ['per-operation', 'discover', 'auto'] as const;
 export type RequestedToolMode = (typeof TOOL_MODES)[number];
 
-export const resolveToolMode = (requested: RequestedToolMode, exposedCount: number): ToolMode => {
-  if (requested === 'auto') {
-    return exposedCount > AUTO_DISCOVER_THRESHOLD ? 'discover' : 'per-operation';
+// `--tool-mode auto` also switches to discover when the tool definitions a
+// model sees (name, description and input schema; hosts keep the output
+// schema from the model) take more bytes than this. Measured over 194
+// public specs (issue #61): a median definition takes 646 bytes, so 64
+// operations take about 40 KB, and 20 of 278 configurations with at most 64
+// operations took more, up to 439 KB. A guard against outliers derived from
+// the operation threshold, not a measured optimum.
+export const AUTO_DISCOVER_DEFINITION_BYTES = 40_000;
+
+type DefinedTool = { toolName: string; description: string; wireSchema: unknown };
+
+// The UTF-8 bytes of the definitions a model sees for these tools, as a
+// current client lists them (without the default `$schema`)
+export const definitionBytes = (tools: readonly DefinedTool[]): number =>
+  tools.reduce(
+    (sum, tool) =>
+      sum +
+      Buffer.byteLength(
+        JSON.stringify({
+          name: tool.toolName,
+          description: tool.description,
+          inputSchema: withoutDefaultDialect(tool.wireSchema),
+        }),
+      ),
+    0,
+  );
+
+export type ToolModeChoice = { toolMode: ToolMode; reason?: 'count' | 'size' };
+
+// `sizeOf` is only called for auto at or below the operation threshold
+export const chooseToolMode = (
+  requested: RequestedToolMode,
+  exposedCount: number,
+  sizeOf: () => number,
+): ToolModeChoice => {
+  if (requested !== 'auto') {
+    return { toolMode: requested };
   }
-  return requested;
+  if (exposedCount > AUTO_DISCOVER_THRESHOLD) {
+    return { toolMode: 'discover', reason: 'count' };
+  }
+  return sizeOf() > AUTO_DISCOVER_DEFINITION_BYTES
+    ? { toolMode: 'discover', reason: 'size' }
+    : { toolMode: 'per-operation' };
 };
+
+export const resolveToolMode = (requested: RequestedToolMode, exposedCount: number): ToolMode =>
+  chooseToolMode(requested, exposedCount, () => 0).toolMode;
 
 // Startup warning: under discover, a host that approves per
 // tool sees ONE approval surface, call_operation, for every exposed

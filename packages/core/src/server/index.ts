@@ -5,7 +5,10 @@ export {
   type SnapshotPipelineInput,
 } from './snapshot.ts';
 export {
+  AUTO_DISCOVER_DEFINITION_BYTES,
   AUTO_DISCOVER_THRESHOLD,
+  chooseToolMode,
+  definitionBytes,
   CALL_TOOL_NAME,
   DESCRIBE_TOOL_NAME,
   discoverApprovalWarning,
