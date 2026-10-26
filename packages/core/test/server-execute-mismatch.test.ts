@@ -324,6 +324,33 @@ describe('response mismatch diagnostics (#24)', () => {
     });
   });
 
+  // Review of #24: the undocumented-success refusal is rebuilt by its
+  // warning, the category stays
+  it('keeps the category of an undocumented success', () => {
+    const outputSchema = envelopeOf(USER);
+    const outcome = mapResponse({
+      outcome: response('{}', 201),
+      validator: compileEnvelopeValidator(outputSchema),
+      outputSchema,
+      redactor: createRedactor([]),
+      maxTextBytes: 4096,
+      undeclaredSuccessHint: '--default-response-is-error',
+      diagnose: true,
+    });
+    expect(outcome.content[0]?.text).toContain('do not retry it blindly');
+    expect(mismatchOf(outcome)).toStrictEqual({ category: 'unmatched_branch' });
+  });
+
+  // Review of #24: a name sanitizing would change would point elsewhere
+  it('leaves out a path whose names sanitizing would change', () => {
+    for (const name of ['name ', 'a\u0000b']) {
+      const named = { type: 'object', properties: { [name]: { type: 'string' } } };
+      const { mismatch } = refuse(envelopeOf(named), JSON.stringify({ [name]: 1 }));
+      expect(mismatch).toMatchObject({ keyword: 'type' });
+      expect(mismatch).not.toHaveProperty('path');
+    }
+  });
+
   it('works the same for a projected call', () => {
     const { mismatch } = refuse(envelopeOf(USER), JSON.stringify({ owner: { login: 1 } }), {
       fields: ['/owner/login'],

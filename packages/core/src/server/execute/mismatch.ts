@@ -141,9 +141,8 @@ const verifiedSteps = (
 
 // The pointer as shown, or undefined. Never cut: a cut could leave part of a
 // secret the redactor no longer recognizes, also one spanning two names
-// (review of #24). The whole pointer is redacted, before and after control
-// characters are stripped; a configured secret across names, or a pointer
-// still too long, drops the path.
+// (review of #24). The whole pointer is redacted; a configured secret across
+// names, a name sanitizing would change, or a pointer too long drops it.
 const shownPointer = (
   steps: readonly (string | undefined)[],
   redactor: Redactor,
@@ -155,8 +154,11 @@ const shownPointer = (
   const escaped = redactor.redactString(
     steps.map((step) => `/${step === undefined ? '*' : escapeToken(step)}`).join(''),
   );
-  const shown = redactor.redactString(sanitizeSpecText(escaped, escaped.length));
-  return shown.length > MAX_PATH ? undefined : shown;
+  // A name with control characters or edge whitespace would come out as
+  // another property's name, so it drops the path instead (review of #24)
+  return sanitizeSpecText(escaped, escaped.length) !== escaped || escaped.length > MAX_PATH
+    ? undefined
+    : escaped;
 };
 
 const jsonTypeOf = (value: unknown): string => {

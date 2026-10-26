@@ -592,18 +592,18 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
       'No structured result is returned: this status is not documented ' +
       `for the operation, and its output schema assumes the spec's "default" response covers ` +
       `errors only (${undeclaredSuccessHint})`;
-    return markSuccessClaim(
-      refused(
+    return refused(
+      markSuccessClaim(
         textOutcome(
           `the upstream reported success (status ${status}), so the request was likely applied; ` +
             `do not retry it blindly. ${reason}`,
           true,
         ),
-        diagnose,
-        'unmatched_branch',
+        `the upstream answered with status ${status} after a redirect or a retry, so the request ` +
+          `may have been applied; do not retry it blindly. ${reason}`,
       ),
-      `the upstream answered with status ${status} after a redirect or a retry, so the request ` +
-        `may have been applied; do not retry it blindly. ${reason}`,
+      diagnose,
+      'unmatched_branch',
     );
   }
   if (branch === undefined) {
