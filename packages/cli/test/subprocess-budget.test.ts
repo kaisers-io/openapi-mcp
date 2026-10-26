@@ -2,11 +2,17 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { LIGHT_SUBPROCESS_FILES, SUBPROCESS_E2E_FILES } from './subprocess-budget.ts';
+import {
+  LIGHT_SUBPROCESS_FILES,
+  REAL_SPEC_FILE,
+  SUBPROCESS_E2E_FILES,
+} from './subprocess-budget.ts';
 
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const packagesDir = join(repoRoot, 'packages');
-const CHILD_PROCESS_IMPORT = /from\s+['"](?:node:)?child_process['"]/u;
+// The import of node:child_process itself, or of the filter suites' harness, which spawns
+// `serve` for them
+const CHILD_PROCESS_IMPORT = /from\s+['"](?:(?:node:)?child_process|\.\/filter-harness\.ts)['"]/u;
 
 const testFilesUnder = async (dir: string): Promise<string[]> => {
   const entries = await readdir(dir, { recursive: true, withFileTypes: true });
@@ -27,7 +33,9 @@ describe('subprocess test budget', () => {
       packageNames.map((name) => testFilesUnder(join(packagesDir, name, 'test'))),
     );
     const files = perPackage.flat();
-    const e2e = new Set(SUBPROCESS_E2E_FILES.map((file) => `packages/cli/${file}`));
+    const e2e = new Set(
+      [...SUBPROCESS_E2E_FILES, REAL_SPEC_FILE].map((file) => `packages/cli/${file}`),
+    );
     const matches = await Promise.all(
       files.map(async (file) =>
         CHILD_PROCESS_IMPORT.test(await readFile(file, 'utf8'))
@@ -47,7 +55,9 @@ describe('subprocess test budget', () => {
 
   it('lists only files that exist and import node:child_process', async () => {
     const listed = [
-      ...SUBPROCESS_E2E_FILES.map((file) => join(repoRoot, 'packages/cli', file)),
+      ...[...SUBPROCESS_E2E_FILES, REAL_SPEC_FILE].map((file) =>
+        join(repoRoot, 'packages/cli', file),
+      ),
       ...Object.keys(LIGHT_SUBPROCESS_FILES).map((file) => join(repoRoot, file)),
     ];
     const checked = await Promise.all(
