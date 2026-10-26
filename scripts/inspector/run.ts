@@ -91,26 +91,8 @@ const home = await mkdtemp(join(tmpdir(), 'inspector-home-'));
 const specPath = join(home, 'spec.json');
 await writeFile(specPath, JSON.stringify(SPEC));
 
-const inspector = async (era: string, args: string[], spec = specPath): Promise<Run> => {
-  const argv = [
-    INSPECTOR,
-    '--cli',
-    '--protocol-era',
-    era,
-    '--format',
-    'json',
-    '-q',
-    process.execPath,
-    BIN,
-    'serve',
-    '--spec',
-    spec,
-    '--base-url',
-    `http://127.0.0.1:${String(port)}`,
-    '--allow-private-network',
-    ...args,
-  ];
-  // No inherited secrets: the server gets the throwaway HOME and PATH only
+// No inherited secrets: every child gets the throwaway HOME and PATH only
+const runNode = async (argv: string[]): Promise<Run> => {
   const child = spawn(process.execPath, argv, {
     env: { HOME: home, PATH: process.env['PATH'] ?? '' },
     timeout: 60_000,
@@ -126,6 +108,27 @@ const inspector = async (era: string, args: string[], spec = specPath): Promise<
   const [code] = (await once(child, 'close')) as [number | null];
   return { code: code ?? 1, stdout, stderr };
 };
+
+// `server` is the command the Inspector starts: the built bin, or corrupt.ts in front of it
+const inspector = (era: string, args: string[], spec = specPath, server = [BIN]): Promise<Run> =>
+  runNode([
+    INSPECTOR,
+    '--cli',
+    '--protocol-era',
+    era,
+    '--format',
+    'json',
+    '-q',
+    process.execPath,
+    ...server,
+    'serve',
+    '--spec',
+    spec,
+    '--base-url',
+    `http://127.0.0.1:${String(port)}`,
+    '--allow-private-network',
+    ...args,
+  ]);
 
 const parse = (output: Run): Output => {
   try {
@@ -152,6 +155,42 @@ const entries = await readdir(FIXTURES);
 const fixtures = entries.filter(
   (name) => /\.(?:json|yaml)$/u.test(name) && name !== 'hostile-path-key.json',
 );
+const CORRUPT = join(import.meta.dirname, 'corrupt.ts');
+const ALL = ['--allow', 'path:/**'];
+const DISCOVER_TOOLS = 'call_operation,describe_operation,openapi_mcp_status,search_operations';
+
+// The tools a client must see: one per operation as `openapi-mcp tools` reports them, plus the
+// status tool, or the discover tools. The Inspector drops a tool it cannot read and keeps the
+// rest, so "no issue and some tools" would pass with the operation tools gone.
+const expectedTools = async (spec: string, mode: string): Promise<string> => {
+  if (mode === 'discover') {
+    return DISCOVER_TOOLS;
+  }
+  const output = await runNode([BIN, '--json', 'tools', '--spec', spec, ...ALL]);
+  const report = JSON.parse(output.stdout) as { data: { tools: { name: string }[] } };
+  return [...report.data.tools.map((tool) => tool.name), 'openapi_mcp_status'].toSorted().join(',');
+};
+const listedTools = (output: Run): string =>
+  (parse(output).result?.tools ?? [])
+    .map((tool) => tool.name)
+    .toSorted()
+    .join(',');
+
+let sawAllowedIssue = false;
+const fixtureIsClean = async (
+  name: string,
+  mode: string,
+  server = [BIN],
+): Promise<Run & { clean: boolean; listed: string; expected: string }> => {
+  const spec = join(FIXTURES, name);
+  const args = ['--tool-mode', mode, ...ALL, '--method', 'tools/list', '--strict'];
+  const list = await inspector('modern', args, spec, server);
+  sawAllowedIssue ||= list.stderr.includes(`Issue: ${ALLOWED_ISSUE}`);
+  const listed = listedTools(list);
+  const expected = await expectedTools(spec, mode);
+  const clean = list.code === 0 && unexpectedIssues(list).length === 0 && listed === expected;
+  return { ...list, clean, listed, expected };
+};
 
 const call = (era: string, args: string) =>
   inspector(era, ['--method', 'tools/call', '--tool-name', 'getPet', '--tool-args-json', args]);
@@ -195,21 +234,39 @@ try {
     );
   }
 
-  // The schemas of every fixture, one tool per operation and the discover tools, carry no
-  // portability problem beyond the allowed one
+  // Every fixture lists all its tools (writes included), one per operation and in discover mode,
+  // with no portability problem beyond the allowed one
   for (const name of fixtures) {
     for (const mode of ['per-operation', 'discover']) {
-      const args = ['--tool-mode', mode, '--method', 'tools/list', '--strict'];
-      const list = await inspector('modern', args, join(FIXTURES, name));
+      const list = await fixtureIsClean(name, mode);
       check(
-        list.code === 0 &&
-          unexpectedIssues(list).length === 0 &&
-          (parse(list).result?.tools?.length ?? 0) > 0,
-        `${name} (${mode}): tools/list --strict has no portability problem`,
+        list.clean,
+        `${name} (${mode}): tools/list --strict lists every tool, no portability problem`,
         list,
       );
     }
   }
+  // A changed --strict output format would hide every issue: the allowed one must still show
+  check(sawAllowedIssue, 'a fixture still reports the allowed `type` array issue', {
+    code: 0,
+    stdout: '',
+    stderr: '',
+  });
+  // The fixture check fails when one operation tool has a schema the client rejects. The list
+  // itself must succeed and lack exactly the corrupted tool, so a wrapper or server that fails to
+  // start cannot pass as a detection.
+  const broken = await fixtureIsClean('petstore.json', 'per-operation', [CORRUPT, BIN]);
+  const expected = broken.expected.split(',');
+  const listed = broken.listed.split(',');
+  check(
+    !broken.clean &&
+      broken.code === 0 &&
+      listed.includes('openapi_mcp_status') &&
+      listed.length === expected.length - 1 &&
+      listed.every((tool) => expected.includes(tool)),
+    'a tool with an unreadable schema fails the fixture check',
+    broken,
+  );
 } finally {
   upstream.close();
   await rm(home, { recursive: true, force: true });
