@@ -539,16 +539,8 @@ const withApi = (name: string | undefined, lines: readonly string[]): string[] =
 // One API, finished for the chosen tool mode (phase 3): its tools, its
 // reports, and the executor configuration of its own calls (the redactor
 // and the validators are shared and set later)
-const finishApi = async (
-  api: LoadedApi,
-  toolMode: 'per-operation' | 'discover',
-  ctx: CliContext,
-) => {
+const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) => {
   const { name, cmdOpts, apiConfig, args, result } = api;
-  // Under discover, each operation's output side is built on first use
-  // (issue #47): nothing at startup lists it. --omit-output-schema needs
-  // every tool's output schema to report its patterns, so it builds them now.
-  const deferOutput = toolMode === 'discover' && args.filters.omitOutputSchema.length === 0;
   const optOut = deferOutput
     ? { built: api.generated, deadPatterns: [], warnings: [] }
     : withOutputSchemaOptOut(
@@ -729,9 +721,17 @@ const prepareServe = async (
     );
   }
   const toolMode = resolveToolMode(requestedToolMode, toolCount);
+  // Under discover, each operation's output side is built on first use
+  // (issue #47): nothing at startup lists it. --omit-output-schema needs
+  // every tool's output schema to report its patterns, so it builds them now,
+  // and then for every API: one snapshot holds either complete or deferred
+  // tools, never both (review of #16)
+  const deferOutput =
+    toolMode === 'discover' &&
+    loaded.every((api) => api.args.filters.omitOutputSchema.length === 0);
   const finished: FinishedApi[] = [];
   for (const api of loaded) {
-    finished.push(await finishApi(api, toolMode, ctx));
+    finished.push(await finishApi(api, deferOutput, ctx));
   }
   const multi = views !== undefined;
   if (multi) {

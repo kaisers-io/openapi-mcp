@@ -267,6 +267,27 @@ describe('serve — several APIs (#16)', () => {
     }
   });
 
+  // Review of #16: an opt-out in one API builds every API's tools completely,
+  // so discover never mixes complete and deferred tools
+  it('describes and calls every API in discover mode when one API opts out of a schema', async () => {
+    upstream.requests.length = 0;
+    const extra = ['--tool-mode', 'discover', '--omit-output-schema', 'shop=name:listOrders'];
+    await withServe(args(extra), home, async (session) => {
+      for (const name of ['crm_listContacts', 'shop_listOrders']) {
+        const described = await session.callTool('describe_operation', { name });
+        expect({ name, described }).toMatchObject({ name, described: { isError: false } });
+      }
+      const called = await session.callTool('call_operation', {
+        name: 'crm_listContacts',
+        arguments: {},
+      });
+      expect(called).toMatchObject({ kind: 'result', isError: false });
+    });
+    expect(upstream.requests).toStrictEqual([
+      { method: 'GET', url: '/crm/contacts', authorization: CRM_TOKEN },
+    ]);
+  });
+
   it('logs a mismatch with a single API too', async () => {
     await withServe(
       [

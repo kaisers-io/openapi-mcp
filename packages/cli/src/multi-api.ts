@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { API_NAME_PATTERN, usageError, withinApi } from '@kaisers-io/openapi-mcp-core';
+import { API_NAME_PATTERN, pathReadings, usageError } from '@kaisers-io/openapi-mcp-core';
 
 // Several APIs behind one `serve` (issue #16). `--api <name>=<source>` declares
 // one; every per-API option then starts with `<name>=`, and exactly that one
@@ -200,10 +200,24 @@ export const combinedContentHash = (apis: readonly { name: string; hash: string 
     .update(apis.map((api) => `${api.name}:${api.hash}`).join('\n'))
     .digest('hex');
 
-// The same test the credential scope applies (every reading of the path, in
-// any letter case), so `/shop%2Fv1` and `/shop/v1` overlap here as they would
-// at call time (review of #16)
-const within = (inner: URL, outer: URL): boolean => withinApi(outer)(inner);
+// Every way an upstream may read a base path (decoded or not), lower-cased,
+// without a trailing slash
+const readingsOf = (url: URL): string[] => [
+  ...new Set(
+    [url.pathname, ...pathReadings(url.pathname)].map(
+      (path) => `${path.replace(/\/+$/u, '').toLowerCase()}/`,
+    ),
+  ),
+];
+
+// Two bases overlap when any reading of one lies within any reading of the
+// other: an upstream that decodes `%2F` sees `/shop%2Fv1` and `/shop/v1%2Fsub`
+// as nested (review of #16)
+const overlap = (first: URL, second: URL): boolean =>
+  first.origin === second.origin &&
+  readingsOf(first).some((one) =>
+    readingsOf(second).some((other) => one.startsWith(other) || other.startsWith(one)),
+  );
 
 // No two APIs may share a cache namespace (different credentials would share
 // an authenticated entry), and no base URL may lie within another's, since
@@ -223,7 +237,7 @@ export const assertSeparateApis = (
   }
   for (const [index, first] of apis.entries()) {
     for (const second of apis.slice(index + 1)) {
-      if (within(first.base, second.base) || within(second.base, first.base)) {
+      if (overlap(first.base, second.base)) {
         throw usageError(
           `the base URLs of the APIs "${first.name}" and "${second.name}" overlap (${first.base.href}, ${second.base.href}); each API needs a base URL of its own`,
         );

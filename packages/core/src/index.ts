@@ -210,6 +210,7 @@ export type { DeadPattern, DeadPatternFlag, FilterTarget } from './filter/engine
 export { applyOutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
 export { API_NAME_PATTERN, apiOfToolName, qualifiedName, qualifyTools } from './toolgen/qualify.ts';
 export { withinApi } from './server/execute/hop-authorizer.ts';
+export { pathReadings } from './server/execute/path-readings.ts';
 export {
   compileRoutes,
   createRouteTable,

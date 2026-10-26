@@ -168,6 +168,20 @@ describe('assertSeparateApis (#16)', () => {
         api('b', 'https://api.example.test/shop/v1'),
       ]),
     ).toThrow('overlap');
+    // Nested once both are decoded, though neither contains every reading
+    // of the other
+    expect(() =>
+      assertSeparateApis([
+        api('a', 'https://api.example.test/shop%2Fv1'),
+        api('b', 'https://api.example.test/shop/v1%2Fsub'),
+      ]),
+    ).toThrow('overlap');
+    expect(() =>
+      assertSeparateApis([
+        api('a', 'https://api.example.test/shop%2Fv1'),
+        api('b', 'https://api.example.test/shop/v2'),
+      ]),
+    ).not.toThrow();
   });
 
   it('refuses two APIs in one cache namespace', () => {
