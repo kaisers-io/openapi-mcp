@@ -618,7 +618,10 @@ the rest is the value as for a single API.
   by all APIs.
 - **Tool names** are `<api>_<name>`, for example `github_repos_get`; `name:` selectors use the
   API's own names (`--allow github=name:repos_get`). A qualified name stays within 64
-  characters: a longer one keeps its start and ends with a hash of the full name. The API names
+  characters: a longer one keeps its start and ends with a hash of the full name. Names are
+  decided over every operation of the spec, so a name keeps naming the same operation however
+  the spec is ordered and whatever the filters expose; a name that fits wins over a shortened
+  one that lands on it. The API names
   `openapi`, `search`, `describe` and `call` are reserved, since they could form this
   server's own tool names. The common hosts rewrite `.` in tool names
   to `_` and one of them drops a tool whose rewritten name collides, which is why `_` is used.
@@ -632,11 +635,12 @@ the rest is the value as for a single API.
   `allow-offsite-redirects`, and even then it is sent without the API's credentials. Base URLs
   that overlap (one within another) and two APIs with the same spec and cache key are startup
   errors. Shared caches and overlapping `--base-url` values are refused before any spec or
-  cache is touched; a base URL that comes from a spec, once it is loaded. One redactor knows the secrets of every
-  API, so all APIs together may configure at most 64 secret values (header values, spec fetch
-  headers and the HTTP bearer token).
+  cache is touched; a base URL that comes from a spec, once it is loaded. One redactor knows
+  the secrets of every API, so all APIs together may configure at most 64 secret values (header
+  values, spec fetch headers and the HTTP bearer token).
 - **Startup:** if any spec fails to load, `serve` does not start. The tool budget (512 tools
-  per operation, 4,096 with `discover`) counts the tools of all APIs together, and at most 32
+  per operation, 4,096 with `discover`) counts the tools of all APIs together; each API is
+  also held to it on its own, counting its operations before omissions (see #67). At most 32
   APIs can be declared. `--tool-mode auto` decides on the total.
 - **Status:** `openapi_mcp_status` reports the sums and, under `apis`, each API's title,
   version, source, tool count, omissions and hash.

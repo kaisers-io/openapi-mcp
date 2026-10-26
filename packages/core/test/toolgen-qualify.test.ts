@@ -29,9 +29,11 @@ const options = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' as cons
 
 describe('qualifyTools (#16)', () => {
   it('prefixes built and deferred tools, and their completed form', () => {
-    const built = qualifyTools(buildTools([op('repos_get')], options), 'github');
+    const built = qualifyTools(buildTools([op('repos_get')], options), 'github', ['repos_get']);
     expect(built.tools.map((tool) => tool.toolName)).toStrictEqual(['github_repos_get']);
-    const deferred = qualifyTools(buildToolsDeferred([op('repos_get')], options), 'github');
+    const deferred = qualifyTools(buildToolsDeferred([op('repos_get')], options), 'github', [
+      'repos_get',
+    ]);
     const [tool] = deferred.tools;
     expect(tool?.toolName).toBe('github_repos_get');
     const completed = tool?.complete();
@@ -56,7 +58,10 @@ describe('qualifyTools (#16)', () => {
   it('resolves names that only collide once qualified', () => {
     const long = 'x'.repeat(64);
     const lookalike = qualifiedName('shop', long).slice('shop_'.length);
-    const built = qualifyTools(buildTools([op(long), op(lookalike)], options), 'shop');
+    const built = qualifyTools(buildTools([op(long), op(lookalike)], options), 'shop', [
+      long,
+      lookalike,
+    ]);
     const names = built.tools.map((tool) => tool.toolName);
     expect(new Set(names).size).toBe(2);
     for (const name of names) {
@@ -64,7 +69,10 @@ describe('qualifyTools (#16)', () => {
       expect(name.startsWith('shop_')).toBe(true);
     }
     // The same on every start
-    const again = qualifyTools(buildTools([op(long), op(lookalike)], options), 'shop');
+    const again = qualifyTools(buildTools([op(long), op(lookalike)], options), 'shop', [
+      long,
+      lookalike,
+    ]);
     expect(again.tools.map((tool) => tool.toolName)).toStrictEqual(names);
   });
 
@@ -79,9 +87,11 @@ describe('qualifyTools (#16)', () => {
           options,
         ),
         'shop',
+        crafted,
       );
-      const last = built.tools.at(-1)?.toolName ?? '';
-      crafted.push(last.slice('shop_'.length));
+      // Each round, a name that fits takes the shortened name's place
+      const shortened = built.tools[0]?.toolName ?? '';
+      crafted.push(shortened.slice('shop_'.length));
     }
     const names = qualifyTools(
       buildTools(
@@ -89,8 +99,32 @@ describe('qualifyTools (#16)', () => {
         options,
       ),
       'shop',
+      crafted,
     ).tools.map((tool) => tool.toolName);
     expect(new Set(names).size).toBe(crafted.length);
+  });
+
+  // Review of #16: decided over every operation of the spec, a name keeps
+  // naming the same operation when the spec is reordered or filtered
+  it('keeps each name on its operation, whatever the order and the filters', () => {
+    const long = 'x'.repeat(64);
+    const lookalike = qualifiedName('shop', long).slice('shop_'.length);
+    const all = [long, lookalike];
+    const namesOf = (toolNames: readonly string[], spec: readonly string[]) => {
+      const built = buildTools(
+        toolNames.map((name) => op(name)),
+        options,
+      );
+      const { tools } = qualifyTools(built, 'shop', spec);
+      return Object.fromEntries(tools.map((tool, index) => [toolNames[index], tool.toolName]));
+    };
+    const ordered = namesOf(all, all);
+    // The name that fits wins, the shortened one moves
+    expect(ordered[lookalike]).toBe(`shop_${lookalike}`);
+    expect(ordered[long]).not.toBe(`shop_${lookalike}`);
+    expect(namesOf(all.toReversed(), all.toReversed())).toStrictEqual(ordered);
+    expect(namesOf([long], all)).toStrictEqual({ [long]: ordered[long] });
+    expect(namesOf([lookalike], all)).toStrictEqual({ [lookalike]: ordered[lookalike] });
   });
 
   it('reads the API back from the part before the first underscore', () => {

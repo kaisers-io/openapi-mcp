@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { qualifiedName } from '@kaisers-io/openapi-mcp-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { startServe, startUpstream, withServe } from './filter-harness.ts';
 import type { Upstream } from './filter-harness.ts';
@@ -303,6 +304,53 @@ describe('serve — several APIs (#16)', () => {
     ];
     const start = startServe(shared, home);
     await expect(start).rejects.toThrow('load the same spec with the same cache key');
+  });
+
+  // Review of #16: a shortened name and one that already looks like it keep
+  // naming the same operation, whatever the order of the paths and whatever
+  // the filters expose
+  it('keeps every qualified name on its operation when the spec is reordered or filtered', async () => {
+    const long = 'x'.repeat(64);
+    const lookalike = qualifiedName('names', long).slice('names_'.length);
+    const paths = {
+      '/long': { get: { operationId: long, responses: ok } },
+      '/short': { get: { operationId: lookalike, responses: ok } },
+    };
+    const reversed = Object.fromEntries(Object.entries(paths).toReversed());
+    const run = async (file: string, spec: object, extra: readonly string[] = []) => {
+      writeFileSync(join(home, file), JSON.stringify({ ...SHOP, paths: spec }));
+      upstream.requests.length = 0;
+      const flags = [
+        '--api',
+        `names=${join(home, file)}`,
+        '--base-url',
+        `names=${upstream.url}/names`,
+        '--enable',
+        'names=allow-private-network',
+        '--enable',
+        'names=allow-insecure-http',
+        '--enable',
+        'names=trust-spec-updates',
+        ...extra,
+      ];
+      return withServe(flags, home, async (session) => {
+        const tools = await session.listTools();
+        await session.callTool(`names_${lookalike}`, {});
+        return { tools, urls: upstream.requests.map((request) => request.url) };
+      });
+    };
+    const ordered = await run('names-ordered.json', paths);
+    expect(ordered.urls).toStrictEqual(['/names/short']);
+    const other = await run('names-reversed.json', reversed);
+    expect(other.urls).toStrictEqual(['/names/short']);
+    expect(other.tools.toSorted()).toStrictEqual(ordered.tools.toSorted());
+    const narrowed = await run('names-ordered.json', paths, ['--deny', 'names=path:/short']);
+    expect(narrowed.tools).not.toContain(`names_${lookalike}`);
+    expect(narrowed.tools.filter((tool) => tool !== 'openapi_mcp_status')).toStrictEqual(
+      ordered.tools.filter(
+        (tool) => tool !== 'openapi_mcp_status' && tool !== `names_${lookalike}`,
+      ),
+    );
   });
 
   it('refuses more secrets than one server can redact, naming each API', async () => {

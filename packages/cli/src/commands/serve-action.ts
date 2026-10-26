@@ -30,6 +30,7 @@ import {
   isValidBearerToken,
   parseSpecSource,
   qualifyTools,
+  assignToolNames,
   resolveToolMode,
   runSpecPipeline,
   SPEC_BUDGETS,
@@ -554,8 +555,16 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
   const exposure = exposureReport(result, optOut.built, cmdOpts.strictFilters === true);
   // Several APIs (issue #16): every tool is named `<api>_<name>`, after the
   // opt-out and the exposure report, so their selectors and reports use the
-  // API's own names
-  const built = name === undefined ? optOut.built : qualifyTools(optOut.built, name);
+  // API's own names; decided over every operation, so filters never move a
+  // name to another operation
+  const built =
+    name === undefined
+      ? optOut.built
+      : qualifyTools(
+          optOut.built,
+          name,
+          assignToolNames(result.spec.operations).map((named) => named.toolName),
+        );
 
   // Resolve + validate the API base URL: --base-url (trusted, address
   // check skipped) else the spec-derived candidate (untrusted — a

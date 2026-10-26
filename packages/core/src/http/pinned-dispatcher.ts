@@ -520,6 +520,9 @@ export const pinnedRequest = async (
   // side-effecting hop chain capped at MAX_REDIRECTS.
   let url = initialUrl;
   let crossed = false;
+  // Leaving the credential scope (issue #16) strips credentials for good,
+  // but keeps the base origin's trust: the origin never changed
+  let leftScope = false;
   // A 303 See Other turns any method into a body-less GET (RFC 9110
   // §15.4.4); every other redirect keeps the original method.
   let method = opts.method.toUpperCase();
@@ -557,9 +560,9 @@ export const pinnedRequest = async (
     // credential scope), it never regains credentials, even bouncing back
     // later.
     if (opts.credentialScope !== undefined && !opts.credentialScope(url)) {
-      crossed = true;
+      leftScope = true;
     }
-    const onOriginalOrigin = url.origin === originalOrigin && !crossed;
+    const onOriginalOrigin = url.origin === originalOrigin && !crossed && !leftScope;
     const hopHeaders = onOriginalOrigin
       ? opts.headers.sameOriginHeaders
       : opts.headers.crossOriginHeaders;
