@@ -39,7 +39,12 @@ const SPEC = {
               'application/json': {
                 schema: {
                   type: 'object',
-                  properties: { id: { type: 'integer' }, name: { type: 'string' } },
+                  // `extra` has no type: listed as the union of every JSON type, not `{}`
+                  properties: {
+                    id: { type: 'integer' },
+                    name: { type: 'string' },
+                    extra: { description: 'Free-form' },
+                  },
                   required: ['id', 'name'],
                 },
               },

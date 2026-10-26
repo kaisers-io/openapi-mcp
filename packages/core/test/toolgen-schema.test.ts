@@ -1549,4 +1549,18 @@ describe('toWireJsonSchema', () => {
     const typed = wire({ type: 'object', additionalProperties: { type: 'string' } });
     expect(typed['additionalProperties']).toEqual({ type: 'string' });
   });
+
+  it('lists a typeless schema as the union of every JSON type, in both directions', () => {
+    const any = ['object', 'array', 'string', 'number', 'boolean', 'null'];
+    for (const mode of ['request', 'response'] as const) {
+      const empty = toWireJsonSchema(ok(convertSchema({}, '3.1', 0, mode)));
+      expect(empty['type']).toStrictEqual(any);
+      const described = toWireJsonSchema(ok(convertSchema({ description: 'x' }, '3.1', 0, mode)));
+      expect(described).toMatchObject({ type: any, description: 'x' });
+    }
+    const schema = ok(convertSchema({ description: 'x' }, '3.1'));
+    for (const value of [{}, [], 'a', 1, true, null]) {
+      expect(schema.safeParse(value).success).toBe(true);
+    }
+  });
 });
