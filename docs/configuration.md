@@ -631,9 +631,10 @@ the rest is the value as for a single API.
   shared origin: a redirect into another API's base path is refused unless the API enables
   `allow-offsite-redirects`, and even then it is sent without the API's credentials. Base URLs
   that overlap (one within another) and two APIs with the same spec and cache key are startup
-  errors, checked before any spec or cache is touched. One redactor knows the secrets of every
-  API, so all APIs together may configure at most 64 secret values (header values and spec
-  fetch headers).
+  errors. Shared caches and overlapping `--base-url` values are refused before any spec or
+  cache is touched; a base URL that comes from a spec, once it is loaded. One redactor knows the secrets of every
+  API, so all APIs together may configure at most 64 secret values (header values, spec fetch
+  headers and the HTTP bearer token).
 - **Startup:** if any spec fails to load, `serve` does not start. The tool budget (512 tools
   per operation, 4,096 with `discover`) counts the tools of all APIs together, and at most 32
   APIs can be declared. `--tool-mode auto` decides on the total.

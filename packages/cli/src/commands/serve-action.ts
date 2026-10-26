@@ -704,6 +704,7 @@ const prepareServe = async (
     const source = canonicalSourceOf(parseSpecSource(viewArgs.source, { cwd: ctx.cwd() }));
     return {
       name: String(view.name),
+      base: viewConfig.baseUrlOverride,
       namespace: cacheNamespace(source, viewArgs.options.cacheKey),
       secrets: [
         ...viewArgs.options.specHeaders.map((header) => header.value),
@@ -713,8 +714,16 @@ const prepareServe = async (
   });
   if (views !== undefined) {
     assertSeparateNamespaces(namespaces);
-    // One redactor holds the secrets of every API
-    const secrets = namespaces.reduce((sum, api) => sum + api.secrets, 0);
+    // Explicit base URLs are known now; a spec-derived one only once loaded
+    assertSeparateBases(
+      namespaces.flatMap(({ name, base }) =>
+        base === undefined ? [] : [{ name, base: new URL(base) }],
+      ),
+    );
+    // One redactor holds the secrets of every API, and the HTTP bearer token
+    const secrets =
+      namespaces.reduce((sum, api) => sum + api.secrets, 0) +
+      (httpConfig?.auth.kind === 'static' ? 1 : 0);
     if (secrets > MAX_REDACTED_SECRETS) {
       throw usageError(
         `all APIs together configure ${String(secrets)} secret values (${namespaces.map((api) => `${api.name}: ${String(api.secrets)}`).join(', ')}); one server holds at most ${String(MAX_REDACTED_SECRETS)}`,

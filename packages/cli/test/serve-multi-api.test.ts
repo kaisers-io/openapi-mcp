@@ -385,6 +385,11 @@ describe('serve — several APIs (#16)', () => {
       'crm=allow-private-network',
     ];
     await expect(startServe(overlapping, home)).rejects.toThrow('overlap');
+    // Review of #16: explicit base URLs are refused before any spec is loaded
+    const missingSpecs = overlapping.map((value) =>
+      value.endsWith('.json') ? value.replace('.json', '-missing.json') : value,
+    );
+    await expect(startServe(missingSpecs, home)).rejects.toThrow('overlap');
     const broken = [...args(), '--api', `missing=${join(home, 'missing.json')}`];
     await expect(startServe(broken, home)).rejects.toThrow(/serve exited/u);
   });
