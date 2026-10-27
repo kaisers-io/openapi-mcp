@@ -106,8 +106,8 @@ args = [
 ]
 ```
 
-Restart the host, and the agent sees the API's read operations as tools. If the description has
-no absolute `servers` URL, add `--base-url https://api.example.com` to the arguments.
+If the description has no absolute `servers` URL, add `--base-url https://api.example.com` to
+the arguments.
 
 If the API needs a token, add `"--header-env", "Authorization=SHOP_TOKEN"` to the arguments.
 The server then sends the value of the environment variable `SHOP_TOKEN` as the
@@ -118,8 +118,9 @@ by the token. The host must pass the variable on: in Claude Code add
 [credentials guide](docs/credentials.md) shows how to set the variable without writing the
 token into a file or your shell history.
 
-Before the host starts the server, `check` tells you whether it would start with these options:
-run the same arguments with `check` instead of `serve`. The [hosts guide](docs/hosts.md) covers
+To find out whether the server would start with these options, run the same arguments with
+`check` instead of `serve`. Then restart the host, and the agent sees the API's read operations
+as tools. The [hosts guide](docs/hosts.md) covers
 the other hosts, Windows, a description that needs its own credentials, and serving over HTTP.
 
 ## Choose what the agent may do

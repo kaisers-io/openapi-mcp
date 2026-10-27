@@ -33,7 +33,7 @@ Every defense below comes on top of this requirement. None of them replaces it.
   |---|---|
   | Spec fetch time | `--timeout`, 30 seconds by default |
   | Spec size | 20 MiB |
-  | YAML alias expansion | 1,000 aliases resolved |
+  | YAML alias expansion | an expansion budget of 1,000 per alias (`maxAliasCount`), not a cap on the number of aliases |
   | Parse depth | 128 levels |
   | `$ref` expansion depth | 64 levels |
   | Operations in the document | 4,096 |
