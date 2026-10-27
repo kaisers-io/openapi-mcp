@@ -238,6 +238,15 @@ const main = async (): Promise<void> => {
   const selected = scenarios.filter(
     (scenario) => scenario.host === host && (ids.length === 0 || ids.includes(scenario.id)),
   );
+  // A misspelled or other-host scenario must not pass as an empty, green run
+  const unknown = ids.filter((id) => !selected.some((scenario) => scenario.id === id));
+  if (selected.length === 0 || unknown.length > 0) {
+    process.stderr.write(
+      `no ${host} scenario ${unknown.length > 0 ? unknown.join(', ') : 'selected'}\n`,
+    );
+    process.exitCode = 2;
+    return;
+  }
   let failed = 0;
   for (const scenario of selected) {
     const project = await prepare(scenario, version);

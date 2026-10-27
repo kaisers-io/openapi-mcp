@@ -51,7 +51,8 @@ const SECRET_PATTERNS = [
   /Bearer [A-Za-z0-9._~+/-]{20,}/u,
 ];
 // An env value in a JSON example must be a variable reference, never a literal
-const ENV_LITERAL = /"[A-Z][A-Z0-9_]*":\s*"(?!\$)[^"]*"/u;
+const ENV_OBJECT = /"env"\s*:\s*\{(?<entries>[^}]*)\}/gu;
+const ENV_LITERAL = /"[A-Z][A-Z0-9_]*"\s*:\s*"(?!\$)[^"]*"/u;
 
 export type Frontmatter = Record<string, string | Record<string, string>>;
 
@@ -120,9 +121,11 @@ export const checkText = (lookup: Lookup, path: string, text: string, problems: 
       problems.push(`${path}: contains a value that looks like a credential`);
     }
   }
-  for (const line of text.split('\n')) {
-    if (line.includes('"env"') && ENV_LITERAL.test(line.slice(line.indexOf('"env"')))) {
-      problems.push(`${path}: an env value is a literal, not a variable reference: ${line.trim()}`);
+  // Every env object, also one written over several lines; PATH may hold a literal directory
+  for (const match of text.matchAll(ENV_OBJECT)) {
+    const entries = (match.groups?.['entries'] ?? '').replaceAll(/"PATH"\s*:\s*"[^"]*"/gu, '');
+    if (ENV_LITERAL.test(entries)) {
+      problems.push(`${path}: an env value is a literal, not a variable reference`);
     }
   }
   for (const match of text.matchAll(REPO_LINK)) {

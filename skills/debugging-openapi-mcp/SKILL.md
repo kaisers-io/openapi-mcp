@@ -62,7 +62,7 @@ predates `help` and `check`: run the steps with the latest version too, and read
 
 ### 3. Environment
 
-Use the executable the host runs (`command -v npx`, `node --version`; Node must be 22.19 or
+Use the executable the host runs (`node -p process.execPath`, `node --version`; Node must be 22.19 or
 later, or 24.11 or later). For each variable the entry names, check that it is set without
 printing it: `[ -n "${NAME:-}" ] && echo set || echo missing` (PowerShell:
 `$null -ne $env:NAME`). The agent's shell may differ from the host's environment: a variable

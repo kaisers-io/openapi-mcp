@@ -47,7 +47,9 @@ unset token
 exec npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --header-env 'Authorization=SHOP_API_TOKEN'
 ```
 
-- Set `PATH` to the directory of `command -v node`: `npx` starts `node` through `PATH`.
+- Set `PATH` to the output of `dirname "$(node -p process.execPath)"`: `npx` starts `node`
+  through `PATH`, and `command -v node` can name a version manager's shim that only works in
+  its shell.
 - Leave out `Bearer ` for an API key, and use the API's own header name in `--header-env`.
 - `chmod 700 ~/.config/openapi-mcp/shop.sh`. The script holds no secret.
 - The host entry runs the script with no arguments; the host file says where.

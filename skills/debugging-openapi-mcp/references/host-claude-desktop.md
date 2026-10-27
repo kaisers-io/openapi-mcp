@@ -24,8 +24,17 @@ Settings, Developer, Edit Config opens the file.
 ```
 
 Claude Desktop starts from the Dock or the Start menu and does not load the shell profile, so
-variables exported in `~/.zshrc` do not reach the server. Use a start script that loads the credentials and starts the CLI as `command`. Without credentials, `command` can be the absolute path of `npx` (from
-`command -v npx`) with the usual `args`.
+variables exported in `~/.zshrc` do not reach the server, and its `PATH` may not contain `node`.
+Use a start script that loads the credentials, sets `PATH` and starts the CLI as `command`.
+Without credentials, `command` can be the absolute path of `npx` next to `node` with the usual
+`args`, plus a `PATH` that holds that directory, since `npx` starts `node` through `PATH`:
+
+```json
+"env": { "PATH": "/Users/<name>/.nvm/versions/node/v24.11.0/bin:/usr/bin:/bin" }
+```
+
+Take the directory from `dirname "$(node -p process.execPath)"`; `command -v node` can name a
+version manager's shim that only works in its shell.
 
 ## Status and logs
 

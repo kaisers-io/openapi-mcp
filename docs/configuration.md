@@ -1063,7 +1063,7 @@ Each command has `name`, `description`, `arguments` (`name`, `required`, `variad
 | `bareValue` | the value of an optional-argument flag given without one (`--nullable-response-fields` means `all`) |
 | `repeatable` | the option can be given several times |
 | `choices` | the accepted values; absent means the CLI does not list them, not that any value works |
-| `perApi` | `serve` with `--api`: `prefix` takes `<api>=` before the value; `prefix-or-all` (`--deny`) applies to every API without one; `enable` is a switch set with `--enable <api>=<switch>` |
+| `perApi` | `serve` or `check` with `--api`: `prefix` takes `<api>=` before the value; `prefix-or-all` (`--deny`) applies to every API without one; `enable` is a switch set with `--enable <api>=<switch>` |
 
 ## `doctor`
 
@@ -1103,8 +1103,8 @@ openapi-mcp --json doctor
 | `4` | not found | unreadable spec file, missing cache entry, `cache unlock` on an entry without a lock |
 | `5` | conflict | cache lock held by another process, `cache promote --hash` mismatch |
 
-With the global `--json` flag, `tools`, `check`, `help`, `doctor` and the `cache` commands print an error as
-`{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`. Two exceptions print plain
+With the global `--json` flag, `tools`, `check`, `help`, `doctor` and the `cache`
+commands print an error as `{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`. Two exceptions print plain
 text on stderr whatever the flags: `serve`, whose stdout is reserved for MCP traffic (it stays
 empty on an error), and the launcher's platform and Node version checks (exit `1`), which run
 before any option is parsed.

@@ -9,7 +9,7 @@ Read the `check` output first: `environment` lists every variable, `startup` the
 
 | Evidence | Cause | Fix |
 |---|---|---|
-| `Executable not found`, `ENOENT`, `command not found` | the host cannot find `npx`; GUI apps often lack the terminal's `PATH` | absolute path from `command -v npx` |
+| `Executable not found`, `ENOENT`, `command not found` | the host cannot find `npx`; GUI apps often lack the terminal's `PATH` | the directory of `node -p process.execPath` in `PATH`, or a start script that sets it |
 | `EINVAL` or "client closed" on Windows | `npx` is a `.cmd` file | `"command": "cmd"`, `"args": ["/d", "/c", "npx", ...]` |
 | `requires Node` | Node below 22.19, or 23 | install Node 24, then point the host at it |
 | timeout on the first start | `npx` downloads the package | raise the host's startup timeout (host file); start once by hand to fill the cache |
