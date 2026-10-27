@@ -6,6 +6,8 @@
 agents in Claude Code, Codex and other MCP hosts can call. There is no code to generate and
 nothing to deploy.
 
+<a id="defaults"></a>
+
 Without any configuration, the agent can only read (`GET`, `HEAD` and `QUERY` operations),
 credentials come only from environment variables, every call is checked against the
 operation's schema, and a changed API description waits for your approval before the server
@@ -30,6 +32,8 @@ server works:
 npx skills add kaisers-io/openapi-mcp --skill configuring-openapi-mcp
 npx skills add kaisers-io/openapi-mcp --skill debugging-openapi-mcp
 ```
+
+<a id="install"></a><a id="quick-start"></a>
 
 ## Set it up by hand
 
@@ -89,6 +93,8 @@ script. Use `"command": "cmd"` with `"args": ["/d", "/c", "npx", "-y", ...]` the
 Pin an exact version, as above, and never `latest`: the server runs with your API credentials
 every time the host starts it. Without `--trust-spec-updates`, a description fetched with
 `--spec-header-env` also needs `--cache-key`.
+
+<a id="options-worth-knowing"></a>
 
 ## Choose what the agent may do
 

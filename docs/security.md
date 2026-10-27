@@ -5,6 +5,8 @@ deliberately, and what stays your responsibility whatever you configure. Read it
 expose write operations, serve over HTTP, or point the server at a spec you do not maintain.
 Setup steps live in the guides; this page states the guarantees and their limits.
 
+<a id="the-load-bearing-assumption-trust-the-spec-source"></a>
+
 ## Trust the spec source
 
 `openapi-mcp` reads the OpenAPI document at `--spec` at runtime. Nobody compiles or reviews it
@@ -68,6 +70,8 @@ Every defense below comes on top of this requirement. None of them replaces it.
   so approval by restart would be easy to bypass. [Spec updates and the cache](spec-updates.md)
   shows the workflow.
 
+<a id="the-egress-trust-boundary-ssrf"></a>
+
 ## Outbound requests (SSRF)
 
 The spec fetch and every API request go through the same hardened fetch code and the same
@@ -113,7 +117,8 @@ checks:
   sensitive, whatever its name.
 - Header names must be unique, ignoring letter case, within the spec-fetch headers
   (`--spec-header-env`) and within the API headers (`--header` and `--header-env`). The two sets
-  are separate, so both may set `Authorization`. A duplicate is a usage error. A control character (CR or LF) in a header name or value is an error too.
+  are separate, so both may set `Authorization`. A duplicate is a usage error. A control
+  character (CR or LF) in a header name or value is an error too.
 - Cache entries never contain credentials, headers, or URLs with query strings. The cache
   metadata stores a redacted display source: origin and path only.
 - The server registers every secret at startup with one central redactor. The redactor runs
@@ -630,5 +635,7 @@ You still must:
 - treat any `--base-url` you set as an explicit, trusted decision. It skips the private-range
   check that applies to origins taken from the spec.
 
-Maintainers: the dependency audit and what to do when it fails are in
+## Dependency audit (maintainers)
+
+The dependency audit and what to do when it fails are in
 [CONTRIBUTING.md](../CONTRIBUTING.md#dependency-audit).

@@ -104,7 +104,8 @@ own, with no `initialize` handshake and no session state, so it never issues an
 `Mcp-Session-Id` and ignores one a client sends. It answers older, 2025-era clients the same
 stateless way.
 
-The endpoint accepts only `POST`. `GET` and `DELETE` get `405` with an `Allow: POST` header.
+The endpoint accepts only `POST`. Any other method, such as `GET` or `DELETE`, gets `405`
+with an `Allow: POST` header.
 A client cancels a call by closing the request stream. There is no separate cancel call. The
 server does not check the request path, and the examples use `/mcp`.
 

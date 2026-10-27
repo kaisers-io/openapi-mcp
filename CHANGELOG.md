@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own version, and proposes the config changes an update needs. `debugging-openapi-mcp` finds
   why a server does not start, lists fewer tools than expected or returns errors, from `check`,
   `tools`, the host's status and its log. `pnpm skills:check` keeps both in line with the CLI.
-  See [Agent skills](README.md#agent-skills-optional).
+  See [Agent skills](README.md#set-it-up-with-your-agent).
 
 - **`check` runs the startup checks of `serve` without serving (#77).** It takes the same
   options, lists every environment variable they name as set or missing (all of them, never a

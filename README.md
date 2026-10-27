@@ -38,6 +38,8 @@ as FreeBSD, are refused because they are untested, not because they are known to
 Node.js comes with `npx`, which runs the commands below in a terminal without installing
 anything else.
 
+<a id="agent-skills-optional"></a>
+
 ## Set it up with your agent
 
 Two [agent skills](https://agentskills.io) let your agent do the setup with you. They work in
@@ -64,6 +66,8 @@ To pin the skills to a release, add its tag:
 `npx skills add kaisers-io/openapi-mcp#vX.Y.Z --skill configuring-openapi-mcp`. A skill's
 `metadata.version` is the CLI version it was checked against. The skills only run the commands
 and write the files this documentation describes, so you can always configure by hand instead.
+
+<a id="install"></a><a id="quickstart"></a><a id="use-as-an-mcp-server"></a>
 
 ## Set it up by hand
 
@@ -123,6 +127,8 @@ To find out whether the server would start with these options, run the same argu
 as tools. The [hosts guide](docs/hosts.md) covers
 the other hosts, Windows, a description that needs its own credentials, and serving over HTTP.
 
+<a id="filtering"></a>
+
 ## Choose what the agent may do
 
 `--allow` and `--deny` select operations by method, path, operationId, tag or tool name. Any
@@ -132,9 +138,13 @@ the other hosts, Windows, a description that needs its own credentials, and serv
 npx -y @kaisers-io/openapi-mcp@0.5.0 tools --spec ./shop.json --allow "tag:Orders" --deny "method:delete"
 ```
 
-`tools` shows which operations become tools with these filters, and lists every other operation
-with the reason. In a host config, the same patterns go into the `serve` arguments. The
-[filtering guide](docs/filtering.md) explains every selector, with tested examples.
+`tools` shows which operations become tools with these filters and how many it left out. Add
+`--json` before `tools` to see every left-out operation with its reason, under `notExposed`.
+In a host config, the same patterns go into the `serve` arguments. The [filtering
+guide](docs/filtering.md) explains every selector, with tested examples.
+
+<a id="windows-hosts"></a><a id="http-transport"></a><a id="caching--refresh"></a>
+<a id="large-apis---tool-mode-discover"></a><a id="other-options-and-behaviour"></a><a id="documentation"></a>
 
 ## More topics
 

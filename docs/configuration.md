@@ -163,8 +163,9 @@ to every API. These switches are set per API with `--enable`: `trust-spec-update
 
 ### HTTP transport flags
 
-[http.md](http.md) explains how to serve over HTTP, and [security.md](security.md#http-mode-authentication-and-limits)
-describes the authentication model. Every flag in this table except `--http` itself needs `--http`.
+[http.md](http.md) explains how to serve over HTTP, and
+[security.md](security.md#http-mode-authentication-and-limits) describes the authentication
+model. Every flag in this table except `--http` itself needs `--http`.
 
 | Flag | Repeatable | Meaning | Default |
 |---|---|---|---|
@@ -232,7 +233,7 @@ Binary request bodies and `--uploads` are explained in
 The supported query parameter styles are listed in
 [requests-and-responses.md](requests-and-responses.md).
 
-### Multipart form-data bodies
+### `multipart/form-data` bodies
 
 How `multipart/form-data` request bodies become tool arguments is explained in
 [requests-and-responses.md](requests-and-responses.md).
