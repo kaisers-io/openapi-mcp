@@ -74,6 +74,7 @@ const load = async (): Promise<void> => {
     join(ROOT, 'README.md'),
     join(ROOT, 'CHANGELOG.md'),
     join(ROOT, 'packages', 'cli', 'package.json'),
+    join(ROOT, 'scripts', 'inspector', 'package.json'),
     ...docs.filter((name) => name.endsWith('.md')).map((name) => join(ROOT, 'docs', name)),
   ];
   await Promise.all(
@@ -182,6 +183,27 @@ const sync = async (): Promise<void> => {
   );
 };
 
+// The MCP Inspector version the skills tell agents to run is the one CI tests with
+const INSPECTOR_PIN = /@modelcontextprotocol\/inspector@(?<version>[^\s`'"]+)/gu;
+
+const inspectorVersion = (): string => {
+  const manifest = JSON.parse(read(join(ROOT, 'scripts', 'inspector', 'package.json'))) as {
+    devDependencies: Record<string, string>;
+  };
+  return manifest.devDependencies['@modelcontextprotocol/inspector'] ?? '';
+};
+
+const checkInspectorPins = (path: string, text: string, problems: string[]): void => {
+  for (const match of text.matchAll(INSPECTOR_PIN)) {
+    const version = match.groups?.['version'];
+    if (version !== inspectorVersion()) {
+      problems.push(
+        `${path}: runs @modelcontextprotocol/inspector@${String(version)}, but scripts/inspector pins ${inspectorVersion()}`,
+      );
+    }
+  }
+};
+
 const checkSkill = (skill: Skill, problems: string[]): void => {
   const skillPath = join(skill.dir, 'SKILL.md');
   const text = read(skillPath);
@@ -229,6 +251,7 @@ const checkSkill = (skill: Skill, problems: string[]): void => {
     const path = join(skill.dir, file);
     const reference = read(path);
     checkText(lookup, path, reference, problems);
+    checkInspectorPins(path, reference, problems);
     const others = (reference.match(REFERENCE) ?? []).filter((link) => link !== file);
     if (others.length > 0 || /\]\((?!https?:)[^)]*\.md/u.test(reference)) {
       problems.push(`${path}: links another reference file; link it from SKILL.md instead`);
