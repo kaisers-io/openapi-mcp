@@ -54,7 +54,7 @@ describe('filter recipes of the configuring skill', () => {
       'read-only',
       'reads-and-create',
       'orders-without-delete',
-      'never-delete',
+      'all-but-delete',
     ]);
   });
 

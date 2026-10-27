@@ -26,9 +26,10 @@ who clicks "always allow" for it allows every exposed write. Recommend:
 
 ## Smaller tool definitions
 
-When the definitions are large and the user keeps `per-operation`:
+The size `auto` measures counts tool names, descriptions and input schemas. Fewer exposed
+operations lower it; nothing else does.
 
-- `--output-schema defs` writes repeated schema parts once
-- `--no-output-schema-descriptions` drops field descriptions from output schemas
-
-Both keep validation unchanged. Recommend them only when `check` shows `size` as the reason.
+Output schemas are listed too, outside that measure. Under `per-operation` they can be most of
+`tools/list`; `--output-schema defs` writes repeated parts once, and
+`--no-output-schema-descriptions` drops their field descriptions. Both keep validation
+unchanged.

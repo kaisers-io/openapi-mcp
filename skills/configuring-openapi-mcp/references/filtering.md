@@ -38,7 +38,7 @@ expose operations nobody looked at.
 | only look things up | none (the read-only default) |
 | look things up and create orders | `--allow "method:get" --allow "operationId:createOrder"`, plus `method:head` and `method:query` when the spec has such operations |
 | everything about orders, never delete | `--allow "tag:Orders" --deny "method:delete"`, then check every remaining write in the table |
-| never delete anything | `--deny "method:delete"`, plus a `--deny` for each operation whose path or name deletes, such as `--deny "route:POST /customers/*/delete"` |
+| change anything, but never delete | `--allow "path:/**" --deny "method:delete"`, plus a `--deny` for each operation whose path or name deletes, such as `--deny "route:POST /customers/*/delete"`; every other write stays allowed, so list them in the table |
 
 A pattern cannot tell what an operation does. `POST /orders/{orderId}/cancel` changes data
 without being a DELETE. The table makes such operations visible, so the user decides on each.
@@ -66,7 +66,7 @@ args: --allow tag:Orders --deny method:delete
 tools: cancelOrder createOrder getOrder getOrderSection listOrderItems listOrders
 ```
 
-<!-- recipe: never-delete -->
+<!-- recipe: all-but-delete -->
 ```
 args: --allow path:/** --deny method:delete --deny path:**delete** --deny operationId:*delete*
 tools: cancelOrder createOrder get_reports getOrder getOrderSection listCustomers listOrderItems listOrders
