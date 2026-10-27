@@ -302,6 +302,42 @@ flags are parsed, such as an unknown flag, uses the general error envelope inste
 [Exit codes](#exit-codes)). Without `--json`, `check` prints the report as lines and the
 warnings go to stderr.
 
+## `call`
+
+`call <tool> --dry-run` shows the request one tool call would send, without sending it. It takes
+the same flags as `serve`, plus the call's arguments as a JSON object in `--args-json`
+(default `{}`). `<tool>` is the name the host lists, with the API name in front when there are
+several APIs. In `discover` mode it is the operation name that `call_operation` takes.
+
+```bash
+openapi-mcp --json call createPet --dry-run --args-json '{"name": "Rex"}' \
+  --spec https://api.example.com/openapi.json --allow "method:post" \
+  --header-env Authorization=EXAMPLE_TOKEN
+```
+
+`call` checks the arguments as `serve` would, so an invalid argument gets the error text a host
+would get, with the code `tool_error` and exit code `3`. It then builds the request with the
+same steps as `serve` and reports, instead of sending it:
+
+- `method`, `origin` and `path`, and the names of the query parameters (`query`), never their
+  values.
+- `headers`: every header name. A credential from `--header-env` shows `"credential": "set"`,
+  and the OAuth `authorization` header `"credential": "not evaluated"`. No value is printed.
+- `body`: its media type and size in bytes, or `"none"`. `uploads` names each file read with
+  `--uploads`, with its size.
+- `checks`: `route` (the operation the path resolves to), `egress` (the address the host
+  resolves to, under the same rules as a call) and `budgets` (the size of the URL and the
+  headers). Each is `allowed`, `refused` with a `reason`, or `not evaluated` with a `reason`,
+  for example when the host does not resolve.
+- `notEvaluated`: what only sending can show. That is redirects, the DNS answer at the time of
+  sending, the response, the queue and the rate limit of a running server, and with
+  `--upstream-oauth-*` the access token and its size.
+
+No request reaches the operation's URL or the OAuth token endpoint. `call` may fetch the spec
+and resolve the API host, and it prepares the `--uploads` folder as `serve` does. `call`
+without `--dry-run` is refused: it never sends a request. The exit code is `0` when every check
+is allowed and `3` when one is refused; the `--json` report then has `"ok": false`.
+
 ## `tools`
 
 `tools` previews the tools a spec produces, with the filters applied, and starts no server. It
@@ -568,7 +604,7 @@ has these fields:
 | `bareValue` | the value of an optional-argument flag given without one (`--nullable-response-fields` means `all`) |
 | `repeatable` | the option can be given several times |
 | `choices` | the accepted values; when it is absent, the CLI does not list them, which does not mean any value works |
-| `perApi` | on `serve` and `check` with `--api`: `prefix` takes `<api>=` before the value; `prefix-or-all` (`--deny`) applies to every API without one; `enable` is a switch set with `--enable <api>=<switch>` |
+| `perApi` | on `serve`, `check` and `call` with `--api`: `prefix` takes `<api>=` before the value; `prefix-or-all` (`--deny`) applies to every API without one; `enable` is a switch set with `--enable <api>=<switch>` |
 
 ## `doctor`
 
@@ -604,17 +640,18 @@ The `--json doctor` output looks like this:
 | `0` | success | |
 | `1` | unexpected error; also the startup guard for an unsupported platform or Node version | |
 | `2` | usage error | an unknown flag, an invalid flag value, a missing `--base-url`, `--http` without `--http-token-env`, an environment variable `check` finds unset |
-| `3` | validation error | an invalid spec, `--strict-filters` with a dead pattern, a case collision or an overlapping tool, a malformed HTTP token, a refused egress target |
+| `3` | validation error | an invalid spec, `--strict-filters` with a dead pattern, a case collision or an overlapping tool, a malformed HTTP token, a refused egress target, an invalid argument or a refused check of `call --dry-run` |
 | `4` | not found | an unreadable spec file, a missing cache entry, `cache unlock` on an entry without a lock |
 | `5` | conflict | a cache lock held by another process, a `cache promote --hash` mismatch |
 
-With the global `--json` flag, `tools`, `help`, `doctor` and the `cache` commands print an error
-as `{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`. `check` uses that envelope
-only for an error in its flags, such as an unknown flag, and reports any other failure inside
-its own report (see [`check`](#check)). Two cases print plain text on stderr whatever the flags.
-`serve` does, because its stdout is reserved for MCP messages and stays empty on an error. The
-launcher's platform and Node version checks do too, because they run before any option is
-parsed, and they exit with `1`.
+With the global `--json` flag, `tools`, `call`, `help`, `doctor` and the `cache` commands print
+an error as `{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`, with a
+`reason` in `error` for the causes listed under [Error reasons](#error-reasons). `check` uses that
+envelope only for an error in its flags, such as an unknown flag, and reports any other failure
+inside its own report (see [`check`](#check)). Two cases print plain text on stderr whatever the
+flags. `serve` does, because its stdout is reserved for MCP messages and stays empty on an
+error. The launcher's platform and Node version checks do too, because they run before any
+option is parsed, and they exit with `1`.
 
 ### Error reasons
 
@@ -634,7 +671,8 @@ matching the message, which may change between versions:
 | `spec_external_ref` | the spec has a `$ref` to another document |
 | `filter_no_selector` | an `--allow`, `--deny` or `--omit-output-schema` pattern has no selector |
 
-`tools`, `cache` and `check` report these reasons, and `check` puts them in the failed stage.
+`tools`, `call`, `cache` and `check` report these reasons, and `check` puts them in the failed
+stage.
 An error without one of these causes has only a `code`. A warning that replaces an error
 reports the reason too: when a spec refresh fails with `401` and the cached spec is served
 instead, the envelope has `"warningReasons": ["spec_http_401_403"]` next to `warnings`.

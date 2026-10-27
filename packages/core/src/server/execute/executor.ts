@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-import { isIP } from 'node:net';
 import { createPinnedAgentPool } from '../../http/agent-pool.ts';
 import { pinnedRequest } from '../../http/pinned-dispatcher.ts';
 import type {
@@ -10,7 +8,7 @@ import type {
   PinnedRequestOptions,
 } from '../../http/pinned-dispatcher.ts';
 import type { Redactor } from '../../redact.ts';
-import { DISPLAY_TEXT_MAX, sanitizeSpecText } from '../../spec/sanitize.ts';
+import { DISPLAY_TEXT_MAX } from '../../spec/sanitize.ts';
 import type { ToolExecutor } from '../dispatch.ts';
 import {
   isSafeMethod,
@@ -20,21 +18,27 @@ import {
   withMetaEntry,
 } from '../effect.ts';
 import type { CallEffect } from '../effect.ts';
-import { retryableErrorOutcome, textOutcome } from '../result.ts';
+import { retryableErrorOutcome } from '../result.ts';
 import type { ToolCallOutcome } from '../result.ts';
 import { DEFAULT_RESPONSE_IS_ERROR_FLAG } from '../../toolgen/output-schema.ts';
 import type { CallOutcomeKind, CallTelemetry } from '../telemetry.ts';
 import type { TraceContext } from '../trace.ts';
 import type { SnapshotTool } from '../types.ts';
-import { buildRequest } from './request.ts';
 import type { OutboundBudgets } from './request.ts';
-import { hopAuthorizer, withinApi } from './hop-authorizer.ts';
-import { routeKey } from './route-table.ts';
+import { withinApi } from './hop-authorizer.ts';
+import {
+  callArguments,
+  checkBase,
+  isError,
+  prepareCall,
+  readCallUploads,
+  unsent,
+} from './prepare.ts';
+import { overFinalBudget } from './wire.ts';
 import type { RouteTable } from './route-table.ts';
 import { mapResponse, mismatchOf } from './response.ts';
 import { imageOutcome, isImageResponse } from './image-result.ts';
 import { decorateResponseOutcome } from './forwarded-headers.ts';
-import { resolveUploads } from './uploads.ts';
 import type { Uploads } from './uploads.ts';
 import type { ImageResponses } from './image-result.ts';
 import type { EnvelopeValidator, EnvelopeValidators } from './envelope-validators.ts';
@@ -42,13 +46,7 @@ import type { PageInput } from './forwarded-headers.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
 import { PROJECTION_FIELD } from '../../toolgen/projection.ts';
 import type { PaginationPlan } from '../../toolgen/pagination.ts';
-import {
-  isRetryableMethod,
-  MAX_RETRIES,
-  realSleep,
-  retriesConnectionErrors,
-  withRetries,
-} from './retry.ts';
+import { isRetryableMethod, realSleep, retriesConnectionErrors, withRetries } from './retry.ts';
 import type { RetryDeps } from './retry.ts';
 import { createSlotQueue } from './slots.ts';
 
@@ -140,18 +138,6 @@ export type ExecutorDeps = {
   now?: () => number;
 };
 
-const textEncoder = new TextEncoder();
-const byteLength = (value: string): number => textEncoder.encode(value).length;
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value);
-
-// A single, stable, redacted prefix for every failure this module produces —
-// never the underlying detail, which could carry a hostname, header name, or
-// library-internal message never meant for a tool-call response.
-const isError = (message: string): ToolCallOutcome =>
-  textOutcome(`tool execution failed: ${message}`, true);
-
 // The observability outcome for a call that reached the transport.
 const PINNED_OUTCOME: Readonly<Record<PinnedErrorReason, CallOutcomeKind>> = {
   timeout: 'timeout',
@@ -210,140 +196,6 @@ const overloaded = (message: string): ToolCallOutcome =>
     }),
     'not_sent',
   );
-
-// A refusal before anything was sent (issue #25)
-const unsent = (message: string): ToolCallOutcome => withEffect(isError(message), 'not_sent');
-
-// URL.hostname keeps brackets around an IPv6 literal; strip them before
-// classifying (mirrors egress.ts's/pinned-dispatcher.ts's own hostnameOf).
-const stripBrackets = (hostname: string): string =>
-  hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
-
-// The cleartext gate's own narrow "loopback" test: 'localhost'/'*.localhost',
-// an IPv4 127.0.0.0/8 literal, or the IPv6 loopback ::1. Deliberately
-// independent of egress.ts's broader classifyAddress ('private' also covers
-// RFC1918/link-local/etc., which must NOT exempt an operator from the
-// cleartext-secret warning — only genuine loopback does).
-const isLoopbackHost = (hostname: string): boolean => {
-  const bare = stripBrackets(hostname).toLowerCase();
-  if (bare === 'localhost' || bare.endsWith('.localhost')) {
-    return true;
-  }
-  if (isIP(bare) === 4) {
-    return bare.startsWith('127.');
-  }
-  return isIP(bare) === 6 && bare === '::1';
-};
-
-// CLEARTEXT gate, mandatory: a secret header sent in the clear over a
-// non-loopback http: origin is a credential-leak footgun — refuse the call
-// entirely (no request is ever sent) unless the operator explicitly opted in
-// via --allow-insecure-http.
-const cleartextBlocked = (config: ExecutorConfig, base: URL): boolean =>
-  (config.secretHeaders.length > 0 || config.oauth !== undefined) &&
-  base.protocol === 'http:' &&
-  !config.allowInsecureHttp &&
-  !isLoopbackHost(base.hostname);
-
-// Explicit path-join (never `new URL(relativePath, base)`, which resolves
-// `..`/`.`-style segments against the base's own directory and can escape
-// it): strip exactly one trailing slash off the base pathname, concatenate
-// the built pathname verbatim, then parse the assembled ABSOLUTE string.
-// `joinFinalUrl` never throws; a malformed result is caught by the
-// origin/boundary assertion in `runUpstreamCall` below.
-const joinFinalUrl = (base: URL, pathname: string, query: string): URL | undefined => {
-  const normalizedBase = base.pathname.endsWith('/') ? base.pathname.slice(0, -1) : base.pathname;
-  const finalPathAndQuery = `${normalizedBase}${pathname}${query === '' ? '' : `?${query}`}`;
-  try {
-    return new URL(`${base.origin}${finalPathAndQuery}`);
-  } catch {
-    return undefined;
-  }
-};
-
-// SEGMENT-BOUNDARY check on the final URL assertion: a bare
-// `startsWith(basePath)` would admit `/api-evil` under base `/api` — the
-// escaped path must land exactly ON the base path or continue at a `/`
-// boundary.
-const withinBasePath = (finalPath: string, basePath: string): boolean =>
-  finalPath === basePath ||
-  finalPath.startsWith(basePath.endsWith('/') ? basePath : `${basePath}/`);
-
-// Assembles the two HopHeaders sets pinnedRequest needs: same-origin carries
-// the derived accept + content-type (only when a body is sent) + every
-// operator-configured static/secret header + whatever headers the tool's own
-// arguments mapped to; cross-origin carries only accept and content-type —
-// the minimal safe set for a
-// redirect that has left the base origin (pinnedRequest itself enforces the
-// monotonic origin-crossing switch; this module only supplies the two sets).
-// Write order fixes precedence on a name collision (later write wins):
-// accept/content-type/tool-arg headers FIRST, then --header, then
-// --header-env LAST — derived < tool < --header < --header-env. Unreachable while the
-// reserved-name gate in runUpstreamCall holds (a tool argument can never map
-// onto a reserved name), but this ordering makes the fallback correct rather
-// than inverted should that gate ever regress.
-const assembleHeaders = (
-  config: ExecutorConfig,
-  accept: string,
-  contentType: string | undefined,
-  toolHeaders: Readonly<Record<string, string>>,
-  bearer: string | undefined,
-): HopHeaders => {
-  // Kept as sequential bracket assignments (not a spread build): the write
-  // ORDER is the precedence contract, and bracket assignment on a plain
-  // object routes a header literally named "__proto__" through the
-  // prototype setter — silently dropping it — while a spread/fromEntries
-  // build would create it as an own property and change what goes on the
-  // wire. Preserving that exact key semantics matters more here than the
-  // functional shape.
-  // Accept is written FIRST, so an operator's --header Accept:... wins; a
-  // tool argument can never reach it (`accept` is a reserved name).
-  const sameOriginHeaders: Record<string, string> = { accept };
-  if (contentType !== undefined) {
-    sameOriginHeaders['content-type'] = contentType;
-  }
-  for (const [name, value] of Object.entries(toolHeaders)) {
-    sameOriginHeaders[name] = value;
-  }
-  for (const header of config.staticHeaders) {
-    sameOriginHeaders[header.name.toLowerCase()] = header.value;
-  }
-  for (const header of config.secretHeaders) {
-    sameOriginHeaders[header.name.toLowerCase()] = header.value;
-  }
-  // The OAuth2 access token, last of all. --header-env Authorization is a
-  // startup usage error alongside --upstream-oauth-*, so nothing is overwritten.
-  if (bearer !== undefined) {
-    sameOriginHeaders['authorization'] = `Bearer ${bearer}`;
-  }
-  // Accept is content negotiation, not a credential: it survives a
-  // cross-origin redirect (as browsers keep it too).
-  const crossOriginHeaders: Record<string, string> =
-    contentType === undefined ? { accept } : { accept, 'content-type': contentType };
-  return { sameOriginHeaders, crossOriginHeaders };
-};
-
-// FINAL outbound budgets, re-checked AFTER the base-URL join and the full
-// header assembly: buildRequest only budgets the relative pathname/query
-// and the tool-argument headers it itself produced —
-// it cannot see the base URL or the operator's static/secret headers. This
-// is the one place that sees the whole wire request.
-const overFinalBudget = (
-  finalUrl: URL,
-  sameOriginHeaders: Readonly<Record<string, string>>,
-  budgets: OutboundBudgets,
-): boolean => {
-  if (finalUrl.href.length > budgets.maxUrlLength) {
-    return true;
-  }
-  // Loop body is a pure sum expression over an already-assembled, bounded
-  // header record — a single-expression `reduce` rewrite.
-  const headerBytes = Object.entries(sameOriginHeaders).reduce(
-    (sum, [name, value]) => sum + byteLength(name) + byteLength(value),
-    0,
-  );
-  return headerBytes > budgets.maxHeaderBytes;
-};
 
 // The executor's ToolExecutor plus the lifecycle of the pooled upstream
 // connections it owns: `close()` must run on server shutdown so no pooled
@@ -429,127 +281,43 @@ const runUpstreamCall = async (
       "this tool's output schema could not be compiled, so its response cannot be validated; the request was not sent",
     );
   }
-  // Imperative on purpose (security-module rule: no control-flow
-  // restructuring / helper extraction across a guard boundary here):
-  // `new URL` can throw synchronously on a malformed string, and the catch
-  // branch below returns early — extracting this into a helper that returns
-  // a tagged result would move the try/catch across this function's own
-  // early-return boundary for no provable benefit.
-  let base: URL;
-  try {
-    base = new URL(config.baseUrl);
-  } catch {
-    // Defensive: baseUrl is resolved and validated before this point.
-    report({ outcome: 'internal_error' });
-    return unsent('the configured base URL is invalid');
+  const checked = checkBase(config, generated, report);
+  if ('refused' in checked) {
+    return checked.refused;
   }
-  if (cleartextBlocked(config, base)) {
-    // Operator policy, not a bad argument: counted as `refused`.
-    report({
-      outcome: 'refused',
-      method: generated.operation.method.toUpperCase(),
-      pathTemplate: generated.operation.path,
-    });
-    return unsent(
-      'refusing to send a secret header in cleartext over a non-loopback http:// origin (pass --allow-insecure-http to override)',
-    );
-  }
-  const method = generated.operation.method.toUpperCase();
-  const given = isRecord(args) ? args : {};
-  // A named upload is read before anything is sent; a refusal sends nothing.
-  // Reading it counts against the call's time budget, so a slow disk cannot
-  // send a request after the deadline (review of #58).
+  // Reading an upload counts against the call's time budget, so a slow disk
+  // cannot send a request after the deadline (review of #58)
   const uploadStarted = retryDeps.now();
   const uploaded =
     config.uploads === undefined
-      ? { ok: given }
-      : await resolveUploads(given, generated.mapper, config.uploads);
-  if ('error' in uploaded) {
-    report({ outcome: 'validation_error' });
-    return unsent(sanitizeSpecText(uploaded.error, DISPLAY_TEXT_MAX));
+      ? { data: callArguments(args) }
+      : await readCallUploads(config.uploads, generated, args, report);
+  if ('refused' in uploaded) {
+    return uploaded.refused;
   }
+  const preparation = prepareCall(config, generated, checked.base, uploaded.data, trace);
+  if ('refused' in preparation) {
+    return preparation.refused;
+  }
+  const {
+    method,
+    base,
+    data,
+    built,
+    finalUrl,
+    authorizeHop,
+    retries,
+    idempotencyKeyField,
+    generatedKey,
+    assemble,
+  } = preparation.prepared;
   // What is left of the budget; the check before sending refuses at zero
   const callTimeoutMs = timeoutMs - (retryDeps.now() - uploadStarted);
-  const data = uploaded.ok;
-  const built = buildRequest(
-    generated.mapper,
-    method,
-    generated.operation.path,
-    data,
-    config.outboundBudgets,
-  );
-  if ('error' in built) {
-    // `buildRequest`'s `{error}` strings embed spec-derived text verbatim
-    // (e.g. `mapping.wireName`, a hostile spec's own param name) — see
-    // request.ts's own comment on wireName being untrusted text. The
-    // dispatcher's finalizeOutcome redacts SECRETS but never strips
-    // control/bidi characters, so a spec field named with e.g. an RLO
-    // (U+202E) would otherwise echo raw in this outcome's text. This is the
-    // single choke point where every buildRequest error becomes a tool
-    // outcome, so sanitizeSpecText here (the untrusted-text rule) covers
-    // every wireName-bearing message from this module in one place.
-    return unsent(sanitizeSpecText(built.error, DISPLAY_TEXT_MAX));
-  }
-  // DEFENSIVE reserved-name check, mandatory rather than merely defensive in
-  // effect: toolgen/layout.ts already drops any reserved header name from a
-  // tool's input schema at build time, so this is unreachable through the
-  // real pipeline — but it is re-checked here fail-closed rather than ever
-  // trusting that upstream guard silently. HTTP header names are
-  // case-insensitive, so the comparison lowercases the built name itself:
-  // today this is correct even without the `.toLowerCase()` because
-  // buildRequest already lowercases built header keys and resolveApiConfig
-  // already lowercases reservedHeaderNames — but this is the mandatory
-  // auth-collision gate and must not depend on those unstated upstream
-  // invariants for a security guard.
-  for (const name of Object.keys(built.ok.headers)) {
-    if (config.reservedHeaderNames.has(name.toLowerCase())) {
-      return unsent('a tool argument collided with a reserved header name');
-    }
-  }
-  const finalUrl = joinFinalUrl(base, built.ok.pathname, built.ok.query);
-  if (finalUrl === undefined) {
-    return unsent('the final request URL could not be constructed');
-  }
-  if (finalUrl.origin !== base.origin || !withinBasePath(finalUrl.pathname, base.pathname)) {
-    return unsent('the final request URL escaped the configured base URL');
-  }
-  const authorizeHop =
-    config.routes === undefined
-      ? undefined
-      : hopAuthorizer(
-          config.routes,
-          base,
-          routeKey(method, generated.operation.path),
-          config.allowOffsiteRedirects === true,
-        );
-  const { accept } = generated;
-  const retries = Math.min(config.retries ?? 0, MAX_RETRIES);
-  const idempotencyKeyField = Object.values(generated.mapper.fields).some(
-    (mapping) =>
-      mapping.destination === 'header' && mapping.wireName.toLowerCase() === 'idempotency-key',
-  );
-  const keyed = retries > 0 && idempotencyKeyField && (method === 'POST' || method === 'PATCH');
-  // ONE key per tool call, identical on every attempt (a 401 token replay
-  // included) — the caller's own value when it passed one, else this fresh
-  // UUID — so the upstream can deduplicate a retried write.
-  const generatedKey = keyed ? randomUUID() : undefined;
   // The wire headers for one send with the given bearer token (none without
   // --upstream-oauth-*), or undefined when they exceed the final budgets —
   // re-checked per send, since a refreshed token can differ in length.
   const headersFor = (bearer: string | undefined): HopHeaders | undefined => {
-    const headers = assembleHeaders(config, accept, built.ok.contentType, built.ok.headers, bearer);
-    if (config.propagateTraceContext === true && trace !== undefined) {
-      // Same-origin set only: a trace id is client correlation data, and a
-      // redirect to a foreign origin must not receive it. `traceparent` and
-      // `tracestate` are reserved tool-header names, so only an operator's
-      // own --header could already hold them — and that one wins.
-      for (const [name, value] of Object.entries(trace)) {
-        headers.sameOriginHeaders[name] ??= value;
-      }
-    }
-    if (generatedKey !== undefined) {
-      headers.sameOriginHeaders['idempotency-key'] ??= generatedKey;
-    }
+    const headers = assemble(bearer);
     return overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)
       ? undefined
       : headers;
@@ -626,7 +394,7 @@ const runUpstreamCall = async (
     const requestOptions: PinnedRequestOptions = {
       method,
       headers,
-      ...(built.ok.body === undefined ? {} : { body: built.ok.body }),
+      ...(built.body === undefined ? {} : { body: built.body }),
       baseTrusted: config.baseTrusted,
       ...(authorizeHop === undefined ? {} : { authorizeHop }),
       ...(config.credentialScope === 'api' ? { credentialScope: withinApi(base) } : {}),
