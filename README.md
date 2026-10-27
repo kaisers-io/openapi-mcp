@@ -50,7 +50,7 @@ npx skills add kaisers-io/openapi-mcp --skill configuring-openapi-mcp
 npx skills add kaisers-io/openapi-mcp --skill debugging-openapi-mcp
 ```
 
-Then ask your agent, for example, "Connect the shop API at https://api.example.com/openapi.json".
+Then ask your agent, for example: `Connect the shop API at https://api.example.com/openapi.json`
 
 `configuring-openapi-mcp` asks in plain words what the agent should do with the API. It shows
 a table of the operations the agent would be allowed to use and what each one does, and you
