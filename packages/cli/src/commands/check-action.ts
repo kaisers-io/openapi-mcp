@@ -1,11 +1,17 @@
 import type { Command } from '@commander-js/extra-typings';
-import { EXIT, parseHeaderEnvMapping, renderError } from '@kaisers-io/openapi-mcp-core';
+import {
+  DISPLAY_TEXT_MAX,
+  EXIT,
+  parseHeaderEnvMapping,
+  renderError,
+  sanitizeSpecText,
+} from '@kaisers-io/openapi-mcp-core';
 import { apiViews } from '../api-options.ts';
 import type { Occurrence } from '../api-options.ts';
 import type { CliContext } from '../context.ts';
 import { getGlobalOpts } from '../output.ts';
 import type { RunState } from '../main.ts';
-import { optionDefaults, prepareServe } from './serve-action.ts';
+import { createOAuthGuard, optionDefaults, prepareServe } from './serve-action.ts';
 import type { ServeCmdOpts, ServeCommand } from './serve-action.ts';
 
 // `check` (issue #77): the startup of `serve` with the same options, reported
@@ -65,7 +71,8 @@ const humanLinesOf = (data: CheckData): string[] => [
     (variable) =>
       `  ${variable.name} (${variable.api === undefined ? '' : `${variable.api} `}${variable.flag}): ${variable.set ? 'set' : 'missing'}`,
   ),
-  `startup: ${data.startup.status}${data.startup.error === undefined ? '' : `: ${data.startup.error.message}`}`,
+  // An error can carry spec text: one sanitized line, like a warning
+  `startup: ${data.startup.status}${data.startup.error === undefined ? '' : `: ${sanitizeSpecText(data.startup.error.message, DISPLAY_TEXT_MAX)}`}`,
   ...(data.toolMode === undefined
     ? []
     : [
@@ -126,6 +133,11 @@ export const runCheck = async (
         },
         true,
       );
+      // `serve` discovers the authorization server before it listens
+      const { httpConfig, allowPrivateNetwork, timeoutMs } = prepared;
+      if (httpConfig?.auth.kind === 'oauth') {
+        await createOAuthGuard(httpConfig.auth, collecting, { allowPrivateNetwork, timeoutMs });
+      }
       startup = { status: 'ok' };
     } catch (error) {
       const { code, message, exitCode: failed } = renderError(error, { verbose: false });

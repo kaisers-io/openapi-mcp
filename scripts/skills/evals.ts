@@ -1,0 +1,200 @@
+// Runs the evaluation scenarios of the agent skills (#72) against a real agent:
+//
+//   node scripts/skills/evals.ts <claude|codex> <model> [scenario id...]
+//
+// Each scenario gets a fresh project with the skill installed where the agent reads skills
+// (.claude/skills or .agents/skills), the eval specs, and its setup files. `npx` resolves
+// @kaisers-io/openapi-mcp to this repository's build through a shim first in PATH, so the
+// skill can use commands that are not released yet. Not part of CI: it needs the agent CLI,
+// its login, and spends tokens.
+
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { chmod, cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+const ROOT = join(import.meta.dirname, '..', '..');
+const EVALS = join(import.meta.dirname, 'evals');
+const BIN = join(ROOT, 'packages', 'cli', 'bin', 'openapi-mcp.mjs');
+
+interface Expect {
+  file?: string;
+  contains?: string[];
+  absent?: string[];
+  exposed?: string[];
+  transcript?: string[];
+}
+interface Scenario {
+  id: string;
+  skill: string;
+  host: 'claude-code' | 'codex';
+  prompt: string;
+  setup?: Record<string, string>;
+  expect: Expect;
+}
+
+const run = async (
+  command: string,
+  args: readonly string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv },
+): Promise<{ code: number; output: string }> => {
+  const child = spawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '';
+  const append = (chunk: Buffer): void => {
+    output += chunk.toString();
+  };
+  child.stdout.on('data', append);
+  child.stderr.on('data', append);
+  const [code] = (await once(child, 'close')) as [number];
+  return { code, output };
+};
+
+// `npx -y @kaisers-io/openapi-mcp@<any> ...` runs this repository's CLI; anything else goes to
+// the real npx
+const writeShim = async (dir: string, realNpx: string): Promise<void> => {
+  const shim = join(dir, 'npx');
+  await writeFile(
+    shim,
+    [
+      '#!/bin/sh',
+      'for arg in "$@"; do',
+      '  case "$arg" in',
+      '    @kaisers-io/openapi-mcp@*)',
+      '      while [ "$1" != "$arg" ]; do shift; done; shift',
+      `      exec "${process.execPath}" "${BIN}" "$@" ;;`,
+      '  esac',
+      'done',
+      `exec "${realNpx}" "$@"`,
+      '',
+    ].join('\n'),
+  );
+  await chmod(shim, 0o755);
+};
+
+const prepare = async (scenario: Scenario, version: string): Promise<string> => {
+  const project = await mkdtemp(join(tmpdir(), `openapi-mcp-eval-${scenario.id}-`));
+  const skillsDir = scenario.host === 'codex' ? '.agents/skills' : '.claude/skills';
+  await cp(join(ROOT, 'skills', scenario.skill), join(project, skillsDir, scenario.skill), {
+    recursive: true,
+  });
+  await cp(join(EVALS, 'shop.json'), join(project, 'shop.json'));
+  await cp(
+    join(ROOT, 'packages', 'cli', 'test', 'fixtures', 'petstore.json'),
+    join(project, 'petstore.json'),
+  );
+  for (const [file, content] of Object.entries(scenario.setup ?? {})) {
+    await mkdir(dirname(join(project, file)), { recursive: true });
+    await writeFile(join(project, file), content.replaceAll('CURRENT', version));
+  }
+  return project;
+};
+
+const agentArgs = (host: Scenario['host'], model: string, prompt: string): [string, string[]] =>
+  host === 'codex'
+    ? [
+        'codex',
+        ['exec', '--model', model, '--sandbox', 'workspace-write', '--skip-git-repo-check', prompt],
+      ]
+    : ['claude', ['-p', prompt, '--model', model, '--permission-mode', 'bypassPermissions']];
+
+// The tools the written Claude Code entry exposes, from `check` with its own arguments
+const exposedBy = async (project: string, configText: string): Promise<string[]> => {
+  const config = JSON.parse(configText) as { mcpServers: Record<string, { args: string[] }> };
+  const [entry] = Object.values(config.mcpServers);
+  const args = entry?.args ?? [];
+  const serve = args.indexOf('serve');
+  const { output } = await run(
+    process.execPath,
+    [BIN, '--json', 'check', ...args.slice(serve + 1)],
+    {
+      cwd: project,
+      env: {
+        PATH: process.env['PATH'] ?? '',
+        HOME: project,
+        SHOP_API_TOKEN: 'Bearer example-token-not-a-secret',
+      },
+    },
+  );
+  const report = JSON.parse(output) as { data: { apis?: { exposed: string[] }[] } };
+  return (report.data.apis ?? []).flatMap((api) => api.exposed).toSorted();
+};
+
+const verify = async (project: string, transcript: string, expect: Expect): Promise<string[]> => {
+  const failures: string[] = [];
+  const lower = transcript.toLowerCase();
+  for (const text of expect.transcript ?? []) {
+    if (!lower.includes(text.toLowerCase())) {
+      failures.push(`transcript lacks "${text}"`);
+    }
+  }
+  if (expect.file === undefined) {
+    return failures;
+  }
+  let text: string;
+  try {
+    text = await readFile(join(project, expect.file), 'utf8');
+  } catch {
+    return [...failures, `${expect.file} was not written`];
+  }
+  for (const part of expect.contains ?? []) {
+    if (!text.includes(part)) {
+      failures.push(`${expect.file} lacks "${part}"`);
+    }
+  }
+  for (const part of expect.absent ?? []) {
+    if (text.includes(part)) {
+      failures.push(`${expect.file} contains "${part}"`);
+    }
+  }
+  if (expect.exposed !== undefined) {
+    const exposed = await exposedBy(project, text);
+    if (exposed.join(' ') !== expect.exposed.toSorted().join(' ')) {
+      failures.push(`exposes ${exposed.join(' ')}`);
+    }
+  }
+  return failures;
+};
+
+const main = async (): Promise<void> => {
+  const [agent, model, ...ids] = process.argv.slice(2);
+  if ((agent !== 'claude' && agent !== 'codex') || model === undefined) {
+    process.stderr.write('usage: node scripts/skills/evals.ts <claude|codex> <model> [id...]\n');
+    process.exitCode = 2;
+    return;
+  }
+  const host = agent === 'codex' ? 'codex' : 'claude-code';
+  const { scenarios } = JSON.parse(await readFile(join(EVALS, 'scenarios.json'), 'utf8')) as {
+    scenarios: Scenario[];
+  };
+  const pkg = JSON.parse(await readFile(join(ROOT, 'packages', 'cli', 'package.json'), 'utf8')) as {
+    version: string;
+  };
+  const which = await run('sh', ['-c', 'command -v npx'], { cwd: ROOT, env: process.env });
+  const shimDir = await mkdtemp(join(tmpdir(), 'openapi-mcp-eval-bin-'));
+  await writeShim(shimDir, which.output.trim());
+  const selected = scenarios.filter(
+    (scenario) => scenario.host === host && (ids.length === 0 || ids.includes(scenario.id)),
+  );
+  let failed = 0;
+  for (const scenario of selected) {
+    const project = await prepare(scenario, pkg.version);
+    const prompt = `Use the ${scenario.skill} skill. ${scenario.prompt}`;
+    const [command, args] = agentArgs(scenario.host, model, prompt);
+    const env = {
+      ...process.env,
+      PATH: `${shimDir}:${process.env['PATH'] ?? ''}`,
+      SHOP_API_TOKEN: 'Bearer example-token-not-a-secret',
+    };
+    const result = await run(command, args, { cwd: project, env });
+    await writeFile(join(project, 'transcript.txt'), result.output);
+    const failures = await verify(project, result.output, scenario.expect);
+    failed += failures.length === 0 ? 0 : 1;
+    process.stdout.write(
+      `${failures.length === 0 ? 'pass' : 'FAIL'} ${scenario.id} (${agent} ${model}) ${project}\n${failures.map((line) => `  ${line}\n`).join('')}`,
+    );
+  }
+  process.exitCode = failed === 0 ? 0 : 1;
+};
+
+await main();

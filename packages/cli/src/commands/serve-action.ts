@@ -268,7 +268,7 @@ const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1']);
 // inconsistent authorization server is a startup failure, not a 503 per
 // request. Host is the audience's authority: behind a TLS-terminating
 // reverse proxy, the proxy must forward the client's Host header.
-const createOAuthGuard = async (
+export const createOAuthGuard = async (
   auth: Extract<HttpAuthConfig, { kind: 'oauth' }>,
   ctx: CliContext,
   egress: { allowPrivateNetwork: boolean; timeoutMs: number },

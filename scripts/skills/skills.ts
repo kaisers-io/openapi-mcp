@@ -11,7 +11,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { ALLOWED_KEYS, checkText, frontmatterOf, NAME, REFERENCE } from './rules.ts';
 import type { Lookup } from './rules.ts';
 
@@ -41,9 +41,10 @@ const read = (path: string): string => {
 
 const exists = (path: string): boolean => files.has(path);
 
+// The loaded files directly in `dir`, by name (native separators, so Windows too)
 const listDir = (dir: string): string[] =>
   [...files.keys()]
-    .filter((path) => path.startsWith(`${dir}/`) && !path.slice(dir.length + 1).includes('/'))
+    .filter((path) => dirname(path) === dir)
     .map((path) => basename(path))
     .toSorted();
 

@@ -46,7 +46,11 @@ const SPECS: Record<string, unknown> = {
     '/x': {
       get: {
         operationId: 'getX',
-        responses: ok({ type: 'object', properties: { id: { type: 'string', pattern: '(' } } }),
+        // An invalid pattern, with a terminal escape the human output must not pass on
+        responses: ok({
+          type: 'object',
+          properties: { id: { type: 'string', pattern: '(\u001B[2J' } },
+        }),
       },
     },
   }),
@@ -301,6 +305,35 @@ describe('check (issue #77)', () => {
       'api a: https://a.example.test/, 2 operations exposed',
       'tools the host lists: 3',
     ]);
+  });
+
+  it('discovers the authorization server of --http-auth oauth, as serve does', async () => {
+    const result = await check([
+      '--spec',
+      'small.json',
+      ...BASE,
+      '--http',
+      '--http-auth',
+      'oauth',
+      '--oauth-issuer',
+      'not-a-url',
+      '--oauth-audience',
+      'also-not-a-url',
+    ]);
+    expect(result.code).not.toBe(EXIT.OK);
+    expect(reportOf(result.lines).data.startup.status).toBe('failed');
+  });
+
+  it('prints a failed startup as one sanitized line without --json', async () => {
+    const result = await check(
+      ['--spec', 'bad-pattern.json', ...BASE, '--tool-mode', 'discover'],
+      {},
+      [],
+    );
+    expect(result.code).toBe(EXIT.USAGE);
+    const output = result.lines.join('\n');
+    expect(output).toContain('startup: failed');
+    expect(output).not.toContain('\u001B');
   });
 
   it('prints a human report and the warnings on stderr without --json', async () => {
