@@ -65,6 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Shorter README, with guides for each topic.** The README now covers what the package is
+  for, setup with the agent skills, and a minimal host config. New guides in `docs/` cover hosts,
+  credentials, HTTP, spec updates, tool modes, several APIs, and requests and responses.
+  `docs/configuration.md` is the complete flag reference and now lists `--api`, `--enable`,
+  `--uploads`, `--image-responses` and `--image-dir-max-bytes`. The docs were checked against
+  the code and corrected where they were wrong, for example: the 512-tool limit applies only to
+  `per-operation` mode, one server can serve several APIs, and `HTTPS_PROXY` has no effect.
+
 - **`doctor` describes what it reports (#77):** CLI and Node versions, app root and cache
   root. Its help text promised an effective configuration it never printed; `check` reports
   that now.
