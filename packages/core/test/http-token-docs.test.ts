@@ -8,7 +8,7 @@ import { isValidBearerToken } from '../src/index.ts';
 // generator the docs tell users to run is executed here and its output fed to
 // `isValidBearerToken`, so an example that the validator would reject cannot ship.
 
-const DOCS = ['README.md', 'docs/configuration.md', 'docs/security.md'] as const;
+const DOCS = ['docs/http.md', 'docs/configuration.md', 'docs/security.md'] as const;
 const SAMPLES = 10;
 
 const readDoc = (path: string): string =>

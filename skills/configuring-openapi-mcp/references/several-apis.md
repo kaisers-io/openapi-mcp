@@ -1,7 +1,7 @@
 # Several APIs
 
 One server can serve up to 32 APIs. Details:
-[docs/configuration.md, Several APIs](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/configuration.md#several-apis).
+[docs/several-apis.md](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/several-apis.md).
 
 ## One server or several
 

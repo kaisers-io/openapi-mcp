@@ -1,7 +1,7 @@
 # Tool modes
 
 How the host sees the exposed operations. Details:
-[docs/configuration.md, Tool modes](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/configuration.md#tool-modes).
+[docs/tool-modes.md](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/tool-modes.md).
 
 | Mode | The host lists | Use when |
 |---|---|---|

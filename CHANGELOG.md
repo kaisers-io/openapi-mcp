@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own version, and proposes the config changes an update needs. `debugging-openapi-mcp` finds
   why a server does not start, lists fewer tools than expected or returns errors, from `check`,
   `tools`, the host's status and its log. `pnpm skills:check` keeps both in line with the CLI.
-  See [Agent skills](README.md#agent-skills-optional).
+  See [Agent skills](README.md#set-it-up-with-your-agent).
 
 - **`check` runs the startup checks of `serve` without serving (#77).** It takes the same
   options, lists every environment variable they name as set or missing (all of them, never a
@@ -64,6 +64,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computed; measured on 100 KiB and 1 MiB responses, the time per call stays within noise.
 
 ### Changed
+
+- **Shorter README, with guides for each topic.** The README now covers what the package is
+  for, setup with the agent skills, and a minimal host config. New guides in `docs/` cover hosts,
+  credentials, HTTP, spec updates, tool modes, several APIs, and requests and responses.
+  `docs/configuration.md` is the complete flag reference and now lists `--api`, `--enable`,
+  `--uploads`, `--image-responses` and `--image-dir-max-bytes`. The docs were checked against
+  the code and corrected where they were wrong, for example: the 512-tool limit applies only to
+  `per-operation` mode, one server can serve several APIs, and `HTTPS_PROXY` has no effect.
 
 - **`doctor` describes what it reports (#77):** CLI and Node versions, app root and cache
   root. Its help text promised an effective configuration it never printed; `check` reports

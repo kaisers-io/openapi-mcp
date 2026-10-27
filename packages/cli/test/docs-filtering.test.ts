@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,13 +94,12 @@ describe('docs/filtering.md', () => {
   // Review of #45: every document that shows a pattern, the README shipped
   // in the npm package included, uses the selector syntax
   it('uses selectors in every document that shows a pattern', () => {
-    for (const relative of [
-      '../../../README.md',
-      '../README.md',
-      '../../../docs/configuration.md',
-      '../../../docs/security.md',
-      '../../../docs/overlays.md',
-    ]) {
+    const docs = readdirSync(fileURLToPath(new URL('../../../docs/', import.meta.url)))
+      // The earlier syntax appears in filtering.md on purpose; the test above covers it
+      .filter((name) => name.endsWith('.md') && name !== 'filtering.md')
+      .map((name) => `../../../docs/${name}`);
+    expect(docs.length).toBeGreaterThan(5);
+    for (const relative of ['../../../README.md', '../README.md', ...docs]) {
       const text = readFileSync(fileURLToPath(new URL(relative, import.meta.url)), 'utf8');
       const shown = [
         ...text.matchAll(/--(?:allow|deny|omit-output-schema)[ =]["'](?<pattern>[^"']+)["']/gu),
