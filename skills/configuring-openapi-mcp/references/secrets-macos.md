@@ -9,12 +9,19 @@ the values of this setup, each in single quotes; a single quote inside a value i
 ## Default: Keychain and a start script
 
 Store the value. The trailing `-w` makes `security` prompt for it, so it stays out of the shell
-history and the process list; `-U` replaces an existing item, and `-T ""` gives no program
-access without asking, `security` itself included
+history and the process list, and `-T ""` gives no program access without asking, `security`
+itself included
 ([security(1)](https://github.com/apple-oss-distributions/Security/blob/main/SecurityTool/macOS/security.1)):
 
 ```sh
-security add-generic-password -U -a "$USER" -s shop-api-token -T "" -w
+security add-generic-password -a "$USER" -s shop-api-token -T "" -w
+```
+
+To replace a stored value, delete the item first and add it again. Updating it in place with
+`-U` keeps the programs it already trusts:
+
+```sh
+security delete-generic-password -a "$USER" -s shop-api-token >/dev/null
 ```
 
 Check that it exists without showing it:
