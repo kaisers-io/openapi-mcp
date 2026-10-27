@@ -24,7 +24,9 @@ name built from method and path, such as `get_reports`.
 1. A `--deny` that matches wins.
 2. With any `--allow`, an operation is exposed only if an `--allow` matches. Reads are not
    kept by default then.
-3. Without `--allow`, reads (GET, HEAD, QUERY) are exposed and nothing else.
+3. Without `--allow`, reads (GET, HEAD, QUERY) are exposed and nothing else. To keep them next
+   to an `--allow`, name each of these methods the spec uses: `tools` without filters lists
+   the reads as tools. `--strict-filters` rejects a `method:` pattern that matches nothing.
 
 ## From intent to patterns
 
@@ -34,7 +36,7 @@ expose operations nobody looked at.
 | The user says | Patterns |
 |---|---|
 | only look things up | none (the read-only default) |
-| look things up and create orders | `--allow "method:get" --allow "operationId:createOrder"` |
+| look things up and create orders | `--allow "method:get" --allow "operationId:createOrder"`, plus `method:head` and `method:query` when the spec has such operations |
 | everything about orders, never delete | `--allow "tag:Orders" --deny "method:delete"`, then check every remaining write in the table |
 | never delete anything | `--deny "method:delete"`, plus a `--deny` for each operation whose path or name deletes, such as `--deny "route:POST /customers/*/delete"` |
 

@@ -336,6 +336,18 @@ describe('check (issue #77)', () => {
     expect(output).not.toContain('\u001B');
   });
 
+  it('refuses a variable name with control characters before it reports anything', async () => {
+    const result = await check(
+      ['--spec', 'small.json', ...BASE, '--http', '--http-token-env', 'BAD\n\u001B[2Jstartup: ok'],
+      {},
+      [],
+    );
+    expect(result.code).toBe(EXIT.USAGE);
+    const output = [...result.lines, ...result.errLines].join('\n');
+    expect(output).not.toContain('\u001B');
+    expect(output).not.toContain('startup: ok');
+  });
+
   it('prints a human report and the warnings on stderr without --json', async () => {
     const result = await check(['--spec', 'many.json', ...BASE, '--tool-mode', 'auto'], {}, []);
     expect(result.code).toBe(EXIT.OK);

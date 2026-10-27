@@ -44,6 +44,11 @@ exit $LASTEXITCODE
 ```
 
 - Leave out `Bearer ` for an API key, and use the API's own header name in `--header-env`.
+- `npx.cmd` is a batch file: `cmd` reads `& | < > ^ %` and `"` in its arguments as its own
+  syntax, whatever the quoting in PowerShell
+  ([about_Parsing](https://learn.microsoft.com/powershell/module/microsoft.powershell.core/about/about_parsing)).
+  If the spec URL or another value holds one of them, put the spec in a local file and pass
+  its path.
 - The host command is `powershell.exe` with the arguments `-NoLogo`, `-NoProfile`,
   `-NonInteractive`, `-ExecutionPolicy`, `Bypass`, `-File` and the script's absolute path, each
   as its own array element (backslashes doubled in JSON). `Bypass` applies to this one process,
@@ -71,8 +76,7 @@ SHOP_API_TOKEN=op://Private/Shop API/credential
 - The host command is `op` with the arguments `run`,
   `--env-file=C:\Users\<name>\.config\openapi-mcp\shop.env`, `--`, `cmd`, `/d`, `/c`, `npx`,
   `-y`, `@kaisers-io/openapi-mcp@X.Y.Z`, `serve`, and the rest, each as its own array element.
-  `cmd` reads `& | < > ^ %` as its own syntax: if a value holds one of them, use the start
-  script above with `& op run --env-file=... -- npx.cmd ...` in place of its token lines.
+  The same limit on `& | < > ^ %` and `"` applies as for the start script above.
 
 ## Avoid
 

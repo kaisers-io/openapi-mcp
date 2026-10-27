@@ -67,8 +67,9 @@ SHOP_API_TOKEN=op://Private/Shop API/credential
   on, so `op` can ask for Touch ID instead of a terminal sign-in.
 - Use the start script above, with its `PATH` line, and replace its token lines and the
   `exec` line with
-  `exec op run --env-file="$HOME/.config/openapi-mcp/shop.env" -- npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve ...`.
-  A host started from the Dock would otherwise not find `node`.
+  `exec /opt/homebrew/bin/op run --env-file="$HOME/.config/openapi-mcp/shop.env" -- npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve ...`,
+  with the output of `command -v op` as the path of `op`. A host started from the Dock would
+  otherwise find neither `op` nor `node`.
 
 ## Avoid
 

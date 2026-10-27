@@ -2,9 +2,11 @@ import type { Command } from '@commander-js/extra-typings';
 import {
   DISPLAY_TEXT_MAX,
   EXIT,
+  isEnvVarName,
   parseHeaderEnvMapping,
   renderError,
   sanitizeSpecText,
+  usageError,
 } from '@kaisers-io/openapi-mcp-core';
 import { apiViews } from '../api-options.ts';
 import type { Occurrence } from '../api-options.ts';
@@ -34,6 +36,11 @@ const variablesOf = (
 ): Variable[] => {
   const variables: Variable[] = [];
   const add = (name: string, flag: string, api: string | undefined): void => {
+    // Checked before it is reported, as serve checks it before reading it; the message leaves
+    // the name out, since it may hold control characters
+    if (!isEnvVarName(name)) {
+      throw usageError(`${flag} names an invalid environment variable`);
+    }
     const value = ctx.env[name];
     variables.push({
       name,

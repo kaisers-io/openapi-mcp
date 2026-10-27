@@ -77,10 +77,11 @@ The token is stored in plain text, protected by file permissions only. Say so.
 No file on disk holds the credential: [`op run`](https://developer.1password.com/docs/cli/reference/commands/run/)
 resolves `op://` references from an env file when the server starts. The env file holds
 `SHOP_API_TOKEN=op://Private/Shop API/credential` (copied with "Copy Secret Reference", never
-sourced as a script). Use the start script above, with its `PATH` line, and replace its token
-lines and the `exec` line with
-`exec op run --env-file="$HOME/.config/openapi-mcp/shop.env" -- npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve ...`.
-The value is then in the environment of `op`, `npx` and the server. A GUI host needs the
+sourced as a script). The field must hold the full header value, for example `Bearer <token>`.
+Use the start script above, with its `PATH` line, and replace its token lines and the `exec`
+line with `exec /usr/bin/op run --env-file="$HOME/.config/openapi-mcp/shop.env" -- npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve ...`.
+Replace `/usr/bin/op` with the output of `command -v op`. The value is then in the environment
+of `op`, `npx` and the server. A GUI host needs the
 [app integration](https://developer.1password.com/docs/cli/app-integration/) so `op` can unlock
 without a terminal.
 
