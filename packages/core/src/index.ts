@@ -42,6 +42,7 @@ export {
 export {
   HEADER_NAME_RE,
   NON_LATIN1_RE,
+  isEnvVarName,
   parseHeaderEnvMapping,
   resolveHeaderEnvMappings,
 } from './http/headers.ts';

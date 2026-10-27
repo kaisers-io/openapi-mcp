@@ -43,9 +43,9 @@ export type UploadOptionsInput = {
 
 export type ResolvedUploads = Uploads & { deleted: number };
 
-export const resolveUploadOptions = async (
-  input: UploadOptionsInput,
-): Promise<ResolvedUploads | undefined> => {
+// The upload folder's path, checked but neither created nor swept: what
+// `check` (issue #77) reports without touching the folder
+export const uploadFolderPath = (input: UploadOptionsInput): string | undefined => {
   if (!input.enabled) {
     return undefined;
   }
@@ -56,7 +56,16 @@ export const resolveUploadOptions = async (
   if (input.homeDir === undefined || input.homeDir === '') {
     throw usageError('--uploads needs a home directory for its upload folder');
   }
-  const dir = defaultUploadDir(input.homeDir, input.source, input.cwd, input.cacheKey);
+  return defaultUploadDir(input.homeDir, input.source, input.cwd, input.cacheKey);
+};
+
+export const resolveUploadOptions = async (
+  input: UploadOptionsInput,
+): Promise<ResolvedUploads | undefined> => {
+  const dir = uploadFolderPath(input);
+  if (dir === undefined) {
+    return undefined;
+  }
   const folder = await openManagedFolder(dir, 'upload folder');
   const deleted = await sweepUploads(folder, UPLOAD_MAX_AGE_MS, input.now);
   return { folder, maxBytes: input.maxBytes, deleted };

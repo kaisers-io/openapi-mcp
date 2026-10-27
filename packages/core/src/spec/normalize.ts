@@ -70,6 +70,8 @@ export type NormalizedSpec = {
   // `components.securitySchemes` and the root `security` (see security.ts);
   // absent when the spec declares none.
   securitySchemes?: readonly SecurityScheme[];
+  // Declared schemes left out of `securitySchemes` (over the cap, or malformed)
+  securitySchemesDropped?: number;
   security?: readonly SecurityRequirement[];
 };
 
@@ -254,7 +256,7 @@ export const normalizeSpec = (
       reason: 'webhooks are not supported',
     })),
   ];
-  const securitySchemes = extractSecuritySchemes(document);
+  const { schemes: securitySchemes, dropped } = extractSecuritySchemes(document);
   const security = parseSecurityRequirements(document['security']);
   return {
     title,
@@ -264,6 +266,7 @@ export const normalizeSpec = (
     omitted,
     ...extractServerUrl(document),
     ...(securitySchemes.length === 0 ? {} : { securitySchemes }),
+    ...(dropped === 0 ? {} : { securitySchemesDropped: dropped }),
     ...(security === undefined ? {} : { security }),
   };
 };

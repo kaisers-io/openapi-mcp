@@ -11,12 +11,13 @@ import {
 } from '@kaisers-io/openapi-mcp-core';
 import type { HeaderEnvMapping } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
-import { resolveOAuthConfig } from './oauth-options.ts';
+import { CLIENT_AUTH_METHODS, resolveOAuthConfig } from './oauth-options.ts';
 import type { OAuthCmdOpts, ResolvedOAuthConfig } from './oauth-options.ts';
+import { collect, declareChoices } from './option-meta.ts';
 
 // The image options belong to the API side too (#14)
 export { parseImageResponseMode, resolveImageResponses } from './image-options.ts';
-export { resolveUploadOptions } from './upload-options.ts';
+export { resolveUploadOptions, uploadFolderPath } from './upload-options.ts';
 export {
   apiViews,
   assertSeparateBases,
@@ -24,11 +25,6 @@ export {
   combinedContentHash,
 } from './multi-api.ts';
 export type { Occurrence } from './multi-api.ts';
-
-const collect = (value: string, previous: readonly string[]): readonly string[] => [
-  ...previous,
-  value,
-];
 
 // Mirrors http/headers.ts's non-exported CONTROL_CHAR_RE (a static --header
 // has no env-var indirection layer, so this file owns its own copy): any C0
@@ -173,8 +169,8 @@ export type ApiCmdOpts = OAuthCmdOpts & {
 // The --base-url/--header-env/--header/--max-response-bytes/
 // --allow-insecure-http flags for the runtime API executor — separate from
 // registerSpecOptions, which governs the spec fetch instead.
-export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
-  command
+export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> => {
+  const registered = command
     .option('--base-url <url>', 'override the spec-derived base URL for API requests')
     .option(
       '--header-env <Header=ENV>',
@@ -241,6 +237,9 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
       'client authentication: client_secret_basic or client_secret_post',
       'client_secret_basic',
     );
+  declareChoices(registered, '--upstream-oauth-client-auth', CLIENT_AUTH_METHODS);
+  return registered;
+};
 
 // Shared by both header groups so the name/value size checks are defined
 // once. `secret` only changes the wording, never echoing a secret value.

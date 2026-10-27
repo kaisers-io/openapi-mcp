@@ -8,6 +8,8 @@ import {
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
 import type { GeneratedTool } from '@kaisers-io/openapi-mcp-core';
+import { factsOf, inventoryCounts, schemeInventory, withFacts } from '../inventory-facts.ts';
+import type { OperationFacts } from '../inventory-facts.ts';
 import { getGlobalOpts, wrapAction } from '../output.ts';
 import {
   filterMessages,
@@ -22,7 +24,7 @@ import {
 import type { SpecCmdOpts } from '../spec-options.ts';
 import type { CommandRegistrar } from './registry.ts';
 
-type ToolRow = {
+type ToolRow = OperationFacts & {
   name: string;
   method: string;
   path: string;
@@ -94,7 +96,11 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
         const allOmitted = [...result.spec.omitted, ...built.omitted].map((omission) =>
           publicOmission(omission),
         );
-        const tools: ToolRow[] = built.tools.map(toToolRow);
+        const tools: ToolRow[] = built.tools.map((tool) => ({
+          ...toToolRow(tool),
+          ...factsOf(tool.operation, result.spec),
+        }));
+        const notExposed = withFacts(exposure.notExposed, result.spec);
         // Which credential the exposed operations expect, per referenced
         // security scheme — the operator otherwise has to guess the header.
         const security = summarizeSecurity(
@@ -112,16 +118,18 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
             : { candidateContentHash: result.candidateContentHash }),
           cacheStatus: result.cacheStatus,
           toolCount: tools.length,
+          counts: inventoryCounts(tools.length, notExposed),
           tools,
           omitted: allOmitted,
           // Every operation that is not a tool, with its reason (issue #41)
-          notExposed: exposure.notExposed,
+          notExposed,
           overlaps: exposure.overlaps,
           overlapCheckComplete: exposure.overlapCheckComplete,
           deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns],
           // Patterns that match values differing only by case (issue #42)
           caseCollisions: [...result.caseCollisions, ...optOut.caseCollisions],
           security,
+          ...schemeInventory(result.spec, tools, notExposed),
         };
         const nameWidth = tools.reduce((width, tool) => Math.max(width, tool.name.length), 4);
         const humanLines: readonly string[] = [

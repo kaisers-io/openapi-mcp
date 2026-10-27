@@ -138,6 +138,7 @@ compare your output with them.
    For recipe 2 that is the `note` property of `Order`, nothing else. A change in a request
    schema, a security requirement, a server URL or another property means the target was
    too broad.
+
 3. **Inventory.** The corrected spec must expose the same operations, with the same
    authentication hints, as the original. Run `tools` with a throwaway cache: against your
    real cache, `tools` would accept a new file unreviewed, or, for a file it accepted
@@ -151,8 +152,10 @@ compare your output with them.
    HOME="$REVIEW_HOME" openapi-mcp --json tools --spec shop-3.1.nullable-note.json --allow 'operationId:*'
    ```
 
-   Apart from `source` and `contentHash`, both outputs must be the same. Delete
+   Apart from `source`, `contentHash` and the `summary` and `description` texts an overlay
+   meant to change, both outputs must be the same. Delete
    `$REVIEW_HOME` afterwards.
+
 4. **Validation.** `tools` and `serve` validate the corrected spec as strictly as any other;
    an overlay cannot switch that off.
 

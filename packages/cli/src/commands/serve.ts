@@ -2,21 +2,19 @@ import type { Command } from '@commander-js/extra-typings';
 import {
   AUTO_DISCOVER_DEFINITION_BYTES,
   AUTO_DISCOVER_THRESHOLD,
+  TOOL_MODES,
 } from '@kaisers-io/openapi-mcp-core';
-import { DEFAULT_IMAGE_DIR_MAX_BYTES } from '../image-options.ts';
+import { DEFAULT_IMAGE_DIR_MAX_BYTES, IMAGE_RESPONSE_MODES } from '../image-options.ts';
 import { registerApiOptions } from '../api-options.ts';
 import { emitError } from '../output.ts';
 import { CAPTURED_FLAGS } from '../multi-api.ts';
 import type { Occurrence } from '../multi-api.ts';
-import { registerSpecOptions } from '../spec-options.ts';
+import { collect, declareChoices } from '../option-meta.ts';
+import { OUTPUT_SCHEMA_FORMS, registerSpecOptions } from '../spec-options.ts';
 import type { runServe as RunServe, ServeCmdOpts } from './serve-action.ts';
 import type { CommandRegistrar } from './registry.ts';
 
-// Accumulates a repeatable option (--oauth-required-scope).
-const collect = (value: string, previous: string[] | undefined): string[] => [
-  ...(previous ?? []),
-  value,
-];
+const HTTP_AUTH_MODES = ['static', 'oauth'] as const;
 
 // Registration only: the options and help text are defined here, statically,
 // so `serve --help` and option parsing are unchanged. Everything the action
@@ -25,10 +23,12 @@ const collect = (value: string, previous: string[] | undefined): string[] => [
 // kaisers-io/openapi-mcp-archive#91), so the other commands never load or
 // evaluate it. A bundling mistake would surface as a failure of `serve` itself,
 // which the packed-CLI smoke test exercises.
-export const registerServe: CommandRegistrar = (program, ctx, state) => {
+// Every option of `serve`, also taken by `check` (issue #77), so the two can
+// never accept different flags
+const registerServeOptions = (base: Command) => {
   const command = registerApiOptions(
     registerSpecOptions(
-      program.command('serve'),
+      base,
       'permit private/loopback addresses for spec fetch redirects, for API requests to a spec-derived origin or redirect, and for the --upstream-oauth-* token URL (never cloud-metadata)',
       false,
     ),
@@ -42,9 +42,6 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       '--enable <name=switch>',
       'with --api: turn a per-API switch on for one API, e.g. shop=allow-private-network (repeatable)',
       collect,
-    )
-    .description(
-      'start an MCP server (stdio by default) exposing tools generated from an OpenAPI spec',
     )
     .option('--http', 'serve over Streamable HTTP (127.0.0.1 unless --http-host) instead of stdio')
     .option('--port <n>', 'HTTP port', '3044')
@@ -115,6 +112,12 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       '--no-output-schema-descriptions',
       'show output schemas without their field descriptions, which are most of their size; validation is the same either way',
     );
+  // Their values are checked in serve-action.ts, with its own messages
+  declareChoices(command, '--tool-mode', TOOL_MODES);
+  declareChoices(command, '--image-responses', IMAGE_RESPONSE_MODES);
+  declareChoices(command, '--output-schema', OUTPUT_SCHEMA_FORMS);
+  declareChoices(command, '--http-auth', HTTP_AUTH_MODES);
+  declareChoices(command, '--log', ['json']);
   // `.option()` chained onto a Command whose Opts type already carries
   // SpecCmdOpts's own index signature does not narrow any further through
   // @commander-js/extra-typings' literal-flag inference (it falls back to a
@@ -130,7 +133,18 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       occurrences.push({ flag, value });
     });
   }
-  (command as unknown as Command<[], ServeCmdOpts>).action(async (cmdOpts: ServeCmdOpts) => {
+  return { command: command as unknown as Command<[], ServeCmdOpts>, occurrences };
+};
+
+export const registerServe: CommandRegistrar = (program, ctx, state) => {
+  const { command, occurrences } = registerServeOptions(
+    program
+      .command('serve')
+      .description(
+        'start an MCP server (stdio by default) exposing tools generated from an OpenAPI spec',
+      ),
+  );
+  command.action(async (cmdOpts: ServeCmdOpts) => {
     // A missing chunk (broken install) takes serve's own error path: plain
     // text on stderr regardless of --json, stdout stays MCP-only
     let runServe: typeof RunServe;
@@ -141,5 +155,19 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       return;
     }
     await runServe(command, cmdOpts, ctx, state, occurrences);
+  });
+};
+
+export const registerCheck: CommandRegistrar = (program, ctx, state) => {
+  const { command, occurrences } = registerServeOptions(
+    program
+      .command('check')
+      .description(
+        'run the startup checks of serve with the same options, without serving: environment variables, base URL, tool mode, tools (no API call)',
+      ),
+  );
+  command.action(async (cmdOpts: ServeCmdOpts) => {
+    const { runCheck } = await import('./check-action.ts');
+    await runCheck(command, cmdOpts, ctx, state, occurrences);
   });
 };

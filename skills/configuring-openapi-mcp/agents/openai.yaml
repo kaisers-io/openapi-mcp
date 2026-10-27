@@ -1,0 +1,6 @@
+interface:
+  display_name: "Configure openapi-mcp"
+  short_description: "Connect an API to the agent through openapi-mcp, step by step"
+  default_prompt: "Use $configuring-openapi-mcp to connect an API to this agent."
+policy:
+  allow_implicit_invocation: true

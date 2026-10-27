@@ -1,0 +1,31 @@
+name: skill-audit
+# Scans the agent skills under skills/ for injected instructions, exfiltration patterns, malicious
+# code and obfuscation before they are merged: skills.sh shows its own scan of a published skill on
+# a public page, with no way to re-run it. Credential-free, so pull requests from forks are covered.
+#
+# Path-filtered: only a change to a skill, this workflow or the root package.json can change the
+# result. The scanner is a Python package run through uvx; it and uv are pinned to exact versions at
+# least a week old, as Dependabot's cooldown does for the other dependencies, and Dependabot cannot
+# see these two pins, so they are bumped by hand. pipx ships on GitHub's Ubuntu images, so
+# installing uv adds no third-party action.
+on:
+  push:
+    branches: [main]
+    paths: ['skills/**', '.github/workflows/skill-audit.yml', 'package.json']
+  pull_request:
+    paths: ['skills/**', '.github/workflows/skill-audit.yml', 'package.json']
+permissions:
+  contents: read
+jobs:
+  static:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - run: pipx install uv==0.13.3
+      # `scan-all skills` enumerates the skill directories below skills/; given one skill's own
+      # directory it reports "No skills found to scan" and exits 0
+      - run: >
+          uvx --from cisco-ai-skill-scanner==2.3.0 skill-scanner scan-all skills
+          --policy balanced --recursive --fail-on-severity medium --format summary

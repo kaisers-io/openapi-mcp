@@ -15,6 +15,8 @@
 //                              (Keep a Changelog form) under a fresh, empty `## [Unreleased]`
 //   packages/cli/CHANGELOG.md  the copy the npm tarball ships: byte-identical to CHANGELOG.md, and
 //                              released by `--set` together with it
+//   skills/*/SKILL.md          `metadata.version`, the CLI version each agent skill was checked
+//                              against (skill-sites.ts)
 //
 // Why the pins must follow the version: the host examples pin an exact version, never `latest`,
 // because the server runs with the user's API credentials and an unpinned `npx` runs whatever was

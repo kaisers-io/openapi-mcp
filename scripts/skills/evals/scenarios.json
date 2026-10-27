@@ -1,0 +1,132 @@
+{
+  "description": "Evaluation scenarios for the agent skills (#72). Each runs in a fresh project with the skill installed. The user's answers are given in the prompt, so the agent can run without asking; a run passes when every expectation holds. `shop.json` is the shop example of docs/filtering.md with a bearer scheme; its API base, https://api.example.test, does not resolve, so the expected configs pass --base-url.",
+  "scenarios": [
+    {
+      "id": "configure-read-only",
+      "skill": "configuring-openapi-mcp",
+      "host": "claude-code",
+      "prompt": "Connect the shop API to Claude Code for this project. The description is ./shop.json. The agent should only look things up. Its API is at https://api.example.test. I have a token in SHOP_API_TOKEN. Do not ask me anything else.",
+      "expect": {
+        "file": ".mcp.json",
+        "contains": [
+          "@kaisers-io/openapi-mcp@",
+          "--header-env",
+          "Authorization=SHOP_API_TOKEN",
+          "${SHOP_API_TOKEN}"
+        ],
+        "absent": ["--allow", "Bearer "],
+        "exposed": [
+          "get_reports",
+          "getOrder",
+          "getOrderSection",
+          "listCustomers",
+          "listOrderItems",
+          "listOrders"
+        ]
+      }
+    },
+    {
+      "id": "configure-one-write",
+      "skill": "configuring-openapi-mcp",
+      "host": "claude-code",
+      "prompt": "Connect the shop API (./shop.json, base https://api.example.test) to Claude Code for this project. The agent may look everything up and create orders, nothing else. My token is in SHOP_API_TOKEN. Show me the table of allowed operations, then write the config. Do not ask me anything else.",
+      "expect": {
+        "file": ".mcp.json",
+        "contains": ["--header-env", "SHOP_API_TOKEN"],
+        "absent": ["path:/**"],
+        "exposed": [
+          "createOrder",
+          "get_reports",
+          "getOrder",
+          "getOrderSection",
+          "listCustomers",
+          "listOrderItems",
+          "listOrders"
+        ],
+        "transcript": ["createOrder", "Bearer"]
+      }
+    },
+    {
+      "id": "configure-two-apis-codex",
+      "skill": "configuring-openapi-mcp",
+      "host": "codex",
+      "prompt": "Connect two APIs to Codex for this project, read-only: shop (./shop.json, base https://api.example.test, token in SHOP_API_TOKEN) and petstore (./petstore.json, base https://pets.example.test, no credentials), behind one server. Do not ask me anything else.",
+      "expect": {
+        "file": ".codex/config.toml",
+        "contains": [
+          "[mcp_servers.",
+          "--api",
+          "shop=",
+          "petstore=",
+          "env_vars",
+          "SHOP_API_TOKEN",
+          "startup_timeout_sec"
+        ],
+        "absent": ["Bearer "]
+      }
+    },
+    {
+      "id": "configure-update-from-0.4",
+      "skill": "configuring-openapi-mcp",
+      "host": "claude-code",
+      "setup": {
+        ".mcp.json": "{\"mcpServers\":{\"shop\":{\"command\":\"npx\",\"args\":[\"-y\",\"@kaisers-io/openapi-mcp@0.4.1\",\"serve\",\"--spec\",\"./shop.json\",\"--base-url\",\"https://api.example.test\",\"--allow\",\"**\",\"--deny\",\"DELETE /**\"]}}}"
+      },
+      "prompt": "Update the shop server in this project to the current openapi-mcp. Keep what it may do. Do not ask me anything else.",
+      "expect": {
+        "file": ".mcp.json",
+        "contains": ["method:delete", "operationId:*"],
+        "absent": ["@0.4.1", "\"**\"", "DELETE /**", "path:/**"],
+        "transcript": ["case"]
+      }
+    },
+    {
+      "id": "debug-codex-env-vars",
+      "skill": "debugging-openapi-mcp",
+      "host": "codex",
+      "setup": {
+        ".codex/config.toml": "[mcp_servers.shop]\ncommand = \"npx\"\nargs = [\"-y\", \"@kaisers-io/openapi-mcp@CURRENT\", \"serve\", \"--spec\", \"./shop.json\", \"--base-url\", \"https://api.example.test\", \"--header-env\", \"Authorization=SHOP_API_TOKEN\"]\n"
+      },
+      "prompt": "The shop server fails to start in Codex. SHOP_API_TOKEN is exported in my shell. Find out why.",
+      "expect": {
+        "transcript": ["env_vars", "SHOP_API_TOKEN"]
+      }
+    },
+    {
+      "id": "debug-pending-approval",
+      "skill": "debugging-openapi-mcp",
+      "host": "claude-code",
+      "prompt": "Claude Code shows my shop server from .mcp.json as pending and never connects. What is wrong?",
+      "expect": {
+        "transcript": ["approv", "/mcp"]
+      },
+      "setup": {
+        ".mcp.json": "{\"mcpServers\":{\"shop\":{\"command\":\"npx\",\"args\":[\"-y\",\"@kaisers-io/openapi-mcp@CURRENT\",\"serve\",\"--spec\",\"./shop.json\",\"--base-url\",\"https://api.example.test\"]}}}"
+      }
+    },
+    {
+      "id": "debug-read-only-default",
+      "skill": "debugging-openapi-mcp",
+      "host": "claude-code",
+      "setup": {
+        ".mcp.json": "{\"mcpServers\":{\"shop\":{\"command\":\"npx\",\"args\":[\"-y\",\"@kaisers-io/openapi-mcp@CURRENT\",\"serve\",\"--spec\",\"./shop.json\",\"--base-url\",\"https://api.example.test\"]}}}"
+      },
+      "prompt": "The shop server works, but the agent cannot create orders. createOrder is missing. Why?",
+      "expect": {
+        "transcript": ["read-only", "--allow"]
+      }
+    },
+    {
+      "id": "debug-wrong-base-url",
+      "skill": "debugging-openapi-mcp",
+      "host": "claude-code",
+      "setup": {
+        ".mcp.json": "{\"mcpServers\":{\"shop\":{\"command\":\"npx\",\"args\":[\"-y\",\"@kaisers-io/openapi-mcp@CURRENT\",\"serve\",\"--spec\",\"./shop.json\",\"--base-url\",\"https://api.example.test\"]}}}"
+      },
+      "prompt": "Every call of the shop server returns 'upstream request failed with status 404', even listOrders. The API docs say the base URL is https://api.example.test/v2. Why?",
+      "expect": {
+        "transcript": ["--base-url", "/v2"]
+      }
+    }
+  ]
+}

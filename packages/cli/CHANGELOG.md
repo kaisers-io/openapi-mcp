@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent skills that configure and debug `openapi-mcp` (#72).** `npx skills add
+  kaisers-io/openapi-mcp --skill configuring-openapi-mcp` installs a skill that interviews the
+  user in plain words, shows a table of the operations the agent may use with what each one
+  does, proposes how to store credentials on macOS, Linux or Windows, writes the host config
+  for Claude Code, Codex, Claude Desktop, Cursor, VS Code or Gemini CLI after the user
+  confirms, and checks the server with `check`. It compares the configured, the latest and its
+  own version, and proposes the config changes an update needs. `debugging-openapi-mcp` finds
+  why a server does not start, lists fewer tools than expected or returns errors, from `check`,
+  `tools`, the host's status and its log. `pnpm skills:check` keeps both in line with the CLI.
+  See [Agent skills](README.md#agent-skills-optional).
+
+- **`check` runs the startup checks of `serve` without serving (#77).** It takes the same
+  options, lists every environment variable they name as set or missing (all of them, never a
+  value), then resolves the base URL and the OAuth token URL, chooses the tool mode, and
+  compiles every output schema, also under `discover`. The report names the tool mode and why
+  `auto` chose it, the exposed operations per API, the tools a host lists, and the startup
+  warnings. It calls no operation, requests no token, opens no port, and leaves the
+  `--uploads` folder alone. See [`check`](docs/configuration.md#check).
+
+- **`--json tools` tells what every operation does and which credentials it accepts (#76).**
+  Each exposed and not exposed operation carries its `operationId`, `tags`, `summary`, a
+  description cut at 1,024 characters, and its effective `security` with alternatives, combined
+  schemes and scopes. `securitySchemes` lists each declared scheme with how many exposed and not
+  exposed operations accept it, and `counts` adds the operations up by decision. A write left
+  out by the read-only default can now be judged from its summary without opening the spec. See
+  [`tools`](docs/configuration.md#tools).
+
+- **`--json help` describes every command and option as data (#75).** For tools that write
+  `openapi-mcp` configs: per option the flags, argument, description, default, the value of a
+  bare optional flag, whether it can be repeated, the accepted values, and how `serve` applies
+  it with several APIs. `help [command...]` without `--json` prints the help text, as
+  `<command> --help` does. The help text of `serve` and `tools` now lists the accepted values
+  of `--tool-mode`, `--image-responses`, `--output-schema`, `--http-auth`, `--log`,
+  `--upstream-oauth-client-auth` and `--nullable-response-fields`. See
+  [`help`](docs/configuration.md#help).
+
 - **Several APIs behind one server (#16).** `serve --api <name>=<source>` declares one API, and
   can be repeated; every per-API option then starts with the API's name (`--allow
   github=tag:repos`, `--header-env shop=Authorization=SHOP_TOKEN`), switches are set with
@@ -28,6 +64,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computed; measured on 100 KiB and 1 MiB responses, the time per call stays within noise.
 
 ### Changed
+
+- **`doctor` describes what it reports (#77):** CLI and Node versions, app root and cache
+  root. Its help text promised an effective configuration it never printed; `check` reports
+  that now.
 
 - **`--tool-mode auto` also decides by the size of the tool definitions (#61).** At or below 64
   operations, `auto` now picks `discover` when the definitions a model sees (name, description

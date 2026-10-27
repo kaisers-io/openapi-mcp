@@ -684,6 +684,59 @@ default, `off`, keeps today's behaviour: an image is a tool error naming its med
   client) needs `inline`. Hosts with file tools, such as coding agents, can use `file`. Some
   of them ask before reading a file outside the project folder.
 
+## `check`
+
+`check` takes the same options as `serve`, runs its startup checks and reports them, without
+serving (#77). Copy the host's launch command, replace `serve` with `check`, and run it in the
+same environment and working directory; the host config itself stays on `serve`.
+
+```bash
+openapi-mcp --json check --spec https://api.example.com/openapi.json \
+  --header-env Authorization=EXAMPLE_TOKEN --tool-mode auto
+```
+
+It runs in two stages:
+
+1. **environment**: every variable the options name (`--header-env`, `--spec-header-env`,
+   `--upstream-oauth-client-id-env`, `--upstream-oauth-client-secret-env`, and
+   `--http-token-env` with `--http`), each `set` or missing, never with its value. All of them
+   are listed, not only the first missing one. When one is missing, the next stage is
+   `skipped` and the exit code is `2`.
+2. **startup**: what `serve` does before it accepts a connection: the spec is loaded, filters
+   applied, the base URL and the OAuth token URL resolved and checked, the tool mode chosen,
+   and the output schemas compiled. Unlike `serve`, `check` compiles every output schema
+   under `discover` too, so a schema that would fail on its first call is reported now. A
+   failure gives its `code` and `message`, and the exit code of that error.
+
+`check` calls no operation and requests no OAuth token. Like `serve`, it may fetch the spec
+and look up the addresses of the base URL and token URL; the spec cache follows the same rules
+as `tools`. It opens no port and neither creates nor sweeps the `--uploads` folder.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "environment": {
+      "status": "ok",
+      "variables": [{ "name": "EXAMPLE_TOKEN", "flag": "--header-env", "set": true }]
+    },
+    "startup": { "status": "ok" },
+    "toolMode": "discover",
+    "toolModeReason": "count",
+    "apis": [{ "baseUrl": "https://api.example.com/", "exposed": ["listPets", "getPet"] }],
+    "listedTools": ["openapi_mcp_status", "search_operations", "describe_operation", "call_operation"]
+  },
+  "warnings": ["--tool-mode auto: discover, since 70 operations are exposed (more than 64)"]
+}
+```
+
+`toolModeReason` (`count` or `size`) is present when `auto` chose the mode. `apis` has one
+entry per API, with `name` when `--api` names it; `exposed` lists the operations, and
+`listedTools` the tools a host lists, which under `discover` are the four tools above. With
+`--api`, each variable carries the `api` it belongs to. `warnings` holds every warning
+`serve` prints at startup. Without `--json`, the report is printed as lines and the warnings
+go to stderr.
+
 ## `tools`
 
 Preview the operation inventory an OpenAPI spec generates, with filters applied — no server
@@ -765,6 +818,23 @@ whose name is not a valid HTTP header name, challenge/response `http` schemes (`
 `negotiate`, `ntlm`, `hoba`, `mutual`, `scram-*`), mutual TLS, and malformed schemes;
 interactive OAuth flows need a token obtained elsewhere. Several cookie schemes share one
 `--header-env Cookie=<ENV>` value (`a=1; b=2`).
+
+To choose filters without opening the spec, the `--json` envelope also tells what each
+operation does and which credentials it accepts (#76). Every row of `data.tools` and
+`data.notExposed` carries, where the spec defines them:
+
+| Field | Meaning |
+|---|---|
+| `operationId`, `tags`, `summary` | from the operation |
+| `description` | the operation's description, sanitized and cut at 1,024 characters |
+| `security` | the operation's `security`, or the root one: alternatives, any one of which suffices, each naming the schemes it needs together with their scopes, e.g. `[{"token": []}, {"key": [], "oauth": ["tickets:write"]}]`. `[]` needs no credentials; a `{}` alternative makes them optional. Absent when neither declares it |
+
+An operation omitted while the spec is read (for example for a cookie parameter) has no
+operation to take these from and keeps only its identifiers. `data.securitySchemes` lists each
+declared scheme with `name`, `type`, `deprecated`, and how many `exposed` and `notExposed`
+operations accept it; the first 64 schemes are read, and `data.securitySchemesDropped` counts
+the rest. `data.counts` adds up: `operations` is `exposed` plus every entry of `notExposed`,
+which is counted per `decision`.
 
 `serve` warns at startup when an exposed operation's requirement is satisfied by none of the
 configured `--header` / `--header-env` headers. The warning lists the alternatives joined with
@@ -937,10 +1007,69 @@ run `cache unlock`).
 openapi-mcp cache unlock --spec https://api.example.com/openapi.json --cache-key petstore-prod
 ```
 
+## `help`
+
+`openapi-mcp help [command...]` prints the help text of a command, like `<command> --help`.
+With `--json` it prints the options of the installed version as data, for tools that write
+`openapi-mcp` configs (#75):
+
+```bash
+openapi-mcp --json help            # every command
+openapi-mcp --json help serve      # one command
+```
+
+```json
+{
+  "ok": true,
+  "data": {
+    "version": "0.5.0",
+    "name": "openapi-mcp",
+    "description": "Turn any OpenAPI spec into a strict, locally running MCP server",
+    "arguments": [],
+    "options": [{ "flags": "--json", "long": "--json", "description": "machine-readable JSON output", "mandatory": false, "negate": false, "repeatable": false }],
+    "commands": [
+      {
+        "name": "serve",
+        "options": [
+          {
+            "flags": "--tool-mode <mode>",
+            "long": "--tool-mode",
+            "argument": { "name": "mode", "optional": false },
+            "description": "per-operation (one tool per operation), …",
+            "mandatory": false,
+            "negate": false,
+            "default": "per-operation",
+            "repeatable": false,
+            "choices": ["per-operation", "discover", "auto"]
+          }
+        ],
+        "commands": []
+      }
+    ]
+  },
+  "warnings": []
+}
+```
+
+Each command has `name`, `description`, `arguments` (`name`, `required`, `variadic`),
+`options` and nested `commands`; only the top level carries `version`. Each option has:
+
+| Field | Meaning |
+|---|---|
+| `flags`, `long`, `short` | as written in the help text |
+| `argument` | `name`, and `optional` when the flag may stand alone |
+| `mandatory`, `negate` | a required option; a `--no-<name>` option |
+| `default` | the value used when the option is absent (`true` for a `--no-<name>` option) |
+| `bareValue` | the value of an optional-argument flag given without one (`--nullable-response-fields` means `all`) |
+| `repeatable` | the option can be given several times |
+| `choices` | the accepted values; absent means the CLI does not list them, not that any value works |
+| `perApi` | `serve` or `check` with `--api`: `prefix` takes `<api>=` before the value; `prefix-or-all` (`--deny`) applies to every API without one; `enable` is a switch set with `--enable <api>=<switch>` |
+
 ## `doctor`
 
-Diagnostics: versions, cache root, effective configuration. Takes only the global options
-(`--json`, `--verbose`, `-h/--help`) — **no `--spec` flag**.
+Diagnostics: CLI and Node versions, app root and cache root. Takes only the global options
+(`--json`, `--verbose`, `-h/--help`) — **no `--spec` flag**. To check a server configuration,
+use [`check`](#check).
 
 ```bash
 openapi-mcp doctor
@@ -974,8 +1103,8 @@ openapi-mcp --json doctor
 | `4` | not found | unreadable spec file, missing cache entry, `cache unlock` on an entry without a lock |
 | `5` | conflict | cache lock held by another process, `cache promote --hash` mismatch |
 
-With the global `--json` flag, `tools`, `doctor` and the `cache` commands print an error as
-`{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`. Two exceptions print plain
+With the global `--json` flag, `tools`, `check`, `help`, `doctor` and the `cache`
+commands print an error as `{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`. Two exceptions print plain
 text on stderr whatever the flags: `serve`, whose stdout is reserved for MCP traffic (it stays
 empty on an error), and the launcher's platform and Node version checks (exit `1`), which run
 before any option is parsed.

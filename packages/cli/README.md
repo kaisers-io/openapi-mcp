@@ -75,7 +75,7 @@ env_vars = ["SPEC_TOKEN", "API_TOKEN"]
 
 Windows: `npx` is a `.cmd` script. Hosts that resolve it (Claude Desktop) take the config
 above unchanged; a host that spawns commands without a shell fails with `ENOENT`/`EINVAL` or
-"client closed" — use `"command": "cmd"` with `"args": ["/c", "npx", "-y", ...]` there, keep
+"client closed" — use `"command": "cmd"` with `"args": ["/d", "/c", "npx", "-y", ...]` there, keep
 `& | < > ^ %` out of the arguments, and double backslashes in JSON paths
 (`"C:\\specs\\petstore.json"`).
 
