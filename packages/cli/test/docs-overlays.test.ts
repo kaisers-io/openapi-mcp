@@ -157,7 +157,16 @@ describe('openapi-mcp on the corrected specs (issue #26)', () => {
     const reviewHome = mkdtempSync(join(tmpdir(), 'openapi-mcp-overlays-review-'));
     try {
       const { source: _source, contentHash: _hash, ...rest } = tools(spec, reviewHome);
-      return rest;
+      // An overlay may change what an operation says (#76 lists it), not the inventory
+      const withoutText = (rows: unknown): unknown =>
+        (rows as Record<string, unknown>[]).map(
+          ({ summary: _summary, description: _description, ...row }) => row,
+        );
+      return {
+        ...rest,
+        tools: withoutText(rest['tools']),
+        notExposed: withoutText(rest['notExposed']),
+      };
     } finally {
       rmSync(reviewHome, { recursive: true, force: true });
     }

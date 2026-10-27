@@ -127,13 +127,20 @@ const toScheme = (name: string, raw: Record<string, unknown>): SecurityScheme =>
   return raw['deprecated'] === true ? { ...scheme, deprecated: true } : scheme;
 };
 
-export const extractSecuritySchemes = (document: Record<string, unknown>): SecurityScheme[] => {
+// The schemes kept, and how many declared entries were dropped: past the
+// first MAX_SCHEMES, or not an object (issue #76 reports the count)
+export const extractSecuritySchemes = (
+  document: Record<string, unknown>,
+): { schemes: SecurityScheme[]; dropped: number } => {
   const components = isRecord(document['components']) ? document['components'] : {};
-  const schemes = isRecord(components['securitySchemes']) ? components['securitySchemes'] : {};
-  return Object.entries(schemes)
+  const declared = Object.entries(
+    isRecord(components['securitySchemes']) ? components['securitySchemes'] : {},
+  );
+  const schemes = declared
     .slice(0, MAX_SCHEMES)
     .filter((entry): entry is [string, Record<string, unknown>] => isRecord(entry[1]))
     .map(([name, raw]) => toScheme(name, raw));
+  return { schemes, dropped: declared.length - schemes.length };
 };
 
 // `undefined` when absent or malformed: "no information" (the root default

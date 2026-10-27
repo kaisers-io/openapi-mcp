@@ -766,6 +766,23 @@ whose name is not a valid HTTP header name, challenge/response `http` schemes (`
 interactive OAuth flows need a token obtained elsewhere. Several cookie schemes share one
 `--header-env Cookie=<ENV>` value (`a=1; b=2`).
 
+To choose filters without opening the spec, the `--json` envelope also tells what each
+operation does and which credentials it accepts (#76). Every row of `data.tools` and
+`data.notExposed` carries, where the spec defines them:
+
+| Field | Meaning |
+|---|---|
+| `operationId`, `tags`, `summary` | from the operation |
+| `description` | the operation's description, sanitized and cut at 1,024 characters |
+| `security` | the operation's `security`, or the root one: alternatives, any one of which suffices, each naming the schemes it needs together with their scopes, e.g. `[{"token": []}, {"key": [], "oauth": ["tickets:write"]}]`. `[]` needs no credentials; a `{}` alternative makes them optional. Absent when neither declares it |
+
+An operation omitted while the spec is read (for example for a cookie parameter) has no
+operation to take these from and keeps only its identifiers. `data.securitySchemes` lists each
+declared scheme with `name`, `type`, `deprecated`, and how many `exposed` and `notExposed`
+operations accept it; the first 64 schemes are read, and `data.securitySchemesDropped` counts
+the rest. `data.counts` adds up: `operations` is `exposed` plus every entry of `notExposed`,
+which is counted per `decision`.
+
 `serve` warns at startup when an exposed operation's requirement is satisfied by none of the
 configured `--header` / `--header-env` headers. The warning lists the alternatives joined with
 `OR`; the schemes one alternative needs together are joined with `AND`. An alternative that

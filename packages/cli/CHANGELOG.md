@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--json tools` tells what every operation does and which credentials it accepts (#76).**
+  Each exposed and not exposed operation carries its `operationId`, `tags`, `summary`, a
+  description cut at 1,024 characters, and its effective `security` with alternatives, combined
+  schemes and scopes. `securitySchemes` lists each declared scheme with how many exposed and not
+  exposed operations accept it, and `counts` adds the operations up by decision. A write left
+  out by the read-only default can now be judged from its summary without opening the spec. See
+  [`tools`](docs/configuration.md#tools).
+
 - **`--json help` describes every command and option as data (#75).** For tools that write
   `openapi-mcp` configs: per option the flags, argument, description, default, the value of a
   bare optional flag, whether it can be repeated, the accepted values, and how `serve` applies
