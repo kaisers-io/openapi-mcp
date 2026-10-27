@@ -32,6 +32,8 @@ export type ActionResult = {
   humanLines: readonly string[];
   // The exactOptionalPropertyTypes flag forces the explicit undefined
   warnings?: readonly string[] | undefined;
+  // Stable reasons of warnings that replace an error (issue #79)
+  warningReasons?: readonly string[] | undefined;
 };
 
 // Warnings go to stderr: stdout stays reserved for the command's own output so
@@ -69,7 +71,15 @@ export const emitWarnings = (ctx: CliContext, warnings: readonly string[]): void
 export const emit = (ctx: CliContext, opts: OutputOptions, result: ActionResult): void => {
   const warnings = result.warnings ?? [];
   if (opts.json) {
-    ctx.out(JSON.stringify({ ok: true, data: result.data, warnings }));
+    const reasons = result.warningReasons ?? [];
+    ctx.out(
+      JSON.stringify({
+        ok: true,
+        data: result.data,
+        warnings,
+        ...(reasons.length === 0 ? {} : { warningReasons: reasons }),
+      }),
+    );
     return;
   }
   for (const line of result.humanLines) {
@@ -113,6 +123,7 @@ export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): n
         ok: false,
         error: {
           code: rendered.code,
+          ...(rendered.reason === undefined ? {} : { reason: rendered.reason }),
           message: rendered.message,
           ...(rendered.stack === undefined ? {} : { stack: rendered.stack }),
         },

@@ -9,7 +9,7 @@ import {
   describeCause,
   displaySource,
   errorName,
-  failureHint,
+  fetchFailedError,
   hostnameOf,
   readBodyCapped,
   readValidator,
@@ -244,12 +244,7 @@ const fetchChain = async (
       }
       if (!response.ok) {
         await response.body?.cancel();
-        throw validationError(
-          `spec fetch failed with HTTP ${response.status} for ${displaySource(url)}${failureHint(
-            response.status,
-            opts.headers.length > 0,
-          )}`,
-        );
+        throw fetchFailedError(response.status, displaySource(url), opts.headers.length > 0);
       }
       const text = await readBodyCapped(response, maxBytes, displaySource(url));
       const etag = readValidator(response, 'etag');

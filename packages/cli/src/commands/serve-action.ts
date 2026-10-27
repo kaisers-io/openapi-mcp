@@ -201,17 +201,20 @@ export const resolveBaseUrl = (
     throw usageError(
       'the spec has no absolute server URL to use as the API base (servers[0].url is over ' +
         `the ${String(SPEC_BUDGETS.maxServerUrlBytes)}-byte server URL budget) — pass --base-url <url>`,
+      'base_url_unresolved',
     );
   }
   if (specSourceIsFile) {
     throw usageError(
       'the spec has no absolute server URL to use as the API base — pass --base-url <url>',
+      'base_url_unresolved',
     );
   }
   const documentBase = tryParseUrl(displaySource);
   if (documentBase === undefined) {
     throw usageError(
       'the spec has no absolute server URL to use as the API base — pass --base-url <url>',
+      'base_url_unresolved',
     );
   }
   const resolved =
@@ -437,7 +440,7 @@ export const resolveHttpConfig = (
   }
   const token = ctx.env[cmdOpts.httpTokenEnv];
   if (token === undefined || token === '') {
-    throw validationError(`env var "${cmdOpts.httpTokenEnv}" is not set`);
+    throw validationError(`env var "${cmdOpts.httpTokenEnv}" is not set`, 'env_missing');
   }
   if (!isValidBearerToken(token)) {
     throw validationError(
@@ -1001,6 +1004,7 @@ const prepareServe = async (
     timeoutMs: first.api.args.options.timeoutMs,
     // What `check` reports (issue #77)
     toolModeReason: choice.reason,
+    warningReasons: [...new Set(finished.flatMap((entry) => entry.api.result.warningReasons))],
     apis: finished.map((entry) => ({
       name: entry.api.name,
       baseUrl: `${entry.resolvedBase.url.origin}${entry.resolvedBase.url.pathname}`,

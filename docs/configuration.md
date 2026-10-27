@@ -262,8 +262,8 @@ openapi-mcp --json check --spec https://api.example.com/openapi.json \
    tool mode and compiles the output schemas. Unlike `serve`, `check` compiles every output
    schema under `discover` too, so it reports now a schema that would fail on its first call.
    With `--http-auth oauth` it also fetches the authorization server's metadata and keys, as
-   `serve` does. A failure reports its `code` and `message`, and `check` exits with the exit
-   code of that error.
+   `serve` does. A failure reports its `code` and `message`, and a [`reason`](#error-reasons)
+   when it has one. `check` exits with the exit code of that error.
 
 `check` calls no operation and requests no OAuth token. Like `serve`, it may fetch the spec and
 look up the addresses of the base URL and the token URL, and it follows the same spec cache
@@ -297,7 +297,7 @@ holds every warning `serve` prints at startup.
 
 When a stage fails, the `--json` report has `"ok": false`, `environment.status` is `failed` or
 `startup.status` is `failed` with an `error` object, and a skipped stage has the status
-`skipped`. An error found while the flags are parsed, such as an unknown flag, uses the general
+`skipped`. A failed environment stage has the reason `env_missing`. An error found while the flags are parsed, such as an unknown flag, uses the general
 error envelope instead (see [Exit codes](#exit-codes)). Without `--json`, `check` prints the
 report as lines and the warnings go to stderr.
 
@@ -614,3 +614,32 @@ its own report (see [`check`](#check)). Two cases print plain text on stderr wha
 `serve` does, because its stdout is reserved for MCP messages and stays empty on an error. The
 launcher's platform and Node version checks do too, because they run before any option is
 parsed, and they exit with `1`.
+
+### Error reasons
+
+Many causes share the code `usage` or `validation`. For the causes you can fix in the config,
+the error object also has a `reason`, so a script or an agent can react to it without
+matching the message, which may change between versions:
+
+```json
+{"ok": false, "error": {"code": "usage", "reason": "env_missing", "message": "environment variable \"SHOP_TOKEN\" (for header \"Authorization\") is not set or empty"}}
+```
+
+| `reason` | Raised when |
+|---|---|
+| `env_missing` | a variable named by an `*-env` flag is unset or empty |
+| `base_url_unresolved` | the spec gives no usable API base and `--base-url` is not set |
+| `spec_http_401_403` | the spec fetch answered `401` or `403`; a `403` can also mean that the credentials lack a permission |
+| `spec_external_ref` | the spec has a `$ref` to another document |
+| `filter_no_selector` | an `--allow`, `--deny` or `--omit-output-schema` pattern has no selector |
+
+`tools`, `cache` and `check` report these reasons, and `check` puts them in the failed stage.
+An error without one of these causes has only a `code`. A warning that replaces an error
+reports the reason too: when a spec refresh fails with `401` and the cached spec is served
+instead, the envelope has `"warningReasons": ["spec_http_401_403"]` next to `warnings`.
+`warningReasons` is present only when it is not empty. Tool call errors and the plain-text
+errors of `serve` have no reason.
+
+The reasons are part of the stable interface. A new reason may be added in any release;
+removing one or changing what it means is a breaking change. `code` and the exit codes stay
+as they are.

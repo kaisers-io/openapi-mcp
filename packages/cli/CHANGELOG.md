@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tools`, the host's status and its log. `pnpm skills:check` keeps both in line with the CLI.
   See [Agent skills](README.md#set-it-up-with-your-agent).
 
+- **Stable error reasons in the JSON envelope (#79).** Next to `code`, an error caused by the
+  config now carries a `reason`: `env_missing`, `base_url_unresolved`, `spec_http_401_403`,
+  `spec_external_ref` or `filter_no_selector`. `tools`, `cache` and `check` report it, `check`
+  in the failed stage. A spec refresh that fails with `401` or `403` and serves the cached spec
+  reports `"warningReasons": ["spec_http_401_403"]`. `code` and the exit codes are unchanged.
+  See [Error reasons](docs/configuration.md#error-reasons).
+
 - **`check` runs the startup checks of `serve` without serving (#77).** It takes the same
   options, lists every environment variable they name as set or missing (all of them, never a
   value), then resolves the base URL and the OAuth token URL, chooses the tool mode, and
