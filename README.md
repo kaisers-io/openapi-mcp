@@ -48,12 +48,31 @@ openapi-mcp --version
 openapi-mcp doctor
 ```
 
-`openapi-mcp doctor` prints CLI/Node versions and the effective cache root — a good first
-check when something looks wrong.
+`openapi-mcp doctor` prints CLI/Node versions and the cache root. To check a server
+configuration before a host starts it, run `openapi-mcp check` with the same options as `serve`
+(see [`check`](docs/configuration.md#check)).
 
 The first run per user is slower: it writes Node's V8 compile cache to
 `~/.kaisers-io/openapi-mcp/compile-cache/`, which later starts reuse. Set
 `NODE_DISABLE_COMPILE_CACHE=1` to turn it off, e.g. where the home directory does not persist.
+
+### Agent skills (optional)
+
+Two [agent skills](https://agentskills.io) guide you through a setup in Claude Code, Codex
+and other agents that read skills. `configuring-openapi-mcp` asks what the agent should do with
+the API, shows which operations it may use and what each one does, proposes how to store the
+credentials on your OS, writes the host config after you confirm, and checks that the server
+starts. `debugging-openapi-mcp` finds out why a server does not work and proposes a fix.
+
+```bash
+npx skills add kaisers-io/openapi-mcp --skill configuring-openapi-mcp
+npx skills add kaisers-io/openapi-mcp --skill debugging-openapi-mcp
+```
+
+To pin them to a release, add its tag: `npx skills add kaisers-io/openapi-mcp#vX.Y.Z --skill
+configuring-openapi-mcp`. A skill's `metadata.version` is the CLI version it was checked
+against. You can keep configuring by hand: the skills only run the commands and write the
+files described in this README.
 
 ## Quickstart
 

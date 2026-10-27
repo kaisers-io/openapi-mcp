@@ -81,6 +81,7 @@ const makeTree = async (given: Record<string, string | undefined> = {}): Promise
   trees.push(root);
   await cp(join(SCRIPT_DIR, 'run.ts'), join(root, 'scripts/versions/run.ts'));
   await cp(join(SCRIPT_DIR, 'sites.ts'), join(root, 'scripts/versions/sites.ts'));
+  await cp(join(SCRIPT_DIR, 'skill-sites.ts'), join(root, 'scripts/versions/skill-sites.ts'));
   // The real root package.json declares `"type": "module"`, which the script relies on.
   const files: Record<string, string | undefined> = { 'package.json': '{ "type": "module" }\n' };
   for (const file of Object.keys(FILES)) {
@@ -475,5 +476,33 @@ describe('versions usage', () => {
     for (const args of [[], ['--check', 'extra'], ['--set'], ['--set', NEXT, 'extra']]) {
       expect(run(root, ...args).code).toBe(EXIT_USAGE);
     }
+  });
+});
+
+// The agent skills (#72) carry the CLI version in their frontmatter
+const SKILL = 'skills/demo-skill/SKILL.md';
+const skill = (version: string): string =>
+  `---\nname: demo-skill\ndescription: Demo.\nmetadata:\n  version: "${version}"\n---\n\n# Demo\n`;
+
+describe('versions and the agent skills', () => {
+  afterAll(removeTrees);
+
+  it('fails when a skill names another version', async () => {
+    const result = run(await makeTree({ [SKILL]: skill(WRONG) }), '--check');
+    expect(result.code).toBe(EXIT_PROBLEMS);
+    expectError(result, `${SKILL}:5`, WRONG);
+  });
+
+  it('fails when a skill has no metadata version', async () => {
+    const result = run(await makeTree({ [SKILL]: '---\nname: demo-skill\n---\n' }), '--check');
+    expect(result.code).toBe(EXIT_PROBLEMS);
+    expectError(result, SKILL, 'expected one');
+  });
+
+  it('sets the version of every skill', async () => {
+    const root = await makeTree({ [SKILL]: skill(AT) });
+    expect(run(root, '--set', NEXT).code).toBe(EXIT_OK);
+    expect(await readFile(join(root, SKILL), 'utf8')).toBe(skill(NEXT));
+    expect(run(root, '--check').code).toBe(EXIT_OK);
   });
 });

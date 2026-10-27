@@ -9,9 +9,9 @@
   },
   "scripts": {
     "lint": "oxlint",
-    "fmt": "oxfmt packages scripts/bench scripts/versions scripts/inspector vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
-    "fmt:check": "oxfmt --check packages scripts/bench scripts/versions scripts/inspector vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
-    "typecheck": "pnpm -r run typecheck && tsc -p scripts/bench && tsc -p scripts/versions && tsc -p scripts/inspector",
+    "fmt": "oxfmt packages scripts/bench scripts/versions scripts/inspector scripts/skills vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
+    "fmt:check": "oxfmt --check packages scripts/bench scripts/versions scripts/inspector scripts/skills vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
+    "typecheck": "pnpm -r run typecheck && tsc -p scripts/bench && tsc -p scripts/versions && tsc -p scripts/inspector && tsc -p scripts/skills",
     "bench": "node scripts/bench/run.ts",
     "bench:compare": "node scripts/bench/compare.ts",
     "bench:baseline": "node scripts/bench/run.ts --out scripts/bench/baseline.json",
@@ -20,7 +20,9 @@
     "test:real-specs": "vitest run --config packages/cli/vitest.real-specs.config.ts",
     "build": "pnpm -r run build",
     "versions": "node scripts/versions/run.ts",
-    "check": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test:coverage"
+    "skills:sync": "node scripts/skills/skills.ts sync",
+    "skills:check": "node scripts/skills/skills.ts check",
+    "check": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm skills:check && pnpm test:coverage"
   },
   "packageManager": "pnpm@12.14.0",
   "devDependencies": {

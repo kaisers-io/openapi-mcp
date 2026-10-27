@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agent skills that configure and debug `openapi-mcp` (#72).** `npx skills add
+  kaisers-io/openapi-mcp --skill configuring-openapi-mcp` installs a skill that interviews the
+  user in plain words, shows a table of the operations the agent may use with what each one
+  does, proposes how to store credentials on macOS, Linux or Windows, writes the host config
+  for Claude Code, Codex, Claude Desktop, Cursor, VS Code or Gemini CLI after the user
+  confirms, and checks the server with `check`. It compares the configured, the latest and its
+  own version, and proposes the config changes an update needs. `debugging-openapi-mcp` finds
+  why a server does not start, lists fewer tools than expected or returns errors, from `check`,
+  `tools`, the host's status and its log. `pnpm skills:check` keeps both in line with the CLI.
+  See [Agent skills](README.md#agent-skills-optional).
+
 - **`check` runs the startup checks of `serve` without serving (#77).** It takes the same
   options, lists every environment variable they name as set or missing (all of them, never a
   value), then resolves the base URL and the OAuth token URL, chooses the tool mode, and

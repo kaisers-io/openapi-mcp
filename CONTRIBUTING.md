@@ -130,6 +130,13 @@ change a flag, a default or an output, update the documentation in the same pull
 README's host examples pin an exact version, and `pnpm versions --check` holds every pin to the
 version in `packages/cli/package.json`.
 
+The agent skills under `skills/` describe the CLI for agents. Shared reference files live in
+`skills/_shared/references/`; `pnpm skills:sync` copies them into each skill and writes each
+skill's options file from `openapi-mcp --json help`. `pnpm check` runs `pnpm skills:check`, which
+fails when a skill is out of date, links a missing docs heading, or breaks the writing and
+secret rules in `scripts/skills/rules.ts`. If you change a flag or a behavior a skill describes,
+update the skill in the same pull request.
+
 ## Releasing
 
 The version lives in `packages/cli/package.json`. The READMEs, `docs/` and both changelogs repeat

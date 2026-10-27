@@ -3,6 +3,7 @@
 
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { skillSites } from './skill-sites.ts';
 import { fileURLToPath } from 'node:url';
 
 // Resolved from this file, not `cwd` or `git rev-parse`: it works from any directory and in a tree
@@ -40,7 +41,7 @@ const NEXT_SECTION = /^## /mu;
 export const SEMVER =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/u;
 
-type Value = { label: string; value: unknown };
+export type Value = { label: string; value: unknown };
 export type Site = {
   file: string;
   // The versions this file states, each labelled with where; empty for the changelog.
@@ -61,12 +62,13 @@ export const describeValue = (value: unknown): string =>
   value === undefined ? '(no version field)' : JSON.stringify(value);
 export const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
-const lineOf = (text: string, index: number): number => text.slice(0, index).split('\n').length;
-const distinct = (values: Value[]): string =>
+export const lineOf = (text: string, index: number): number =>
+  text.slice(0, index).split('\n').length;
+export const distinct = (values: Value[]): string =>
   [...new Set(values.map((entry) => String(entry.value)))].join(', ');
 
 /** Readers return undefined after recording why, so one broken file never hides another. */
-const readText = async (file: string): Promise<string | undefined> => {
+export const readText = async (file: string): Promise<string | undefined> => {
   try {
     return await readFile(join(ROOT, file), 'utf8');
   } catch (error) {
@@ -278,7 +280,11 @@ export const readSites = async (): Promise<Site[]> => {
     const text = await readText(file);
     sites.push(text === undefined ? undefined : docSite(file, text));
   }
-  return [...sites.filter((site) => site !== undefined), ...(await changelogSites())];
+  return [
+    ...sites.filter((site) => site !== undefined),
+    ...(await skillSites()),
+    ...(await changelogSites()),
+  ];
 };
 
 /** The value every other site must equal. Unusable means there is nothing to check against. */
