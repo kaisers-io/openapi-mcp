@@ -102,7 +102,7 @@ How headers and secrets work is in [credentials.md](credentials.md). How request
 | `--upstream-oauth-client-secret-env <ENV>` | no | OAuth2 client credentials: the environment variable that holds the client secret; needs `--upstream-oauth-client-id-env` | none |
 | `--upstream-oauth-scheme <name>` | no | the oauth2 `securitySchemes` entry to use when several have a `clientCredentials` flow | the only one |
 | `--upstream-oauth-scope <scope>` | yes | a scope to request | none |
-| `--upstream-oauth-token-url <url>` | no | a token URL that replaces the spec's `tokenUrl`, or confirms one on another origin; an absolute `https` URL | the spec's `tokenUrl` |
+| `--upstream-oauth-token-url <url>` | no | a token URL that replaces the spec's `tokenUrl`, or confirms one on another origin; an absolute `https` URL, or `http` for a loopback host ([credentials](credentials.md)) | the spec's `tokenUrl` |
 | `--upstream-oauth-client-auth <method>` | no | `client_secret_basic` or `client_secret_post` (RFC 6749 §2.3.1) | `client_secret_basic` |
 
 ### Limits, retries and logging flags

@@ -140,5 +140,6 @@ pattern count and the counts of operations that are not exposed.
 
 ## Not shared
 
-Inbound OAuth (`--http-auth oauth`) does not follow any API's `allow-private-network`. With
-several APIs, its issuer must be public. See [serving over HTTP](http.md).
+Inbound OAuth (`--http-auth oauth`) does not follow any API's `allow-private-network`. The
+server trusts the issuer's own origin, so a private issuer works, but a `jwks_uri` on another
+origin must be public. See [serving over HTTP](http.md).

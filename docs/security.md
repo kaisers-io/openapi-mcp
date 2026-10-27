@@ -33,7 +33,7 @@ Every defense below comes on top of this requirement. None of them replaces it.
   |---|---|
   | Spec fetch time | `--timeout`, 30 seconds by default |
   | Spec size | 20 MiB |
-  | YAML aliases and anchors | 1,000 |
+  | YAML alias expansion | 1,000 aliases resolved |
   | Parse depth | 128 levels |
   | `$ref` expansion depth | 64 levels |
   | Operations in the document | 4,096 |
@@ -41,7 +41,8 @@ Every defense below comes on top of this requirement. None of them replaces it.
 
   Every `$ref` must resolve and stay inside the document. A `$ref` to another document is a
   hard failure for the whole spec. A spec that breaks any of these budgets fails before the
-  server writes it to the cache.
+  server writes it to the cache. The text limit is the exception: a longer summary or
+  description is truncated, not refused.
 - The number of tools exposed after `--allow` and `--deny` has its own cap: 512 tools in
   `--tool-mode per-operation`, and 4,096 under `discover` and `auto`, whose `tools/list` does
   not grow with the operation count. With several APIs in one server the cap applies to all of
@@ -110,8 +111,9 @@ checks:
   catches common names but guarantees nothing: an API with an unusual name for its secret
   header could still be misconfigured with `--header`. Use `--header-env` for anything
   sensitive, whatever its name.
-- Header names must be unique across all header flags, ignoring letter case. A duplicate is a
-  usage error. A control character (CR or LF) in a header name or value is an error too.
+- Header names must be unique, ignoring letter case, within the spec-fetch headers
+  (`--spec-header-env`) and within the API headers (`--header` and `--header-env`). The two sets
+  are separate, so both may set `Authorization`. A duplicate is a usage error. A control character (CR or LF) in a header name or value is an error too.
 - Cache entries never contain credentials, headers, or URLs with query strings. The cache
   metadata stores a redacted display source: origin and path only.
 - The server registers every secret at startup with one central redactor. The redactor runs
@@ -382,7 +384,7 @@ Metadata and JWKS go through the same DNS-pinned transport as API calls:
   issuer's own origin, which is your decision, or with `--allow-private-network`.
 - Each document may be at most 64 KiB, and `--timeout` bounds each fetch.
 - Issuer, audience and `jwks_uri` must use `https`. Plain `http` is allowed only for a loopback
-  host. Every redirect hop of a metadata or JWKS fetch must use `https` too.
+  host. Every redirect hop of a metadata or JWKS fetch must meet the same rule.
 - `jwks_uri` may carry a query string (for example Entra ID's `?appid=`), and the server fetches
   it exactly as published. Issuer and audience may not carry one.
 
@@ -541,7 +543,7 @@ on paths, exclude by method: `--deny "method:delete"`.
 
 `--tool-mode discover` replaces the per-operation tools with `search_operations`,
 `describe_operation` and `call_operation` ([Large APIs and tool modes](tool-modes.md) explains
-the mode). It adds no second policy path:
+the mode). Its calls go through the same checks as a direct call:
 
 - The three tools only ever see the exposed operations, after filtering.
 - `call_operation` runs the target through the same rate limit, strict input validation,
@@ -553,7 +555,7 @@ the mode). It adds no second policy path:
   `arguments` for an operation without inputs. That keeps the advertised schema and the runtime
   in agreement.
 
-The trade-off is approval granularity. `call_operation` carries the least safe annotations among
+The cost is coarser approval. `call_operation` carries the least safe annotations among
 the exposed operations, so a host that asks for approval per tool sees one tool for all of them.
 **One approval covers every exposed operation.** In a host that offers "always allow this
 tool", allowing `call_operation` once allows every operation the filters expose, writes included

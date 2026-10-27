@@ -76,8 +76,9 @@ The server matches operations by method and path:
 Everything else waits for your decision: new tools, changed descriptions or input schemas,
 changes to a method, path or base URL, and changes to an authentication scheme.
 
-If the candidate would expose more than 512 tools under the current filters, the server warns,
-because it would refuse to start after `cache promote`. See [tool-modes.md](tool-modes.md).
+If the candidate would expose more operations under the current filters than the tool mode
+allows (512 in `per-operation` mode, 4096 in `discover` and `auto`), the server warns, because
+it would refuse to start after `cache promote`. See [tool-modes.md](tool-modes.md).
 
 ## Reviewing and accepting an update
 

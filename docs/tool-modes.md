@@ -45,8 +45,9 @@ operations by keyword, matching the operation name, path, tags, parameter names,
 description. The search runs locally and gives the same result every time. It uses no
 embeddings and no network. The arguments work like this:
 
-- `query` holds the keywords. The server reads at most 500 characters and 32 distinct terms.
-  Without a query, the operations come back by name.
+- `query` holds the keywords. A query longer than 500 characters is an invalid argument. Of a
+  longer list of terms, the search uses the first 32 distinct ones. Without a query, the
+  operations come back by name.
 - `tags` keeps only operations that have at least one of these tags.
 - `method` keeps only operations with this HTTP method.
 - `limit` is the most results to return, from 1 to 25. The default is 10.
@@ -152,7 +153,7 @@ The server checks two limits on a spec:
 - A spec may document at most 4096 operations. This is a hard stop before anything is cached,
   whatever the filters. A spec with more operations has to be split.
 - After `--allow`/`--deny` filtering, at most 512 operations may be exposed in
-  `per-operation` mode, and at most 4096 in `discover` and `auto` mode. Above the limit,
+  `per-operation` mode (the server lists `openapi_mcp_status` next to them), and at most 4096 in `discover` and `auto` mode. Above the limit,
   `serve` and `check` stop with an error such as
   `N tools would be exposed after filtering — exceeds the 512-tool budget; narrow the set with --allow or --deny`.
 
@@ -171,7 +172,8 @@ candidates.
 ## Paging `tools/list`
 
 Paging of `tools/list` is off by default, so every tool comes in one response. In
-`per-operation` mode that is at most 512 tools, and in `discover` mode it is four. Several MCP
+`per-operation` mode that is at most 513 tools, the 512 operations plus `openapi_mcp_status`,
+and in `discover` mode it is four. Several MCP
 hosts call `tools/list` once and never follow `nextCursor`, so on those hosts paging would
 hide every tool after the first page without any error.
 

@@ -93,6 +93,9 @@ does not fall back to the spec's own origin in this case.
 
 ## Request bodies and parameters
 
+Each tool's input schema is closed: the server checks every call against it before it builds a
+request, and an argument the operation does not define is an invalid argument, not ignored.
+
 ### Which body media type is used
 
 When an operation declares several request body media types, the server picks one, in this
@@ -127,8 +130,8 @@ reason:
   value is an array or an object of scalars. The server rejects an item that contains its own
   delimiter as ambiguous. An empty array or object sends nothing, as with `form`.
 
-Path and header parameters use the `simple` style. A parameter that uses `allowReserved`, or
-`content` instead of `schema`, omits the operation, and so does a cookie parameter.
+Path and header parameters use the `simple` style. A parameter with `allowReserved: true`, or
+with `content` instead of `schema`, omits the operation, and so does a cookie parameter.
 
 ### `multipart/form-data` bodies
 
@@ -580,10 +583,15 @@ Keys under `openapi-mcp/` in a result's `_meta` are part of the public contract:
 
 | Value | When |
 |---|---|
-| `not_sent` | refused before any request left the server: invalid arguments, request authorization, egress, the rate limit, a full queue, a failed first OAuth2 token, and any failure on the first hop before the request was written: a failed DNS lookup, a refused connection, a TLS error, a timeout or a cancel while connecting |
+| `not_sent` | no request left the server (the cases are listed below the table) |
 | `upstream_rejected` | the call sent one request, and the upstream answered it with a `4xx` |
 | `upstream_reported_success` | the call sent one request, the upstream answered it with a `2xx`, but the result could not be returned (it did not match the declared schema, was not valid JSON, or contained a secret) |
 | `outcome_unknown` | everything else: a timeout, a lost connection, an oversized response, a redirect, a `5xx`, and any call that sent more than one attempt |
+
+`not_sent` covers calls the server refused itself: invalid arguments, request authorization,
+egress, the rate limit, a full queue and a failed first OAuth2 token. It also covers a failure on
+the first hop before the request was written: a failed DNS lookup, a refused connection, a TLS
+error, and a timeout or a cancel while connecting.
 
 A first request that the upstream answered with `401`, and that the server sent again with a
 fresh OAuth2 token, does not count. It was not authorized, so it had no effect, and the

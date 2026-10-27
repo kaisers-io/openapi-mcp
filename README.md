@@ -16,7 +16,8 @@ What you get without configuring anything:
   secrets. The server keeps them out of the tool definitions the model sees and redacts them
   from results, errors and logs.
 - The server checks every tool call against the operation's schema before it sends a request,
-  and checks a JSON response against the schema the description declares for it.
+  and rejects arguments the operation does not define. When it can derive a schema for the
+  response, it checks the response against it too.
 - When the API description changes, the server keeps using the version you accepted until you
   approve the new one.
 
@@ -27,6 +28,15 @@ supported.
 > summaries and parameter texts in front of the model. A hostile description can try to steer
 > the agent. The server cleans and shortens that text, but it cannot tell an honest sentence
 > from a manipulative one. See [Trust the spec source](docs/security.md).
+
+## Requirements
+
+Requirements: Node.js `^22.19.0 || >=24.11.0`, macOS, Linux or Windows. Use the latest patch
+release of your Node line, because older patches miss its security fixes. Other platforms, such
+as FreeBSD, are refused because they are untested, not because they are known to be unsafe.
+
+Node.js comes with `npx`, which runs the commands below in a terminal without installing
+anything else.
 
 ## Set it up with your agent
 
@@ -57,10 +67,6 @@ and write the files this documentation describes, so you can always configure by
 
 ## Set it up by hand
 
-Requirements: Node.js `^22.19.0 || >=24.11.0`, macOS, Linux or Windows. Use the latest patch
-release of your Node line, because older patches miss its security fixes. Other platforms, such
-as FreeBSD, are refused because they are untested, not because they are known to be unsafe.
-
 Preview the tools a description would produce, without starting a server:
 
 ```bash
@@ -79,18 +85,14 @@ Then add the server to your host. For Claude Code, put this in `.mcp.json` in yo
         "@kaisers-io/openapi-mcp@0.5.0",
         "serve",
         "--spec",
-        "https://api.example.com/openapi.json",
-        "--header-env",
-        "Authorization=SHOP_TOKEN"
-      ],
-      "env": { "SHOP_TOKEN": "${SHOP_TOKEN}" }
+        "https://api.example.com/openapi.json"
+      ]
     }
   }
 }
 ```
 
-For Codex, put this in `~/.codex/config.toml`. Codex does not expand `${VAR}`, so it forwards
-the variables you name in `env_vars` from the environment you start it in:
+For Codex, put this in `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.shop]
@@ -101,15 +103,20 @@ args = [
   "serve",
   "--spec",
   "https://api.example.com/openapi.json",
-  "--header-env",
-  "Authorization=SHOP_TOKEN",
 ]
-env_vars = ["SHOP_TOKEN"]
 ```
 
-`--header-env Authorization=SHOP_TOKEN` sends the value of `SHOP_TOKEN` as the `Authorization`
-header, unchanged. For a bearer token, the variable holds `Bearer ` followed by the token. If
-the description has no absolute `servers` URL, add `--base-url https://api.example.com`.
+Restart the host, and the agent sees the API's read operations as tools. If the description has
+no absolute `servers` URL, add `--base-url https://api.example.com` to the arguments.
+
+If the API needs a token, add `"--header-env", "Authorization=SHOP_TOKEN"` to the arguments.
+The server then sends the value of the environment variable `SHOP_TOKEN` as the
+`Authorization` header, unchanged, so for a bearer token the variable holds `Bearer ` followed
+by the token. The host must pass the variable on: in Claude Code add
+`"env": { "SHOP_TOKEN": "${SHOP_TOKEN}" }` to the entry, and in Codex add
+`env_vars = ["SHOP_TOKEN"]`, because Codex does not expand `${VAR}`. The
+[credentials guide](docs/credentials.md) shows how to set the variable without writing the
+token into a file or your shell history.
 
 Before the host starts the server, `check` tells you whether it would start with these options:
 run the same arguments with `check` instead of `serve`. The [hosts guide](docs/hosts.md) covers
@@ -121,12 +128,12 @@ the other hosts, Windows, a description that needs its own credentials, and serv
 `--allow` replaces the read-only default, and `--deny` always wins:
 
 ```bash
-openapi-mcp serve --spec ./shop.json --allow "tag:Orders" --deny "method:delete"
+npx -y @kaisers-io/openapi-mcp@0.5.0 tools --spec ./shop.json --allow "tag:Orders" --deny "method:delete"
 ```
 
-`openapi-mcp tools` with the same filters shows the result, and lists every operation that is
-not a tool with the reason. The [filtering guide](docs/filtering.md) explains every selector,
-with tested examples.
+`tools` shows which operations become tools with these filters, and lists every other operation
+with the reason. In a host config, the same patterns go into the `serve` arguments. The
+[filtering guide](docs/filtering.md) explains every selector, with tested examples.
 
 ## More topics
 
@@ -159,7 +166,7 @@ a token out of your config and your shell history.
 The examples run the CLI through `npx`. To have an `openapi-mcp` command instead:
 
 ```bash
-npm i -g @kaisers-io/openapi-mcp
+npm i -g @kaisers-io/openapi-mcp@0.5.0
 openapi-mcp --version
 openapi-mcp doctor
 ```
