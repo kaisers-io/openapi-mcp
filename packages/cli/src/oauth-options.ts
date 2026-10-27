@@ -43,7 +43,7 @@ const isScopeToken = (scope: string): boolean =>
 // Matches the redactor's per-secret length budget.
 const MAX_CREDENTIAL_LENGTH = 8192;
 const MAX_SCOPES = 64;
-const CLIENT_AUTH_METHODS: readonly ClientAuthMethod[] = [
+export const CLIENT_AUTH_METHODS: readonly ClientAuthMethod[] = [
   'client_secret_basic',
   'client_secret_post',
 ];

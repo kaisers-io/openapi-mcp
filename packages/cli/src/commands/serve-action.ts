@@ -70,11 +70,12 @@ import { resolveTokenUrl } from '../oauth-options.ts';
 import type { CliContext } from '../context.ts';
 import { emitError, emitWarnings } from '../output.ts';
 import {
-  filterMessages,
   exposureReport,
-  omissionWarningLines,
-  parseSpecPipelineArgs,
+  filterMessages,
   nullableOption,
+  omissionWarningLines,
+  OUTPUT_SCHEMA_FORMS,
+  parseSpecPipelineArgs,
   withOutputSchemaOptOut,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
@@ -368,8 +369,6 @@ const parseToolMode = (raw: string): RequestedToolMode => {
   }
   return mode;
 };
-
-const OUTPUT_SCHEMA_FORMS = ['inline', 'defs'] as const;
 
 // --output-schema (issue #9), validated like --tool-mode: `defs` shows output
 // schemas in their compact `$defs` form.

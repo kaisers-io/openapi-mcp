@@ -2,21 +2,19 @@ import type { Command } from '@commander-js/extra-typings';
 import {
   AUTO_DISCOVER_DEFINITION_BYTES,
   AUTO_DISCOVER_THRESHOLD,
+  TOOL_MODES,
 } from '@kaisers-io/openapi-mcp-core';
-import { DEFAULT_IMAGE_DIR_MAX_BYTES } from '../image-options.ts';
+import { DEFAULT_IMAGE_DIR_MAX_BYTES, IMAGE_RESPONSE_MODES } from '../image-options.ts';
 import { registerApiOptions } from '../api-options.ts';
 import { emitError } from '../output.ts';
 import { CAPTURED_FLAGS } from '../multi-api.ts';
 import type { Occurrence } from '../multi-api.ts';
-import { registerSpecOptions } from '../spec-options.ts';
+import { collect, declareChoices } from '../option-meta.ts';
+import { OUTPUT_SCHEMA_FORMS, registerSpecOptions } from '../spec-options.ts';
 import type { runServe as RunServe, ServeCmdOpts } from './serve-action.ts';
 import type { CommandRegistrar } from './registry.ts';
 
-// Accumulates a repeatable option (--oauth-required-scope).
-const collect = (value: string, previous: string[] | undefined): string[] => [
-  ...(previous ?? []),
-  value,
-];
+const HTTP_AUTH_MODES = ['static', 'oauth'] as const;
 
 // Registration only: the options and help text are defined here, statically,
 // so `serve --help` and option parsing are unchanged. Everything the action
@@ -115,6 +113,12 @@ export const registerServe: CommandRegistrar = (program, ctx, state) => {
       '--no-output-schema-descriptions',
       'show output schemas without their field descriptions, which are most of their size; validation is the same either way',
     );
+  // Their values are checked in serve-action.ts, with its own messages
+  declareChoices(command, '--tool-mode', TOOL_MODES);
+  declareChoices(command, '--image-responses', IMAGE_RESPONSE_MODES);
+  declareChoices(command, '--output-schema', OUTPUT_SCHEMA_FORMS);
+  declareChoices(command, '--http-auth', HTTP_AUTH_MODES);
+  declareChoices(command, '--log', ['json']);
   // `.option()` chained onto a Command whose Opts type already carries
   // SpecCmdOpts's own index signature does not narrow any further through
   // @commander-js/extra-typings' literal-flag inference (it falls back to a

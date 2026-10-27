@@ -937,6 +937,64 @@ run `cache unlock`).
 openapi-mcp cache unlock --spec https://api.example.com/openapi.json --cache-key petstore-prod
 ```
 
+## `help`
+
+`openapi-mcp help [command...]` prints the help text of a command, like `<command> --help`.
+With `--json` it prints the options of the installed version as data, for tools that write
+`openapi-mcp` configs (#75):
+
+```bash
+openapi-mcp --json help            # every command
+openapi-mcp --json help serve      # one command
+```
+
+```json
+{
+  "ok": true,
+  "data": {
+    "version": "0.5.0",
+    "name": "openapi-mcp",
+    "description": "Turn any OpenAPI spec into a strict, locally running MCP server",
+    "arguments": [],
+    "options": [{ "flags": "--json", "long": "--json", "description": "machine-readable JSON output", "mandatory": false, "negate": false, "repeatable": false }],
+    "commands": [
+      {
+        "name": "serve",
+        "options": [
+          {
+            "flags": "--tool-mode <mode>",
+            "long": "--tool-mode",
+            "argument": { "name": "mode", "optional": false },
+            "description": "per-operation (one tool per operation), …",
+            "mandatory": false,
+            "negate": false,
+            "default": "per-operation",
+            "repeatable": false,
+            "choices": ["per-operation", "discover", "auto"]
+          }
+        ],
+        "commands": []
+      }
+    ]
+  },
+  "warnings": []
+}
+```
+
+Each command has `name`, `description`, `arguments` (`name`, `required`, `variadic`),
+`options` and nested `commands`; only the top level carries `version`. Each option has:
+
+| Field | Meaning |
+|---|---|
+| `flags`, `long`, `short` | as written in the help text |
+| `argument` | `name`, and `optional` when the flag may stand alone |
+| `mandatory`, `negate` | a required option; a `--no-<name>` option |
+| `default` | the value used when the option is absent (`true` for a `--no-<name>` option) |
+| `bareValue` | the value of an optional-argument flag given without one (`--nullable-response-fields` means `all`) |
+| `repeatable` | the option can be given several times |
+| `choices` | the accepted values; absent means the CLI does not list them, not that any value works |
+| `perApi` | `serve` with `--api`: `prefix` takes `<api>=` before the value; `prefix-or-all` (`--deny`) applies to every API without one; `enable` is a switch set with `--enable <api>=<switch>` |
+
 ## `doctor`
 
 Diagnostics: versions, cache root, effective configuration. Takes only the global options

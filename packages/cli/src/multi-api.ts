@@ -29,7 +29,7 @@ export const PER_API_SCALARS: Readonly<Record<string, string>> = {
 };
 
 // Repeatable per-API options (commander collects every value)
-const PER_API_LISTS: Readonly<Record<string, string>> = {
+export const PER_API_LISTS: Readonly<Record<string, string>> = {
   '--allow': 'allow',
   '--spec-header-env': 'specHeaderEnv',
   '--omit-output-schema': 'omitOutputSchema',

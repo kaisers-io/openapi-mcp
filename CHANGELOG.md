@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--json help` describes every command and option as data (#75).** For tools that write
+  `openapi-mcp` configs: per option the flags, argument, description, default, the value of a
+  bare optional flag, whether it can be repeated, the accepted values, and how `serve` applies
+  it with several APIs. `help [command...]` without `--json` prints the help text, as
+  `<command> --help` does. The help text of `serve` and `tools` now lists the accepted values
+  of `--tool-mode`, `--image-responses`, `--output-schema`, `--http-auth`, `--log`,
+  `--upstream-oauth-client-auth` and `--nullable-response-fields`. See
+  [`help`](docs/configuration.md#help).
+
 - **Several APIs behind one server (#16).** `serve --api <name>=<source>` declares one API, and
   can be repeated; every per-API option then starts with the API's name (`--allow
   github=tag:repos`, `--header-env shop=Authorization=SHOP_TOKEN`), switches are set with

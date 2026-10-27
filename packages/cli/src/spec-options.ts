@@ -27,14 +27,10 @@ import type {
 import type { CliContext } from './context.ts';
 import { filterMessages } from './filter-messages.ts';
 import { outputSchemaOptOutWarningLines } from './output-schema-opt-out.ts';
+import { collect, declareChoices } from './option-meta.ts';
 
 export { exposureReport } from './exposure-report.ts';
 export { caseCollisionMessage, deadPatternMessage, filterMessages } from './filter-messages.ts';
-
-const collect = (value: string, previous: readonly string[]): readonly string[] => [
-  ...previous,
-  value,
-];
 
 // Cap for untrusted display strings (paths) in human terminal output
 export const PATH_DISPLAY_MAX = 512;
@@ -163,13 +159,14 @@ export const registerSpecOptions = (
   // `serve` also takes several APIs through --api (issue #16), and checks
   // that one of the two is given itself
   specRequired = true,
-): Command<[], SpecCmdOpts> =>
-  (specRequired
-    ? command.requiredOption('--spec <url|file>', 'OpenAPI spec source, JSON or YAML')
-    : command.option(
-        '--spec <url|file>',
-        'OpenAPI spec source, JSON or YAML (or several APIs with --api)',
-      )
+): Command<[], SpecCmdOpts> => {
+  const registered = (
+    specRequired
+      ? command.requiredOption('--spec <url|file>', 'OpenAPI spec source, JSON or YAML')
+      : command.option(
+          '--spec <url|file>',
+          'OpenAPI spec source, JSON or YAML (or several APIs with --api)',
+        )
   )
     .option(
       '--allow <pattern>',
@@ -215,9 +212,17 @@ export const registerSpecOptions = (
       'declare no output schema for matching tools, whose responses do not match the spec: results are returned as text without response-schema validation (repeatable, --allow selectors)',
       collect,
       [] as readonly string[],
-    ) as unknown as Command<[], SpecCmdOpts>;
+    );
+  declareChoices(registered, '--nullable-response-fields', NULLABLE_FIELD_SCOPES);
+  // A bare flag means `all`, its meaning before the scope existed (issue #17)
+  registered.options.find((option) => option.long === '--nullable-response-fields')?.preset('all');
+  return registered as unknown as Command<[], SpecCmdOpts>;
+};
 
 const NULLABLE_FIELD_SCOPES: readonly NullableFieldScope[] = ['all', 'optional'];
+
+// --output-schema (serve)
+export const OUTPUT_SCHEMA_FORMS = ['inline', 'defs'] as const;
 
 // --nullable-response-fields: absent is off, bare is `all` (its meaning
 // before the scope existed), otherwise the named scope (issue #17).
