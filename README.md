@@ -46,9 +46,11 @@ Two [agent skills](https://agentskills.io) let your agent do the setup with you.
 Claude Code, Codex and other agents that read skills, and they ask before they change anything.
 
 ```bash
-npx skills add kaisers-io/openapi-mcp --skill configuring-openapi-mcp
-npx skills add kaisers-io/openapi-mcp --skill debugging-openapi-mcp
+npx skills add kaisers-io/openapi-mcp
 ```
+
+The command finds both skills and asks which ones to install and for which agents. To install
+only one, add `--skill configuring-openapi-mcp` or `--skill debugging-openapi-mcp`.
 
 Then ask your agent, for example: `Connect the shop API at https://api.example.com/openapi.json`
 
@@ -62,10 +64,10 @@ and tells you what to change when you update.
 `debugging-openapi-mcp` finds out why a server does not start, lists fewer tools than you
 expect, or returns errors, and proposes the smallest fix.
 
-To pin the skills to a release, add its tag:
-`npx skills add kaisers-io/openapi-mcp#vX.Y.Z --skill configuring-openapi-mcp`. A skill's
-`metadata.version` is the CLI version it was checked against. The skills only run the commands
-and write the files this documentation describes, so you can always configure by hand instead.
+To pin the skills to a release, add its tag: `npx skills add kaisers-io/openapi-mcp#vX.Y.Z`. A
+skill's `metadata.version` is the CLI version it was checked against. The skills only run the
+commands and write the files this documentation describes, so you can always configure by hand
+instead.
 
 <a id="install"></a><a id="quickstart"></a><a id="use-as-an-mcp-server"></a>
 
