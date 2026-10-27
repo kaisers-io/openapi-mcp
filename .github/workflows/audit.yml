@@ -3,7 +3,7 @@ name: audit
 # be a required PR check: a new advisory for an unrelated transitive package would otherwise turn every
 # open PR red overnight without any change in the PR. Instead it runs weekly on main, on demand, and on
 # PRs that change the dependency set (where a finding is about that PR). What to do when it fails:
-# docs/security.md, "Dependency audit".
+# CONTRIBUTING.md, "Dependency audit".
 on:
   schedule:
     - cron: '17 6 * * 1' # Mondays 06:17 UTC; scheduled runs always use the default branch (main)
@@ -31,5 +31,5 @@ jobs:
       # This also covers transitive dependencies, which GitHub's dependency graph does not currently
       # read from pnpm 12's multi-document lockfile (so Dependabot alerts cannot see them).
       # An accepted advisory is added below as `--ignore GHSA-…` with a comment giving the reason and a
-      # review-by date (see the playbook in docs/security.md).
+      # review-by date (see the playbook in CONTRIBUTING.md, "Dependency audit").
       - run: pnpm audit --audit-level=high

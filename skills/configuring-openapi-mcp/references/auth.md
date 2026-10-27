@@ -2,7 +2,7 @@
 
 Map the `security` of the allowed operations to flags. Every credential reaches the server as
 an environment variable that a flag names. Details:
-[README, Secrets](https://github.com/kaisers-io/openapi-mcp/blob/main/README.md#secrets) and
+[docs/credentials.md](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/credentials.md) and
 [docs/security.md](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/security.md#credential-hygiene).
 
 ## Reading the spec

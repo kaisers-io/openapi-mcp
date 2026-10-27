@@ -22,7 +22,7 @@ startup_timeout_sec = 60
 
 - Codex passes only a fixed set of variables (such as `HOME` and `PATH`) to the server, plus
   the names in `env_vars`. A token that is not listed there does not arrive, even when it is
-  set in the shell. Add `HTTPS_PROXY` too when the user is behind a proxy.
+  set in the shell. openapi-mcp does not use a proxy, so `HTTPS_PROXY` changes nothing.
 - TOML does not expand `${VAR}`. Never put a secret into `env`: it holds literal values.
 - `codex mcp add` writes literal `--env` values; write the entry yourself instead.
 - The first `npx` download can take longer than the default startup timeout, hence

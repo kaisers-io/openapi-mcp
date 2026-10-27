@@ -1,8 +1,11 @@
 # Filtering
 
-`--allow` and `--deny` decide which operations of a spec become tools. `--omit-output-schema`
-uses the same patterns to pick exposed tools. Every pattern names what it selects, so a
-configuration reads as what it does:
+`--allow` and `--deny` decide which operations of a spec become tools. This page explains the
+pattern syntax, the order in which the server decides, what it reports, and recipes for common
+goals. Read it before you expose write operations. `--omit-output-schema` uses the same
+patterns to pick from the exposed tools.
+
+Every pattern names what it selects, so a configuration reads as what it does:
 
 ```bash
 openapi-mcp serve --spec ./shop.json \
@@ -10,7 +13,8 @@ openapi-mcp serve --spec ./shop.json \
   --deny "method:delete"
 ```
 
-Without any `--allow`, only reads are exposed: `GET`, `HEAD` and the OpenAPI 3.2 `QUERY`.
+Without any `--allow`, the server exposes only reads: `GET`, `HEAD` and the OpenAPI 3.2
+`QUERY` method, which is a read with a request body.
 
 ## Selectors
 
@@ -22,50 +26,77 @@ Every pattern starts with one selector:
 | `path:<glob>` | every method on matching paths | `path:/orders/**` |
 | `route:<METHOD> <glob>` | method and path together | `route:GET /orders/**` |
 | `operationId:<glob>` | the spec's `operationId` | `operationId:*delete*` |
-| `name:<glob>` | the tool name the agent sees | `name:get_reports` |
+| `name:<glob>` | the tool name the agent sees (see [Tool names](#tool-names)) | `name:get_reports` |
 | `tag:<glob>` | the spec's tags | `tag:Orders` |
 
-Rules:
+The rules:
 
-- **Letter case does not matter**, anywhere: the selector, the method, paths (also in
-  `route:`), operationIds, tool names and tags. `method:DELETE`, `method:delete` and
-  `Method:Delete` are the same pattern, and `tag:orders` selects `Orders`. Values are compared
-  with JavaScript's Unicode lower-casing, without Unicode normalization.
-- **The first colon ends the selector.** `tag:Customer Support` and `operationId:orders:read*`
+- Letter case does not matter anywhere: not in the selector, the method, paths (also in
+  `route:`), operationIds, tool names or tags. `method:DELETE`, `method:delete` and
+  `Method:Delete` are the same pattern, and `tag:orders` selects `Orders`. The server compares
+  values with JavaScript's Unicode lower-casing, without Unicode normalization.
+- The first colon ends the selector. `tag:Customer Support` and `operationId:orders:read*`
   work as written.
-- **Wildcards:** in a path, `*` matches within one segment and `**` across segments. In an
+- In a path, `*` matches within one segment and `**` matches across segments. In an
   operationId, tool name or tag, `*` matches any characters, `/` included. There is no escape
   for a literal `*`.
-- **`method:`** takes one method, no wildcard. A method other than the standard ones must be
+- `method:` takes one method and no wildcard. A method other than the standard ones must be
   declared by the spec (OpenAPI 3.2 `additionalOperations`). `OPTIONS`, `TRACE`, `CONNECT` and
   `TRACK` are never exposed and cannot be named.
-- **`route:`** is the method, exactly one space, and a path glob.
-- **A path glob** starts with `/` or `*`, and matches the spec's path template as written
+- `route:` is the method, exactly one space, and a path glob.
+- A path glob starts with `/` or `*`. It matches the spec's path template as written
   (`/orders/{orderId}`), not the URL of a request.
-- **`/orders/**` does not match `/orders`**: the slash before `**` is literal. Use
+- `/orders/**` does not match `/orders`, because the slash before `**` is literal. Use
   `path:/orders` and `path:/orders/**` together, or `path:/orders**`, which also matches
   `/orders-archive`.
-- **Several patterns of one flag add up**: an operation is allowed when any `--allow` pattern
-  matches it. There is no AND beyond `route:`.
-- **A pattern without a selector is an error** that names the explicit form, for example
+- Several patterns of one flag add up: the server allows an operation when any `--allow`
+  pattern matches it. There is no AND beyond `route:`.
+- A pattern without a selector is an error. The error names the explicit form, for example
   `write "operationId:read*"` for `read*`, or `write "route:GET /orders"` for `GET /orders`.
-- Tool names stay exact for the MCP client: a selector never adds an alias.
+- A selector never adds an alias, so the MCP client sees the exact tool names.
 
 ## How a decision is made
 
-For each operation of the spec, in this order:
+The server goes through these steps for each operation of the spec, in this order:
 
-1. **Unsupported operations are omitted** while the spec is loaded, each with a reason (for
-   example a cookie parameter or a per-operation `servers` override).
-2. **`--deny`:** an operation that any `--deny` pattern matches is excluded. Deny always wins.
-3. **`--allow`:** when at least one `--allow` is given, an operation must match one of them.
-   Without any `--allow`, the read-only default applies.
-4. **Tool generation** can still omit an operation whose schema cannot be represented.
-5. **Withholding:** while a changed spec waits for `openapi-mcp cache promote`, an operation it
-   removed is withheld.
-6. **At call time**, every request a tool sends, and every redirect, is checked against these
-   decisions. An excluded operation is never reached through a tool's arguments or a redirect
-   (see [request authorization](security.md#request-authorization)).
+1. While it loads the spec, the server omits unsupported operations, each with a reason, for
+   example a cookie parameter or a per-operation `servers` override.
+2. The server excludes an operation that any `--deny` pattern matches. Deny always wins.
+3. When at least one `--allow` is given, an operation must match one of them. `--allow`
+   replaces the read-only default entirely, so write operations that match are exposed too.
+   Without any `--allow`, the read-only default applies: `GET`, `HEAD` and `QUERY` operations,
+   minus the denied ones.
+4. Tool generation can still omit an operation whose schema it cannot represent.
+5. While a changed spec waits for `openapi-mcp cache promote`, the server withholds every
+   operation the new version removed.
+6. At call time the server checks every request a tool sends, and every redirect, against
+   these decisions. A tool's arguments or a redirect never reach an excluded operation (see
+   [request authorization](security.md#request-authorization)).
+
+A `HEAD` request counts as a `GET` at call time, because a server may answer `HEAD` with its
+GET handler and so return what that `GET` returns. A declared `HEAD` operation becomes a tool
+when the filters allow it, but the server refuses its calls while the `GET` on the same path is
+excluded.
+
+## Tool names
+
+A tool name is the operationId reduced to the characters `[A-Za-z0-9_-]`, at most 64 of them:
+
+- `repos.get` becomes `repos_get`. Each run of other characters becomes one underscore, and
+  runs at the start or end are dropped.
+- Accented letters become their base letter (`Ünïcödé` becomes `Unicode`), and a few letters
+  without one are spelled out (`ß` becomes `ss`, `ø` becomes `o`).
+- Without a usable operationId (none, or one with no ASCII letter or digit left, such as a
+  Chinese one), the name comes from method and path: `GET /users/{id}` becomes
+  `get_users_by_id`.
+- When even method and path leave no letter or digit, the name is `operation_<hash>`.
+- When two names collide, the server adds a stable hash suffix, computed from method and path,
+  so names do not change when the spec is reordered. An operationId that is already a valid
+  tool name keeps it, and the reduced or method-and-path name that lands on it gets the suffix.
+  Two identical operationIds both get a suffix.
+
+`name:` matches these tool names. `operationId:`, `path:` and `tag:` match the spec's own
+values.
 
 ## What is reported where
 
@@ -74,14 +105,19 @@ For each operation of the spec, in this order:
 | Operations that are not tools | one summary line with counts | `notExposed`: each with `decision` and `reason` | `notExposedCounts` |
 | Unsupported operations | one line each | `omitted` | `omittedCount`, `omittedReasons` |
 | Patterns that match nothing | one line each, with a suggestion | `deadPatterns` | `deadPatternCount` |
-| Patterns that match values differing only by case | one line each | `caseCollisions` | — |
-| Tools whose path overlaps one that is not exposed | one line each | `overlaps` | — |
-
-A dead pattern, a case collision and an overlap are warnings. With `--strict-filters` each one
-stops the start instead.
+| Patterns that match values differing only by case | one line each | `caseCollisions` | not reported |
+| Tools whose path overlaps one that is not exposed | one line each | `overlaps` | not reported |
 
 A dead pattern is one that matches no operation of the spec. When it names only an operation
-that is omitted as not supported, the warning says so instead of suggesting another operation.
+that is omitted as unsupported, the warning says so instead of suggesting another operation.
+
+### Strict filters
+
+A dead pattern, a case collision and an overlap are warnings. Pass `--strict-filters` to make
+each of them stop the start instead, with exit code 3. This also applies to an overlap check
+that ran out of its work budget (`overlapCheckComplete` is `false` in `--json tools`), and to
+dead `--omit-output-schema` patterns. Turn it on once a filter set is stable, so that a spec
+change that makes a pattern stale fails at startup instead of passing with a warning.
 
 ## Examples
 
@@ -126,12 +162,12 @@ An invented shop API:
 | `path:**delete**` | `customerDelete`: every path that contains "delete" |
 | `operationId:*delete*` | `deleteOrder`, `customerDelete`: every operationId that contains "delete" |
 
-`cancelOrder` stays exposed. A pattern cannot tell what an operation does: one that deletes
-without `DELETE`, and without "delete" in its path or operationId, has to be named, for example
-`--deny "operationId:cancelOrder"`. `method:delete` is the only pattern that does not depend on
-how the spec names things.
+`cancelOrder` stays exposed. A pattern cannot tell what an operation does. An operation that
+deletes without `DELETE`, and without "delete" in its path or operationId, has to be named, for
+example `--deny "operationId:cancelOrder"`. `method:delete` is the only pattern that does not
+depend on how the spec names things.
 
-Name patterns alone are weak here: `operationId:delete*` does not match `customerDelete`, and
+Name patterns alone are weak here. `operationId:delete*` does not match `customerDelete`, and
 no name pattern matches a `DELETE` called `removeCustomer`.
 
 ### Case collisions
@@ -143,16 +179,16 @@ alike. When a pattern matches values that differ only by case, startup names the
 --allow "path:/orders/**" matches values that differ only by case: "/orders/export", "/Orders/export" (GET /orders/export, GET /Orders/export)
 ```
 
-The operator may have meant only one of them. Spell out the operation you want, or exclude the
-other one. A pattern that takes every spelling as written anyway, such as `path:/**`, is not
-reported: ignoring case adds nothing there.
+You may have meant only one of them. Spell out the operation you want, or exclude the other
+one. The server does not report a pattern that takes every spelling as written anyway, such as
+`path:/**`, because ignoring case adds nothing there.
 
 ## Overlapping paths
 
 Request authorization (see [security](security.md#request-authorization)) resolves each request
 against every operation of the spec. A concrete path wins over a template, as OpenAPI defines.
-Two templates are not ranked against each other, so when an exposed template and one that is
-not exposed match the same URL, that request is refused.
+Two templates are not ranked against each other. So when an exposed template and one that is
+not exposed match the same URL, the server refuses that request.
 
 | Configuration | `GET /orders/{orderId}/items` | `GET /orders/{orderId}/{section}` | What happens |
 |---|---|---|---|
@@ -161,29 +197,36 @@ not exposed match the same URL, that request is refused.
 | `--allow "route:GET /orders/**" --deny "route:GET /orders/*/{section}"` | exposed | excluded | refused, as in the first row |
 | `--allow "route:GET /orders/**" --deny "operationId:getOrderSection" --deny "operationId:listOrderItems"` | excluded | excluded | neither is a tool |
 
-**Why it is refused.** OpenAPI ranks only concrete paths before templates. Servers that route
-in declaration order, such as
-[Starlette](https://starlette.dev/routing/#route-priority),
+### Why the server refuses
+
+OpenAPI ranks only concrete paths before templates. Servers that route in declaration order,
+such as [Starlette](https://starlette.dev/routing/#route-priority),
 [FastAPI](https://fastapi.tiangolo.com/tutorial/path-params/#order-matters) and
 [Rails](https://guides.rubyonrails.org/routing.html#crud-verbs-and-actions), could send
 `/orders/42/items` to the `{section}` handler, which the configuration excludes.
 
-**How you learn about it.** Startup names each such tool and the operation it overlaps:
+### How you learn about it
+
+Startup names each such tool and the operation it overlaps:
 
 ```
 tool listOrderItems (GET /orders/{orderId}/items): a request that also matches GET /orders/{orderId}/{section}, which is not exposed, is refused; review --allow, --deny and the spec
 ```
 
 `openapi-mcp --json tools` lists every pair under `overlaps`. With `--strict-filters` an
-overlap stops the start. A call that is refused says that its URL also matches an operation
-this server does not expose.
+overlap stops the start. The error of a refused call says that its URL also matches an
+operation this server does not expose.
 
-**What to do.** Exclude both operations, or, if exposing the other one is intended, allow both.
-Allowing both widens what an agent can do, so decide it deliberately.
+### What to do
 
-**Not an overlap.** An excluded concrete path inside an exposed template, such as
-`GET /items/export` under `GET /items/{id}`, is not reported. That one URL is the other
-operation: `getItem` with `id: "export"` is refused, and every other id works.
+Exclude both operations. Or, if you intend to expose the other one, allow both. Allowing both
+widens what an agent can do, so decide it deliberately.
+
+### What is not an overlap
+
+An excluded concrete path inside an exposed template, such as `GET /items/export` under
+`GET /items/{id}`, is not reported. That one URL is the other operation: the server refuses
+`getItem` with `id: "export"`, and every other id works.
 
 ## Migrating from the earlier syntax
 
@@ -202,19 +245,17 @@ replacement:
 ## How the filters are tested
 
 Every pull request runs the filters end to end, through the real CLI over MCP stdio, on Linux,
-macOS and Windows, in both tool modes, against a local API that records every request:
+macOS and Windows, in both tool modes, against a local API that records every request.
 
-- `packages/cli/test/serve-filter-matrix.test.ts` covers every selector, letter case, glob
-  boundaries (`/orders/**` against `/orders**`), a tag with a space, an operationId with `/`,
-  generated tool names, Unicode without normalization (`tag:STRASSE` does not select `Straße`),
-  deny over allow, the read-only default, and arguments that try to leave their operation. For
-  each configuration the expected tools are written by hand: exactly those are offered, every
-  other operation is refused by name and by a case variant with zero requests sent, and every
-  offered one reaches the API with its own method and path.
-- `packages/cli/test/filters-real-specs.test.ts` does the same against the GitHub, Stripe and
-  DigitalOcean specs. The expectation is a predicate over the raw spec, never the filter code; an
-  operation the predicate expects but the server does not offer must be one startup reports as
-  omitted, and those are pinned by count and hash.
+`packages/cli/test/serve-filter-matrix.test.ts` covers every selector, letter case, glob
+boundaries (`/orders/**` against `/orders**`), a tag with a space, an operationId with `/`,
+generated tool names, Unicode without normalization (`tag:STRASSE` does not select `Straße`),
+deny over allow, the read-only default, and arguments that try to leave their operation. The
+expected tools for each configuration are written by hand. The test checks that exactly those
+are offered, that every other operation is refused by name and by a case variant with zero
+requests sent, and that every offered one reaches the API with its own method and path.
 
-A declared `HEAD` operation is offered when the filters allow it, but its calls are refused while
-the `GET` on the same path is excluded: a `HEAD` request reads what that `GET` returns.
+`packages/cli/test/filters-real-specs.test.ts` does the same against the GitHub, Stripe and
+DigitalOcean specs. There the expectation is a predicate over the raw spec, never the filter
+code. An operation that the predicate expects but the server does not offer must be one that
+startup reports as omitted. The test pins those by count and hash.
