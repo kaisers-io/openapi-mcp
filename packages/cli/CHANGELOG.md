@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`check` runs the startup checks of `serve` without serving (#77).** It takes the same
+  options, lists every environment variable they name as set or missing (all of them, never a
+  value), then resolves the base URL and the OAuth token URL, chooses the tool mode, and
+  compiles every output schema, also under `discover`. The report names the tool mode and why
+  `auto` chose it, the exposed operations per API, the tools a host lists, and the startup
+  warnings. It calls no operation, requests no token, opens no port, and leaves the
+  `--uploads` folder alone. See [`check`](docs/configuration.md#check).
+
 - **`--json tools` tells what every operation does and which credentials it accepts (#76).**
   Each exposed and not exposed operation carries its `operationId`, `tags`, `summary`, a
   description cut at 1,024 characters, and its effective `security` with alternatives, combined
@@ -45,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   computed; measured on 100 KiB and 1 MiB responses, the time per call stays within noise.
 
 ### Changed
+
+- **`doctor` describes what it reports (#77):** CLI and Node versions, app root and cache
+  root. Its help text promised an effective configuration it never printed; `check` reports
+  that now.
 
 - **`--tool-mode auto` also decides by the size of the tool definitions (#61).** At or below 64
   operations, `auto` now picks `discover` when the definitions a model sees (name, description

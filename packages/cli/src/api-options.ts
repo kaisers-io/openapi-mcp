@@ -17,7 +17,7 @@ import { collect, declareChoices } from './option-meta.ts';
 
 // The image options belong to the API side too (#14)
 export { parseImageResponseMode, resolveImageResponses } from './image-options.ts';
-export { resolveUploadOptions } from './upload-options.ts';
+export { resolveUploadOptions, uploadFolderPath } from './upload-options.ts';
 export {
   apiViews,
   assertSeparateBases,

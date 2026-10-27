@@ -18,7 +18,7 @@ const resolveAppRoot = (ctx: CliContext): string => {
 export const registerDoctor: CommandRegistrar = (program, ctx, state) => {
   program
     .command('doctor')
-    .description('diagnostics: versions, cache root, effective configuration')
+    .description('diagnostics: CLI and Node versions, app root and cache root')
     .action(async () => {
       const opts = getGlobalOpts(program);
       state.exitCode = await wrapAction(ctx, opts, () => {

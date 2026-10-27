@@ -67,7 +67,9 @@ const describeCommand = (command: CommandUnknownOpts): CommandData => ({
     required: argument.required,
     variadic: argument.variadic,
   })),
-  options: command.options.map((option) => describeOption(option, command.name() === 'serve')),
+  options: command.options.map((option) =>
+    describeOption(option, command.name() === 'serve' || command.name() === 'check'),
+  ),
   commands: command.commands.map((child) => describeCommand(child)),
 });
 

@@ -64,6 +64,7 @@ import {
   resolveApiConfig,
   resolveImageResponses,
   resolveUploadOptions,
+  uploadFolderPath,
 } from '../api-options.ts';
 import type { ApiCmdOpts, Occurrence } from '../api-options.ts';
 import { resolveTokenUrl } from '../oauth-options.ts';
@@ -382,7 +383,7 @@ const parseOutputSchemaForm = (raw: string): boolean => {
 
 // The registered `serve` command: resolveHttpConfig reads per-option provenance
 // from it (getOptionValueSource).
-type ServeCommand = Pick<Command<[], ServeCmdOpts>, 'getOptionValueSource'>;
+export type ServeCommand = Pick<Command<[], ServeCmdOpts>, 'getOptionValueSource'>;
 
 // Orphaned HTTP-only flags without --http are a usage error, not a
 // silent no-op: `--port` carries a default ('3044'), so a plain value
@@ -475,6 +476,7 @@ const loadApi = async (
   ctx: CliContext,
   requestedToolMode: RequestedToolMode,
   httpConfig: HttpConfig | undefined,
+  inspect: boolean,
 ): Promise<LoadedApi> => {
   // Resolved BEFORE buildTools (below): its reservedHeaderNames must be
   // unioned into buildTools' reservedHeaders so a spec header parameter
@@ -506,7 +508,7 @@ const loadApi = async (
     throw validationError(withApi(name, filterWarnings).join('\n'));
   }
   // Before the tools are built: their binary fields name this folder
-  const uploads = await resolveUploadOptions({
+  const uploadInput = {
     enabled: cmdOpts.uploads === true,
     homeDir: ctx.homeDir(),
     source: args.source,
@@ -515,7 +517,10 @@ const loadApi = async (
     ...(httpConfig === undefined ? {} : { httpHost: httpConfig.hostname }),
     maxBytes: apiConfig.maxResponseBytes,
     now: ctx.now(),
-  });
+  };
+  // `check` (issue #77) names the folder but neither creates nor sweeps it
+  const uploads = inspect ? undefined : await resolveUploadOptions(uploadInput);
+  const uploadDir = inspect ? uploadFolderPath(uploadInput) : uploads?.folder.path;
   if (uploads !== undefined && uploads.deleted > 0) {
     emitWarnings(
       ctx,
@@ -533,7 +538,7 @@ const loadApi = async (
     reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
     openapiVersion: result.spec.openapiVersion,
     projection: cmdOpts.responseProjection === true,
-    ...(uploads === undefined ? {} : { uploadDir: uploads.folder.path }),
+    ...(uploadDir === undefined ? {} : { uploadDir }),
     defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
     ...nullableOption(cmdOpts.nullableResponseFields),
   });
@@ -691,6 +696,9 @@ const prepareServe = async (
   ctx: CliContext,
   occurrences: readonly Occurrence[],
   onExecutor: (close: () => Promise<void>) => void,
+  // `check` (issue #77): the same preparation without touching the upload
+  // folder, and every output schema compiled now, also under discover
+  inspect = false,
 ) => {
   // HTTP-specific options are validated FIRST — BEFORE any spec/cache/
   // network processing — so a bad --port or --http-token-env fails
@@ -753,7 +761,9 @@ const prepareServe = async (
   }
   const loaded: LoadedApi[] = [];
   for (const view of declared) {
-    loaded.push(await loadApi(view.name, view.options, ctx, requestedToolMode, httpConfig));
+    loaded.push(
+      await loadApi(view.name, view.options, ctx, requestedToolMode, httpConfig, inspect),
+    );
   }
   const toolCount = loaded.reduce((sum, api) => sum + api.generated.tools.length, 0);
   const budget =
@@ -890,7 +900,7 @@ const prepareServe = async (
   // operation's first call instead, before the request is sent.
   const compileToolValidator = createEnvelopeCompiler();
   let validators: EnvelopeValidators;
-  if (snapshot.toolMode === 'discover') {
+  if (snapshot.toolMode === 'discover' && !inspect) {
     const byName = snapshot.operationsByName;
     validators = lazyEnvelopeValidators(
       compileToolValidator,
@@ -989,8 +999,17 @@ const prepareServe = async (
     // with one API; with several there is no single setting, so it stays off
     allowPrivateNetwork: multi ? false : first.allowPrivateNetwork,
     timeoutMs: first.api.args.options.timeoutMs,
+    // What `check` reports (issue #77)
+    toolModeReason: choice.reason,
+    apis: finished.map((entry) => ({
+      name: entry.api.name,
+      baseUrl: `${entry.resolvedBase.url.origin}${entry.resolvedBase.url.pathname}`,
+      exposed: entry.built.tools.map((tool) => tool.toolName),
+    })),
   };
 };
+
+export { prepareServe };
 
 // The executor configuration of one API's calls
 const executorConfigOf = async (
@@ -1077,7 +1096,7 @@ const executorConfigOf = async (
 };
 
 // Commander's default of each option an API may set for itself
-const optionDefaults = (command: ServeCommand): Record<string, unknown> =>
+export const optionDefaults = (command: ServeCommand): Record<string, unknown> =>
   Object.fromEntries(
     (
       command as unknown as { options: { attributeName: () => string; defaultValue: unknown }[] }

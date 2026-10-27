@@ -684,6 +684,59 @@ default, `off`, keeps today's behaviour: an image is a tool error naming its med
   client) needs `inline`. Hosts with file tools, such as coding agents, can use `file`. Some
   of them ask before reading a file outside the project folder.
 
+## `check`
+
+`check` takes the same options as `serve`, runs its startup checks and reports them, without
+serving (#77). Copy the host's launch command, replace `serve` with `check`, and run it in the
+same environment and working directory; the host config itself stays on `serve`.
+
+```bash
+openapi-mcp --json check --spec https://api.example.com/openapi.json \
+  --header-env Authorization=EXAMPLE_TOKEN --tool-mode auto
+```
+
+It runs in two stages:
+
+1. **environment**: every variable the options name (`--header-env`, `--spec-header-env`,
+   `--upstream-oauth-client-id-env`, `--upstream-oauth-client-secret-env`, and
+   `--http-token-env` with `--http`), each `set` or missing, never with its value. All of them
+   are listed, not only the first missing one. When one is missing, the next stage is
+   `skipped` and the exit code is `2`.
+2. **startup**: what `serve` does before it accepts a connection: the spec is loaded, filters
+   applied, the base URL and the OAuth token URL resolved and checked, the tool mode chosen,
+   and the output schemas compiled. Unlike `serve`, `check` compiles every output schema
+   under `discover` too, so a schema that would fail on its first call is reported now. A
+   failure gives its `code` and `message`, and the exit code of that error.
+
+`check` calls no operation and requests no OAuth token. Like `serve`, it may fetch the spec
+and look up the addresses of the base URL and token URL; the spec cache follows the same rules
+as `tools`. It opens no port and neither creates nor sweeps the `--uploads` folder.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "environment": {
+      "status": "ok",
+      "variables": [{ "name": "EXAMPLE_TOKEN", "flag": "--header-env", "set": true }]
+    },
+    "startup": { "status": "ok" },
+    "toolMode": "discover",
+    "toolModeReason": "count",
+    "apis": [{ "baseUrl": "https://api.example.com/", "exposed": ["listPets", "getPet"] }],
+    "listedTools": ["openapi_mcp_status", "search_operations", "describe_operation", "call_operation"]
+  },
+  "warnings": ["--tool-mode auto: discover, since 70 operations are exposed (more than 64)"]
+}
+```
+
+`toolModeReason` (`count` or `size`) is present when `auto` chose the mode. `apis` has one
+entry per API, with `name` when `--api` names it; `exposed` lists the operations, and
+`listedTools` the tools a host lists, which under `discover` are the four tools above. With
+`--api`, each variable carries the `api` it belongs to. `warnings` holds every warning
+`serve` prints at startup. Without `--json`, the report is printed as lines and the warnings
+go to stderr.
+
 ## `tools`
 
 Preview the operation inventory an OpenAPI spec generates, with filters applied — no server
@@ -1014,8 +1067,9 @@ Each command has `name`, `description`, `arguments` (`name`, `required`, `variad
 
 ## `doctor`
 
-Diagnostics: versions, cache root, effective configuration. Takes only the global options
-(`--json`, `--verbose`, `-h/--help`) — **no `--spec` flag**.
+Diagnostics: CLI and Node versions, app root and cache root. Takes only the global options
+(`--json`, `--verbose`, `-h/--help`) — **no `--spec` flag**. To check a server configuration,
+use [`check`](#check).
 
 ```bash
 openapi-mcp doctor
@@ -1049,7 +1103,7 @@ openapi-mcp --json doctor
 | `4` | not found | unreadable spec file, missing cache entry, `cache unlock` on an entry without a lock |
 | `5` | conflict | cache lock held by another process, `cache promote --hash` mismatch |
 
-With the global `--json` flag, `tools`, `doctor` and the `cache` commands print an error as
+With the global `--json` flag, `tools`, `check`, `help`, `doctor` and the `cache` commands print an error as
 `{"ok": false, "error": {"code": "<code>", "message": "<text>"}}`. Two exceptions print plain
 text on stderr whatever the flags: `serve`, whose stdout is reserved for MCP traffic (it stays
 empty on an error), and the launcher's platform and Node version checks (exit `1`), which run
