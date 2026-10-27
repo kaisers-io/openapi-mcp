@@ -59,8 +59,9 @@ Find three versions and keep them apart:
 
 Below, `CLI` means `npx -y @kaisers-io/openapi-mcp@V`, where V is the configured version, or
 the latest one for a new entry. If the configured version is older than the latest, propose the
-update and read `references/migrations.md`. Tell the user each change of its "Changes without
-an error" table that applies between the two versions, and what it means for this entry. If the
+update and read `references/migrations.md`. Your answer lists every row of its "Changes without
+an error" table between the two versions, one line each: the change, and whether and how it
+affects this entry. If the
 latest is newer than the skill, say that the
 skill may not know newer flags and that `npx skills add kaisers-io/openapi-mcp#v<latest>
 --skill configuring-openapi-mcp` updates it. Do not run `npx skills check`: it installs updates.

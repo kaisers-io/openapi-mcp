@@ -137,6 +137,15 @@ fails when a skill is out of date, links a missing docs heading, or breaks the w
 secret rules in `scripts/skills/rules.ts`. If you change a flag or a behavior a skill describes,
 update the skill in the same pull request.
 
+`scripts/skills/evals/scenarios.json` describes how the skills must behave, and
+`node scripts/skills/evals.ts <claude|codex> <model> [scenario...]` plays the scenarios against
+an agent with this checkout's CLI (it needs the agent CLI and its login, so it is not part of CI).
+When you change a skill's text, run the affected scenarios while you work and all of them with
+at least two models before the pull request, and put the results in its description. Read the
+transcript of a failed run (`transcript.txt` in the project the runner prints) before you change
+the skill: a scenario or its check can be wrong too. The `skill-audit` workflow scans the skills
+for injected instructions and exfiltration patterns.
+
 ## Releasing
 
 The version lives in `packages/cli/package.json`. The READMEs, `docs/` and both changelogs repeat

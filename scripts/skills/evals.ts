@@ -17,6 +17,8 @@ import { dirname, join } from 'node:path';
 const ROOT = join(import.meta.dirname, '..', '..');
 const EVALS = join(import.meta.dirname, 'evals');
 const BIN = join(ROOT, 'packages', 'cli', 'bin', 'openapi-mcp.mjs');
+// The credential every scenario's user has set
+const RUN_ENV: Record<string, string> = { SHOP_API_TOKEN: 'Bearer example-token-not-a-secret' };
 
 interface Expect {
   file?: string;
@@ -100,9 +102,21 @@ const agentArgs = (host: Scenario['host'], model: string, prompt: string): [stri
 
 // The tools the written Claude Code entry exposes, from `check` with its own arguments
 const exposedBy = async (project: string, configText: string): Promise<string[]> => {
-  const config = JSON.parse(configText) as { mcpServers: Record<string, { args: string[] }> };
+  const config = JSON.parse(configText) as {
+    mcpServers: Record<string, { args: string[]; env?: Record<string, string> }>;
+  };
   const [entry] = Object.values(config.mcpServers);
   const args = entry?.args ?? [];
+  // The entry's env as Claude Code expands it, from the run's own variables
+  const expanded = Object.fromEntries(
+    Object.entries(entry?.env ?? {}).map(([name, value]) => [
+      name,
+      value.replaceAll(
+        /\$\{(?<variable>\w+)\}/gu,
+        (_match, variable: string) => RUN_ENV[variable] ?? '',
+      ),
+    ]),
+  );
   const serve = args.indexOf('serve');
   const { output } = await run(
     process.execPath,
@@ -112,7 +126,8 @@ const exposedBy = async (project: string, configText: string): Promise<string[]>
       env: {
         PATH: process.env['PATH'] ?? '',
         HOME: project,
-        SHOP_API_TOKEN: 'Bearer example-token-not-a-secret',
+        ...RUN_ENV,
+        ...expanded,
       },
     },
   );
@@ -231,7 +246,7 @@ const main = async (): Promise<void> => {
     const env = {
       ...process.env,
       PATH: `${shimDir}:${process.env['PATH'] ?? ''}`,
-      SHOP_API_TOKEN: 'Bearer example-token-not-a-secret',
+      ...RUN_ENV,
     };
     const result = await run(command, args, { cwd: project, env });
     await writeFile(join(project, 'transcript.txt'), result.output);

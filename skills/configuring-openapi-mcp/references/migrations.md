@@ -21,6 +21,12 @@ How to move a server entry from an older `openapi-mcp` version to a newer one. D
    you could not compare, instead of claiming the set is unchanged.
 4. Apply the changes below, run `CLI --json check` with the new version, and show the new
    entry before writing it.
+5. Give your answer a section "Changes without an error" with one line for every row of that
+   table between the two versions, even when the tool names did not change:
+
+   ```
+   - 0.5.0, selectors ignore letter case: no effect here, the tool names are the same
+   ```
 
 ## Changes the CLI reports
 

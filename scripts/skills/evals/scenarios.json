@@ -32,7 +32,7 @@
       "prompt": "Connect the shop API (./shop.json, base https://api.example.test) to Claude Code for this project. The agent may look everything up and create orders, nothing else. My token is in SHOP_API_TOKEN. Show me the table of allowed operations, then write the config. Do not ask me anything else.",
       "expect": {
         "file": ".mcp.json",
-        "contains": ["Authorization=SHOP_API_TOKEN", "${SHOP_API_TOKEN}"],
+        "contains": ["--header-env", "SHOP_API_TOKEN"],
         "absent": ["path:/**"],
         "exposed": [
           "createOrder",
@@ -99,6 +99,9 @@
       "prompt": "Claude Code shows my shop server from .mcp.json as pending and never connects. What is wrong?",
       "expect": {
         "transcript": ["approv", "/mcp"]
+      },
+      "setup": {
+        ".mcp.json": "{\"mcpServers\":{\"shop\":{\"command\":\"npx\",\"args\":[\"-y\",\"@kaisers-io/openapi-mcp@CURRENT\",\"serve\",\"--spec\",\"./shop.json\",\"--base-url\",\"https://api.example.test\"]}}}"
       }
     },
     {
