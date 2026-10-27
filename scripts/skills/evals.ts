@@ -50,9 +50,9 @@ const run = async (
   return { code, output };
 };
 
-// `npx -y @kaisers-io/openapi-mcp@<any> ...` runs this repository's CLI; anything else goes to
-// the real npx
-const writeShim = async (dir: string, realNpx: string): Promise<void> => {
+// `npx -y @kaisers-io/openapi-mcp@<this version> ...` runs this repository's CLI; anything else,
+// an older version included, goes to the real npx
+const writeShim = async (dir: string, realNpx: string, version: string): Promise<void> => {
   const shim = join(dir, 'npx');
   await writeFile(
     shim,
@@ -60,7 +60,7 @@ const writeShim = async (dir: string, realNpx: string): Promise<void> => {
       '#!/bin/sh',
       'for arg in "$@"; do',
       '  case "$arg" in',
-      '    @kaisers-io/openapi-mcp@*)',
+      `    @kaisers-io/openapi-mcp@${version})`,
       '      while [ "$1" != "$arg" ]; do shift; done; shift',
       `      exec "${process.execPath}" "${BIN}" "$@" ;;`,
       '  esac',
@@ -156,29 +156,76 @@ const verify = async (project: string, transcript: string, expect: Expect): Prom
   return failures;
 };
 
+const loadScenarios = async (): Promise<Scenario[]> => {
+  const data = JSON.parse(await readFile(join(EVALS, 'scenarios.json'), 'utf8')) as {
+    scenarios: Scenario[];
+  };
+  return data.scenarios;
+};
+
+const shimPath = async (version: string): Promise<string> => {
+  // The npx next to this Node, not the one PATH finds: a version manager's npx shim would
+  // resolve npx through PATH again and reach this shim
+  const shimDir = await mkdtemp(join(tmpdir(), 'openapi-mcp-eval-bin-'));
+  await writeShim(shimDir, join(dirname(process.execPath), 'npx'), version);
+  return shimDir;
+};
+
+const cliVersion = async (): Promise<string> => {
+  const text = await readFile(join(ROOT, 'packages', 'cli', 'package.json'), 'utf8');
+  return (JSON.parse(text) as { version: string }).version;
+};
+
+// `prepare <id>`: a project and a shim directory for an agent that runs outside this script;
+// `verify <id> <project>`: the expectations against that project and its transcript.txt
+const manual = async (mode: string, id: string, project: string | undefined): Promise<void> => {
+  const scenarios = await loadScenarios();
+  const scenario = scenarios.find((candidate) => candidate.id === id);
+  if (scenario === undefined) {
+    throw new Error(`no scenario ${id}`);
+  }
+  if (mode === 'prepare') {
+    const version = await cliVersion();
+    const prepared = await prepare(scenario, version);
+    const shim = await shimPath(version);
+    const prompt = `Use the ${scenario.skill} skill. ${scenario.prompt}`;
+    process.stdout.write(`${JSON.stringify({ project: prepared, shim, prompt })}\n`);
+    return;
+  }
+  if (project === undefined) {
+    throw new Error('verify needs the project directory');
+  }
+  const transcript = await readFile(join(project, 'transcript.txt'), 'utf8').catch(() => '');
+  const failures = await verify(project, transcript, scenario.expect);
+  process.stdout.write(
+    `${failures.length === 0 ? 'pass' : 'FAIL'} ${id}\n${failures.map((line) => `  ${line}\n`).join('')}`,
+  );
+  process.exitCode = failures.length === 0 ? 0 : 1;
+};
+
 const main = async (): Promise<void> => {
   const [agent, model, ...ids] = process.argv.slice(2);
+  if ((agent === 'prepare' || agent === 'verify') && model !== undefined) {
+    await manual(agent, model, ids[0]);
+    return;
+  }
   if ((agent !== 'claude' && agent !== 'codex') || model === undefined) {
-    process.stderr.write('usage: node scripts/skills/evals.ts <claude|codex> <model> [id...]\n');
+    process.stderr.write(
+      'usage: node scripts/skills/evals.ts <claude|codex> <model> [id...]\n       node scripts/skills/evals.ts prepare <id> | verify <id> <project>\n',
+    );
     process.exitCode = 2;
     return;
   }
   const host = agent === 'codex' ? 'codex' : 'claude-code';
-  const { scenarios } = JSON.parse(await readFile(join(EVALS, 'scenarios.json'), 'utf8')) as {
-    scenarios: Scenario[];
-  };
-  const pkg = JSON.parse(await readFile(join(ROOT, 'packages', 'cli', 'package.json'), 'utf8')) as {
-    version: string;
-  };
-  const which = await run('sh', ['-c', 'command -v npx'], { cwd: ROOT, env: process.env });
-  const shimDir = await mkdtemp(join(tmpdir(), 'openapi-mcp-eval-bin-'));
-  await writeShim(shimDir, which.output.trim());
+  const scenarios = await loadScenarios();
+  const version = await cliVersion();
+  const shimDir = await shimPath(version);
   const selected = scenarios.filter(
     (scenario) => scenario.host === host && (ids.length === 0 || ids.includes(scenario.id)),
   );
   let failed = 0;
   for (const scenario of selected) {
-    const project = await prepare(scenario, pkg.version);
+    const project = await prepare(scenario, version);
     const prompt = `Use the ${scenario.skill} skill. ${scenario.prompt}`;
     const [command, args] = agentArgs(scenario.host, model, prompt);
     const env = {
@@ -188,7 +235,10 @@ const main = async (): Promise<void> => {
     };
     const result = await run(command, args, { cwd: project, env });
     await writeFile(join(project, 'transcript.txt'), result.output);
-    const failures = await verify(project, result.output, scenario.expect);
+    const failures = [
+      ...(result.code === 0 ? [] : [`the agent exited with ${String(result.code)}`]),
+      ...(await verify(project, result.output, scenario.expect)),
+    ];
     failed += failures.length === 0 ? 0 : 1;
     process.stdout.write(
       `${failures.length === 0 ? 'pass' : 'FAIL'} ${scenario.id} (${agent} ${model}) ${project}\n${failures.map((line) => `  ${line}\n`).join('')}`,

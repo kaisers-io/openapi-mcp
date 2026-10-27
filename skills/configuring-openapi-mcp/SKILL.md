@@ -59,7 +59,9 @@ Find three versions and keep them apart:
 
 Below, `CLI` means `npx -y @kaisers-io/openapi-mcp@V`, where V is the configured version, or
 the latest one for a new entry. If the configured version is older than the latest, propose the
-update and read `references/migrations.md`. If the latest is newer than the skill, say that the
+update and read `references/migrations.md`. Tell the user each change of its "Changes without
+an error" table that applies between the two versions, and what it means for this entry. If the
+latest is newer than the skill, say that the
 skill may not know newer flags and that `npx skills add kaisers-io/openapi-mcp#v<latest>
 --skill configuring-openapi-mcp` updates it. Do not run `npx skills check`: it installs updates.
 
@@ -86,7 +88,8 @@ Ask these, skipping what step 2 already answered:
 6. This project only, or every project?
 7. Will it send files or receive images?
 
-If the user has only a website, look for the OpenAPI document (often `openapi.json`,
+If the user names the API's base URL, pass it with `--base-url`. If the user has only a
+website, look for the OpenAPI document (often `openapi.json`,
 `openapi.yaml` or a link in the API docs). An HTML page is not a spec.
 
 ### 4. Operations
@@ -104,13 +107,16 @@ tag. The user removes rows or confirms. Repeat until they confirm.
 
 ### 5. Credentials
 
-Read `references/auth.md` to map the `security` of the allowed operations to flags. Then read
-the file for the detected OS and propose its default. The user decides.
+Read `references/auth.md` to map the `security` of the allowed operations to flags. Tell the
+user what each variable must hold: for a bearer token, the word `Bearer`, a space and the
+token. Then read the file for the detected OS and propose its default. The user decides.
 
 ### 6. Check and write
 
 Run `CLI --json check <the same options as serve>`. Missing variables are expected until the
-user has set them: say which ones. Resolve every other failure first. Then show the config
+user has set them: say which ones. Resolve every other failure first. A `cannot resolve` error
+for the API host means this machine cannot reach the API: ask the user for the right base URL
+or network, and do not write the config until `check` passes. Then show the config
 change from the host file, write it after the user confirms, and say how to undo it.
 
 ### 7. Verify

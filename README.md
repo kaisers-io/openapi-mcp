@@ -174,7 +174,8 @@ executable. Hosts that resolve it themselves take the configs above unchanged â€
 Desktop's own Windows example uses `"command": "npx"`. A host that starts the command directly,
 without a shell, cannot run a `.cmd` file: the server then never starts, and the host log shows
 `ENOENT`, `EINVAL` (Node refuses to spawn `.cmd` files without a shell since its April 2024
-security release) or just "client closed". Start it through `cmd /c` instead:
+security release) or just "client closed". Start it through `cmd /d /c` instead (`/d` skips
+`cmd`'s AutoRun commands, which could print to the MCP stream):
 
 ```json
 {
@@ -182,6 +183,7 @@ security release) or just "client closed". Start it through `cmd /c` instead:
     "petstore": {
       "command": "cmd",
       "args": [
+        "/d",
         "/c",
         "npx",
         "-y",

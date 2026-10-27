@@ -32,7 +32,7 @@ The key is `servers`, not `mcpServers`.
 - `${env:NAME}` reads a variable of the VS Code process; `envFile` loads a file.
 - Some agent modes do not start servers that need `${input:...}`. If the server does not
   start there, use `envFile` or a start script that loads the credentials and starts the CLI.
-- Windows: `"command": "cmd"`, `"args": ["/c", "npx", ...]`.
+- Windows: `"command": "cmd"`, `"args": ["/d", "/c", "npx", ...]`.
 
 ## Status and logs
 

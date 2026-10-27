@@ -29,7 +29,7 @@ startup_timeout_sec = 60
   `startup_timeout_sec = 60`.
 - With a start script that loads the credentials, `command` is the script's absolute path and
   `args` is empty.
-- Windows: `command = "cmd"`, `args = ["/c", "npx", ...]`.
+- Windows: `command = "cmd"`, `args = ["/d", "/c", "npx", ...]`.
 - `enabled_tools` and `disabled_tools` act on the tools the host lists. Under
   `--tool-mode discover` those are the four discovery tools, so restrict operations with
   `--allow` and `--deny` instead.

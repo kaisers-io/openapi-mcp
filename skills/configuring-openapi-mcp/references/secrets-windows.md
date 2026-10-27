@@ -1,52 +1,81 @@
 # Credentials on Windows
 
-Propose the default. Offer the alternative when the user has 1Password. The user decides.
-Never ask for the value in the chat: the user types it into a prompt in their own PowerShell.
+Microsoft recommends protected storage for secrets, Credential Manager or DPAPI, over plain text
+([Handling passwords](https://learn.microsoft.com/en-us/windows/win32/secbp/handling-passwords)).
+Propose the first option that fits and let the user decide. Never ask for the value in the
+chat: the user types it into a prompt in their own PowerShell. Before you show a command,
+replace `X.Y.Z`, the spec URL, the names and the header flag with the values of this setup, in
+single quotes; a single quote inside a value is written twice (`''`).
 
-## Default: a user environment variable
+## VS Code
 
-Read the value without echo, then store it for the user. `Read-Host -AsSecureString` hides the
-input ([Read-Host](https://learn.microsoft.com/powershell/module/microsoft.powershell.utility/read-host)),
-and `SetEnvironmentVariable` with `User` stores it for new processes of this user
-([Environment.SetEnvironmentVariable](https://learn.microsoft.com/dotnet/api/system.environment.setenvironmentvariable)):
+In a `.vscode/mcp.json` or user `mcp.json`, use `inputs` with `"password": true` (host file):
+VS Code asks once and keeps the value in its secret storage. Some agent modes and portable
+configurations do not support input variables
+([VS Code](https://code.visualstudio.com/docs/agents/reference/mcp-configuration#input-variables-for-sensitive-data)).
+Use the next option there.
+
+## Default: DPAPI and a start script
+
+`Export-Clixml` encrypts a credential with DPAPI, so only this user on this machine can read it
+([Export-Clixml](https://learn.microsoft.com/powershell/module/microsoft.powershell.utility/export-clixml)).
+Store it:
 
 ```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.config\openapi-mcp" | Out-Null
 $secure = Read-Host -AsSecureString 'Shop API token'
-$plain = [System.Net.NetworkCredential]::new('', $secure).Password
-[Environment]::SetEnvironmentVariable('SHOP_API_TOKEN', "Bearer $plain", 'User')
-Remove-Variable plain, secure
+[pscredential]::new('shop-api-token', $secure) | Export-Clixml -Path "$env:USERPROFILE\.config\openapi-mcp\shop-api-token.xml"
+Remove-Variable secure
 ```
 
-- Leave out `Bearer ` for an API key.
-- Windows keeps user variables unencrypted in the user's registry. Say so.
-- Apps that are already running keep their old environment: the user restarts the host. A
-  terminal inside an editor needs the editor restarted too.
-
-Check that it is set without showing it:
+`Read-Host` masks the input and accepts at most 1,022 characters. The start script decrypts it,
+adds one variable to the environment it inherits, and starts the pinned CLI:
 
 ```powershell
-$null -ne [Environment]::GetEnvironmentVariable('SHOP_API_TOKEN', 'User')
+# %USERPROFILE%\.config\openapi-mcp\shop.ps1
+$ErrorActionPreference = 'Stop'
+$credential = Import-Clixml -Path "$env:USERPROFILE\.config\openapi-mcp\shop-api-token.xml"
+$token = $credential.GetNetworkCredential().Password
+if ([string]::IsNullOrEmpty($token)) { exit 1 }
+$env:SHOP_API_TOKEN = "Bearer $token"
+Remove-Variable token, credential
+& npx.cmd -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --header-env 'Authorization=SHOP_API_TOKEN'
+exit $LASTEXITCODE
 ```
 
-`True` while the host still reports it missing means the host was not restarted.
+- Leave out `Bearer ` for an API key, and use the API's own header name in `--header-env`.
+- The host command is `powershell.exe` with the arguments `-NoLogo`, `-NoProfile`,
+  `-NonInteractive`, `-ExecutionPolicy`, `Bypass`, `-File` and the script's absolute path, each
+  as its own array element (backslashes doubled in JSON). `Bypass` applies to this one process,
+  so the user's execution policy stays as it is.
+- Before you write the host entry, test the script as a host would start it, with the
+  [MCP Inspector CLI](https://github.com/modelcontextprotocol/inspector):
+  `npx -y @modelcontextprotocol/inspector@2.11.0 --cli powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <script> --method tools/list`.
+  If it does not list the tools, do not use this option: offer 1Password.
 
 ## Alternative: 1Password CLI
 
-No plain-text copy in the registry, and the value exists only in the server process.
-[`op run`](https://developer.1password.com/docs/cli/reference/commands/run/) resolves
-`op://` references from an env file:
+No file on disk holds the credential: [`op run`](https://developer.1password.com/docs/cli/reference/commands/run/)
+resolves `op://` references from an env file when the server starts. The value is then in the
+environment of `op`, `cmd`, `npx` and the server.
 
 ```
 # %USERPROFILE%\.config\openapi-mcp\shop.env (no secret, only a reference)
 SHOP_API_TOKEN=op://Private/Shop API/credential
 ```
 
-The host command is `op` with the arguments
-`run --env-file=C:\Users\<name>\.config\openapi-mcp\shop.env -- cmd /c npx -y @kaisers-io/openapi-mcp@X.Y.Z serve ...`.
-The stored field must hold the full header value, for example `Bearer <token>`.
+- Copy the reference from 1Password ("Copy Secret Reference"). The field must hold the full
+  header value, for example `Bearer <token>`.
+- Turn on the [app integration](https://developer.1password.com/docs/cli/app-integration/), so
+  `op` can unlock with Windows Hello when a host starts it.
+- The host command is `op` with the arguments `run`,
+  `--env-file=C:\Users\<name>\.config\openapi-mcp\shop.env`, `--`, `cmd`, `/d`, `/c`, `npx`,
+  `-y`, `@kaisers-io/openapi-mcp@X.Y.Z`, `serve`, and the rest, each as its own array element.
+  `cmd` reads `& | < > ^ %` as its own syntax: if a value holds one of them, use the start
+  script above with `& op run --env-file=... -- npx.cmd ...` in place of its token lines.
 
 ## Avoid
 
-- `setx`: it cuts values at 1,024 characters and leaves the value in the command history
-  ([setx](https://learn.microsoft.com/windows-server/administration/windows-commands/setx)).
+- A user environment variable (`SetEnvironmentVariable(..., 'User')`) or `setx` with the value:
+  Windows stores it unencrypted, and every program the user starts inherits it.
 - The value in a host config or any file in a repository.

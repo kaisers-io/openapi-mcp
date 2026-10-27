@@ -75,8 +75,8 @@
       "prompt": "Update the shop server in this project to the current openapi-mcp. Keep what it may do. Do not ask me anything else.",
       "expect": {
         "file": ".mcp.json",
-        "contains": ["method:delete", "path:/**"],
-        "absent": ["@0.4.1", "\"**\"", "DELETE /**"],
+        "contains": ["method:delete", "operationId:*"],
+        "absent": ["@0.4.1", "\"**\"", "DELETE /**", "path:/**"],
         "transcript": ["case"]
       }
     },
@@ -88,14 +88,18 @@
         ".codex/config.toml": "[mcp_servers.shop]\ncommand = \"npx\"\nargs = [\"-y\", \"@kaisers-io/openapi-mcp@CURRENT\", \"serve\", \"--spec\", \"./shop.json\", \"--base-url\", \"https://api.example.test\", \"--header-env\", \"Authorization=SHOP_API_TOKEN\"]\n"
       },
       "prompt": "The shop server fails to start in Codex. SHOP_API_TOKEN is exported in my shell. Find out why.",
-      "expect": { "transcript": ["env_vars", "SHOP_API_TOKEN"] }
+      "expect": {
+        "transcript": ["env_vars", "SHOP_API_TOKEN"]
+      }
     },
     {
       "id": "debug-pending-approval",
       "skill": "debugging-openapi-mcp",
       "host": "claude-code",
       "prompt": "Claude Code shows my shop server from .mcp.json as pending and never connects. What is wrong?",
-      "expect": { "transcript": ["approv", "/mcp"] }
+      "expect": {
+        "transcript": ["approv", "/mcp"]
+      }
     },
     {
       "id": "debug-read-only-default",
@@ -105,7 +109,9 @@
         ".mcp.json": "{\"mcpServers\":{\"shop\":{\"command\":\"npx\",\"args\":[\"-y\",\"@kaisers-io/openapi-mcp@CURRENT\",\"serve\",\"--spec\",\"./shop.json\",\"--base-url\",\"https://api.example.test\"]}}}"
       },
       "prompt": "The shop server works, but the agent cannot create orders. createOrder is missing. Why?",
-      "expect": { "transcript": ["read-only", "--allow"] }
+      "expect": {
+        "transcript": ["read-only", "--allow"]
+      }
     },
     {
       "id": "debug-wrong-base-url",
@@ -115,7 +121,9 @@
         ".mcp.json": "{\"mcpServers\":{\"shop\":{\"command\":\"npx\",\"args\":[\"-y\",\"@kaisers-io/openapi-mcp@CURRENT\",\"serve\",\"--spec\",\"./shop.json\",\"--base-url\",\"https://api.example.test\"]}}}"
       },
       "prompt": "Every call of the shop server returns 'upstream request failed with status 404', even listOrders. The API docs say the base URL is https://api.example.test/v2. Why?",
-      "expect": { "transcript": ["--base-url", "/v2"] }
+      "expect": {
+        "transcript": ["--base-url", "/v2"]
+      }
     }
   ]
 }

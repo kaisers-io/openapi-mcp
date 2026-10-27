@@ -8,7 +8,8 @@ How to move a server entry from an older `openapi-mcp` version to a newer one. D
 1. Read every section between the configured and the target version in the CHANGELOG at the
    target tag. The tables below cover the changes that touch a server entry.
 2. Run the old and the new version with the entry's spec and filter options, each with a
-   throwaway home (`HOME="$(mktemp -d)"`, Windows: `USERPROFILE`):
+   throwaway home (`HOME="$(mktemp -d)"`, Windows: `USERPROFILE`). The old version needs its
+   old patterns:
 
    ```sh
    npx -y @kaisers-io/openapi-mcp@OLD --json tools --spec <spec> <filters>
@@ -16,6 +17,8 @@ How to move a server entry from an older `openapi-mcp` version to a newer one. D
    ```
 
 3. Compare the tool names of the two runs and show the user what the update adds or removes.
+   "Keep what it may do" means the same tool names. If the old version cannot run, say that
+   you could not compare, instead of claiming the set is unchanged.
 4. Apply the changes below, run `CLI --json check` with the new version, and show the new
    entry before writing it.
 
@@ -27,7 +30,7 @@ The new version stops with an error that names the replacement. Apply it.
 |---|---|---|
 | 0.5.0 | `--deny "DELETE /**"` | `--deny "method:delete"` |
 | 0.5.0 | `--allow "GET /orders/**"` | `--allow "route:GET /orders/**"` |
-| 0.5.0 | `--allow "**"` | `--allow "path:/**"` (includes operations without an operationId) |
+| 0.5.0 | `--allow "**"` | `--allow "operationId:*"` (the same operations); `path:/**` also exposes operations without an operationId |
 | 0.5.0 | `--allow "read*"` | `--allow "operationId:read*"` |
 
 ## Changes without an error

@@ -32,7 +32,7 @@ are not merged. Recommend project scope for a team, local scope for a personal s
 - With a start script that loads the credentials, `command` is the script's absolute path, `args`
   is empty and `env` is left out.
 - To write it with the CLI: `claude mcp add-json --scope project shop '<the inner object>'`.
-- Windows: `"command": "cmd"`, `"args": ["/c", "npx", ...]`.
+- Windows: `"command": "cmd"`, `"args": ["/d", "/c", "npx", ...]`.
 
 ## Status
 

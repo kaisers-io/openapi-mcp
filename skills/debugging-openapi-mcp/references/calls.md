@@ -1,9 +1,11 @@
 # A tool call returns an error
 
 Errors from the API carry no host or path, so that a response cannot leak them. The result's
-`_meta` has `openapi-mcp/effect`: `not_sent`, `upstream_rejected`,
-`upstream_reported_success` or `outcome_unknown`. Only `not_sent` and `upstream_rejected` mean
-the API changed nothing. Details:
+`_meta` has `openapi-mcp/effect`, which states evidence, not a guarantee: `not_sent` (no
+request reached the API), `upstream_rejected` (the one request got a 4xx), `upstream_reported_success`
+(a 2xx came back, but the result could not be returned) or `outcome_unknown`. Only `not_sent`
+means the API saw nothing. After any other effect, check the data before a write is repeated.
+Details:
 [docs/security.md, Failed writes and retries](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/security.md#failed-writes-and-retries).
 
 | Error text | Cause | Fix |
@@ -16,7 +18,7 @@ the API changed nothing. Details:
 | `the request to the upstream server failed` | DNS, TLS or network | test the base URL from the same machine |
 | `not allowed by the egress policy` | the base URL or a redirect leads to a private address | `--allow-private-network` only after the user confirms the address is theirs |
 | `did not match the tool's declared output schema` | the API answers differently from its spec | `--log json` shows `mismatch`; a spec fix, `--nullable-response-fields`, or `--omit-output-schema` for that tool |
-| `exceeded the maximum response size` | response over `--max-response-bytes` | API pagination, or `--response-projection` and `_fields`; raise the limit last |
+| `exceeded the maximum response size` | response over `--max-response-bytes` | smaller responses from the API (pagination, its own field or page-size parameters); `--response-projection` does not help, since the limit applies while the response is read; raise the limit last |
 | `could not obtain an OAuth2 access token` | client ID, secret, token URL or scope | check the variables and `--upstream-oauth-token-url` |
 | `refusing to send a secret header in cleartext` | `http://` to a remote host | use `https://` |
 | `rate limit exceeded`, `overloaded` | `--rate-limit` or `--max-concurrency` reached | wait `retryAfterMs`; raise the limit if the user agrees |

@@ -25,7 +25,7 @@ Source: [Cursor MCP docs](https://cursor.com/docs/context/mcp).
 - `"envFile": "/absolute/path/shop.env"` loads variables from a file for stdio servers. The file
   must not be in the repository.
 - Cursor started from the Dock may not have the shell's variables or `PATH`. Use a start script that loads the credentials and starts the CLI as `command` then.
-- Windows: `"command": "cmd"`, `"args": ["/c", "npx", ...]`.
+- Windows: `"command": "cmd"`, `"args": ["/d", "/c", "npx", ...]`.
 
 ## Status
 
