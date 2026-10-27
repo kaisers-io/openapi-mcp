@@ -1208,7 +1208,7 @@ const buildTyped = (
     // above; a bare `{}` or a description-only node stays `unknown`.)
     const orphan = Object.keys(node).find((keyword) => ASSERTION_KEYWORDS.has(keyword));
     return orphan === undefined
-      ? { ok: z.unknown() }
+      ? { ok: ANY_JSON }
       : { unrepresentable: `the constraint "${orphan}" on a typeless schema` };
   }
   return { unrepresentable: `the unsupported type "${String(typeValue)}"` };
@@ -1424,6 +1424,28 @@ export const withConvertMemo = <Value>(
     activeScope = previous;
   }
 };
+
+// A schema with no type and no assertion (`{}`, or a description only) admits any
+// JSON value. Listed as the union of every JSON type, which admits the same
+// values: `{}` is what MCP clients flag as accepting anything by accident (the
+// MCP Inspector's --strict check), and a bare `true` is not a schema object.
+const ANY_JSON = z
+  .unknown()
+  .meta({ type: ['object', 'array', 'string', 'number', 'boolean', 'null'] });
+
+// z.toJSONSchema with an open object's `additionalProperties` written as
+// `true`: zod emits `{}`, a schema with no keyword that MCP clients flag as
+// accepting anything by accident (the MCP Inspector's --strict check). Both
+// mean "any undeclared property" (JSON Schema Core 2020-12 §4.3.2).
+export const toWireJsonSchema = (schema: z.ZodType) =>
+  z.toJSONSchema(schema, {
+    override: ({ jsonSchema }) => {
+      const extra = jsonSchema.additionalProperties;
+      if (isRecord(extra) && Object.keys(extra).length === 0) {
+        jsonSchema.additionalProperties = true;
+      }
+    },
+  });
 
 // z.toJSONSchema of one Zod schema instance, once per build. Callers must not
 // mutate the result: it is shared by every tool whose schema converted to the

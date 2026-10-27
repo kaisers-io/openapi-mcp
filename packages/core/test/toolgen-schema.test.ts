@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { toWireJsonSchema } from '../src/toolgen/schema.ts';
 import { UNSAFE_PATTERN_REASON, convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
 import type { SchemaResult } from '../src/index.ts';
 
@@ -1526,6 +1527,40 @@ describe('convertSchema — anyOf of required-only branches beside properties (#
     ];
     for (const variant of variants) {
       expect('unrepresentable' in convertSchema(variant, '3.0')).toBe(true);
+    }
+  });
+});
+
+// Issue #70: zod writes an open object's additionalProperties as `{}`, which the
+// MCP Inspector's --strict check flags as a schema with no keyword
+describe('toWireJsonSchema', () => {
+  it('writes an open object as additionalProperties: true, in both directions', () => {
+    const open = { type: 'object', properties: { id: { type: 'integer' } } };
+    const response = toWireJsonSchema(ok(convertSchema(open, '3.1', 0, 'response')));
+    expect(response['additionalProperties']).toBe(true);
+    const freeForm = toWireJsonSchema(ok(convertSchema({ type: 'object' }, '3.1')));
+    expect(freeForm['additionalProperties']).toBe(true);
+  });
+
+  it('keeps a closed object and a typed catchall as they are', () => {
+    const wire = (node: unknown) => toWireJsonSchema(ok(convertSchema(node, '3.1')));
+    const closed = wire({ type: 'object', properties: { id: { type: 'integer' } } });
+    expect(closed['additionalProperties']).toBe(false);
+    const typed = wire({ type: 'object', additionalProperties: { type: 'string' } });
+    expect(typed['additionalProperties']).toEqual({ type: 'string' });
+  });
+
+  it('lists a typeless schema as the union of every JSON type, in both directions', () => {
+    const any = ['object', 'array', 'string', 'number', 'boolean', 'null'];
+    for (const mode of ['request', 'response'] as const) {
+      const empty = toWireJsonSchema(ok(convertSchema({}, '3.1', 0, mode)));
+      expect(empty['type']).toStrictEqual(any);
+      const described = toWireJsonSchema(ok(convertSchema({ description: 'x' }, '3.1', 0, mode)));
+      expect(described).toMatchObject({ type: any, description: 'x' });
+    }
+    const schema = ok(convertSchema({ description: 'x' }, '3.1'));
+    for (const value of [{}, [], 'a', 1, true, null]) {
+      expect(schema.safeParse(value).success).toBe(true);
     }
   });
 });

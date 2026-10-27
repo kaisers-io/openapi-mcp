@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import type { z } from 'zod';
 import type { OmittedOperation, OperationRecord } from '../spec/normalize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import { deriveAnnotations } from './annotations.ts';
@@ -10,7 +10,7 @@ import type { NamedOperation } from './naming.ts';
 import type { JsonSchemaRecord, NullableFieldScope } from './output-schema.ts';
 import { detectPagination } from './pagination.ts';
 import type { PaginationPlan } from './pagination.ts';
-import { withConvertMemo } from './schema.ts';
+import { toWireJsonSchema, withConvertMemo } from './schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
 
@@ -119,7 +119,7 @@ const toWireSchema = (inputSchema: z.ZodType): { ok: WireSchema } | { error: str
   try {
     // A shallow copy: zod adds a hidden `~standard` property to the result
     // that keeps the zod schema alive for as long as the JSON Schema (#47)
-    return { ok: { ...z.toJSONSchema(inputSchema) } };
+    return { ok: { ...toWireJsonSchema(inputSchema) } };
   } catch (error) {
     // Defensive: our schemas are representable (proven), but fail closed if a
     // future construct is not — omit rather than emit a nonconforming schema.
