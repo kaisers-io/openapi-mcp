@@ -148,6 +148,7 @@ export const buildSnapshot = (
       'read-only-default': 0,
       omitted: pipeline.spec.omitted.length + built.omitted.length,
       withheld: pipeline.withheldOperations?.length ?? 0,
+      'head-without-get': 0,
     },
     ...(pipeline.cacheLock === undefined ? {} : { cacheLock: pipeline.cacheLock }),
     ...(pipeline.apis === undefined

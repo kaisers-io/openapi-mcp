@@ -209,7 +209,14 @@ describe('tools --json: what each operation does (issue #76)', () => {
     expect(data.counts).toEqual({
       operations: 6,
       exposed: 3,
-      notExposed: { denied: 0, 'not-allowed': 0, 'read-only-default': 1, omitted: 2, withheld: 0 },
+      notExposed: {
+        denied: 0,
+        'not-allowed': 0,
+        'read-only-default': 1,
+        omitted: 2,
+        withheld: 0,
+        'head-without-get': 0,
+      },
     });
     expect(data.counts.operations).toBe(data.tools.length + data.notExposed.length);
   });

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A `HEAD` operation is no longer offered when its `GET` is not exposed (#68).** A `HEAD`
+  request reaches the `GET` on the same path, so such a tool was refused on every call. It is now
+  left out and listed under `notExposed` with the decision `head-without-get`, and
+  `notExposedCounts` counts it. See [filtering.md](docs/filtering.md#how-a-decision-is-made).
+
 ## [0.6.0] - 2026-10-28
 
 ### Added

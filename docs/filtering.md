@@ -74,9 +74,10 @@ The server goes through these steps for each operation of the spec, in this orde
    [request authorization](security.md#request-authorization)).
 
 A `HEAD` request counts as a `GET` at call time, because a server may answer `HEAD` with its
-GET handler and so return what that `GET` returns. A declared `HEAD` operation becomes a tool
-when the filters allow it, but the server refuses its calls while the `GET` on the same path is
-excluded.
+GET handler and so return what that `GET` returns. So a declared `HEAD` operation becomes a tool
+only together with the `GET` on the same path. When the filters exclude that `GET`, or it is
+omitted as not supported, the `HEAD` is left out too, with the decision `head-without-get`.
+`--allow 'route:HEAD /orders/{id}'` alone therefore exposes nothing: add the `GET` as well.
 
 ## Tool names
 

@@ -121,16 +121,10 @@ const DELETES = ['deleteOrder', 'deleteCustomers', 'removeCustomer'];
 const without = (names: readonly string[], drop: readonly string[]) =>
   names.filter((name) => !drop.includes(name));
 
-// `blocked`: offered as tools, but every call is refused before it is sent,
-// because its URL also matches an operation the filters exclude. A HEAD
-// request reads what the GET on the same path returns, so a declared HEAD
-// stays closed while that GET is excluded.
-const CASES: readonly {
-  title: string;
-  args: string[];
-  expected: readonly string[];
-  blocked?: readonly string[];
-}[] = [
+// A HEAD request reads what the GET on the same path returns, so a declared
+// HEAD is left out while that GET is excluded (issue #68): every tool that is
+// offered can be called.
+const CASES: readonly { title: string; args: string[]; expected: readonly string[] }[] = [
   { title: 'no --allow: the read-only default (GET and HEAD)', args: [], expected: READS },
   {
     title: 'everything but deletes',
@@ -159,10 +153,9 @@ const CASES: readonly {
     expected: ['getOrder'],
   },
   {
-    title: 'a declared HEAD alone is offered, but stays closed while its GET is excluded',
+    title: 'a declared HEAD is left out while its GET is excluded',
     args: ['--allow', 'route:HEAD /orders/{orderId}'],
-    expected: ['headOrder'],
-    blocked: ['headOrder'],
+    expected: [],
   },
   {
     title: 'a route with * for one segment, in other letter cases',
@@ -217,10 +210,9 @@ const CASES: readonly {
     expected: ORDERS,
   },
   {
-    title: '--deny alone narrows the read-only default',
+    title: '--deny alone narrows the read-only default, HEAD with its GET',
     args: ['--deny', 'method:get'],
-    expected: ['headOrder'],
-    blocked: ['headOrder'],
+    expected: [],
   },
 ];
 
@@ -259,23 +251,11 @@ describe('serve — --allow and --deny end to end', () => {
   ];
 
   const sent = () => upstream.requests.map(({ method, url }) => `${method} ${url}`).toSorted();
-  const expectedRequests = (names: readonly string[], blocked: readonly string[] = []) =>
-    without(names, blocked)
-      .map((name) => (ROUTES[name] ?? []).join(' '))
-      .toSorted();
-  const OVERLAP =
-    'tool execution failed: the request was not sent: its URL also matches an operation this server does not expose; see the server startup diagnostics';
-  // A called tool either reaches the upstream or, when blocked, is refused
-  // with exactly this message
-  const expectCalled = (name: string, reply: ToolReply, blocked: readonly string[] = []) => {
-    if (blocked.includes(name)) {
-      expect({ name, reply }).toMatchObject({
-        name,
-        reply: { kind: 'result', isError: true, text: OVERLAP },
-      });
-    } else {
-      expect({ name, kind: reply.kind }).toStrictEqual({ name, kind: 'result' });
-    }
+  const expectedRequests = (names: readonly string[]) =>
+    names.map((name) => (ROUTES[name] ?? []).join(' ')).toSorted();
+  // A called tool reaches the upstream
+  const expectCalled = (name: string, reply: ToolReply) => {
+    expect({ name, kind: reply.kind }).toStrictEqual({ name, kind: 'result' });
   };
 
   const expectRefusedPerOperation = async (session: McpSession, name: string) => {
@@ -308,7 +288,7 @@ describe('serve — --allow and --deny end to end', () => {
     }
   };
 
-  it.each(CASES)('per-operation: $title', async ({ args, expected, blocked }) => {
+  it.each(CASES)('per-operation: $title', async ({ args, expected }) => {
     upstream.requests.length = 0;
     await withServe(serveArgs(args), home, async (session) => {
       const tools = await session.listTools();
@@ -318,13 +298,13 @@ describe('serve — --allow and --deny end to end', () => {
       }
       expect(upstream.requests).toStrictEqual([]);
       for (const name of expected) {
-        expectCalled(name, await session.callTool(name, argsOf(name)), blocked);
+        expectCalled(name, await session.callTool(name, argsOf(name)));
       }
     });
-    expect(sent()).toStrictEqual(expectedRequests(expected, blocked));
+    expect(sent()).toStrictEqual(expectedRequests(expected));
   });
 
-  it.each(CASES)('discover: $title', async ({ args, expected, blocked }) => {
+  it.each(CASES)('discover: $title', async ({ args, expected }) => {
     upstream.requests.length = 0;
     await withServe(serveArgs([...args, '--tool-mode', 'discover']), home, async (session) => {
       const tools = await session.listTools();
@@ -351,10 +331,10 @@ describe('serve — --allow and --deny end to end', () => {
         const described = await session.callTool('describe_operation', { name });
         expect(described).toMatchObject({ kind: 'result', isError: false });
         const reply = await session.callTool('call_operation', { name, arguments: argsOf(name) });
-        expectCalled(name, reply, blocked);
+        expectCalled(name, reply);
       }
     });
-    expect(sent()).toStrictEqual(expectedRequests(expected, blocked));
+    expect(sent()).toStrictEqual(expectedRequests(expected));
   });
 
   // The arguments of an exposed tool must not reach another operation

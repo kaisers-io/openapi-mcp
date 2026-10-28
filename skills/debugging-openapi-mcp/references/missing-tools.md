@@ -12,6 +12,7 @@ and the tools the host lists. Details:
 | `decision: denied`, `pattern` names the `--deny` | a deny matches it | narrow that deny |
 | `decision: omitted`, with a reason | the operation uses something not supported | explain the reason; the spec needs a change (overlay) |
 | `decision: withheld` | a refreshed spec waits as a candidate and removed it | ask the user to review it: `openapi-mcp cache promote` |
+| `decision: head-without-get` | a `HEAD` whose `GET` on the same path is not exposed; its calls would be refused | allow the `GET` too, or leave it out |
 | `deadPatterns` | a pattern matches nothing | use the suggestion |
 | `check` reports `toolMode: discover` | the host lists four tools, not one per operation | expected; or `--tool-mode per-operation` if the user wants one tool each |
 | the host lists the first tools only | `--tools-page-size` and a host that ignores `nextCursor` | remove `--tools-page-size` |

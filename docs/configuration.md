@@ -404,6 +404,7 @@ summary line, for example `operations not exposed: 1 excluded by --deny, 1 match
 | `read-only-default` | no `--allow` is given and it is not a read (`GET`, `HEAD`, `QUERY`) |
 | `omitted` | it is not supported; the reason says why (it is also listed under `data.omitted`, unchanged) |
 | `withheld` | a pending candidate spec removed it, until `openapi-mcp cache promote` |
+| `head-without-get` | it is a `HEAD` and the `GET` on the same path is not exposed, so every call would be refused (see [filtering.md](filtering.md)) |
 
 `data.overlaps` lists each exposed operation whose path can match the same URL as one that is not
 exposed. Request authorization refuses those URLs (see

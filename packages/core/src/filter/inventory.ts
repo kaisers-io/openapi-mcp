@@ -46,6 +46,7 @@ export const notExposedCounts = (operations: readonly NotExposedOperation[]): No
     'read-only-default': 0,
     omitted: 0,
     withheld: 0,
+    'head-without-get': 0,
   };
   for (const operation of operations) {
     counts[operation.decision] += 1;
@@ -59,6 +60,7 @@ const SUMMARY_WORDING: Record<NotExposedDecision, string> = {
   'read-only-default': 'left out by the read-only default',
   omitted: 'omitted as not supported',
   withheld: 'withheld for a pending candidate',
+  'head-without-get': 'HEAD left out because its GET is not exposed',
 };
 
 // One bounded line however large the spec, or none when everything is a

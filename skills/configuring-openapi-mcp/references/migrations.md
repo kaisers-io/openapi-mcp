@@ -45,7 +45,8 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
-| Unreleased | `--tool-mode auto` also picks `discover` when the tool definitions take more than 40,000 bytes. | Run `CLI --json check`; if it now reports `discover` and the user wants approval per tool, set `--tool-mode per-operation`. |
+| Unreleased | A `HEAD` operation whose `GET` on the same path is not exposed is no longer a tool; its calls were always refused. | Nothing in the config; allow the `GET` too if the user needs the `HEAD`. |
+| 0.6.0 | `--tool-mode auto` also picks `discover` when the tool definitions take more than 40,000 bytes. | Run `CLI --json check`; if it now reports `discover` and the user wants approval per tool, set `--tool-mode per-operation`. |
 | 0.5.0 | Every selector ignores letter case. In `operationId:`, `name:` and `tag:` patterns, `*` also matches `/`. | Compare the tools of both versions; an `--allow` can expose more, a `--deny` can exclude more. |
 | 0.5.0 | A redirect that leaves the API base URL, or goes to a path with no operation, is not followed. | If the API redirects to another host, for example for downloads, add `--allow-offsite-redirects` after the user agrees. |
 | 0.5.0 | `describe_operation` leaves out the output schema unless the agent asks for it. | Nothing in the config. |
