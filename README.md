@@ -31,9 +31,10 @@ supported.
 
 ## Requirements
 
-Requirements: Node.js `^22.19.0 || >=24.11.0`, macOS, Linux or Windows. Use the latest patch
-release of your Node line, because older patches miss its security fixes. Other platforms, such
-as FreeBSD, are refused because they are untested, not because they are known to be unsafe.
+Requirements: Node.js 22.19 or later, or 24.11 or later (Node 23 is not supported), on
+macOS, Linux or Windows. Use the latest patch release of your Node line, because older patches miss
+its security fixes. Other platforms, such as FreeBSD, are refused because they are untested, not
+because they are known to be unsafe.
 
 Node.js comes with `npx`, which runs the commands below in a terminal without installing
 anything else.
