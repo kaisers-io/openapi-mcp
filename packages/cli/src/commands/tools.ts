@@ -165,6 +165,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
             ...optOut.warnings,
             ...exposure.warnings,
           ],
+          warningReasons: result.warningReasons,
         };
       });
     });
