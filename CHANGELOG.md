@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-28
+
 ### Fixed
 
 - **An HTML error page shows its message, not its markup (#63).** A `4xx` or `5xx` response with
