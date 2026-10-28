@@ -38,10 +38,19 @@ const spend = (work: Work, steps: number): void => {
 // GET can stand for it
 type HeadItem = { char: string } | 'param';
 
-const patternItems = (tokens: readonly Token[]): Item[] =>
+const patternItems = (tokens: readonly Token[], fold: boolean): Item[] =>
   tokens.flatMap((token): Item[] =>
-    'param' in token ? ['one', 'star'] : [...token.literal.toLowerCase()].map((char) => ({ char })),
+    'param' in token
+      ? ['one', 'star']
+      : [...(fold ? token.literal.toLowerCase() : token.literal)].map((char) => ({ char })),
   );
+
+// The route table folds a whole request segment at once, but each template
+// text on its own. Outside ASCII, lower case can depend on the neighbours (a
+// final Greek sigma), so a cover that relies on folding is proven only for
+// ASCII text; any other text must match as written.
+const isAscii = (tokens: readonly Token[]): boolean =>
+  tokens.every((token) => 'param' in token || /^[\x00-\x7f]*$/u.test(token.literal));
 
 const headItems = (tokens: readonly Token[], fold: boolean): HeadItem[] =>
   tokens.flatMap((token): HeadItem[] =>
@@ -98,20 +107,23 @@ const coversSegment = (
 
 const covers = (get: Route, head: Route, work: Work): boolean =>
   get.segments.length === head.segments.length &&
-  get.segments.every((tokens, index) =>
-    coversSegment(patternItems(tokens), headItems(head.segments[index] ?? [], true), work),
-  );
+  get.segments.every((tokens, index) => {
+    const theirs = head.segments[index] ?? [];
+    const fold = isAscii(tokens) && isAscii(theirs);
+    return coversSegment(patternItems(tokens, fold), headItems(theirs, fold), work);
+  });
 
 // Whether a concrete path is one of the URLs of `head`, matched as written,
 // as the route table picks a concrete winner
 const isUrlOf = (head: Route, concrete: Route, work: Work): boolean =>
   head.segments.length === concrete.segments.length &&
-  head.segments.every((tokens, index) => {
-    const pattern = tokens.flatMap((token): Item[] =>
-      'param' in token ? ['one', 'star'] : [...token.literal].map((char) => ({ char })),
-    );
-    return coversSegment(pattern, headItems(concrete.segments[index] ?? [], false), work);
-  });
+  head.segments.every((tokens, index) =>
+    coversSegment(
+      patternItems(tokens, false),
+      headItems(concrete.segments[index] ?? [], false),
+      work,
+    ),
+  );
 
 // The route key of every exposed HEAD that no call can pass, with the path
 // of an excluded GET that refuses it

@@ -22,6 +22,7 @@ describe('headsWithoutGet', () => {
       '/orders/{orderId}',
     ],
     ['other letter case', [get('/Orders/{id}'), head('/orders/{id}')], '/Orders/{id}'],
+    ['the same non-ASCII text', [get('/a/{id}Σ'), head('/a/{x}Σ')], '/a/{id}Σ'],
     ['percent-encoding', [get('/caf%C3%A9/{id}'), head('/café/{id}')], '/caf%C3%A9/{id}'],
     ['a text part in the segment', [get('/f/{name}.json'), head('/f/{n}.JSON')], '/f/{name}.json'],
     ['a broader template', [get('/a/{id}'), head('/a/prefix-{id}')], '/a/{id}'],
@@ -56,6 +57,8 @@ describe('headsWithoutGet', () => {
     ['another segment count', [get('/a'), head('/a/{id}')]],
     ['a text part the HEAD lacks', [get('/a/{id}.json'), head('/a/{id}')]],
     ['a webhook key', [get('orderCreated'), entry('HEAD', 'orderCreated', true)]],
+    // `AΣ` folds to `aς` in a request, while the template text `Σ` folds to `σ`
+    ['a non-ASCII letter in another case', [get('/a/{id}σ'), head('/a/{id}Σ')]],
   ])('keeps a HEAD when %s', (_name, entries) => {
     expect(headsWithoutGet(entries).size).toBe(0);
   });
@@ -94,8 +97,22 @@ describe('headsWithoutGet', () => {
       return seed % n;
     };
     const pick = <T>(items: readonly T[]): T => items[random(items.length)] as T;
-    const SEGMENTS = ['a', 'A', 'x', 'safe', '{id}', 'prefix-{id}', '{p}-{q}', '{id}.json', ''];
-    const VALUES = ['x', 'safe', '1', 'prefix-1', 'a', 'A', 'b-c', 'y.json'];
+    const SEGMENTS = [
+      'a',
+      'A',
+      'x',
+      'safe',
+      '{id}',
+      'prefix-{id}',
+      '{p}-{q}',
+      '{id}.json',
+      '',
+      '{id}σ',
+      '{id}Σ',
+      'Σ',
+      'İ{id}',
+    ];
+    const VALUES = ['x', 'safe', '1', 'prefix-1', 'a', 'A', 'b-c', 'y.json', 'Σ', 'İ'];
     const pathOf = (): string =>
       `/${Array.from({ length: 1 + random(2) }, () => pick(SEGMENTS)).join('/')}`;
     const fill = (path: string): string => path.replaceAll(/\{[a-z]+\}/gu, () => pick(VALUES));
