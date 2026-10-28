@@ -139,7 +139,9 @@ and the startup prints one line with the operations and the flag that builds the
 
 `--omit-unsupported-parameters <pattern>` builds the exposed operations the pattern matches
 without those optional parameters. The agent then cannot set them: the tool refuses them as
-arguments and never sends them. Its description starts with
+arguments, and the server puts none of them into a request it builds. A redirect from the API
+is followed as for every call (see [security.md](security.md#request-authorization)), so the
+API itself can still add one. Its description starts with
 `[Parameters not available here: expand.]`, and `--json tools` lists each one under
 `leftOutParameters` with its reason. Leaving one out can take a filter or a dry run away from
 the agent, so it is never the default: the flag names the operations where the user accepts
@@ -149,7 +151,7 @@ that.
 |---|---|---|
 | optional, in the query or a header | the operation is omitted | the tool has no such argument |
 | required, or in the path | the operation is omitted | the operation is omitted |
-| a header the operator sets with `--header` or `--header-env`, or one the HTTP client sends by itself (`Accept-Language`, `User-Agent`, `Accept-Encoding`, `Sec-Fetch-Mode`) | the operation is omitted | the operation is omitted |
+| a header the operator sets with `--header` or `--header-env`, or one the HTTP client sends by itself (`Accept-Language`, `User-Agent`, `Accept-Encoding`, `Sec-Fetch-Mode`, `Cache-Control`, `Pragma`) | the operation is omitted | the operation is omitted |
 | optional, when another query parameter could send its name | the operation is omitted | the operation is omitted |
 
 Another query parameter could send the name when it is an object sent as separate keys

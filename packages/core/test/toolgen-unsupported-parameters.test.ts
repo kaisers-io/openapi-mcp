@@ -164,19 +164,23 @@ describe('paramFields with optional parameters left out', () => {
     });
   });
 
-  it.each(['Accept-Language', 'user-agent', 'Accept-Encoding', 'Sec-Fetch-Mode'])(
-    'still omits the operation for a %s header, which the HTTP client sends anyway',
-    (name) => {
-      const header = {
-        name,
-        in: 'header',
-        content: { 'application/json': { schema: { type: 'object' } } },
-      };
-      expect(paramFields(op([header]), new Set(), '3.1', true)).toStrictEqual({
-        unrepresentable: `parameter "${name}" uses content instead of schema`,
-      });
-    },
-  );
+  it.each([
+    'Accept-Language',
+    'user-agent',
+    'Accept-Encoding',
+    'Sec-Fetch-Mode',
+    'Cache-Control',
+    'Pragma',
+  ])('still omits the operation for a %s header, which the HTTP client sends anyway', (name) => {
+    const header = {
+      name,
+      in: 'header',
+      content: { 'application/json': { schema: { type: 'object' } } },
+    };
+    expect(paramFields(op([header]), new Set(), '3.1', true)).toStrictEqual({
+      unrepresentable: `parameter "${name}" uses content instead of schema`,
+    });
+  });
 
   it.each([
     ['the left-out header first', ['bad', 'good'], 'X-Mode'],

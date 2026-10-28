@@ -252,14 +252,18 @@ const querystringField = (
 };
 
 // Request headers the HTTP client sends by itself when a request has none
-// (fetch: Accept-Language, User-Agent, Accept-Encoding, Sec-Fetch-Mode). A
-// header parameter of one of these names cannot be left out: the request
-// would still carry the header, only with the client's value (review of #67).
+// (fetch: Accept-Language, User-Agent, Accept-Encoding, Sec-Fetch-Mode, and
+// Cache-Control and Pragma next to a conditional header such as
+// If-None-Match). A header parameter of one of these names cannot be left
+// out: the request would still carry the header, only with the client's
+// value (reviews of #67).
 const CLIENT_HEADERS: ReadonlySet<string> = new Set([
   'accept-language',
   'user-agent',
   'accept-encoding',
   'sec-fetch-mode',
+  'cache-control',
+  'pragma',
 ]);
 
 // An optional query or header parameter this server cannot send, left out
