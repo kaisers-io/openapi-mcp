@@ -8,7 +8,8 @@ import type { ExpectedRevision } from '../cache/revision.ts';
 import type { CacheEntry } from '../cache/store.ts';
 import { evaluateFreshness } from '../cache/ttl.ts';
 import { CACHE_META_SCHEMA_VERSION } from '../schemas/cache.ts';
-import { usageError, validationError } from '../errors.ts';
+import { reasonOf, usageError, validationError } from '../errors.ts';
+import type { ErrorReason } from '../errors.ts';
 import { applyFilters } from '../filter/apply.ts';
 import type { NotExposedOperation } from '../filter/apply.ts';
 import type { CaseCollision } from '../filter/case-collisions.ts';
@@ -80,6 +81,8 @@ export type SpecPipelineResult = {
   displaySource: string;
   deadPatterns: readonly DeadPattern[];
   warnings: readonly string[];
+  // The stable reasons of the warnings that replace an error (issue #79)
+  warningReasons: readonly ErrorReason[];
   cacheStatus: CacheStatus;
   // Accepted operations hidden because the pending candidate removed them
   // (kaisers-io/openapi-mcp-archive#60); empty when no candidate is waiting
@@ -422,6 +425,7 @@ const runSpecPipelineOnce = async (
       contentHash: cached.meta.sourceContentHash,
       displaySource: cached.meta.displaySource,
       cacheStatus: 'stale',
+      warningReason: reasonOf(error),
       candidateOperationKeys: await pendingCandidateKeys(layout, deps.cacheFs, cached),
       // A failed refresh does not make a waiting candidate disappear either
       cached,
@@ -548,6 +552,8 @@ type FinishInput = {
   // The entry being served, when one is. A candidate recorded in it must
   // surface on EVERY such result, not only on the run that created it.
   cached?: CacheEntry | undefined;
+  // Why a failed refresh was replaced by the cached baseline, when known
+  warningReason?: ErrorReason | undefined;
 };
 
 const PENDING_PROMOTION_WARNING =
@@ -628,6 +634,7 @@ const finish = (
     displaySource: input.displaySource,
     deadPatterns: filtered.deadPatterns,
     warnings: allWarnings,
+    warningReasons: input.warningReason === undefined ? [] : [input.warningReason],
     cacheStatus: input.cacheStatus,
     ...(input.cacheLock === undefined ? {} : { cacheLock: input.cacheLock }),
   };

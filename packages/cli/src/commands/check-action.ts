@@ -1,4 +1,5 @@
 import type { Command } from '@commander-js/extra-typings';
+import type { ErrorReason } from '@kaisers-io/openapi-mcp-core';
 import {
   DISPLAY_TEXT_MAX,
   EXIT,
@@ -24,7 +25,10 @@ import type { ServeCmdOpts, ServeCommand } from './serve-action.ts';
 // called.
 
 type Variable = { name: string; flag: string; api?: string; set: boolean };
-type Stage = { status: 'ok' | 'failed' | 'skipped'; error?: { code: string; message: string } };
+type Stage = {
+  status: 'ok' | 'failed' | 'skipped';
+  error?: { code: string; reason?: ErrorReason; message: string };
+};
 
 const WARNING_PREFIX = 'openapi-mcp: warning: ';
 
@@ -97,7 +101,7 @@ const humanLinesOf = (data: CheckData): string[] => [
 type Prepared = Awaited<ReturnType<typeof prepareServe>>;
 
 type CheckData = {
-  environment: { status: Stage['status']; variables: Variable[] };
+  environment: { status: Stage['status']; reason?: ErrorReason; variables: Variable[] };
   startup: Stage;
   toolMode?: string;
   toolModeReason?: string;
@@ -147,15 +151,20 @@ export const runCheck = async (
       }
       startup = { status: 'ok' };
     } catch (error) {
-      const { code, message, exitCode: failed } = renderError(error, { verbose: false });
-      startup = { status: 'failed', error: { code, message } };
+      const { code, reason, message, exitCode: failed } = renderError(error, { verbose: false });
+      startup = {
+        status: 'failed',
+        error: { code, ...(reason === undefined ? {} : { reason }), message },
+      };
       exitCode = failed;
     } finally {
       await closeExecutor?.();
     }
   }
   const data: CheckData = {
-    environment: { status: missing ? 'failed' : 'ok', variables },
+    environment: missing
+      ? { status: 'failed', reason: 'env_missing', variables }
+      : { status: 'ok', variables },
     startup,
     ...(prepared === undefined
       ? {}
@@ -169,7 +178,15 @@ export const runCheck = async (
         }),
   };
   if (opts.json) {
-    ctx.out(JSON.stringify({ ok: exitCode === EXIT.OK, data, warnings }));
+    const warningReasons = prepared?.warningReasons ?? [];
+    ctx.out(
+      JSON.stringify({
+        ok: exitCode === EXIT.OK,
+        data,
+        warnings,
+        ...(warningReasons.length === 0 ? {} : { warningReasons }),
+      }),
+    );
   } else {
     for (const line of humanLinesOf(data)) {
       ctx.out(line);

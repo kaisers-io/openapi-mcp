@@ -4,11 +4,12 @@ export {
   cachePathTypeError,
   conflictError,
   notFoundError,
+  reasonOf,
   renderError,
   usageError,
   validationError,
 } from './errors.ts';
-export type { ExitCode, RenderedError } from './errors.ts';
+export type { ErrorReason, ExitCode, RenderedError } from './errors.ts';
 export { createRedactor, MAX_REDACTED_SECRETS } from './redact.ts';
 export type { Redactor, RuntimeRedactor } from './redact.ts';
 export {

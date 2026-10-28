@@ -58,7 +58,10 @@ const readCredential = (
   }
   const value = env[envVar];
   if (value === undefined || value === '') {
-    throw usageError(`environment variable "${envVar}" (for ${flag}) is not set or empty`);
+    throw usageError(
+      `environment variable "${envVar}" (for ${flag}) is not set or empty`,
+      'env_missing',
+    );
   }
   // Never echo the value: it is (or accompanies) a secret.
   if (CONTROL_CHAR_RE.test(value)) {
