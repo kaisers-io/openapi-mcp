@@ -585,7 +585,7 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
   const exposure = exposureReport(result, optOut.built, cmdOpts.strictFilters === true);
   // After the opt-out and the exposure report, so their selectors and
   // reports use the API's own names
-  const built = qualified(api, optOut.built);
+  const built = qualified(api, exposure.built);
 
   // Resolve + validate the API base URL: --base-url (trusted, address
   // check skipped) else the spec-derived candidate (untrusted — a

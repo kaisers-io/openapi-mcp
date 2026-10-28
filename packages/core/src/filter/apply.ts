@@ -132,58 +132,6 @@ const filteredOutRecord = (
   reason,
 });
 
-// A path template as the route table matches it: placeholders by position,
-// letters regardless of case. One pass, no pattern that could backtrack.
-const templateOf = (path: string): string => {
-  let template = '';
-  let inPlaceholder = false;
-  for (const char of path) {
-    if (inPlaceholder) {
-      inPlaceholder = char !== '}';
-    } else if (char === '{') {
-      inPlaceholder = true;
-      template += '{}';
-    } else {
-      template += char;
-    }
-  }
-  return template.toLowerCase();
-};
-
-// A HEAD request reaches the GET on the same path (route-table.ts), so a HEAD
-// operation whose GET is not exposed is refused on every call (issue #68). It
-// is left out instead of offered as a tool that never works. Only the GETs
-// known here count; one omitted later, while tools are built, still shows as
-// an overlap at startup.
-const withoutHeadsOfHiddenGets = (
-  exposed: readonly NamedOperation[],
-  filteredOut: readonly NotExposedOperation[],
-  omitted: readonly OmittedOperation[],
-): { exposed: NamedOperation[]; filteredOut: NotExposedOperation[] } => {
-  const hiddenGets = new Map(
-    [...filteredOut, ...omitted]
-      .filter((operation) => operation.method === 'GET')
-      .map((operation) => [templateOf(operation.path), operation.path]),
-  );
-  const heads = exposed.filter(
-    (named) =>
-      named.operation.method === 'head' && hiddenGets.has(templateOf(named.operation.path)),
-  );
-  return {
-    exposed: exposed.filter((named) => !heads.includes(named)),
-    filteredOut: [
-      ...filteredOut,
-      ...heads.map((named) =>
-        filteredOutRecord(
-          named,
-          'head-without-get',
-          `a HEAD request reaches GET ${hiddenGets.get(templateOf(named.operation.path)) ?? ''}, which is not exposed`,
-        ),
-      ),
-    ],
-  };
-};
-
 // ONE budget for the whole run — exposure and dead-pattern detection alike.
 // Scoping it per match would bound nothing: the reachable cost is the aggregate
 // over patterns x operations x candidate lengths, which is what measured 22.5 s
@@ -242,9 +190,5 @@ export const applyFilters = (
     ...caseCollisionsFor(allow, 'allow', records, budget),
     ...caseCollisionsFor(deny, 'deny', records, budget),
   ];
-  return {
-    ...withoutHeadsOfHiddenGets(exposed, filteredOut, omitted),
-    deadPatterns,
-    caseCollisions,
-  };
+  return { exposed, filteredOut, deadPatterns, caseCollisions };
 };

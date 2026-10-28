@@ -91,8 +91,8 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           result.spec,
           cmdOpts.strictFilters === true,
         );
-        const { built } = optOut;
-        const exposure = exposureReport(result, built, cmdOpts.strictFilters === true);
+        const exposure = exposureReport(result, optOut.built, cmdOpts.strictFilters === true);
+        const { built } = exposure;
         const allOmitted = [...result.spec.omitted, ...built.omitted].map((omission) =>
           publicOmission(omission),
         );

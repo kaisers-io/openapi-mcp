@@ -75,9 +75,11 @@ The server goes through these steps for each operation of the spec, in this orde
 
 A `HEAD` request counts as a `GET` at call time, because a server may answer `HEAD` with its
 GET handler and so return what that `GET` returns. So a declared `HEAD` operation becomes a tool
-only together with the `GET` on the same path. When the filters exclude that `GET`, or it is
-omitted as not supported, the `HEAD` is left out too, with the decision `head-without-get`.
-`--allow 'route:HEAD /orders/{id}'` alone therefore exposes nothing: add the `GET` as well.
+only together with the `GET` on the same path. When that `GET` is not a tool, because the filters
+exclude it or because it is omitted as not supported, the `HEAD` is left out too, with the
+decision `head-without-get`. `--allow 'route:HEAD /orders/{id}'` alone therefore exposes nothing:
+add the `GET` as well. A `GET` whose path only overlaps the `HEAD`'s refuses some of its calls,
+not all; the startup warning about overlapping paths names it.
 
 ## Tool names
 

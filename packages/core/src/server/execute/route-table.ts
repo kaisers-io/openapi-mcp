@@ -72,7 +72,7 @@ export type Route = RouteEntry & {
 
 const PLACEHOLDER_RE = /\{[^{}]*\}/gu;
 
-const tokenize = (segment: string, decode: (text: string) => string): Token[] => {
+export const tokenize = (segment: string, decode: (text: string) => string): Token[] => {
   const tokens: Token[] = [];
   let last = 0;
   for (const match of segment.matchAll(PLACEHOLDER_RE)) {

@@ -307,39 +307,6 @@ describe('applyFilters — precedence', () => {
   });
 });
 
-describe('applyFilters — a HEAD whose GET is not exposed (issue #68)', () => {
-  const orders = [
-    record('get', '/orders/{orderId}', 'getOrder'),
-    record('head', '/Orders/{id}', 'headOrder'),
-    record('head', '/pets', 'headPets'),
-  ];
-
-  it('leaves the HEAD out with its reason when the filters exclude the GET', () => {
-    const decision = applyFilters(named(orders), [], patterns('method:get'));
-    expect(exposedIds(decision)).toEqual(['headPets']);
-    expect(decision.filteredOut).toContainEqual(
-      expect.objectContaining({
-        method: 'HEAD',
-        operationId: 'headOrder',
-        decision: 'head-without-get',
-        reason: 'a HEAD request reaches GET /orders/{orderId}, which is not exposed',
-      }),
-    );
-  });
-
-  it('leaves the HEAD out when the GET was omitted as not supported', () => {
-    const decision = applyFilters(named(orders.slice(1)), [], [], undefined, [
-      { method: 'GET', path: '/orders/{orderId}', reason: 'not supported' },
-    ]);
-    expect(exposedIds(decision)).toEqual(['headPets']);
-  });
-
-  it('keeps the HEAD when its GET is exposed, or when there is no GET', () => {
-    const decision = applyFilters(named(orders), [], []);
-    expect(exposedIds(decision)).toEqual(['getOrder', 'headOrder', 'headPets']);
-  });
-});
-
 describe('applyFilters — dead patterns', () => {
   it('reports an allow pattern that matches nothing, flagged and with a suggestion', () => {
     // "headPets" is 1 edit from "readPets" and "readPetById" is 4: the nearer
