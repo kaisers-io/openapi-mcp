@@ -399,6 +399,13 @@ describe('mapResponse — HTTP error status (>=400)', () => {
       expect(text).toBe('upstream request failed with status 502');
     });
 
+    it('drops the excerpt when a rebuilt secret straddles the 1 KB cut', () => {
+      const secret = 'example-token-not-a-secret';
+      const encoded = [...secret].map((char) => `&#${String(char.codePointAt(0))};`).join('');
+      const text = errorText(`<p>${'a'.repeat(1010)} ${encoded}</p>`, createRedactor([secret]));
+      expect(text).toBe('upstream request failed with status 502');
+    });
+
     it('redacts a secret in the visible text', () => {
       const secret = 'example-token-not-a-secret';
       const text = errorText(styled('Error', `<p>bad key ${secret}</p>`), createRedactor([secret]));

@@ -10,7 +10,9 @@
 // work stays linear in the body size, which the response budget bounds.
 
 // Elements whose content is never visible text. <title> is read separately.
-const HIDDEN = new Set(['head', 'style', 'script', 'noscript', 'svg', 'template', 'title']);
+// <head> is not among them: its end tag is optional (`<head><title>T</title>
+// <body>…`), and what it holds besides these elements is tags without text.
+const HIDDEN = new Set(['style', 'script', 'noscript', 'svg', 'template', 'title']);
 
 const NAMED: Record<string, string> = {
   amp: '&',

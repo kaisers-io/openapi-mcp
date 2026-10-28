@@ -6,6 +6,12 @@ describe('htmlErrorText', () => {
   it.each([
     ['nothing hidden in an unclosed <style>', '<p>A</p><style>p{}', 'A'],
     ['a comment', '<p>A<!-- B -->C</p>', 'A C'],
+    [
+      'hidden elements in the body',
+      '<p>A</p><script>s</script><noscript>n</noscript><svg>v</svg><template>t</template>B',
+      'A B',
+    ],
+    ['a head without its end tag', '<head><title>T</title><meta charset=utf-8><body>B', 'T: B'],
     ['an unclosed comment', '<p>A</p><!-- B', 'A'],
     ['a self-closing hidden element', '<p>A</p><svg/><p>B</p>', 'A B'],
     ['a `<` that opens no tag', '<p>1 < 2</p>', '1 < 2'],

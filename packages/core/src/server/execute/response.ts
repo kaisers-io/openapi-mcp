@@ -340,9 +340,13 @@ const mapHttpError = (
   // be split across the excerpt boundary and leak a surviving fragment.
   const redacted = redactor.redactString(decoded.ok);
   // An HTML page shows its title and visible text, not its markup (issue
-  // #63). Decoding entities can rebuild a redacted secret; the scan below
-  // catches that and drops the excerpt.
+  // #63). Decoding entities can rebuild a redacted secret: the whole text is
+  // scanned before the cut, so a secret across the excerpt boundary cannot
+  // leave a fragment that the scan of the excerpt below would miss.
   const readable = readableErrorText(essence, redacted);
+  if (readable !== '' && scanSafely(redactor, readable)) {
+    return textOutcome(`upstream request failed with status ${status}`, true);
+  }
   const excerpt = sanitizeSpecText(readable === '' ? redacted : readable, excerptMax);
   if (scanSafely(redactor, excerpt)) {
     return textOutcome(`upstream request failed with status ${status}`, true);
