@@ -139,6 +139,27 @@ const SPECS: SpecCase[] = [
         exposesNothing: true,
       },
       {
+        // Issue #67: the reads, built without `expand` and the other
+        // optional parameters this server cannot send
+        title: 'the reads, without the parameters this server cannot send',
+        args: ['--omit-unsupported-parameters', 'method:get'],
+        mode: 'discover',
+        expected: READ,
+        // GET /v1/billing/credit_balance_summary: its `filter` is required
+        missing: { count: 1, hash: '0fe783adc9587e94' },
+      },
+      {
+        // 610 operations pass the filters but fewer become tools: the
+        // budget counts the tools, so this starts per operation
+        title: 'everything, per operation, without those parameters',
+        args: ['--allow', 'path:/**', '--omit-unsupported-parameters', 'path:/**'],
+        mode: 'per-operation',
+        expected: () => true,
+        // 312 form bodies with an encoding object (not supported yet), and
+        // the required `filter` above
+        missing: { count: 313, hash: '64fd0752c0360845' },
+      },
+      {
         title: 'deletes, except under customers',
         args: ['--allow', 'method:delete', '--deny', 'path:/v1/customers/**'],
         mode: 'discover',

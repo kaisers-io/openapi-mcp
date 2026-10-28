@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--omit-unsupported-parameters <pattern>` builds an operation without the optional
+  parameters the server cannot send (#67).** Such an operation was omitted. Stripe's `expand`,
+  a `deepObject` over an array that OpenAPI leaves undefined, kept every Stripe read out, so the
+  read-only default exposed nothing; with `--omit-unsupported-parameters "method:get"` its 271
+  reads are tools. The agent cannot set a left-out parameter: the tool refuses it as an argument
+  and its description names it. It is never the default, because a left-out parameter can be a
+  filter or a dry run. A required or path parameter, a header the operator sets, and a parameter
+  that a query object sent as separate keys could also send still omit the operation. `--json
+  tools` lists `leftOutParameters` per tool and `omittableParameters` per omitted operation, and
+  the startup names the operations the flag would build. See
+  [filtering.md](docs/filtering.md#operations-omitted-for-an-optional-parameter).
+- **The skills compare what the server delivers with what the user wants (#67).**
+  `configuring-openapi-mcp` counts the confirmed operations and the tools, names each gap with
+  its cause and proposes a fix, `--omit-unsupported-parameters` included, before it writes the
+  config. `debugging-openapi-mcp` starts a missing-tools diagnosis the same way.
+
+### Fixed
+
+- **The 512-tool limit counts the tools that are built (#67).** It counted the operations the
+  filters passed, so `--allow "path:/**"` on Stripe stopped with "610 tools would be exposed"
+  although 26 were built. An operation omitted as not supported, and a `HEAD` left out as
+  `head-without-get`, no longer count. A start that fails the limit still writes nothing to the
+  spec cache.
+
 ## [0.6.1] - 2026-10-28
 
 ### Fixed

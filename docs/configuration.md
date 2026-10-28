@@ -133,6 +133,7 @@ flags are explained in [requests-and-responses.md](requests-and-responses.md).
 | `--default-response-is-error` | no | derive an output schema for an operation that declares a `default` response, assuming that response covers only errors | off |
 | `--nullable-response-fields [all\|optional]` | no | let object properties in derived output schemas be `null`, for specs that leave out `nullable`: every property (`all`, also the value of the bare flag) or only those not listed in `required` (`optional`) | off |
 | `--omit-output-schema <pattern>` | yes | declare no output schema for the exposed tools this selector matches, for an API whose responses do not match its spec; their results come back as text without response-schema validation | `[]` |
+| `--omit-unsupported-parameters <pattern>` | yes | build the exposed operations this selector matches without the optional parameters the server cannot send, instead of omitting them; the agent cannot set those parameters; see [filtering.md](filtering.md#operations-omitted-for-an-optional-parameter) | `[]` |
 
 ### Image and upload flags
 
@@ -155,7 +156,8 @@ Both features are explained in [requests-and-responses.md](requests-and-response
 
 With `--api`, each of these flags starts its value with the API's name and `=`, for example
 `--allow github=tag:repos`: `--allow`, `--spec-header-env`, `--ttl`, `--cache-key`,
-`--nullable-response-fields`, `--omit-output-schema`, `--base-url`, `--header-env`, `--header`
+`--nullable-response-fields`, `--omit-output-schema`, `--omit-unsupported-parameters`,
+`--base-url`, `--header-env`, `--header`
 and every `--upstream-oauth-*` flag. `--deny` may also be given without a name, and then applies
 to every API. These switches are set per API with `--enable`: `trust-spec-updates`,
 `allow-private-network`, `default-response-is-error`, `allow-insecure-http` and
@@ -363,6 +365,7 @@ An inventory that only `serve --tool-mode discover` can expose fails here; narro
 | `--default-response-is-error` | no | derive an output schema for an operation that declares a `default` response, assuming that response covers only errors; see [requests-and-responses.md](requests-and-responses.md) | off |
 | `--nullable-response-fields [all\|optional]` | no | let object properties in derived output schemas be `null`: every property (`all`, also the value of the bare flag) or only those not listed in `required` (`optional`) | off |
 | `--omit-output-schema <pattern>` | yes | declare no output schema for the exposed tools this selector matches | `[]` |
+| `--omit-unsupported-parameters <pattern>` | yes | build the exposed operations this selector matches without the optional parameters the server cannot send | `[]` |
 
 This example uses an operationId glob, which ignores case, so it matches every operationId that
 starts with `read`:
@@ -379,6 +382,7 @@ openapi-mcp tools --spec https://api.example.com/openapi.json --allow "operation
 |---|---|---|
 | `[output schema assumes default = error]` | the output schema exists only because of `--default-response-is-error` | `outputSchemaAssumesDefaultIsError: true` |
 | `[output schema omitted]` | `--omit-output-schema` removed the output schema | `outputSchemaOptedOut: true` |
+| `[N optional parameters left out]` | `--omit-unsupported-parameters` built the tool without parameters the server cannot send | `leftOutParameters`: each with `name`, `in` and `reason` |
 
 With the global `--json` flag each tool is an object. Besides `name`, `method`, `path`,
 `summary` and `deprecated`, it carries `outputSchema` (`true` or `false`). With
@@ -402,7 +406,7 @@ summary line, for example `operations not exposed: 1 excluded by --deny, 1 match
 | `denied` | a `--deny` pattern matches it; `pattern` names the first one |
 | `not-allowed` | `--allow` is given and no pattern matches it, for example an operation without an `operationId` under `--allow 'operationId:*'` |
 | `read-only-default` | no `--allow` is given and it is not a read (`GET`, `HEAD`, `QUERY`) |
-| `omitted` | it is not supported; the reason says why (it is also listed under `data.omitted`, unchanged) |
+| `omitted` | it is not supported; the reason says why (it is also listed under `data.omitted`, unchanged). `omittableParameters` names the optional parameters `--omit-unsupported-parameters` would leave out, when only those keep it from being a tool |
 | `withheld` | a pending candidate spec removed it, until `openapi-mcp cache promote` |
 | `head-without-get` | it is a `HEAD`, and every URL it can send also matches a `GET` that is not exposed, so every call would be refused (see [filtering.md](filtering.md#how-a-decision-is-made)) |
 
@@ -415,8 +419,9 @@ The `openapi_mcp_status` tool reports the same counts under `notExposedCounts`.
 A dead `--allow` or `--deny` pattern that names only an operation omitted as not supported, by
 its operationId, tags, or method and path, says so instead of suggesting another operation. A
 pattern can name a method that only such an operation declares, for example an OpenAPI 3.2
-`SEARCH` with a `servers` override. The 512-tool limit counts the tools that are served, after
-the server withholds the operations a pending candidate removed.
+`SEARCH` with a `servers` override. The 512-tool limit counts the tools that are served: after
+the server withholds the operations a pending candidate removed, and without the operations
+omitted as not supported and the `HEAD` operations left out as `head-without-get`.
 
 ### Credentials the spec asks for
 
@@ -672,7 +677,7 @@ matching the message, which may change between versions:
 | `base_url_unresolved` | the spec gives no usable API base and `--base-url` is not set |
 | `spec_http_401_403` | the spec fetch answered `401` or `403`; a `403` can also mean that the credentials lack a permission |
 | `spec_external_ref` | the spec has a `$ref` to another document |
-| `filter_no_selector` | an `--allow`, `--deny` or `--omit-output-schema` pattern has no selector |
+| `filter_no_selector` | an `--allow`, `--deny`, `--omit-output-schema` or `--omit-unsupported-parameters` pattern has no selector |
 
 `tools`, `call`, `cache` and `check` report these reasons, and `check` puts them in the failed
 stage. An error without one of these causes has only a `code`. A warning that replaces an error

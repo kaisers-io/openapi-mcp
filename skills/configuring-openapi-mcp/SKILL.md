@@ -29,6 +29,9 @@ changes one server entry in an MCP host. The user may not know the flags or the 
 7. Pin the CLI version in the config: `npx -y @kaisers-io/openapi-mcp@X.Y.Z`.
 8. Never widen `--allow` or turn off a protection to make an error go away. Promoting or
    clearing the spec cache is the user's decision.
+9. `--omit-unsupported-parameters` takes parameters away from the agent. Propose it only for
+   operations the user wants, name each parameter it leaves out and what it does, and add it
+   only after the user agrees.
 
 ## Asking the user
 
@@ -108,6 +111,11 @@ Fill "What it does" from `summary` or `description`, in plain words. List the wr
 With many operations, show the writes and the blocked operations, and summarize the reads by
 tag. The user removes rows or confirms. Repeat until they confirm.
 
+Then compare what the server delivers with what the user confirmed, as `references/filtering.md`
+("Comparing the result") describes: count the expected operations and the tools, name every
+gap with its cause, and propose a fix for each. Do not move on while a wanted operation is
+missing without the user knowing why.
+
 ### 5. Credentials
 
 Read `references/auth.md` to map the `security` of the allowed operations to flags. Tell the
@@ -117,7 +125,8 @@ token. Then read the file for the detected OS and propose its default. The user 
 ### 6. Check and write
 
 Run `CLI --json check <the same options as serve>`. Missing variables are expected until the
-user has set them: say which ones. Resolve every other failure first. A `cannot resolve` error
+user has set them: say which ones. The number of operations in `apis[].exposed` must equal the
+number of tools the comparison of step 4 ended with; if not, compare again. Resolve every other failure first. A `cannot resolve` error
 for the API host means this machine cannot reach the API: ask the user for the right base URL
 or network, and do not write the config until `check` passes. Then show the config
 change from the host file, write it after the user confirms, and say how to undo it.

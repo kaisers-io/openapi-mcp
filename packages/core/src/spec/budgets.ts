@@ -1,7 +1,8 @@
 // Resource budgets for untrusted spec input. All violations are hard
 // validation errors. Every budget except maxToolCount is enforced before
 // anything is cached or emitted; maxToolCount depends on the run's filters and
-// is enforced after filtering, before anything is emitted.
+// on which operations become tools, so the CLI enforces it on the tools it
+// builds, before anything is emitted (issue #67).
 export const SPEC_BUDGETS = {
   fetchTimeoutMs: 30_000,
   maxSpecBytes: 20 * 1024 * 1024,
@@ -9,8 +10,9 @@ export const SPEC_BUDGETS = {
   maxParseDepth: 128,
   maxSchemaNodes: 500_000,
   maxRefDepth: 64,
-  // Bounds what is EXPOSED to the model, i.e. the operations left after
-  // --allow/--deny filtering (issue kaisers-io/openapi-mcp-archive#32)
+  // Bounds what is EXPOSED to the model, i.e. the tools built from the
+  // operations left after --allow/--deny filtering (issue
+  // kaisers-io/openapi-mcp-archive#32, counted on built tools since #67)
   maxToolCount: 512,
   // The exposed-set budget under --tool-mode discover (issue
   // kaisers-io/openapi-mcp-archive#38). tools/list then carries four fixed

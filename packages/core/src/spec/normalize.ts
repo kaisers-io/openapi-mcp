@@ -48,6 +48,9 @@ export type OmittedOperation = {
   operationId?: string;
   tags?: readonly string[];
   toolName?: string;
+  // Omitted only for optional parameters this server cannot send: these
+  // names, which --omit-unsupported-parameters would leave out (issue #67)
+  omittableParameters?: readonly string[];
 };
 
 export type NormalizedSpec = {

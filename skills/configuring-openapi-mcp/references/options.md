@@ -27,6 +27,7 @@ value, `prefix-or-all` applies to every API without one, `enable` is set with
 | `--default-response-is-error` |  |  |  | enable | derive output schemas for operations with a "default" response, assuming it covers errors only (an undocumented 2xx then fails) |
 | `--nullable-response-fields [scope]` |  (alone: `all`) | all, optional |  | prefix | admit null for object properties in derived output schemas (for specs, e.g. springdoc, that omit "nullable"): every property (all, the default) or only those not listed in "required" (optional) |
 | `--omit-output-schema <pattern>` |  |  | yes | prefix | declare no output schema for matching tools, whose responses do not match the spec: results are returned as text without response-schema validation (repeatable, --allow selectors) |
+| `--omit-unsupported-parameters <pattern>` |  |  | yes | prefix | build matching operations without the optional parameters this server cannot send (e.g. a deepObject array), instead of omitting them; the agent then cannot set those parameters (repeatable, --allow selectors) |
 | `--base-url <url>` |  |  |  | prefix | override the spec-derived base URL for API requests |
 | `--header-env <Header=ENV>` |  |  | yes | prefix | API auth header, value read from env (repeatable, secret) |
 | `--header <Header:value>` |  |  | yes | prefix | static, non-secret API header (repeatable) |

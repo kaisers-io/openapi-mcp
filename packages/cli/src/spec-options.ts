@@ -1,6 +1,5 @@
 import type { Command } from '@commander-js/extra-typings';
 import {
-  applyOutputSchemaOptOut,
   defaultCacheRoot,
   parseCacheKey,
   parseAgeDuration,
@@ -10,14 +9,9 @@ import {
   resolveHeaderEnvMappings,
   sanitizeSpecText,
   usageError,
-  validationError,
 } from '@kaisers-io/openapi-mcp-core';
 import type {
-  BuildToolsResult,
-  CaseCollision,
-  DeadPattern,
   FilterPattern,
-  NormalizedSpec,
   NullableFieldScope,
   OmittedOperation,
   ResolvedHeader,
@@ -25,11 +19,16 @@ import type {
   SpecPipelineOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
-import { filterMessages } from './filter-messages.ts';
-import { outputSchemaOptOutWarningLines } from './output-schema-opt-out.ts';
 import { collect, declareChoices } from './option-meta.ts';
 
 export { exposureReport, reachableTools, unreachableHeads } from './exposure-report.ts';
+export { withOutputSchemaOptOut } from './output-schema-opt-out.ts';
+export {
+  toolsBuiltInPipeline,
+  unsupportedParameterLines,
+  unsupportedParameterOptIn,
+} from './unsupported-parameters.ts';
+export type { OutputSchemaOptOutResult } from './output-schema-opt-out.ts';
 export { caseCollisionMessage, deadPatternMessage, filterMessages } from './filter-messages.ts';
 
 // Cap for untrusted display strings (paths) in human terminal output
@@ -48,46 +47,11 @@ export const omissionWarningLines = (allOmitted: readonly OmittedOperation[]): r
       `omitted ${omission.method} ${sanitizeSpecText(omission.path, PATH_DISPLAY_MAX)} — ${sanitizeSpecText(omission.reason, PATH_DISPLAY_MAX)}`,
   );
 
-export type OutputSchemaOptOutResult = {
-  built: BuildToolsResult;
-  deadPatterns: readonly DeadPattern[];
-  caseCollisions: readonly CaseCollision[];
-  warnings: readonly string[];
-};
-
-// --omit-output-schema (issue #13) on the generated tools, shared by `tools`
-// and `serve`. Its dead patterns are reported like the filters': a warning,
-// or under --strict-filters an error (exit 3).
-export const withOutputSchemaOptOut = (
-  built: BuildToolsResult,
-  patterns: readonly FilterPattern[],
-  spec: Pick<NormalizedSpec, 'operations' | 'omitted'>,
-  strictFilters: boolean,
-): OutputSchemaOptOutResult => {
-  const optOut = applyOutputSchemaOptOut(built.tools, patterns, spec);
-  const deadMessages = filterMessages(optOut);
-  if (strictFilters && deadMessages.length > 0) {
-    throw validationError(deadMessages.join('\n'));
-  }
-  return {
-    built: { ...built, tools: optOut.tools },
-    deadPatterns: optOut.deadPatterns,
-    caseCollisions: optOut.caseCollisions,
-    warnings: [
-      ...deadMessages,
-      ...optOut.ineffectivePatterns.map(
-        (raw) =>
-          `--omit-output-schema "${sanitizeSpecText(raw, PATTERN_DISPLAY_MAX)}" matches only tools without an output schema, so it changes nothing`,
-      ),
-      ...outputSchemaOptOutWarningLines(optOut.tools),
-    ],
-  };
-};
-
 export type ParsedFilters = {
   allow: readonly FilterPattern[];
   deny: readonly FilterPattern[];
   omitOutputSchema: readonly FilterPattern[];
+  omitUnsupportedParameters: readonly FilterPattern[];
 };
 
 // Patterns parse in the command layer so a syntax error, an over-long
@@ -97,10 +61,12 @@ export const parseFilters = (
   allowRaw: readonly string[],
   denyRaw: readonly string[],
   omitOutputSchemaRaw: readonly string[],
+  omitUnsupportedParametersRaw: readonly string[],
 ): ParsedFilters => ({
   allow: parseFilterPatterns(allowRaw),
   deny: parseFilterPatterns(denyRaw),
   omitOutputSchema: parseFilterPatterns(omitOutputSchemaRaw),
+  omitUnsupportedParameters: parseFilterPatterns(omitUnsupportedParametersRaw),
 });
 
 const cacheRootOf = (ctx: CliContext): string | undefined => {
@@ -130,6 +96,7 @@ export type SpecCmdOpts = {
   // `true` when the flag is given without a value
   nullableResponseFields?: boolean | string;
   omitOutputSchema: readonly string[];
+  omitUnsupportedParameters: readonly string[];
 };
 
 // The --spec/--allow/--deny/... flags shared by every command that runs the
@@ -212,6 +179,12 @@ export const registerSpecOptions = (
       'declare no output schema for matching tools, whose responses do not match the spec: results are returned as text without response-schema validation (repeatable, --allow selectors)',
       collect,
       [] as readonly string[],
+    )
+    .option(
+      '--omit-unsupported-parameters <pattern>',
+      'build matching operations without the optional parameters this server cannot send (e.g. a deepObject array), instead of omitting them; the agent then cannot set those parameters (repeatable, --allow selectors)',
+      collect,
+      [] as readonly string[],
     );
   declareChoices(registered, '--nullable-response-fields', NULLABLE_FIELD_SCOPES);
   // A bare flag means `all`, its meaning before the scope existed (issue #17)
@@ -270,7 +243,12 @@ export const parseSpecPipelineArgs = (cmdOpts: SpecCmdOpts, ctx: CliContext): Sp
   // (kaisers-io/openapi-mcp-archive#88)
   const ttlMs = parseAgeDuration(cmdOpts.ttl, '--ttl');
   const cacheKey = cmdOpts.cacheKey === undefined ? undefined : parseCacheKey(cmdOpts.cacheKey);
-  const filters = parseFilters(cmdOpts.allow, cmdOpts.deny, cmdOpts.omitOutputSchema);
+  const filters = parseFilters(
+    cmdOpts.allow,
+    cmdOpts.deny,
+    cmdOpts.omitOutputSchema,
+    cmdOpts.omitUnsupportedParameters,
+  );
   return {
     source: cmdOpts.spec,
     options: {

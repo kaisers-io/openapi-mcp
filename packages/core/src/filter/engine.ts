@@ -15,7 +15,11 @@ const SUGGESTION_MAX_LENGTH = 256;
 // A floor so that short patterns ("gt" for "get") still get a suggestion
 const MIN_SUGGESTION_DISTANCE = 2;
 
-export type DeadPatternFlag = 'allow' | 'deny' | 'omit-output-schema';
+export type DeadPatternFlag =
+  | 'allow'
+  | 'deny'
+  | 'omit-output-schema'
+  | 'omit-unsupported-parameters';
 
 export type DeadPattern = {
   raw: string;
@@ -25,7 +29,8 @@ export type DeadPattern = {
   suggestion?: string | undefined;
   // The pattern names an operation of the spec that is not exposed, so no
   // suggestion is given: one omitted as not supported (every flag), or for
-  // --omit-output-schema also one the filters leave out
+  // --omit-output-schema and --omit-unsupported-parameters also one the
+  // filters leave out
   notExposed?: true;
 };
 

@@ -71,6 +71,7 @@ const SPEC_OPTIONS = [
   '--default-response-is-error',
   '--nullable-response-fields',
   '--omit-output-schema',
+  '--omit-unsupported-parameters',
 ];
 const SERVE_OPTIONS = [
   ...SPEC_OPTIONS,

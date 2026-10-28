@@ -18,7 +18,7 @@ import {
   SYSTEM_HEADERS,
   validateOpenApiDocument,
 } from '../src/index.ts';
-import type { CacheFs, CacheMeta, SpecPipelineDeps } from '../src/index.ts';
+import type { CacheFs, CacheMeta, ExposedOperations, SpecPipelineDeps } from '../src/index.ts';
 
 // SpecPipelineDeps.fetcher is now typed via undici's own fetch (see
 // fetch.test.ts's identical note). None of the fakes below touch
@@ -1117,6 +1117,60 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
     });
   });
 
+  // Issue #67: the caller counts the tools the exposed operations become; an
+  // operation omitted as not supported is no tool
+  it('enforces the budget on the tools the caller counts, before the cache is written', async () => {
+    const seen: number[] = [];
+    const counted = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      {
+        ...baseOpts,
+        countTools: (exposed) => {
+          seen.push(exposed.namedOperations.length);
+          return 10;
+        },
+      },
+      bigDeps(600),
+    );
+    // 600 operations pass the filters, 10 of them become tools: it starts
+    expect(counted.namedOperations).toHaveLength(600);
+    expect(seen).toStrictEqual([600]);
+    const cacheFs = memoryCacheFs();
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...baseOpts, cacheRoot: '/cache', countTools: () => 513 },
+        { ...bigDeps(20), cacheFs },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringMatching(/^513 tools .*512-tool budget/u) as string,
+    });
+    expect([...cacheFs.files.keys()].filter((key) => key.endsWith('meta.json'))).toEqual([]);
+  });
+
+  it('hands the count dereferenced operations, the spec and the withheld ones', async () => {
+    let received: ExposedOperations | undefined;
+    await runSpecPipeline(
+      'https://api.example.com/big.json',
+      {
+        ...baseOpts,
+        countTools: (exposed) => {
+          received = exposed;
+          return exposed.namedOperations.length;
+        },
+      },
+      bigDeps(3),
+    );
+    expect(received?.spec.operations).toHaveLength(3);
+    expect(received?.namedOperations.map((named) => named.toolName)).toStrictEqual([
+      'op0',
+      'op1',
+      'op2',
+    ]);
+    expect(received?.withheldOperations).toStrictEqual([]);
+  });
+
   it('counts only what survives --deny against the tool budget', async () => {
     const result = await runSpecPipeline(
       'https://api.example.com/big.json',
@@ -1184,7 +1238,7 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
     expect(refreshed.cacheStatus).toBe('candidate');
     expect(refreshed.namedOperations).toHaveLength(10);
     expect(refreshed.warnings.join('\n')).toMatch(
-      /candidate spec would expose 600 tools .*512-tool budget.*--allow or --deny/u,
+      /600 operations of the candidate spec pass the current filters .*512-tool budget.*may refuse to start.*--allow or --deny/u,
     );
   });
 

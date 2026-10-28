@@ -33,6 +33,9 @@ export type NotExposedOperation = {
   // `denied`: the first --deny pattern that matches it
   pattern?: string;
   reason: string;
+  // `omitted` only for these optional parameters, which
+  // --omit-unsupported-parameters would leave out (issue #67)
+  omittableParameters?: readonly string[];
 };
 
 export type FilterDecision = {

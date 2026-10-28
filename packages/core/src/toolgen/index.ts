@@ -4,7 +4,13 @@ export { convertSchema, MAX_CONVERT_DEPTH, UNSAFE_PATTERN_REASON } from './schem
 export { hasNestedQuantifier } from './pattern-safety.ts';
 export type { SchemaMode, SchemaResult } from './schema.ts';
 export { buildLayout, paramFields } from './layout.ts';
-export type { Field, FieldMapping, LayoutResult, RequestMapper } from './layout.ts';
+export type {
+  Field,
+  FieldMapping,
+  LayoutResult,
+  LeftOutParameter,
+  RequestMapper,
+} from './layout.ts';
 export { buildTools, buildToolsDeferred, completeTools, SYSTEM_HEADERS } from './build.ts';
 export type {
   BuildToolsResult,

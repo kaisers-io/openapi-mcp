@@ -5,12 +5,18 @@ tool under `notExposed`, with its `decision` and `reason`. `CLI --json check` ad
 and the tools the host lists. Details:
 [docs/filtering.md](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/filtering.md#how-a-decision-is-made).
 
+Compare first: count the operations the user expects (their config, or what they say the agent
+should do) and the tools in `data.tools`. Name each missing or extra operation with the row
+below that explains it, and propose the fix.
+
 | Evidence | Cause | Fix |
 |---|---|---|
 | `decision: read-only-default` | no `--allow`, so only reads are exposed | `--allow` for each operation the user wants, plus the reads |
 | `decision: not-allowed` | `--allow` is given and no pattern matches it | add a pattern for it |
 | `decision: denied`, `pattern` names the `--deny` | a deny matches it | narrow that deny |
-| `decision: omitted`, with a reason | the operation uses something not supported | explain the reason; the spec needs a change (overlay) |
+| `decision: omitted`, with `omittableParameters` | only optional parameters the server cannot send keep it out (Stripe's `expand`, a `deepObject` array) | propose `--omit-unsupported-parameters "operationId:<id>"`; name the parameters the agent then cannot set, and add it only if the user agrees |
+| `decision: omitted`, without `omittableParameters` | the operation uses something not supported | explain the reason; the spec needs a change (overlay) |
+| a tool's `leftOutParameters` | `--omit-unsupported-parameters` built it without them | expected; the agent cannot set them |
 | `decision: withheld` | a refreshed spec waits as a candidate and removed it | ask the user to review it: `openapi-mcp cache promote` |
 | `decision: head-without-get` | a `HEAD` whose every URL also matches a `GET` that is not exposed; its calls would be refused | allow the `GET` too, or leave it out |
 | `deadPatterns` | a pattern matches nothing | use the suggestion |

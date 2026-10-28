@@ -50,7 +50,7 @@ const keyOf = (tool: Tools[number]): string =>
 // refused (issue #68): by route key, with that GET's path. Known once the
 // tools are generated: the output-schema opt-out drops none of them.
 export const unreachableHeads = (
-  result: SpecPipelineResult,
+  result: Pick<SpecPipelineResult, 'spec' | 'withheldOperations'>,
   tools: Tools,
 ): ReadonlyMap<string, string> =>
   headsWithoutGet(

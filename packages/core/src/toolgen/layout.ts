@@ -251,6 +251,61 @@ const querystringField = (
   };
 };
 
+// An optional query or header parameter this server cannot send, left out
+// of the tool instead of omitting the operation, when the operator opts in
+// (--omit-unsupported-parameters, issue #67)
+export type LeftOutParameter = { name: string; in: 'query' | 'header'; reason: string };
+
+// What the request-serialization checks reject about one parameter, or
+// undefined when it can be sent. Its location and name are checked before.
+const parameterProblem = (
+  param: Record<string, unknown>,
+  name: string,
+  location: 'path' | 'query' | 'header',
+  version: OpenapiVersion,
+): { problem: string } | { ok: { style: string; explode: boolean; schema: z.ZodType } } => {
+  if (param['allowReserved'] === true) {
+    return { problem: `parameter "${name}" uses allowReserved, which is not supported` };
+  }
+  if (param['content'] !== undefined) {
+    return { problem: `parameter "${name}" uses content instead of schema` };
+  }
+  const style = typeof param['style'] === 'string' ? param['style'] : STYLE_SUPPORT[location];
+  const styleSupported =
+    location === 'query' ? QUERY_STYLES.has(style) : style === STYLE_SUPPORT[location];
+  if (!styleSupported) {
+    return { problem: `parameter "${name}" uses the unsupported style "${style}"` };
+  }
+  const explode = typeof param['explode'] === 'boolean' ? param['explode'] : style === 'form';
+  if (location === 'query') {
+    const problem = queryStyleProblem(style as QueryStyle, explode, param['schema']);
+    if (problem !== undefined) {
+      return { problem: `parameter "${name}": ${problem}` };
+    }
+  }
+  const converted = convertSchema(param['schema'] ?? {}, version);
+  if (!('ok' in converted)) {
+    return { problem: `parameter "${name}": ${converted.unrepresentable}` };
+  }
+  return { ok: { style, explode, schema: converted.ok } };
+};
+
+// A query parameter that sends only its own name: a scalar, or an array of
+// scalars. A kept `form` parameter with explode=true and an object value
+// sends each property as its own query key, so it could send a left-out
+// parameter by name (`expand`, or `expand[0]`): with one of those, a
+// parameter is never left out (review of #67).
+const sendsOnlyItsName = (field: Field, schema: unknown): boolean => {
+  if (field.mapping.destination !== 'query') {
+    return true;
+  }
+  if (field.mapping.style !== 'form' || !field.mapping.explode) {
+    return true;
+  }
+  const node = isRecord(schema) ? schema : {};
+  return isScalarSchema(node) || (node['type'] === 'array' && isScalarSchema(node['items']));
+};
+
 export const paramFields = (
   operation: OperationRecord,
   reservedHeaders: ReadonlySet<string>,
@@ -259,8 +314,14 @@ export const paramFields = (
   // test-ergonomics only; production callers (buildLayout ← buildTools) always
   // pass the real spec version explicitly.
   version: OpenapiVersion = '3.1',
-): { ok: Field[] } | { unrepresentable: string } => {
+  // Leave out an optional query or header parameter that cannot be sent,
+  // instead of omitting the operation (issue #67)
+  omitUnsupported = false,
+): { ok: Field[]; leftOut: LeftOutParameter[] } | { unrepresentable: string } => {
   const fields: Field[] = [];
+  const leftOut: LeftOutParameter[] = [];
+  // The raw schema of each kept query field, for the check below
+  const querySchemas = new Map<Field, unknown>();
   const seenHeaders = new Set<string>();
   // Imperative on purpose (like headers.ts's mapping loop): each parameter is
   // validated — and, on failure, the WHOLE operation is omitted — in
@@ -290,50 +351,46 @@ export const paramFields = (
     // malformed/unsupported reserved-header param omits the operation rather than
     // being silently discarded. allowReserved/content/style and the schema
     // conversion run first; the reserved-header drop comes after.
-    if (param['allowReserved'] === true) {
-      return { unrepresentable: `parameter "${name}" uses allowReserved, which is not supported` };
-    }
-    if (param['content'] !== undefined) {
-      return { unrepresentable: `parameter "${name}" uses content instead of schema` };
-    }
-    const style = typeof param['style'] === 'string' ? param['style'] : STYLE_SUPPORT[location];
-    const styleSupported =
-      location === 'query' ? QUERY_STYLES.has(style) : style === STYLE_SUPPORT[location];
-    if (!styleSupported) {
-      return { unrepresentable: `parameter "${name}" uses the unsupported style "${style}"` };
-    }
-    const explode = typeof param['explode'] === 'boolean' ? param['explode'] : style === 'form';
-    if (location === 'query') {
-      const problem = queryStyleProblem(style as QueryStyle, explode, param['schema']);
-      if (problem !== undefined) {
-        return { unrepresentable: `parameter "${name}": ${problem}` };
-      }
-    }
-    const converted = convertSchema(param['schema'] ?? {}, version);
-    if (!('ok' in converted)) {
-      return { unrepresentable: `parameter "${name}": ${converted.unrepresentable}` };
+    const checked = parameterProblem(param, name, location, version);
+    const reserved = location === 'header' && reservedHeaders.has(name.toLowerCase());
+    // Only an optional query or header parameter the operator may set is
+    // left out; any other problem still omits the operation
+    const leaveOut =
+      'problem' in checked &&
+      omitUnsupported &&
+      location !== 'path' &&
+      param['required'] !== true &&
+      !reserved;
+    if ('problem' in checked && !leaveOut) {
+      return { unrepresentable: checked.problem };
     }
     if (location === 'header') {
       const lower = name.toLowerCase();
       // A reserved header (system or operator-auth) is validated above but NOT
       // exposed as a tool input — it is injected at request time. Drop it now (it
       // never reaches the mapper and does not participate in the kept-header dedup).
-      if (reservedHeaders.has(lower)) {
+      if (reserved) {
         continue;
       }
       // HTTP header names are case-insensitive; two params differing only in case
       // target the same header and would serialize ambiguously. Omit fail-closed.
+      // A header left out below counts too, so leaving one out cannot hide that.
       if (seenHeaders.has(lower)) {
         return { unrepresentable: `duplicate header parameter "${name}" (case-insensitive)` };
       }
       seenHeaders.add(lower);
     }
+    if ('problem' in checked) {
+      leftOut.push({ name, in: location as 'query' | 'header', reason: checked.problem });
+      continue;
+    }
+    const { style, explode } = checked.ok;
     const schema =
       typeof param['description'] === 'string'
-        ? converted.ok.describe(
+        ? checked.ok.schema.describe(
             sanitizeSpecText(stripMarkdownLinks(param['description']), SPEC_BUDGETS.maxTextLength),
           )
-        : converted.ok;
+        : checked.ok.schema;
     const required = location === 'path' ? true : param['required'] === true;
     const mapping: FieldMapping = ((): FieldMapping => {
       switch (location) {
@@ -354,9 +411,21 @@ export const paramFields = (
         }
       }
     })();
-    fields.push({ preferred: name, name, location, schema, required, mapping });
+    const field: Field = { preferred: name, name, location, schema, required, mapping };
+    fields.push(field);
+    querySchemas.set(field, param['schema']);
   }
-  return { ok: fields };
+  const leftOutQuery = leftOut.find((parameter) => parameter.in === 'query');
+  const sender =
+    leftOutQuery === undefined
+      ? undefined
+      : fields.find((field) => !sendsOnlyItsName(field, querySchemas.get(field)));
+  if (leftOutQuery !== undefined && sender !== undefined) {
+    return {
+      unrepresentable: `parameter "${leftOutQuery.name}" cannot be left out: the exploded object "${sender.name}" could send it`,
+    };
+  }
+  return { ok: fields, leftOut };
 };
 
 export type LayoutResult = {
@@ -365,6 +434,8 @@ export type LayoutResult = {
   // True when the optional `_fields` projection argument was added (see
   // toolgen/projection.ts) — never mapped onto the request.
   projection: boolean;
+  // The optional parameters left out (issue #67), in spec order
+  leftOut: readonly LeftOutParameter[];
 };
 
 type BodyResult = {
@@ -1062,8 +1133,10 @@ export const buildLayout = (
   projectable = false,
   // --uploads (#29): binary fields also take a file name in this folder
   uploadDir?: string,
+  // --omit-unsupported-parameters (issue #67)
+  omitUnsupported = false,
 ): { ok: LayoutResult } | { unrepresentable: string } => {
-  const params = paramFields(operation, reservedHeaders, version);
+  const params = paramFields(operation, reservedHeaders, version, omitUnsupported);
   if (!('ok' in params)) {
     return params;
   }
@@ -1170,5 +1243,5 @@ export const buildLayout = (
     ...(body.ok.required === true ? { bodyRequired: true as const } : {}),
     fields,
   };
-  return { ok: { inputSchema, mapper, projection } };
+  return { ok: { inputSchema, mapper, projection, leftOut: params.leftOut } };
 };

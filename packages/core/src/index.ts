@@ -127,6 +127,7 @@ export type {
   SpecPipelineDeps,
   SpecPipelineOptions,
   SpecPipelineResult,
+  ExposedOperations,
 } from './spec/pipeline.ts';
 export type { CacheFs, CacheRuntime } from './cache/fs.ts';
 export {
@@ -210,6 +211,7 @@ export type { FilterDecision, NotExposedDecision, NotExposedOperation } from './
 export type { CaseCollision } from './filter/case-collisions.ts';
 export type { DeadPattern, DeadPatternFlag, FilterTarget } from './filter/engine.ts';
 export { applyOutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
+export { selectUnsupportedParameterOptIn } from './toolgen/unsupported-parameters.ts';
 export {
   API_NAME_PATTERN,
   apiOfToolName,
@@ -231,6 +233,7 @@ export { routeOverlaps } from './server/execute/route-overlaps.ts';
 export type { RouteOverlap, RouteOverlapReport } from './server/execute/route-overlaps.ts';
 export type { Route, RouteEntry, RouteRefusal, RouteTable } from './server/execute/route-table.ts';
 export type { OutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
+export type { UnsupportedParameterOptIn } from './toolgen/unsupported-parameters.ts';
 export {
   assignToolNames,
   buildLayout,
@@ -260,6 +263,7 @@ export type {
   JsonSchemaRecord,
   OutputSchemaOptions,
   LayoutResult,
+  LeftOutParameter,
   NamedOperation,
   NullableFieldScope,
   OutputSchemaDerivation,
