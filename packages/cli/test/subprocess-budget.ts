@@ -38,6 +38,7 @@ export const SUBPROCESS_E2E_FILES = [
   'test/serve.test.ts',
   'test/serve-filter-matrix.test.ts',
   'test/serve-head-without-get.test.ts',
+  'test/serve-html-error.test.ts',
   'test/serve-multi-api.test.ts',
   'test/serve-http.test.ts',
   'test/serve-http-oauth.test.ts',

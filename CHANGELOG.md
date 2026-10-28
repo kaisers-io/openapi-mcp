@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An HTML error page shows its message, not its markup (#63).** A `4xx` or `5xx` response with
+  `text/html` or `application/xhtml+xml` now contributes its title and visible text to the
+  1 KB excerpt, without `<head>`, `<style>`, `<script>` and tags. Real error pages often start
+  with kilobytes of CSS: of 20 real or framework-default pages, the old excerpt held the message
+  for 16, the new one for all 20, and it is shorter. Redaction still runs first, and an
+  excerpt in which decoded entities rebuild a registered secret is dropped.
 - **A `HEAD` operation is no longer offered when its `GET` is not exposed (#68).** A `HEAD`
   request also reaches the `GET` on the same URL, so such a tool was refused on every call. It is
   now left out when every URL it can send matches a `GET` that is not a tool, whether the filters
