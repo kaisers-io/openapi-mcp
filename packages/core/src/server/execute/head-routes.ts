@@ -50,7 +50,10 @@ const patternItems = (tokens: readonly Token[], fold: boolean): Item[] =>
 // final Greek sigma), so a cover that relies on folding is proven only for
 // ASCII text; any other text must match as written.
 const isAscii = (tokens: readonly Token[]): boolean =>
-  tokens.every((token) => 'param' in token || /^[\x00-\x7f]*$/u.test(token.literal));
+  tokens.every(
+    (token) =>
+      'param' in token || [...token.literal].every((char) => (char.codePointAt(0) ?? 0) < 0x80),
+  );
 
 const headItems = (tokens: readonly Token[], fold: boolean): HeadItem[] =>
   tokens.flatMap((token): HeadItem[] =>
