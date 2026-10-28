@@ -131,6 +131,7 @@ const EXPECTED: Record<string, string[]> = {
   'cache unlock': ['--spec', '--id', '--cache-key', '--force'],
   serve: SERVE_OPTIONS,
   check: SERVE_OPTIONS,
+  call: ['--args-json', '--dry-run', ...SERVE_OPTIONS],
   help: [],
 };
 
