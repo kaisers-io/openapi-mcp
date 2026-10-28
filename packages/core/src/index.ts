@@ -225,6 +225,7 @@ export {
   routeEntriesFor,
   routeKey,
 } from './server/execute/route-table.ts';
+export { headsWithoutGet } from './server/execute/head-routes.ts';
 export { hopAuthorizer } from './server/execute/hop-authorizer.ts';
 export { routeOverlaps } from './server/execute/route-overlaps.ts';
 export type { RouteOverlap, RouteOverlapReport } from './server/execute/route-overlaps.ts';

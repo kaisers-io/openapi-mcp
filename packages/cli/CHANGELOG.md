@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with kilobytes of CSS: of 20 real or framework-default pages, the old excerpt held the message
   for 16, the new one for all 20, and it is shorter. Redaction still runs first, and an
   excerpt in which decoded entities rebuild a registered secret is dropped.
+- **A `HEAD` operation is no longer offered when its `GET` is not exposed (#68).** A `HEAD`
+  request also reaches the `GET` on the same URL, so such a tool was refused on every call. It is
+  now left out when every URL it can send matches a `GET` that is not a tool, whether the filters
+  excluded that `GET` or it was omitted as not supported, and listed under `notExposed` with the
+  decision `head-without-get`; `notExposedCounts` counts it. A `HEAD` with at least one URL that
+  can pass stays a tool. Request authorization is unchanged. See
+  [filtering.md](docs/filtering.md#how-a-decision-is-made).
 
 ## [0.6.0] - 2026-10-28
 

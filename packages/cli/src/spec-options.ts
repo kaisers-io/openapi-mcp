@@ -29,7 +29,7 @@ import { filterMessages } from './filter-messages.ts';
 import { outputSchemaOptOutWarningLines } from './output-schema-opt-out.ts';
 import { collect, declareChoices } from './option-meta.ts';
 
-export { exposureReport } from './exposure-report.ts';
+export { exposureReport, reachableTools, unreachableHeads } from './exposure-report.ts';
 export { caseCollisionMessage, deadPatternMessage, filterMessages } from './filter-messages.ts';
 
 // Cap for untrusted display strings (paths) in human terminal output

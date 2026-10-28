@@ -132,6 +132,7 @@ describe('not-exposed inventory', () => {
       'read-only-default': 2,
       omitted: 3,
       withheld: 1,
+      'head-without-get': 0,
     });
     expect(notExposedSummary(counts)).toBe(
       'operations not exposed: 2 left out by the read-only default, 3 omitted as not supported, 1 withheld for a pending candidate; every one with its reason: openapi-mcp --json tools with the same options',

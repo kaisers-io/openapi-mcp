@@ -69,6 +69,9 @@ const SPEC = {
       },
     },
     '/search': {
+      // Its GET is omitted while tools are built, so every HEAD call would be
+      // refused (issue #68)
+      head: { operationId: 'searchHead', security: [], responses: ok },
       get: {
         operationId: 'search',
         summary: 'Omitted while its tool is built',
@@ -193,6 +196,16 @@ describe('tools --json: what each operation does (issue #76)', () => {
     });
   });
 
+  it('leaves out a HEAD whose GET was omitted while tools were built (issue #68)', async () => {
+    const data = await toolsData();
+    expect(data.tools.some((tool) => tool.path === '/search')).toBe(false);
+    expect(byPath(data.notExposed, 'HEAD', '/search')).toMatchObject({
+      operationId: 'searchHead',
+      decision: 'head-without-get',
+    });
+    expect(data.counts.notExposed['head-without-get']).toBe(1);
+  });
+
   it('lists the declared schemes with their use, and how many past the cap it left out', async () => {
     const data = await toolsData();
     expect(data.securitySchemes.slice(0, 3)).toEqual([
@@ -207,9 +220,16 @@ describe('tools --json: what each operation does (issue #76)', () => {
   it('counts every operation once', async () => {
     const data = await toolsData();
     expect(data.counts).toEqual({
-      operations: 6,
+      operations: 7,
       exposed: 3,
-      notExposed: { denied: 0, 'not-allowed': 0, 'read-only-default': 1, omitted: 2, withheld: 0 },
+      notExposed: {
+        denied: 0,
+        'not-allowed': 0,
+        'read-only-default': 1,
+        omitted: 2,
+        withheld: 0,
+        'head-without-get': 1,
+      },
     });
     expect(data.counts.operations).toBe(data.tools.length + data.notExposed.length);
   });

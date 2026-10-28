@@ -262,6 +262,7 @@ describe('serve — request authorization (issue #40)', () => {
           'read-only-default': 0,
           omitted: 0,
           withheld: 0,
+          'head-without-get': 0,
         },
       });
     },

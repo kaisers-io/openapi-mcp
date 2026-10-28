@@ -248,3 +248,46 @@ describe('exposureReport — an incomplete overlap check', () => {
     expect(() => exposureReport(result, built, true, 0)).toThrow('ran out of its work budget');
   });
 });
+
+// Issue #68: leaving out a HEAD no call can pass must not change how any
+// other request is authorized, so the route table keeps it as exposed
+describe('exposureReport — a HEAD whose GET is not exposed', () => {
+  const operation = (method: string, path: string, operationId: string) => ({
+    method,
+    path,
+    operationId,
+    tags: [],
+    deprecated: false,
+    parameters: [],
+    responses: {},
+  });
+  const headOp = operation('head', '/a/{id}', 'headA');
+  const headJson = operation('head', '/a/{name}.json', 'headJson');
+  const result = {
+    spec: {
+      operations: [operation('get', '/a/{id}', 'getA'), headOp, headJson],
+      omitted: [],
+    },
+    withheldOperations: [],
+    filteredOut: [],
+  } as unknown as SpecPipelineResult;
+  const built = {
+    tools: [
+      { operation: headOp, toolName: 'headA' },
+      { operation: headJson, toolName: 'headJson' },
+    ],
+    omitted: [],
+  } as unknown as BuildToolsResult;
+
+  it('leaves the tool out, lists it, and keeps its route exposed', () => {
+    const report = exposureReport(result, built, false);
+    expect(report.built.tools.map((tool) => tool.toolName)).toStrictEqual([]);
+    expect(report.notExposed.map((row) => [row.operationId, row.decision])).toStrictEqual([
+      ['headA', 'head-without-get'],
+      ['headJson', 'head-without-get'],
+    ]);
+    expect(report.routeEntries).toContainEqual({ method: 'HEAD', path: '/a/{id}', exposed: true });
+    // No overlap warning for a tool that is not offered
+    expect(report.overlaps).toStrictEqual([]);
+  });
+});

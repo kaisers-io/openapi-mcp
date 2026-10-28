@@ -19,7 +19,14 @@ const pipeline = {
   deadPatterns: [],
 };
 const RLO = String.fromCodePoint(0x20_2e);
-const counts = { denied: 1, 'not-allowed': 0, 'read-only-default': 2, omitted: 0, withheld: 0 };
+const counts = {
+  denied: 1,
+  'not-allowed': 0,
+  'read-only-default': 2,
+  omitted: 0,
+  withheld: 0,
+  'head-without-get': 0,
+};
 const apis = [
   {
     name: 'github',

@@ -274,6 +274,7 @@ const buildTransformSnapshot = (): ServerSnapshot => {
       'read-only-default': 0,
       omitted: 0,
       withheld: 0,
+      'head-without-get': 0,
     },
   };
   return {

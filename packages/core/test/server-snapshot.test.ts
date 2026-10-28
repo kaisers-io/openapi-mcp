@@ -270,6 +270,7 @@ describe('buildSnapshot', () => {
       'read-only-default': 0,
       omitted: 1,
       withheld: 0,
+      'head-without-get': 0,
     };
     expect(buildSnapshot(built, pipelineOf()).meta.notExposedCounts).toEqual({
       ...counts,

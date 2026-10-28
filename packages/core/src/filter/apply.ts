@@ -19,7 +19,8 @@ export type NotExposedDecision =
   | 'not-allowed'
   | 'read-only-default'
   | 'omitted'
-  | 'withheld';
+  | 'withheld'
+  | 'head-without-get';
 
 export type NotExposedOperation = {
   // Upper case, as sent
