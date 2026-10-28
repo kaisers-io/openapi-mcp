@@ -626,7 +626,7 @@ The `--json doctor` output looks like this:
 {
   "ok": true,
   "data": {
-    "cliVersion": "0.6.0",
+    "cliVersion": "0.6.1",
     "nodeVersion": "24.12.0",
     "appRoot": "/Users/you/.kaisers-io/openapi-mcp",
     "cacheRoot": "/Users/you/.kaisers-io/openapi-mcp/cache",
