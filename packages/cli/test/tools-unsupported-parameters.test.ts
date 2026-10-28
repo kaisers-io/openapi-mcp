@@ -171,7 +171,7 @@ describe('--omit-unsupported-parameters (issue #67)', () => {
     });
     expect(notExposed(envelope.data, 'search')).toMatchObject({
       decision: 'omitted',
-      reason: 'parameter "expand" cannot be left out: the exploded object "filter" could send it',
+      reason: 'parameter "expand" cannot be left out: the query parameter "filter" could send it',
     });
   });
 

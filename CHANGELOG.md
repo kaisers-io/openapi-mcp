@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads are tools. The agent cannot set a left-out parameter: the tool refuses it as an argument
   and its description names it. It is never the default, because a left-out parameter can be a
   filter or a dry run. A required or path parameter, a header the operator sets, and a parameter
-  that a query object sent as separate keys could also send still omit the operation. `--json
+  that another query parameter could also send still omit the operation. `--json
   tools` lists `leftOutParameters` per tool and `omittableParameters` per omitted operation, and
   the startup names the operations the flag would build. See
   [filtering.md](docs/filtering.md#operations-omitted-for-an-optional-parameter).

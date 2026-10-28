@@ -150,7 +150,12 @@ that.
 | optional, in the query or a header | the operation is omitted | the tool has no such argument |
 | required, or in the path | the operation is omitted | the operation is omitted |
 | a header the operator sets with `--header` or `--header-env` | the operation is omitted | the operation is omitted |
-| optional, next to a query object that is sent as separate keys (`style: form`, `explode: true`) | the operation is omitted | the operation is omitted, because that object could send the left-out name |
+| optional, when another query parameter could send its name | the operation is omitted | the operation is omitted |
+
+Another query parameter could send the name when it is an object sent as separate keys
+(`style: form`, `explode: true`), a `deepObject` such as `filter` next to a left-out
+`filter[dryRun]`, or a name that a server reads as part of it, such as `expand[]` next to a
+left-out `expand`. Names are compared without letter case, as some servers read them.
 
 The flag never exposes an operation. `--deny` and the read-only default decide first. A pattern
 that matches no exposed operation is a dead pattern. One that matches only operations that send

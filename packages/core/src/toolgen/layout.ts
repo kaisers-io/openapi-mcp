@@ -290,20 +290,31 @@ const parameterProblem = (
   return { ok: { style, explode, schema: converted.ok } };
 };
 
-// A query parameter that sends only its own name: a scalar, or an array of
-// scalars. A kept `form` parameter with explode=true and an object value
-// sends each property as its own query key, so it could send a left-out
-// parameter by name (`expand`, or `expand[0]`): with one of those, a
-// parameter is never left out (review of #67).
-const sendsOnlyItsName = (field: Field, schema: unknown): boolean => {
+// Whether a kept query field can send a query key that a server reads as
+// the left-out parameter `name` (reviews of #67): the key itself, or one
+// that starts with `name[`, which a bracket-parsing server (Rack, PHP, qs)
+// reads as part of it. Compared without letter case, as some servers bind
+// query names. A kept `form` object with explode=true sends each property as
+// its own key, so any key; a deepObject `k` sends `k[property]` for any
+// property without brackets (request.ts rejects one with brackets); every
+// other kept field sends only its own name.
+const couldSend = (field: Field, schema: unknown, name: string): boolean => {
   if (field.mapping.destination !== 'query') {
+    return false;
+  }
+  const own = field.mapping.wireName.toLowerCase();
+  const target = name.toLowerCase();
+  if (own === target || own.startsWith(`${target}[`)) {
     return true;
+  }
+  if (field.mapping.style === 'deepObject') {
+    return target.startsWith(`${own}[`) && /^\[[^[\]]*\]$/u.test(target.slice(own.length));
   }
   if (field.mapping.style !== 'form' || !field.mapping.explode) {
-    return true;
+    return false;
   }
   const node = isRecord(schema) ? schema : {};
-  return isScalarSchema(node) || (node['type'] === 'array' && isScalarSchema(node['items']));
+  return !(isScalarSchema(node) || (node['type'] === 'array' && isScalarSchema(node['items'])));
 };
 
 export const paramFields = (
@@ -415,15 +426,16 @@ export const paramFields = (
     fields.push(field);
     querySchemas.set(field, param['schema']);
   }
-  const leftOutQuery = leftOut.find((parameter) => parameter.in === 'query');
-  const sender =
-    leftOutQuery === undefined
-      ? undefined
-      : fields.find((field) => !sendsOnlyItsName(field, querySchemas.get(field)));
-  if (leftOutQuery !== undefined && sender !== undefined) {
-    return {
-      unrepresentable: `parameter "${leftOutQuery.name}" cannot be left out: the exploded object "${sender.name}" could send it`,
-    };
+  for (const parameter of leftOut) {
+    const sender =
+      parameter.in === 'query'
+        ? fields.find((field) => couldSend(field, querySchemas.get(field), parameter.name))
+        : undefined;
+    if (sender !== undefined) {
+      return {
+        unrepresentable: `parameter "${parameter.name}" cannot be left out: the query parameter "${sender.name}" could send it`,
+      };
+    }
   }
   return { ok: fields, leftOut };
 };

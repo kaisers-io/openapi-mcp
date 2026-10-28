@@ -189,10 +189,61 @@ describe('paramFields with optional parameters left out', () => {
       const filter = { name: 'filter', in: 'query', schema };
       expect(paramFields(op([filter, EXPAND]), new Set(), '3.1', true)).toStrictEqual({
         unrepresentable:
-          'parameter "expand" cannot be left out: the exploded object "filter" could send it',
+          'parameter "expand" cannot be left out: the query parameter "filter" could send it',
       });
     },
   );
+
+  // A server reads `name[...]` as part of `name`, and some bind names
+  // without letter case (reviews of #67)
+  const filterObject = {
+    name: 'filter',
+    in: 'query',
+    style: 'deepObject',
+    explode: true,
+    schema: { type: 'object', properties: { dryRun: { type: 'boolean' } } },
+  };
+  const unsendable = (name: string) => ({ ...EXPAND, name });
+  const withLeftOut = (kept: Record<string, unknown>, leftOutName: string) =>
+    paramFields(op([kept, unsendable(leftOutName)]), new Set(), '3.1', true);
+
+  it.each([
+    ['a deepObject that sends its property as the name', filterObject, 'filter[dryRun]'],
+    ['a deepObject that sends any property as the name', filterObject, 'filter[other]'],
+    [
+      'a name that a server reads as part of it',
+      { name: 'expand[]', in: 'query', schema: { type: 'string' } },
+      'expand',
+    ],
+    [
+      'the same name in another letter case',
+      { name: 'Expand', in: 'query', schema: { type: 'string' } },
+      'expand',
+    ],
+    [
+      'a deepObject whose keys a server reads as part of it',
+      { ...filterObject, name: 'expand[x]' },
+      'expand',
+    ],
+  ])('omits the operation when %s', (_name, kept, leftOutName) => {
+    expect(withLeftOut(kept, leftOutName)).toStrictEqual({
+      unrepresentable: `parameter "${leftOutName}" cannot be left out: the query parameter "${kept.name}" could send it`,
+    });
+  });
+
+  it.each([
+    ['a deepObject with another name', filterObject, 'expand'],
+    // Request.ts refuses a property with brackets, so `filter[a][b]` is never sent
+    ['a deepObject and a nested name below it', filterObject, 'filter[a][b]'],
+    [
+      'a name that only starts the same',
+      { name: 'expanded', in: 'query', schema: { type: 'string' } },
+      'expand',
+    ],
+  ])('keeps %s next to a left-out parameter', (_name, kept, leftOutName) => {
+    const result = fieldsOf(withLeftOut(kept, leftOutName));
+    expect(result.leftOut.map((entry) => entry.name)).toStrictEqual([leftOutName]);
+  });
 
   it.each([
     ['a scalar', { name: 'q', in: 'query', schema: { type: 'string' } }],
