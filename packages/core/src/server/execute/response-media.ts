@@ -1,4 +1,5 @@
 import type { SequenceKind } from '../../toolgen/media-type.ts';
+import { htmlErrorText } from './html-text.ts';
 
 // The media-type reading of an upstream response for response.ts.
 export { isJsonEssence, sequenceKind } from '../../toolgen/media-type.ts';
@@ -11,6 +12,11 @@ export const mediaEssence = (contentType: string | undefined): string | undefine
   const trimmed = essence === undefined ? '' : essence.trim().toLowerCase();
   return trimmed === '' ? undefined : trimmed;
 };
+
+// The readable text of an HTML error body (issue #63), or '' for any other
+// media type and for a page with no text
+export const readableErrorText = (essence: string | undefined, body: string): string =>
+  essence === 'text/html' || essence === 'application/xhtml+xml' ? htmlErrorText(body) : '';
 
 export const isTextEssence = (essence: string): boolean => essence.startsWith('text/');
 
