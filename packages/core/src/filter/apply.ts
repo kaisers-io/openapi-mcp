@@ -133,8 +133,22 @@ const filteredOutRecord = (
 });
 
 // A path template as the route table matches it: placeholders by position,
-// letters regardless of case
-const templateOf = (path: string): string => path.replaceAll(/\{[^}]*\}/gu, '{}').toLowerCase();
+// letters regardless of case. One pass, no pattern that could backtrack.
+const templateOf = (path: string): string => {
+  let template = '';
+  let inPlaceholder = false;
+  for (const char of path) {
+    if (inPlaceholder) {
+      inPlaceholder = char !== '}';
+    } else if (char === '{') {
+      inPlaceholder = true;
+      template += '{}';
+    } else {
+      template += char;
+    }
+  }
+  return template.toLowerCase();
+};
 
 // A HEAD request reaches the GET on the same path (route-table.ts), so a HEAD
 // operation whose GET is not exposed is refused on every call (issue #68). It
