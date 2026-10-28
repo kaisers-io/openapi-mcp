@@ -88,8 +88,12 @@ describe('Node floor: engines, docs, CI and the bin stub agree', SPAWN_BUDGET, (
   });
 
   it('documents the range in both READMEs and tests every line floor in the CI matrix', () => {
-    expect(repoFile('README.md')).toContain(`Requirements: Node.js \`${floor}\``);
-    expect(repoFile('packages/cli/README.md')).toContain(`Requirements: Node.js \`${floor}\``);
+    // The READMEs state the range in words: `22.19 or later, or 24.11 or later`
+    const inWords = lines
+      .map(([major, minor]) => `${String(major)}.${String(minor)} or later`)
+      .join(', or ');
+    expect(repoFile('README.md')).toContain(`Requirements: Node.js ${inWords}`);
+    expect(repoFile('packages/cli/README.md')).toContain(`Requirements: Node.js ${inWords}`);
     expect(repoFile('CONTRIBUTING.md')).toContain(`**Node.js \`${floor}\`**`);
     // No other place may state the old floor (e.g. a Development section)
     for (const file of [
