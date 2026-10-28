@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An HTML error page shows its message, not its markup (#63).** A `4xx` or `5xx` response with
+  `text/html` or `application/xhtml+xml` now contributes its title and visible text to the
+  1 KB excerpt, without `<head>`, `<style>`, `<script>` and tags. Real error pages often start
+  with kilobytes of CSS: of 20 real or framework-default pages, the old excerpt held the message
+  for 16, the new one for all 20, and it is shorter. Redaction still runs first, and an
+  excerpt in which decoded entities rebuild a registered secret is dropped.
+
 ## [0.6.0] - 2026-10-28
 
 ### Added

@@ -188,9 +188,11 @@ checks:
   is `--image-responses` (off by default), which returns PNG, JPEG, GIF and WebP images; see
   [Image responses](#image-responses).
 - An upstream `4xx` or `5xx` response returns `isError: true` with the status and a short body
-  excerpt, which goes through the same central redactor as everything else. For `401` and
-  `403` the server drops the body entirely and returns a message that names the environment
-  variable to check.
+  excerpt, which goes through the same central redactor as everything else. A JSON body keeps
+  up to the display budget, any other body 1 KB. An HTML page contributes its title and visible
+  text, without `<head>`, `<style>` or `<script>`. If decoding its entities rebuilds a
+  registered secret, the excerpt is dropped. For `401` and `403` the server drops the body
+  entirely and returns a message that names the environment variable to check.
 - On stdio, stdout carries only JSON-RPC messages, and every diagnostic goes to stderr. A host
   that reads stdout as the protocol stream never sees log output there.
 

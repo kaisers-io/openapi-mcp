@@ -18,6 +18,7 @@ import {
   isTextEssence,
   mediaEssence,
   parseSequence,
+  readableErrorText,
   sequenceKind,
 } from './response-media.ts';
 import { markSecretScanned, structuredOutcome, textOutcome } from '../result.ts';
@@ -338,7 +339,11 @@ const mapHttpError = (
   // this redaction, over the already-secret-free text, so a secret cannot
   // be split across the excerpt boundary and leak a surviving fragment.
   const redacted = redactor.redactString(decoded.ok);
-  const excerpt = sanitizeSpecText(redacted, excerptMax);
+  // An HTML page shows its title and visible text, not its markup (issue
+  // #63). Decoding entities can rebuild a redacted secret; the scan below
+  // catches that and drops the excerpt.
+  const readable = readableErrorText(essence, redacted);
+  const excerpt = sanitizeSpecText(readable === '' ? redacted : readable, excerptMax);
   if (scanSafely(redactor, excerpt)) {
     return textOutcome(`upstream request failed with status ${status}`, true);
   }

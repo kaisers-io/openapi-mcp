@@ -343,7 +343,7 @@ describe('mapResponse — HTTP error status (>=400)', () => {
       return isError(mapResponse(defaultOpts({ outcome })));
     };
     const html = `<html><body><h1>Internal Server Error</h1>${'<p>x</p>'.repeat(2000)}</body></html>`;
-    const page = errorText(500, 'text/html', html);
+    const page = errorText(500, 'text/plain', html);
     expect(page).toHaveLength(prefix.length + 1024);
     expect(page).toContain('<h1>Internal Server Error</h1>');
     const json = JSON.stringify({ message: 'Validation failed', detail: 'y'.repeat(6000) });
@@ -352,6 +352,59 @@ describe('mapResponse — HTTP error status (>=400)', () => {
     );
     // A body that claims JSON but does not parse is treated as text
     expect(errorText(500, 'application/json', `{${html}`)).toHaveLength(prefix.length + 1024);
+  });
+
+  // Issue #63: the first kilobyte of an HTML page can be all <head> and CSS
+  describe('an HTML error page', () => {
+    const errorText = (body: string, redactor = noSecrets(), type = 'text/html'): string => {
+      const outcome = response(502, type, body);
+      return isError(mapResponse(defaultOpts({ outcome, redactor })));
+    };
+    const styled = (head: string, body: string): string =>
+      `<!DOCTYPE html><html><head><title>${head}</title><style>${'.c{color:red}'.repeat(400)}</style>` +
+      `<script>var x = "<b>not text</b>";</script></head><body><!-- note --><h1>502</h1>${body}</body></html>`;
+
+    it('shows the title and the visible text, not the markup', () => {
+      expect(errorText(styled('Bad Gateway', '<p>Upstream &amp; database&nbsp;down</p>'))).toBe(
+        'upstream request failed with status 502: Bad Gateway: 502 Upstream & database down',
+      );
+      const xhtml = errorText(
+        '<html><body><p>Gone</p></body></html>',
+        noSecrets(),
+        'application/xhtml+xml',
+      );
+      expect(xhtml).toBe('upstream request failed with status 502: Gone');
+    });
+
+    it('does not repeat a title the text starts with, and keeps a page without text as it is', () => {
+      const nginx =
+        '<html><head><title>502 Bad Gateway</title></head><body><center><h1>502 Bad Gateway</h1></center><hr><center>nginx</center></body></html>';
+      expect(errorText(nginx)).toBe(
+        'upstream request failed with status 502: 502 Bad Gateway nginx',
+      );
+      expect(errorText('<html><body></body></html>')).toBe(
+        'upstream request failed with status 502: <html><body></body></html>',
+      );
+    });
+
+    it('caps the text at 1 KB', () => {
+      const text = errorText(styled('Error', `<p>${'word '.repeat(1000)}</p>`));
+      expect(text).toHaveLength('upstream request failed with status 502: '.length + 1024);
+    });
+
+    it('drops the excerpt when decoding entities rebuilds a secret', () => {
+      const secret = 'example-token-not-a-secret';
+      const encoded = [...secret].map((char) => `&#${String(char.codePointAt(0))};`).join('');
+      const text = errorText(`<p>token ${encoded}</p>`, createRedactor([secret]));
+      expect(text).toBe('upstream request failed with status 502');
+    });
+
+    it('redacts a secret in the visible text', () => {
+      const secret = 'example-token-not-a-secret';
+      const text = errorText(styled('Error', `<p>bad key ${secret}</p>`), createRedactor([secret]));
+      expect(text).toContain('[redacted]');
+      expect(text).not.toContain(secret);
+    });
   });
 
   it('a non-401/403 error with an empty body reports only the status', () => {
