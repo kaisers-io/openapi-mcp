@@ -244,6 +244,37 @@ describe('--omit-unsupported-parameters (issue #67)', () => {
     );
   });
 
+  it('applies per API, and reports on each API by its own tool names', async () => {
+    const result = await cli([
+      'check',
+      '--api',
+      'shop=spec.json',
+      '--api',
+      'pets=spec.json',
+      '--base-url',
+      'shop=https://shop.example.test',
+      '--base-url',
+      'pets=https://pets.example.test',
+      '--cache-key',
+      'pets=pets',
+      '--omit-unsupported-parameters',
+      'shop=method:get',
+    ]);
+    const report = JSON.parse(result.lines.join('\n')) as {
+      data: { startup: { status: string }; apis?: { name?: string; exposed: string[] }[] };
+      warnings: string[];
+    };
+    expect(report.data.startup).toStrictEqual({ status: 'ok' });
+    const exposed = Object.fromEntries(
+      (report.data.apis ?? []).map((api) => [api.name, api.exposed.length]),
+    );
+    expect(exposed).toStrictEqual({ shop: 2, pets: 0 });
+    const warnings = report.warnings.join('\n');
+    expect(warnings).not.toContain('changes nothing');
+    expect(warnings).toMatch(/shop.*--omit-unsupported-parameters: 2 tools leave out/u);
+    expect(warnings).toMatch(/pets.*2 operations are omitted only for optional parameters/u);
+  });
+
   it('counts the tools that are built against the budget, not the operations', async () => {
     // 600 reads pass the filters; 300 are omitted, so 300 tools fit the 512 budget
     const fits = await cli(['tools', '--spec', 'big.json']);

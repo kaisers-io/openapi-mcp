@@ -681,7 +681,7 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
     ...result.warnings,
     ...api.filterWarnings,
     ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
-    ...unsupportedParameterLines(built.tools, built.omitted, api.optIn),
+    ...unsupportedParameterLines(exposure.built.tools, exposure.built.omitted, api.optIn),
     ...optOut.warnings,
     ...exposure.warnings,
     // Exposed operations whose `security` requirement no configured
