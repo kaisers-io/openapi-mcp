@@ -1,5 +1,8 @@
 # openapi-mcp
 
+[![npm](https://img.shields.io/npm/v/@kaisers-io/openapi-mcp?label=npm&color=blue)](https://www.npmjs.com/package/@kaisers-io/openapi-mcp)
+[![CI](https://github.com/kaisers-io/openapi-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kaisers-io/openapi-mcp/actions/workflows/ci.yml)
+
 `openapi-mcp` gives an AI agent safe access to an HTTP API. You point it at the API's OpenAPI
 3.0, 3.1 or 3.2 description, from a URL or a file, and it runs on your machine as an
 [MCP](https://modelcontextprotocol.io) server: each operation you allow becomes a tool that
