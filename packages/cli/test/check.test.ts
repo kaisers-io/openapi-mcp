@@ -142,6 +142,7 @@ describe('check (issue #77)', () => {
     expect(report.ok).toBe(false);
     expect(report.data.environment).toEqual({
       status: 'failed',
+      reason: 'env_missing',
       variables: [
         { name: 'PRESENT_TOKEN', flag: '--header-env', set: true },
         { name: 'MISSING_KEY', flag: '--header-env', set: false },

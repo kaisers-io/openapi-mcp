@@ -2,8 +2,6 @@ name: bench
 on:
   push: { branches: [main] }
   pull_request:
-    # Docs-only changes cannot move a benchmark; skip the 45-minute job for them
-    paths-ignore: ['**/*.md', 'docs/**', 'LICENSE']
 # PR-controlled code runs here (install/build/benchmark) — keep the ambient token read-only.
 permissions:
   contents: read
@@ -23,23 +21,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: { persist-credentials: false }
+        # Depth 2: the merge commit's first parent is the base, for the docs-only check below
+        with: { persist-credentials: false, fetch-depth: 2 }
+      # Docs-only changes cannot move a benchmark, so the job skips the 45-minute measurement for
+      # them. It still runs and passes, because `bench` is a required check: a workflow skipped
+      # by `paths-ignore` never reports, and the pull request could not be merged.
+      - name: detect docs-only changes
+        id: changes
+        env:
+          IS_PR: ${{ github.event_name == 'pull_request' }}
+        run: |
+          set -euo pipefail
+          measure=true
+          # The list is read in full first: `grep -q` stopping early would fail the pipe
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          if [ "$IS_PR" = true ] && ! grep -qvE '(\.md$|^docs/|^LICENSE$)' <<< "$changed"; then
+            measure=false
+            echo "docs-only change: the benchmark is skipped"
+          fi
+          echo "measure=$measure" >> "$GITHUB_OUTPUT"
       - name: check out the PR base
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.changes.outputs.measure == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           path: .bench-base
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - if: steps.changes.outputs.measure == 'true'
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - if: steps.changes.outputs.measure == 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version-file: .node-version, package-manager-cache: false }
-      - run: pnpm install --frozen-lockfile --ignore-scripts && pnpm build
+      - if: steps.changes.outputs.measure == 'true'
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm build
       - name: build the PR base
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.changes.outputs.measure == 'true'
         working-directory: .bench-base
         run: pnpm install --frozen-lockfile --ignore-scripts && pnpm build
       - name: benchmark
+        if: steps.changes.outputs.measure == 'true'
         env:
           IS_PR: ${{ github.event_name == 'pull_request' }}
         run: |
@@ -52,6 +72,7 @@ jobs:
             node scripts/bench/run.ts --runs 5 --out bench-report.json
           fi
       - name: compare
+        if: steps.changes.outputs.measure == 'true'
         env:
           IS_PR: ${{ github.event_name == 'pull_request' }}
         run: |

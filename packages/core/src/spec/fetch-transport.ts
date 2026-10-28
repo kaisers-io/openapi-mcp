@@ -93,7 +93,7 @@ export const readBodyCapped = async (
   return Buffer.concat(chunks).toString('utf8');
 };
 
-export const failureHint = (status: number, hasHeaders: boolean): string => {
+const failureHint = (status: number, hasHeaders: boolean): string => {
   if (status !== 401 && status !== 403) {
     return '';
   }
@@ -101,6 +101,12 @@ export const failureHint = (status: number, hasHeaders: boolean): string => {
     ? ' — check the env vars configured via --spec-header-env'
     : ' — the spec URL may require authentication via --spec-header-env';
 };
+
+export const fetchFailedError = (status: number, source: string, hasHeaders: boolean): Error =>
+  validationError(
+    `spec fetch failed with HTTP ${status} for ${source}${failureHint(status, hasHeaders)}`,
+    status === 401 || status === 403 ? 'spec_http_401_403' : undefined,
+  );
 
 // A validator is remote-controlled, is stored in meta.json, and is replayed as a
 // request header on the next revalidation: keep it bounded and printable ASCII,

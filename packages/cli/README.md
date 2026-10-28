@@ -29,9 +29,11 @@ store the credentials safely, write the host config after you confirm, and check
 server works:
 
 ```bash
-npx skills add kaisers-io/openapi-mcp --skill configuring-openapi-mcp
-npx skills add kaisers-io/openapi-mcp --skill debugging-openapi-mcp
+npx skills add kaisers-io/openapi-mcp
 ```
+
+The command finds both skills, `configuring-openapi-mcp` and `debugging-openapi-mcp`, and asks
+which ones to install and for which agents.
 
 <a id="install"></a><a id="quick-start"></a>
 
