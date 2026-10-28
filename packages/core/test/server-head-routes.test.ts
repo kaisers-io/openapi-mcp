@@ -59,6 +59,8 @@ describe('headsWithoutGet', () => {
     ['a webhook key', [get('orderCreated'), entry('HEAD', 'orderCreated', true)]],
     // `AΣ` folds to `aς` in a request, while the template text `Σ` folds to `σ`
     ['a non-ASCII letter in another case', [get('/a/{id}σ'), head('/a/{id}Σ')]],
+    // Neither mode matches `/A/AΣ`: as written `a` is not `A`, folded `aς` is not `σ`
+    ['another case in one segment and non-ASCII in another', [get('/a/{id}Σ'), head('/A/{id}Σ')]],
   ])('keeps a HEAD when %s', (_name, entries) => {
     expect(headsWithoutGet(entries).size).toBe(0);
   });
@@ -114,10 +116,10 @@ describe('headsWithoutGet', () => {
     ];
     const VALUES = ['x', 'safe', '1', 'prefix-1', 'a', 'A', 'b-c', 'y.json', 'Σ', 'İ'];
     const pathOf = (): string =>
-      `/${Array.from({ length: 1 + random(2) }, () => pick(SEGMENTS)).join('/')}`;
+      `/${Array.from({ length: 1 + random(3) }, () => pick(SEGMENTS)).join('/')}`;
     const fill = (path: string): string => path.replaceAll(/\{[a-z]+\}/gu, () => pick(VALUES));
     let removed = 0;
-    for (let round = 0; round < 3000; round += 1) {
+    for (let round = 0; round < 20_000; round += 1) {
       const entries = [
         ...Array.from({ length: 1 + random(3) }, () => get(pathOf(), random(3) === 0)),
         head(pathOf()),
@@ -135,6 +137,55 @@ describe('headsWithoutGet', () => {
       }
     }
     // The generator must actually exercise removals
+    expect(removed).toBeGreaterThan(100);
+  });
+
+  // Exhaustive over a small alphabet: every pair of one excluded GET and one
+  // HEAD of up to two segments, every URL from every combination of sample
+  // values. Mixed letter case and context-dependent lower case included.
+  it('leaves out no HEAD that the route table lets any URL through, for every small pair', () => {
+    const SEGMENTS = ['a', 'A', 'x', '{id}', 'p-{id}', '{id}Σ', '{id}σ', 'Σ', 'İ{id}'];
+    const VALUES = ['x', 'A', 'a', 'p-1', 'Σ', 'İ', 'AΣ'];
+    const paths = [
+      ...SEGMENTS.map((first) => `/${first}`),
+      ...SEGMENTS.flatMap((first) => SEGMENTS.map((second) => `/${first}/${second}`)),
+    ];
+    const urlsOf = (path: string): string[] =>
+      path
+        .split(/\{[a-z]+\}/u)
+        .reduce<string[]>(
+          (urls, part, index) =>
+            index === 0
+              ? [part]
+              : urls.flatMap((url) => VALUES.map((value) => `${url}${value}${part}`)),
+          [],
+        );
+    const concrete = paths.filter((path) => !path.includes('{'));
+    const expectAllRefused = (entries: RouteEntry[], headPath: string): void => {
+      const table = createRouteTable(entries);
+      for (const url of urlsOf(headPath)) {
+        const verdict = table.authorize('HEAD', url, routeKey('HEAD', headPath));
+        expect({ entries, url, verdict }).toMatchObject({ verdict: expect.any(String) });
+      }
+    };
+    let removed = 0;
+    for (const getPath of paths) {
+      for (const headPath of paths) {
+        const entries = [get(getPath), head(headPath)];
+        if (headsWithoutGet(entries).size === 0) {
+          continue;
+        }
+        removed += 1;
+        expectAllRefused(entries, headPath);
+        // An exposed concrete GET next to it may only keep the HEAD
+        for (const path of concrete) {
+          const withConcrete = [get(getPath), get(path, true), head(headPath)];
+          if (headsWithoutGet(withConcrete).size > 0) {
+            expectAllRefused(withConcrete, headPath);
+          }
+        }
+      }
+    }
     expect(removed).toBeGreaterThan(100);
   });
 

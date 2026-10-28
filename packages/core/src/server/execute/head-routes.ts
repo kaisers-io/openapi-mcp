@@ -48,7 +48,7 @@ const patternItems = (tokens: readonly Token[], fold: boolean): Item[] =>
 // The route table folds a whole request segment at once, but each template
 // text on its own. Outside ASCII, lower case can depend on the neighbours (a
 // final Greek sigma), so a cover that relies on folding is proven only for
-// ASCII text; any other text must match as written.
+// ASCII text.
 const isAscii = (tokens: readonly Token[]): boolean =>
   tokens.every(
     (token) =>
@@ -108,13 +108,20 @@ const coversSegment = (
   return false;
 };
 
-const covers = (get: Route, head: Route, work: Work): boolean =>
+const coversIn = (get: Route, head: Route, fold: boolean, work: Work): boolean =>
   get.segments.length === head.segments.length &&
-  get.segments.every((tokens, index) => {
-    const theirs = head.segments[index] ?? [];
-    const fold = isAscii(tokens) && isAscii(theirs);
-    return coversSegment(patternItems(tokens, fold), headItems(theirs, fold), work);
-  });
+  get.segments.every((tokens, index) =>
+    coversSegment(patternItems(tokens, fold), headItems(head.segments[index] ?? [], fold), work),
+  );
+
+// The route table matches a request against a route in one mode for all of
+// its segments: as written, or folded. A cover is proven in one mode too:
+// as written, or folded when every text of both routes is ASCII.
+const covers = (get: Route, head: Route, work: Work): boolean =>
+  coversIn(get, head, false, work) ||
+  (get.segments.every((tokens) => isAscii(tokens)) &&
+    head.segments.every((tokens) => isAscii(tokens)) &&
+    coversIn(get, head, true, work));
 
 // Whether a concrete path is one of the URLs of `head`, matched as written,
 // as the route table picks a concrete winner
