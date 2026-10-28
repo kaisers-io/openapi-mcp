@@ -297,9 +297,10 @@ holds every warning `serve` prints at startup.
 
 When a stage fails, the `--json` report has `"ok": false`, `environment.status` is `failed` or
 `startup.status` is `failed` with an `error` object, and a skipped stage has the status
-`skipped`. A failed environment stage has the reason `env_missing`. An error found while the flags are parsed, such as an unknown flag, uses the general
-error envelope instead (see [Exit codes](#exit-codes)). Without `--json`, `check` prints the
-report as lines and the warnings go to stderr.
+`skipped`. A failed environment stage has the reason `env_missing`. An error found while the
+flags are parsed, such as an unknown flag, uses the general error envelope instead (see
+[Exit codes](#exit-codes)). Without `--json`, `check` prints the report as lines and the
+warnings go to stderr.
 
 ## `tools`
 

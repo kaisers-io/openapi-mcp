@@ -163,6 +163,7 @@ export const assertBaseUrlShape = (url: URL): void => {
   if (problem !== undefined) {
     throw usageError(
       `the resolved API base URL (${url.origin}${url.pathname}) is invalid — ${problem[1]}; pass --base-url to override`,
+      'base_url_unresolved',
     );
   }
 };

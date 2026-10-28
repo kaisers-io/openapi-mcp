@@ -677,6 +677,27 @@ describe('cache refresh', () => {
     expect(envelope.warningReasons).toEqual(['spec_http_401_403']);
   });
 
+  it.each([
+    ['tools', []],
+    ['check', ['--base-url', 'https://api.example.com']],
+  ])('%s serves the baseline after a 401 and reports spec_http_401_403', async (cmd, extra) => {
+    const statuses = [200, 401];
+    let clock = 0;
+    const capture = cacheCtx([specText], {
+      now: () => (clock += 3_600_000),
+      fetcher: (() =>
+        Promise.resolve(
+          new Response(specText, { status: statuses.shift() ?? 401 }),
+        )) as unknown as CliContext['fetcher'],
+    });
+    const args = ['node', 'openapi-mcp', '--json', cmd, '--spec', SPEC_URL, ...extra];
+    expect(await run(capture.ctx, args)).toBe(EXIT.OK);
+    expect(JSON.parse(capture.lines.at(-1)!)).not.toHaveProperty('warningReasons');
+    expect(await run(capture.ctx, [...args, '--ttl', '1s'])).toBe(EXIT.OK);
+    const envelope = JSON.parse(capture.lines.at(-1)!) as { warningReasons?: string[] };
+    expect(envelope.warningReasons).toEqual(['spec_http_401_403']);
+  });
+
   it('reports no change when the spec is identical', async () => {
     const capture = cacheCtx([specText, specText]);
     await seed(capture);

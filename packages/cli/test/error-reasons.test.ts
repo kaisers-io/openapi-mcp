@@ -26,6 +26,7 @@ const spec = (extra: Record<string, unknown> = {}) => ({
 
 const SPECS: Record<string, unknown> = {
   'plain.json': spec(),
+  'ftp-server.json': { ...spec(), servers: [{ url: 'ftp://api.example.test' }] },
   'external-ref.json': spec({ parameters: [{ $ref: 'other.json#/components/parameters/x' }] }),
 };
 
@@ -99,6 +100,15 @@ describe('error reasons (issue #79)', () => {
 
   it('base_url_unresolved: a file spec without servers and without --base-url', async () => {
     const { code, envelope } = await runJson(['check', '--spec', 'plain.json']);
+    expect(code).toBe(EXIT.USAGE);
+    expect(envelope.data?.startup.error).toMatchObject({
+      code: 'usage',
+      reason: 'base_url_unresolved',
+    });
+  });
+
+  it('base_url_unresolved: a spec base URL with a bad shape', async () => {
+    const { code, envelope } = await runJson(['check', '--spec', 'ftp-server.json']);
     expect(code).toBe(EXIT.USAGE);
     expect(envelope.data?.startup.error).toMatchObject({
       code: 'usage',
