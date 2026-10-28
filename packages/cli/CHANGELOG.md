@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-28
+
 ### Added
 
 - **Agent skills that configure and debug `openapi-mcp` (#72).** `npx skills add
-  kaisers-io/openapi-mcp --skill configuring-openapi-mcp` installs a skill that interviews the
+  kaisers-io/openapi-mcp` installs both. `configuring-openapi-mcp` interviews the
   user in plain words, shows a table of the operations the agent may use with what each one
   does, proposes how to store credentials on macOS, Linux or Windows, writes the host config
   for Claude Code, Codex, Claude Desktop, Cursor, VS Code or Gemini CLI after the user
@@ -22,10 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Stable error reasons in the JSON envelope (#79).** Next to `code`, an error caused by the
   config now carries a `reason`: `env_missing`, `base_url_unresolved`, `spec_http_401_403`,
-  `spec_external_ref` or `filter_no_selector`. `tools`, `cache` and `check` report it, `check`
-  in the failed stage. A spec refresh that fails with `401` or `403` and serves the cached spec
+  `spec_external_ref` or `filter_no_selector`. `tools`, `call`, `cache` and `check` report it,
+  `check` in the failed stage. A spec refresh that fails with `401` or `403` and serves the cached spec
   reports `"warningReasons": ["spec_http_401_403"]`. `code` and the exit codes are unchanged.
   See [Error reasons](docs/configuration.md#error-reasons).
+
 - **`call --dry-run` shows the request a tool call would send (#78).** It takes the options
   of `serve`, checks the arguments with the same error text a host gets, and builds the request
   with the executor's own steps. It reports the method, origin and path, the query parameter
