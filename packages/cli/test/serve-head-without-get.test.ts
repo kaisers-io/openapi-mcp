@@ -66,6 +66,13 @@ const SPEC = {
     '/reports/summary': { get: op('getSummary') },
     // A HEAD with its GET
     '/pets': { get: op('listPets'), head: op('headPets') },
+    // A concrete GET inside the HEAD's template wins over an excluded one,
+    // so HEAD /safe/ok passes while GET /safe/{id} is excluded
+    '/safe/{id}': { get: op('getSafeItem', [param('id')]), head: op('headSafe', [param('id')]) },
+    '/safe/ok': { get: op('getSafeOk') },
+    // A GET template broader than the HEAD's covers all of its URLs
+    '/blobs/{blobId}': { get: op('getBlob', [param('blobId')]) },
+    '/blobs/v-{ver}': { head: op('headBlobVersion', [param('ver')]) },
   },
 };
 
@@ -86,6 +93,11 @@ const CALLS: Readonly<Record<string, { args: Record<string, string>; request: st
   getSummary: { args: {}, request: 'GET /reports/summary' },
   listPets: { args: {}, request: 'GET /pets' },
   headPets: { args: {}, request: 'HEAD /pets' },
+  getSafeItem: { args: { id: 's-1' }, request: 'GET /safe/s-1' },
+  headSafe: { args: { id: 'ok' }, request: 'HEAD /safe/ok' },
+  getSafeOk: { args: {}, request: 'GET /safe/ok' },
+  getBlob: { args: { blobId: 'b-1' }, request: 'GET /blobs/b-1' },
+  headBlobVersion: { args: { ver: '2' }, request: 'HEAD /blobs/v-2' },
 };
 const ALL = Object.keys(CALLS);
 const HEADS = ALL.filter((name) => name.startsWith('head'));
@@ -124,6 +136,12 @@ const CASES: readonly {
       (name) => !['headSearch', 'getFile', 'headLatest', 'getDoc'].includes(name),
     ),
     leftOut: ['headSearch', 'headLatest'],
+  },
+  {
+    title: 'a denied GET template with an exposed concrete GET inside keeps its HEAD',
+    args: ['--deny', 'route:GET /safe/{id}'],
+    expected: ALL.filter((name) => !['headSearch', 'getSafeItem'].includes(name)),
+    leftOut: ['headSearch'],
   },
   {
     title: 'one denied GET, the other placeholder name and letter case',
@@ -235,20 +253,29 @@ describe('serve — a HEAD whose GET is not a tool (issue #68)', () => {
     expect(sent()).toStrictEqual(['HEAD /reports/monthly']);
   });
 
+  it('lets the kept HEAD through on the concrete GET only, and refuses its other URLs', async () => {
+    upstream.requests.length = 0;
+    await withServe(options(['--deny', 'route:GET /safe/{id}']), home, async (session) => {
+      const refused = await session.callTool('headSafe', { id: 'other' });
+      expect(refused).toMatchObject({ kind: 'result', isError: true });
+      expect(upstream.requests).toStrictEqual([]);
+      await expectSent(session, 'headSafe', () => session.callTool('headSafe', { id: 'ok' }));
+    });
+    expect(sent()).toStrictEqual(['HEAD /safe/ok']);
+  });
+
   it.each(CASES)('tools --json lists the left-out HEADs: $title', ({ args, leftOut }) => {
     const result = spawnSync(
       process.execPath,
       [CLI_ENTRY, '--json', 'tools', '--spec', specPath, ...args],
       { encoding: 'utf8', env: { ...process.env, HOME: home }, timeout: SUBPROCESS_WAIT_MS },
     );
-    const data = (
-      JSON.parse(result.stdout) as {
-        data: {
-          notExposed: { operationId?: string; decision: string }[];
-          counts: { notExposed: Record<string, number> };
-        };
-      }
-    ).data;
+    const { data } = JSON.parse(result.stdout) as {
+      data: {
+        notExposed: { operationId?: string; decision: string }[];
+        counts: { notExposed: Record<string, number> };
+      };
+    };
     const heads = data.notExposed
       .filter((row) => row.decision === 'head-without-get')
       .map((row) => row.operationId);

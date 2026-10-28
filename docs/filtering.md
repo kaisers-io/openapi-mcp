@@ -74,12 +74,14 @@ The server goes through these steps for each operation of the spec, in this orde
    [request authorization](security.md#request-authorization)).
 
 A `HEAD` request counts as a `GET` at call time, because a server may answer `HEAD` with its
-GET handler and so return what that `GET` returns. So a declared `HEAD` operation becomes a tool
-only together with the `GET` on the same path. When that `GET` is not a tool, because the filters
-exclude it or because it is omitted as not supported, the `HEAD` is left out too, with the
-decision `head-without-get`. `--allow 'route:HEAD /orders/{id}'` alone therefore exposes nothing:
-add the `GET` as well. A `GET` whose path only overlaps the `HEAD`'s refuses some of its calls,
-not all; the startup warning about overlapping paths names it.
+GET handler and so return what that `GET` returns. A `HEAD` call is therefore refused when its URL
+also matches a `GET` that is not a tool. When that holds for every URL a `HEAD` operation can
+send, the `HEAD` is left out with the decision `head-without-get`. Examples:
+`--allow 'route:HEAD /orders/{id}'` alone, or `--deny method:get`, or a `GET` omitted as not
+supported. Add the `GET` as well to keep the `HEAD`. A `HEAD` stays a tool as soon as one of its
+URLs can pass, for example when an exposed `GET` on a concrete path such as `/orders/latest`
+lies inside its template. Its other URLs are refused, and the startup warning about
+overlapping paths names them.
 
 ## Tool names
 

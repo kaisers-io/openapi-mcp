@@ -42,13 +42,8 @@ export type ExposureReport<Built> = {
 
 const display = (key: string): string => sanitizeSpecText(key, KEY_DISPLAY_MAX);
 
-// What the operator should know about the operations that are not tools
-// (issue #41), shared by `tools` and `serve`: one summary line counting them
-// by reason, and each exposed tool that a request authorization refuses for
-// some arguments because its path also matches an operation that is not
-// exposed. Under --strict-filters such an overlap stops the start.
-// A HEAD left out because its GET is not exposed (issue #68). `get` is that
-// GET's path, or '' when it has another template that covers the HEAD's path.
+// A HEAD left out because a GET that is not exposed refuses every call it
+// could make (issue #68); `get` is that GET's path
 const headRow = (
   tool: {
     toolName: string;
@@ -62,12 +57,14 @@ const headRow = (
   toolName: tool.toolName,
   tags: tool.operation.tags,
   decision: 'head-without-get',
-  reason:
-    get === ''
-      ? 'a HEAD request reaches a GET on the same path, which is not exposed'
-      : `a HEAD request reaches GET ${display(get)}, which is not exposed`,
+  reason: `every HEAD request also reaches GET ${display(get)}, which is not exposed`,
 });
 
+// What the operator should know about the operations that are not tools
+// (issue #41), shared by `tools` and `serve`: one summary line counting them
+// by reason, and each exposed tool that a request authorization refuses for
+// some arguments because its path also matches an operation that is not
+// exposed. Under --strict-filters such an overlap stops the start.
 export const exposureReport = <Built extends BuildToolsResult | DeferredToolsResult>(
   result: SpecPipelineResult,
   generated: Built,
@@ -97,9 +94,14 @@ export const exposureReport = <Built extends BuildToolsResult | DeferredToolsRes
       .filter((tool) => unreachable.has(keyOf(tool)))
       .map((tool) => headRow(tool, unreachable.get(keyOf(tool)) ?? '')),
   ];
-  // Compiled once: `serve` builds its route table from the same routes
-  const routeEntries = entriesOf(built.tools);
-  const { overlaps, complete, routes } = routeOverlaps(routeEntries, overlapBudget);
+  // Compiled once: `serve` builds its route table from the same routes. A
+  // HEAD left out above stays exposed there, as it was: leaving it out only
+  // stops offering a tool no call could pass, and must not change how any
+  // other request is authorized.
+  const routeEntries = entriesOf(generated.tools);
+  const reported = routeOverlaps(routeEntries, overlapBudget);
+  const { complete, routes } = reported;
+  const overlaps = reported.overlaps.filter((overlap) => !unreachable.has(overlap.exposed));
   const toolNames = new Map(
     built.tools.map((tool) => [
       `${tool.operation.method.toUpperCase()} ${tool.operation.path}`,
