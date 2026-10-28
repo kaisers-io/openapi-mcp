@@ -160,12 +160,16 @@ describe('headsWithoutGet', () => {
               : urls.flatMap((url) => VALUES.map((value) => `${url}${value}${part}`)),
           [],
         );
+    const segmentsOf = (path: string): number => path.split('/').length;
     const concrete = paths.filter((path) => !path.includes('{'));
+    // Collected and checked once: an expect per URL costs more than the check
+    const allowed: { entries: RouteEntry[]; url: string }[] = [];
     const expectAllRefused = (entries: RouteEntry[], headPath: string): void => {
       const table = createRouteTable(entries);
       for (const url of urlsOf(headPath)) {
-        const verdict = table.authorize('HEAD', url, routeKey('HEAD', headPath));
-        expect({ entries, url, verdict }).toMatchObject({ verdict: expect.any(String) });
+        if (table.authorize('HEAD', url, routeKey('HEAD', headPath)) === undefined) {
+          allowed.push({ entries, url });
+        }
       }
     };
     let removed = 0;
@@ -177,8 +181,9 @@ describe('headsWithoutGet', () => {
         }
         removed += 1;
         expectAllRefused(entries, headPath);
-        // An exposed concrete GET next to it may only keep the HEAD
-        for (const path of concrete) {
+        // An exposed concrete GET next to it may only keep the HEAD. Only one
+        // with as many segments can be one of its URLs.
+        for (const path of concrete.filter((other) => segmentsOf(other) === segmentsOf(headPath))) {
           const withConcrete = [get(getPath), get(path, true), head(headPath)];
           if (headsWithoutGet(withConcrete).size > 0) {
             expectAllRefused(withConcrete, headPath);
@@ -186,8 +191,10 @@ describe('headsWithoutGet', () => {
         }
       }
     }
+    expect(allowed).toStrictEqual([]);
     expect(removed).toBeGreaterThan(100);
-  });
+    // Under a second alone, several on a loaded CI runner
+  }, 30_000);
 
   it('keeps every HEAD it has not proven when the work budget runs out', () => {
     expect(headsWithoutGet([get('/a/{id}'), head('/a/{id}')], 0).size).toBe(0);
