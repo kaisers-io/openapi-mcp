@@ -45,7 +45,7 @@ which ones to install and for which agents.
 Preview the tools, without starting a server:
 
 ```bash
-npx -y @kaisers-io/openapi-mcp@0.5.0 tools --spec https://api.example.com/openapi.json
+npx -y @kaisers-io/openapi-mcp@0.6.0 tools --spec https://api.example.com/openapi.json
 ```
 
 Claude Code (`.mcp.json`, which expands `${VAR}`):
@@ -57,7 +57,7 @@ Claude Code (`.mcp.json`, which expands `${VAR}`):
       "command": "npx",
       "args": [
         "-y",
-        "@kaisers-io/openapi-mcp@0.5.0",
+        "@kaisers-io/openapi-mcp@0.6.0",
         "serve",
         "--spec",
         "https://api.example.com/openapi.json",
@@ -78,7 +78,7 @@ in `env_vars` from the environment you start it in:
 [mcp_servers.shop]
 command = "npx"
 args = [
-  "-y", "@kaisers-io/openapi-mcp@0.5.0", "serve",
+  "-y", "@kaisers-io/openapi-mcp@0.6.0", "serve",
   "--spec", "https://api.example.com/openapi.json",
   "--header-env", "Authorization=SHOP_TOKEN",
 ]

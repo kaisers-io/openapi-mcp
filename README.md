@@ -80,7 +80,7 @@ instead.
 Preview the tools a description would produce, without starting a server:
 
 ```bash
-npx -y @kaisers-io/openapi-mcp@0.5.0 tools --spec https://api.example.com/openapi.json
+npx -y @kaisers-io/openapi-mcp@0.6.0 tools --spec https://api.example.com/openapi.json
 ```
 
 Then add the server to your host. For Claude Code, put this in `.mcp.json` in your project:
@@ -92,7 +92,7 @@ Then add the server to your host. For Claude Code, put this in `.mcp.json` in yo
       "command": "npx",
       "args": [
         "-y",
-        "@kaisers-io/openapi-mcp@0.5.0",
+        "@kaisers-io/openapi-mcp@0.6.0",
         "serve",
         "--spec",
         "https://api.example.com/openapi.json"
@@ -109,7 +109,7 @@ For Codex, put this in `~/.codex/config.toml`:
 command = "npx"
 args = [
   "-y",
-  "@kaisers-io/openapi-mcp@0.5.0",
+  "@kaisers-io/openapi-mcp@0.6.0",
   "serve",
   "--spec",
   "https://api.example.com/openapi.json",
@@ -141,7 +141,7 @@ the other hosts, Windows, a description that needs its own credentials, and serv
 `--allow` replaces the read-only default, and `--deny` always wins:
 
 ```bash
-npx -y @kaisers-io/openapi-mcp@0.5.0 tools --spec ./shop.json --allow "tag:Orders" --deny "method:delete"
+npx -y @kaisers-io/openapi-mcp@0.6.0 tools --spec ./shop.json --allow "tag:Orders" --deny "method:delete"
 ```
 
 `tools` shows which operations become tools with these filters and how many it left out. Add
@@ -183,7 +183,7 @@ a token out of your config and your shell history.
 The examples run the CLI through `npx`. To have an `openapi-mcp` command instead:
 
 ```bash
-npm i -g @kaisers-io/openapi-mcp@0.5.0
+npm i -g @kaisers-io/openapi-mcp@0.6.0
 openapi-mcp --version
 openapi-mcp doctor
 ```
