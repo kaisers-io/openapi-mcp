@@ -195,7 +195,12 @@ const registerRefresh: CommandRegistrar = (program, ctx, state) => {
             ? `  candidate: none${data.cacheStatus === 'revalidated' ? ' — the spec is unchanged' : ''}`
             : `  candidate: ${meta.candidate.contentHash} (run "openapi-mcp cache promote" to accept)`,
         ];
-        return { data, humanLines, warnings: result.warnings };
+        return {
+          data,
+          humanLines,
+          warnings: result.warnings,
+          warningReasons: result.warningReasons,
+        };
       });
     });
 };

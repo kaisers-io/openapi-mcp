@@ -1,4 +1,5 @@
 import { usageError, validationError } from '../errors.ts';
+import type { ErrorReason } from '../errors.ts';
 import { HTTP_METHODS } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
 import type { OperationMethod } from '../spec/normalize.ts';
@@ -330,9 +331,10 @@ const replacementFor = (raw: string): string => {
   return `"operationId:${raw}"`;
 };
 
-const selectorError = (raw: string, problem: string): Error =>
+const selectorError = (raw: string, problem: string, reason?: ErrorReason): Error =>
   usageError(
     `${problem}; write ${sanitizeSpecText(replacementFor(raw), FILTER_PATTERN_MAX_LENGTH)}. Selectors: ${SELECTOR_LIST}`,
+    reason,
   );
 
 const methodOf = (value: string, selector: string): FilterMethod => {
@@ -389,7 +391,7 @@ export const parseFilterPattern = (raw: string): FilterPattern => {
   const colon = raw.indexOf(':');
   const space = raw.indexOf(' ');
   if (colon === -1 || (space !== -1 && space < colon)) {
-    throw selectorError(raw, 'a filter pattern needs a selector');
+    throw selectorError(raw, 'a filter pattern needs a selector', 'filter_no_selector');
   }
   const keyword = raw.slice(0, colon).toLowerCase();
   const selector = SELECTORS.find((known) => known.toLowerCase() === keyword);

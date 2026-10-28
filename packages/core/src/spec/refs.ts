@@ -52,6 +52,7 @@ export const assertInternal = (ref: string): void => {
   if (!ref.startsWith('#')) {
     throw validationError(
       `external $ref "${ref}" is not supported — inline external documents before serving`,
+      'spec_external_ref',
     );
   }
 };

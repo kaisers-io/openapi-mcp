@@ -67,6 +67,7 @@ export const resolveHeaderEnvMappings = (
     if (value === undefined || value === '') {
       throw usageError(
         `environment variable "${mapping.envVar}" (for header "${mapping.headerName}") is not set or empty`,
+        'env_missing',
       );
     }
     if (CONTROL_CHAR_RE.test(value)) {
