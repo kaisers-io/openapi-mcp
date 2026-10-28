@@ -149,7 +149,7 @@ that.
 |---|---|---|
 | optional, in the query or a header | the operation is omitted | the tool has no such argument |
 | required, or in the path | the operation is omitted | the operation is omitted |
-| a header the operator sets with `--header` or `--header-env` | the operation is omitted | the operation is omitted |
+| a header the operator sets with `--header` or `--header-env`, or one the HTTP client sends by itself (`Accept-Language`, `User-Agent`, `Accept-Encoding`, `Sec-Fetch-Mode`) | the operation is omitted | the operation is omitted |
 | optional, when another query parameter could send its name | the operation is omitted | the operation is omitted |
 
 Another query parameter could send the name when it is an object sent as separate keys

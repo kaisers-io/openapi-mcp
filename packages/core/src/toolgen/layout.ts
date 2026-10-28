@@ -251,6 +251,17 @@ const querystringField = (
   };
 };
 
+// Request headers the HTTP client sends by itself when a request has none
+// (fetch: Accept-Language, User-Agent, Accept-Encoding, Sec-Fetch-Mode). A
+// header parameter of one of these names cannot be left out: the request
+// would still carry the header, only with the client's value (review of #67).
+const CLIENT_HEADERS: ReadonlySet<string> = new Set([
+  'accept-language',
+  'user-agent',
+  'accept-encoding',
+  'sec-fetch-mode',
+]);
+
 // An optional query or header parameter this server cannot send, left out
 // of the tool instead of omitting the operation, when the operator opts in
 // (--omit-unsupported-parameters, issue #67)
@@ -364,14 +375,15 @@ export const paramFields = (
     // conversion run first; the reserved-header drop comes after.
     const checked = parameterProblem(param, name, location, version);
     const reserved = location === 'header' && reservedHeaders.has(name.toLowerCase());
-    // Only an optional query or header parameter the operator may set is
+    // Only an optional query or header parameter that no one else sends is
     // left out; any other problem still omits the operation
     const leaveOut =
       'problem' in checked &&
       omitUnsupported &&
       location !== 'path' &&
       param['required'] !== true &&
-      !reserved;
+      !reserved &&
+      !(location === 'header' && CLIENT_HEADERS.has(name.toLowerCase()));
     if ('problem' in checked && !leaveOut) {
       return { unrepresentable: checked.problem };
     }
