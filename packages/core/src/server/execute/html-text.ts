@@ -39,11 +39,16 @@ const decodeEntities = (text: string): string =>
 const collapse = (text: string): string => decodeEntities(text).replaceAll(/\s+/gu, ' ').trim();
 
 const titleOf = (html: string): string => {
-  const open = /<title\b[^>]*>/iu.exec(html);
+  // No `[^>]*` here: on a page with many `<title` and no `>` it would scan to
+  // the end once per match
+  const open = /<title\b/iu.exec(html);
   if (open === null) {
     return '';
   }
-  const start = open.index + open[0].length;
+  const start = html.indexOf('>', open.index) + 1;
+  if (start === 0) {
+    return '';
+  }
   const close = /<\/title\s*>/giu;
   close.lastIndex = start;
   const end = close.exec(html)?.index;

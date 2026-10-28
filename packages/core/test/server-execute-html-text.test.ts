@@ -13,6 +13,8 @@ describe('htmlErrorText', () => {
     ['upper-case tags', '<HTML><HEAD><TITLE>T</TITLE></HEAD><BODY>B</BODY></HTML>', 'T: B'],
     ['numeric and named entities', '<p>&#65;&#x42;&copy;&unknown;&#0;</p>', 'AB©&unknown;&#0;'],
     ['a title only', '<title>Only</title>', 'Only'],
+    ['an unclosed <title> tag', '<title', '<title'],
+    ['an unclosed title', '<title>Never closed', ''],
     ['plain text', 'just text', 'just text'],
   ])('handles %s', (_name, html, expected) => {
     expect(htmlErrorText(html)).toBe(expected);
@@ -23,6 +25,8 @@ describe('htmlErrorText', () => {
     const started = performance.now();
     htmlErrorText(hostile);
     htmlErrorText('<a'.repeat(400_000));
+    htmlErrorText('<title'.repeat(200_000));
+    htmlErrorText(`${'</title '.repeat(100_000)}`);
     expect(performance.now() - started).toBeLessThan(2000);
   });
 });
