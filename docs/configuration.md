@@ -316,13 +316,15 @@ openapi-mcp --json call createPet --dry-run --args-json '{"name": "Rex"}' \
 ```
 
 `call` checks the arguments as `serve` would, so an invalid argument gets the error text a host
-would get, with the code `tool_error` and exit code `3`. It then builds the request with the
+would get, with the code `tool_error` and exit code `3`. A response schema that cannot be
+compiled is refused the same way, since `serve` would not send the call either. It then builds the request with the
 same steps as `serve` and reports, instead of sending it:
 
 - `method`, `origin` and `path`, and the names of the query parameters (`query`), never their
   values.
 - `headers`: every header name. A credential from `--header-env` shows `"credential": "set"`,
-  and the OAuth `authorization` header `"credential": "not evaluated"`. No value is printed.
+  and the OAuth `authorization` header `"credential": "not evaluated"`. No value is printed,
+  and a configured secret in an argument is redacted, as in every other output.
 - `body`: its media type and size in bytes, or `"none"`. `uploads` names each file read with
   `--uploads`, with its size.
 - `checks`: `route` (the operation the path resolves to), `egress` (the address the host
@@ -672,8 +674,7 @@ matching the message, which may change between versions:
 | `filter_no_selector` | an `--allow`, `--deny` or `--omit-output-schema` pattern has no selector |
 
 `tools`, `call`, `cache` and `check` report these reasons, and `check` puts them in the failed
-stage.
-An error without one of these causes has only a `code`. A warning that replaces an error
+stage. An error without one of these causes has only a `code`. A warning that replaces an error
 reports the reason too: when a spec refresh fails with `401` and the cached spec is served
 instead, the envelope has `"warningReasons": ["spec_http_401_403"]` next to `warnings`.
 `warningReasons` is present only when it is not empty. Tool call errors and the plain-text

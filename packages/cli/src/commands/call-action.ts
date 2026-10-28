@@ -108,17 +108,16 @@ export const runCall = async (
     }
     let report: DryRunReport | undefined;
     const executor: ToolExecutor = async (target, data) => {
-      const result = await dryRunCall(
-        prepared.executorConfigFor(target),
-        target,
-        data,
-        (hostname) =>
-          ctx.transport.resolve(hostname, ctx.transport.timeoutSignal(prepared.timeoutMs)),
+      const config = prepared.executorConfigFor(target);
+      const result = await dryRunCall(config, target, data, (hostname) =>
+        ctx.transport.resolve(hostname, ctx.transport.timeoutSignal(prepared.timeoutMs)),
       );
       if ('refused' in result) {
         return result.refused;
       }
-      ({ report } = result);
+      // A configured secret can reach the report through an argument, in
+      // the path for example; it is redacted as every other output is
+      report = config.redactor.redactJson(result.report) as DryRunReport;
       return textOutcome('dry run', false);
     };
     const dispatcher = createDispatcher({

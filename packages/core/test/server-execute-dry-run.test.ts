@@ -83,7 +83,8 @@ const config = (overrides: Partial<ExecutorConfig> = {}): ExecutorConfig => ({
   maxResponseBytes: 65_536,
   outboundBudgets: { maxUrlLength: 8192, maxHeaderBytes: 16_384, maxBodyBytes: 65_536 },
   maxConcurrent: 16,
-  validators: new Map(),
+  // Every tool has a validator entry, as serve registers one per tool
+  validators: { has: () => true, get: () => {} },
   ...overrides,
 });
 
@@ -199,6 +200,34 @@ describe('dryRunCall (issue #78)', () => {
     expect('refused' in build).toBe(true);
     const meta = await dryRunCall(config(), toolNamed('openapi_mcp_status'), {}, publicHost);
     expect('refused' in meta).toBe(true);
+    const unregistered = await dryRunCall(
+      config({ validators: new Map() }),
+      toolNamed('createThing'),
+      { body: {} },
+      publicHost,
+    );
+    expect('refused' in unregistered).toBe(true);
+  });
+
+  it('refuses a call whose response validator cannot be compiled, as the executor does', async () => {
+    const result = await dryRunCall(
+      config({
+        validators: {
+          has: () => true,
+          get: () => {
+            throw new Error('invalid pattern');
+          },
+        },
+      }),
+      toolNamed('createThing'),
+      { body: {} },
+      publicHost,
+    );
+    expect('refused' in result && result.refused.content).toEqual([
+      expect.objectContaining({
+        text: expect.stringContaining('output schema could not be compiled') as unknown,
+      }),
+    ]);
   });
 
   it('names an upload with its size, and refuses a missing file', async () => {

@@ -29,6 +29,7 @@ import { withinApi } from './hop-authorizer.ts';
 import {
   callArguments,
   checkBase,
+  checkValidator,
   isError,
   prepareCall,
   readCallUploads,
@@ -41,7 +42,7 @@ import { imageOutcome, isImageResponse } from './image-result.ts';
 import { decorateResponseOutcome } from './forwarded-headers.ts';
 import type { Uploads } from './uploads.ts';
 import type { ImageResponses } from './image-result.ts';
-import type { EnvelopeValidator, EnvelopeValidators } from './envelope-validators.ts';
+import type { EnvelopeValidators } from './envelope-validators.ts';
 import type { PageInput } from './forwarded-headers.ts';
 import { NO_NEXT_PAGE, nextPageHint } from '../../toolgen/pagination.ts';
 import { PROJECTION_FIELD } from '../../toolgen/projection.ts';
@@ -260,27 +261,11 @@ const runUpstreamCall = async (
     report({ outcome: 'internal_error' });
     return unsent('this tool has no upstream operation to execute');
   }
-  // Validators FAIL-CLOSED, mandatory: a missing map entry is a wiring bug
-  // (the caller must build one entry per upstream tool, `undefined` for a
-  // genuine no-outputSchema tool) — never fall through to a silent
-  // unvalidated text path.
-  if (!config.validators.has(tool.name)) {
-    report({ outcome: 'internal_error' });
-    return unsent('no response validator is registered for this tool');
+  const validated = checkValidator(config, tool.name, report);
+  if ('refused' in validated) {
+    return validated.refused;
   }
-  // A validator compiled on demand can fail here. That happens before the
-  // request is built, so a refused schema never follows a sent write. The
-  // cause is the operator's to read (lazyEnvelopeValidators reports it);
-  // the caller gets fixed text.
-  let validator: EnvelopeValidator | undefined;
-  try {
-    validator = config.validators.get(tool.name);
-  } catch {
-    report({ outcome: 'internal_error' });
-    return unsent(
-      "this tool's output schema could not be compiled, so its response cannot be validated; the request was not sent",
-    );
-  }
+  const { validator } = validated;
   const checked = checkBase(config, generated, report);
   if ('refused' in checked) {
     return checked.refused;

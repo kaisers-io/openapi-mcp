@@ -4,7 +4,14 @@ import type { PinnedPolicy, Resolve } from '../../http/pinned-dispatcher.ts';
 import type { ToolCallOutcome } from '../result.ts';
 import type { SnapshotTool } from '../types.ts';
 import type { ExecutorConfig } from './executor.ts';
-import { callArguments, checkBase, prepareCall, readCallUploads, unsent } from './prepare.ts';
+import {
+  callArguments,
+  checkBase,
+  checkValidator,
+  prepareCall,
+  readCallUploads,
+  unsent,
+} from './prepare.ts';
 import { overFinalBudget } from './wire.ts';
 
 // `call --dry-run` (issue #78): the request a tool call would send, built by
@@ -106,6 +113,12 @@ export const dryRunCall = async (
   const { generated } = tool;
   if (generated === undefined) {
     return { refused: unsent('this tool has no upstream operation to execute') };
+  }
+  // A response validator that cannot be compiled refuses the call before it
+  // is sent, so the dry run refuses it too
+  const validated = checkValidator(config, tool.name, ignore);
+  if ('refused' in validated) {
+    return validated;
   }
   const checked = checkBase(config, generated, ignore);
   if ('refused' in checked) {

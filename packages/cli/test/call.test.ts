@@ -241,6 +241,59 @@ describe('call --dry-run (issue #78)', () => {
     expect(result.sent).toBe(0);
   });
 
+  it('redacts a configured secret that reaches the report through an argument', async () => {
+    const secret = 'example-token-not-a-secret';
+    const args = [
+      'getThing',
+      '--dry-run',
+      '--spec',
+      'spec.json',
+      '--header-env',
+      'X-Token=DEMO_TOKEN',
+      '--args-json',
+      JSON.stringify({ id: secret }),
+    ];
+    const env = { DEMO_TOKEN: secret };
+    const json = await callCli(args, { env });
+    const human = await callCli(args, { env, json: false });
+    expect(json.code).toBe(EXIT.OK);
+    expect(reportOf(json.lines).data?.path).toMatch(/^\/v1\/things\//u);
+    for (const result of [json, human]) {
+      expect([...result.lines, ...result.errLines].join('\n')).not.toContain(secret);
+    }
+  });
+
+  it('uses the configuration of the API the tool belongs to', async () => {
+    const result = await callCli(
+      [
+        'b_getThing',
+        '--dry-run',
+        '--api',
+        'a=spec.json',
+        '--api',
+        'b=spec.json',
+        '--cache-key',
+        'b=b',
+        '--base-url',
+        'a=https://a.example.test/v1',
+        '--base-url',
+        'b=https://b.example.test/v2',
+        '--header-env',
+        'b=Authorization=B_TOKEN',
+        '--args-json',
+        '{"id":"1"}',
+      ],
+      { env: { B_TOKEN: 'b-secret' } },
+    );
+    expect(result.code).toBe(EXIT.OK);
+    expect(reportOf(result.lines).data).toMatchObject({
+      tool: 'b_getThing',
+      origin: 'https://b.example.test',
+      path: '/v2/things/1',
+      headers: [{ name: 'accept' }, { name: 'authorization', credential: 'set' }],
+    });
+  });
+
   it('refuses what serve refuses before sending, with its tool error', async () => {
     const result = await callCli(
       [

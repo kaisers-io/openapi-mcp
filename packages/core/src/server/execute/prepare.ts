@@ -7,6 +7,7 @@ import type { ToolCallOutcome } from '../result.ts';
 import type { CallTelemetry } from '../telemetry.ts';
 import type { TraceContext } from '../trace.ts';
 import type { RuntimeTool } from '../types.ts';
+import type { EnvelopeValidator } from './envelope-validators.ts';
 import type { ExecutorConfig } from './executor.ts';
 import { hopAuthorizer } from './hop-authorizer.ts';
 import { buildRequest } from './request.ts';
@@ -51,6 +52,32 @@ export type PreparedCall = {
   // The header sets of one send with the given bearer token, before the
   // final budget check
   assemble: (bearer?: string) => HopHeaders;
+};
+
+// The tool's response validator. Validators FAIL-CLOSED, mandatory: a
+// missing map entry is a wiring bug (the caller must build one entry per
+// upstream tool, `undefined` for a genuine no-outputSchema tool) — never fall
+// through to a silent unvalidated text path. A validator compiled on demand
+// can fail here, before the request is built, so a refused schema never
+// follows a sent write. The cause is the operator's to read
+// (lazyEnvelopeValidators reports it); the caller gets fixed text.
+export const checkValidator = (
+  config: ExecutorConfig,
+  name: string,
+  report: (telemetry: CallTelemetry) => void,
+): { validator: EnvelopeValidator | undefined } | { refused: ToolCallOutcome } => {
+  if (!config.validators.has(name)) {
+    report({ outcome: 'internal_error' });
+    return refuse('no response validator is registered for this tool');
+  }
+  try {
+    return { validator: config.validators.get(name) };
+  } catch {
+    report({ outcome: 'internal_error' });
+    return refuse(
+      "this tool's output schema could not be compiled, so its response cannot be validated; the request was not sent",
+    );
+  }
 };
 
 // The base URL and the cleartext gate, before an upload is read
