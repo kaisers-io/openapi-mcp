@@ -60,7 +60,7 @@ const SPEC = {
   ),
 };
 
-const PREFIX = (status: number) => `upstream request failed with status ${String(status)}: `;
+const prefixOf = (status: number) => `upstream request failed with status ${String(status)}: `;
 
 describe('serve — the excerpt of an upstream error page (issue #63)', () => {
   let home: string;
@@ -114,16 +114,16 @@ describe('serve — the excerpt of an upstream error page (issue #63)', () => {
       return texts;
     });
     expect(replies).toStrictEqual({
-      nginx: `${PREFIX(502)}502 Bad Gateway nginx`,
-      styled: `${PREFIX(500)}Server Error: 500 Order service & database unavailable`,
-      xhtml: `${PREFIX(503)}Maintenance until 10:00`,
-      echo: `${PREFIX(500)}bad key [redacted]`,
+      nginx: `${prefixOf(502)}502 Bad Gateway nginx`,
+      styled: `${prefixOf(500)}Server Error: 500 Order service & database unavailable`,
+      xhtml: `${prefixOf(503)}Maintenance until 10:00`,
+      echo: `${prefixOf(500)}bad key [redacted]`,
       // Decoding the entities rebuilds the secret, so no excerpt at all
       encoded: 'upstream request failed with status 500',
       plain: expect.stringMatching(/^upstream request failed with status 500: plain failure x+/u),
-      json: `${PREFIX(422)}${jsonBody}`,
+      json: `${prefixOf(422)}${jsonBody}`,
     });
-    expect(replies['plain']).toHaveLength(PREFIX(500).length + 1024);
+    expect(replies['plain']).toHaveLength(prefixOf(500).length + 1024);
     expect(JSON.stringify(replies)).not.toContain(SECRET);
   });
 });
