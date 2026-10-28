@@ -42,6 +42,31 @@ export type ExposureReport<Built> = {
 
 const display = (key: string): string => sanitizeSpecText(key, KEY_DISPLAY_MAX);
 
+type Tools = (BuildToolsResult | DeferredToolsResult)['tools'];
+const keyOf = (tool: Tools[number]): string =>
+  routeKey(tool.operation.method.toUpperCase(), tool.operation.path);
+
+// Each exposed HEAD whose GET is not exposed, so every call it could make is
+// refused (issue #68): by route key, with that GET's path. Known once the
+// tools are generated: the output-schema opt-out drops none of them.
+export const unreachableHeads = (
+  result: SpecPipelineResult,
+  tools: Tools,
+): ReadonlyMap<string, string> =>
+  headsWithoutGet(
+    routeEntriesFor(
+      result.spec,
+      result.withheldOperations,
+      tools.map((tool) => tool.operation),
+    ),
+  );
+
+// The tools without those HEADs
+export const reachableTools = <Tool extends Tools[number]>(
+  tools: readonly Tool[],
+  unreachable: ReadonlyMap<string, string>,
+): Tool[] => tools.filter((tool) => !unreachable.has(keyOf(tool)));
+
 // A HEAD left out because a GET that is not exposed refuses every call it
 // could make (issue #68); `get` is that GET's path
 const headRow = (
@@ -81,9 +106,7 @@ export const exposureReport = <Built extends BuildToolsResult | DeferredToolsRes
   // A HEAD whose GET is not exposed is refused on every call: it is left
   // out, decided on the final tools, after toolgen and the output-schema
   // opt-out, so a GET omitted at any stage counts
-  const unreachable = headsWithoutGet(entriesOf(generated.tools));
-  const keyOf = (tool: Built['tools'][number]): string =>
-    routeKey(tool.operation.method.toUpperCase(), tool.operation.path);
+  const unreachable = unreachableHeads(result, generated.tools);
   const built: Built =
     unreachable.size === 0
       ? generated

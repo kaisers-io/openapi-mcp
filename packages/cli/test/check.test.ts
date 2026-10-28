@@ -41,6 +41,15 @@ const reads = (count: number, description = '') =>
 const SPECS: Record<string, unknown> = {
   'small.json': specWith(reads(2)),
   'many.json': specWith(reads(70)),
+  // 64 usable reads, the auto threshold, and a HEAD whose GET is denied
+  'head-at-threshold.json': specWith({
+    ...reads(64),
+    '/hidden/{id}': {
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      get: { operationId: 'getHidden', responses: ok() },
+      head: { operationId: 'headHidden', responses: ok() },
+    },
+  }),
   'large.json': specWith(reads(12, 'd'.repeat(4000))),
   'bad-pattern.json': specWith({
     '/x': {
@@ -255,6 +264,24 @@ describe('check (issue #77)', () => {
     const large = await check(['--spec', 'large.json', ...BASE, '--tool-mode', 'auto']);
     const bySize = reportOf(large.lines);
     expect(bySize.data).toMatchObject({ toolMode: 'discover', toolModeReason: 'size' });
+  });
+
+  // Issue #68: a HEAD left out for its denied GET is not counted
+  it('decides auto without a HEAD that no call can pass', async () => {
+    const result = await check([
+      '--spec',
+      'head-at-threshold.json',
+      ...BASE,
+      '--tool-mode',
+      'auto',
+      '--deny',
+      'route:GET /hidden/**',
+    ]);
+    const report = reportOf(result.lines);
+    expect(report.data.toolMode).toBe('per-operation');
+    expect(report.data.toolModeReason).toBeUndefined();
+    expect(report.data.apis?.[0]?.exposed).toHaveLength(64);
+    expect(report.warnings.join('\n')).not.toContain('--tool-mode auto');
   });
 
   it('compiles every output schema under discover, which serve leaves to the first call', async () => {

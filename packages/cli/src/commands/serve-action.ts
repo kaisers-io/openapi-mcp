@@ -77,6 +77,8 @@ import {
   omissionWarningLines,
   OUTPUT_SCHEMA_FORMS,
   parseSpecPipelineArgs,
+  reachableTools,
+  unreachableHeads,
   withOutputSchemaOptOut,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
@@ -469,6 +471,9 @@ type LoadedApi = {
   filterWarnings: string[];
   uploads: Awaited<ReturnType<typeof resolveUploadOptions>>;
   generated: ReturnType<typeof buildToolsDeferred>;
+  // The HEADs no call can pass (issue #68): left out of the tools, so the
+  // tool mode is decided without them
+  unreachable: ReadonlyMap<string, string>;
   // Built in full when `--tool-mode auto` sizes the tool definitions; reused
   // in either mode, never built twice (issue #61)
   completed?: ReturnType<typeof completeTools>;
@@ -546,7 +551,17 @@ const loadApi = async (
     defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
     ...nullableOption(cmdOpts.nullableResponseFields),
   });
-  return { name, cmdOpts, apiConfig, args, result, filterWarnings, uploads, generated: deferred };
+  return {
+    name,
+    cmdOpts,
+    apiConfig,
+    args,
+    result,
+    filterWarnings,
+    uploads,
+    generated: deferred,
+    unreachable: unreachableHeads(result, deferred.tools),
+  };
 };
 
 // Several APIs (issue #16): every line says which API it is about
@@ -769,7 +784,10 @@ const prepareServe = async (
       await loadApi(view.name, view.options, ctx, requestedToolMode, httpConfig, inspect),
     );
   }
-  const toolCount = loaded.reduce((sum, api) => sum + api.generated.tools.length, 0);
+  const toolCount = loaded.reduce(
+    (sum, api) => sum + reachableTools(api.generated.tools, api.unreachable).length,
+    0,
+  );
   const budget =
     requestedToolMode === 'per-operation'
       ? SPEC_BUDGETS.maxToolCount
@@ -786,7 +804,9 @@ const prepareServe = async (
     // Sized as the host lists them, with their qualified names (review of #61)
     return definitionBytes(
       loaded.flatMap((api) =>
-        api.completed === undefined ? [] : qualified(api, api.completed).tools,
+        api.completed === undefined
+          ? []
+          : reachableTools(qualified(api, api.completed).tools, api.unreachable),
       ),
     );
   });

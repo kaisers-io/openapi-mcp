@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now left out when every URL it can send matches a `GET` that is not a tool, whether the filters
   excluded that `GET` or it was omitted as not supported, and listed under `notExposed` with the
   decision `head-without-get`; `notExposedCounts` counts it. A `HEAD` with at least one URL that
-  can pass stays a tool. Request authorization is unchanged. See [filtering.md](docs/filtering.md#how-a-decision-is-made).
+  can pass stays a tool. Request authorization is unchanged. See
+  [filtering.md](docs/filtering.md#how-a-decision-is-made).
 
 ## [0.6.0] - 2026-10-28
 
