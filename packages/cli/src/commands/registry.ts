@@ -4,6 +4,7 @@ import type { RunState } from '../main.ts';
 import { registerCache } from './cache.ts';
 import { registerDoctor } from './doctor.ts';
 import { registerHelp } from './help.ts';
+import { registerCall } from './call.ts';
 import { registerCheck, registerServe } from './serve.ts';
 import { registerTools } from './tools.ts';
 
@@ -15,5 +16,6 @@ export const REGISTRARS: readonly CommandRegistrar[] = [
   registerCache,
   registerServe,
   registerCheck,
+  registerCall,
   registerHelp,
 ];

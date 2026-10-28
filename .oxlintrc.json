@@ -492,6 +492,16 @@
       }
     },
     {
+      "files": ["packages/core/src/server/execute/prepare.ts"],
+      "rules": {
+        // Off: prepare.ts holds every step an upstream call takes before it
+        // sends (issue #78) -- uploads, the request builder, route
+        // authorization, the wire guards, retries and the idempotency key --
+        // so the executor and `call --dry-run` cannot drift apart
+        "import/max-dependencies": "off"
+      }
+    },
+    {
       "files": ["packages/core/src/server/execute/executor.ts"],
       "rules": {
         // Off: executor.ts is the composition root of one upstream tool
@@ -669,13 +679,12 @@
     {
       "files": ["packages/core/src/server/execute/executor.ts"],
       "rules": {
-        // Off: executor.ts is the whole integration point wiring
-        // request-building, the pinned transport, response-mapping,
-        // redaction, and the concurrency semaphore -- sanitizing a
-        // buildRequest error's spec-derived wireName and assembleHeaders's
-        // header-precedence write order both depend on seeing the full call
-        // sequence in one place; splitting either out would separate that
-        // ordering invariant from the code that must respect it.
+        // Off: executor.ts is the whole integration point wiring the
+        // prepared request (prepare.ts), the pinned transport, the OAuth
+        // token wait and its one 401 replay, retries, response-mapping and
+        // the concurrency semaphore -- the effect of a sent call depends on
+        // seeing that whole send sequence in one place; splitting it would
+        // separate the effect rules from the sends they describe.
         "max-lines": "off",
         // Off for the same reason: as the integration point it imports one
         // module per stage it wires (request, transport + connection pool,

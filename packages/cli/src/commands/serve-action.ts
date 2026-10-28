@@ -1003,6 +1003,9 @@ const prepareServe = async (
     // with one API; with several there is no single setting, so it stays off
     allowPrivateNetwork: multi ? false : first.allowPrivateNetwork,
     timeoutMs: first.api.args.options.timeoutMs,
+    // The configuration a tool's call uses, for `call --dry-run` (issue #78)
+    executorConfigFor: (tool: { name: string }): ExecutorConfig =>
+      configs.get(multi ? apiOfToolName(tool.name) : first.api.name) as ExecutorConfig,
     // What `check` reports (issue #77)
     toolModeReason: choice.reason,
     warningReasons: [...new Set(finished.flatMap((entry) => entry.api.result.warningReasons))],

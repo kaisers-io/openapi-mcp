@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the failed stage. A spec refresh that fails with `401` or `403` and serves the cached spec
   reports `"warningReasons": ["spec_http_401_403"]`. `code` and the exit codes are unchanged.
   See [Error reasons](docs/configuration.md#error-reasons).
+- **`call --dry-run` shows the request a tool call would send (#78).** It takes the options
+  of `serve`, checks the arguments with the same error text a host gets, and builds the request
+  with the executor's own steps. It reports the method, origin and path, the query parameter
+  and header names (a credential only as `set`), the body's media type and size, each upload
+  with its size, and whether route authorization, the egress check and the size budgets allow
+  it. Nothing is sent to the API or to an OAuth token endpoint, and no secret is printed. See
+  [`call`](docs/configuration.md#call).
 
 - **`check` runs the startup checks of `serve` without serving (#77).** It takes the same
   options, lists every environment variable they name as set or missing (all of them, never a
