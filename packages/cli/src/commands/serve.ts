@@ -25,7 +25,7 @@ const HTTP_AUTH_MODES = ['static', 'oauth'] as const;
 // which the packed-CLI smoke test exercises.
 // Every option of `serve`, also taken by `check` (issue #77), so the two can
 // never accept different flags
-const registerServeOptions = (base: Command) => {
+export const registerServeOptions = (base: Command) => {
   const command = registerApiOptions(
     registerSpecOptions(
       base,

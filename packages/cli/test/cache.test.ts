@@ -680,6 +680,7 @@ describe('cache refresh', () => {
   it.each([
     ['tools', []],
     ['check', ['--base-url', 'https://api.example.com']],
+    ['call', ['--base-url', 'https://api.example.com', '--dry-run', 'listThings']],
   ])('%s serves the baseline after a 401 and reports spec_http_401_403', async (cmd, extra) => {
     const statuses = [200, 401];
     let clock = 0;

@@ -30,6 +30,7 @@ export const SUBPROCESS_TEST_TIMEOUT_MS = 30_000;
 export const SUBPROCESS_E2E_FILES = [
   'test/bin.test.ts',
   'test/bin-compile-cache.test.ts',
+  'test/call-process.test.ts',
   'test/cache-concurrency.test.ts',
   'test/check-process.test.ts',
   'test/coverage-subprocess.test.ts',

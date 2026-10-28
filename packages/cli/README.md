@@ -1,5 +1,8 @@
 # openapi-mcp
 
+[![npm](https://img.shields.io/npm/v/@kaisers-io/openapi-mcp?label=npm&color=blue)](https://www.npmjs.com/package/@kaisers-io/openapi-mcp)
+[![CI](https://github.com/kaisers-io/openapi-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kaisers-io/openapi-mcp/actions/workflows/ci.yml)
+
 `openapi-mcp` gives an AI agent safe access to an HTTP API. You point it at the API's OpenAPI
 3.0, 3.1 or 3.2 description, from a URL or a file, and it runs on your machine as an
 [MCP](https://modelcontextprotocol.io) server: each operation you allow becomes a tool that
@@ -16,11 +19,11 @@ uses it.
 > **Only use a description you trust.** Its operation names and texts reach the model, and a
 > hostile description can try to steer the agent.
 
-Requirements: Node.js `^22.19.0 || >=24.11.0`, macOS, Linux or Windows. Use the latest patch
-release of your Node line, because older patches miss its security fixes. On Windows the cache
-directories are private through your user profile's access control list (owner, SYSTEM,
-Administrators), not through `0700`/`0600` modes. Other platforms, such as FreeBSD, are
-refused because they are untested, not because they are known to be unsafe.
+Requirements: Node.js 22.19 or later, or 24.11 or later (Node 23 is not supported), on
+macOS, Linux or Windows. Use the latest patch release of your Node line, because older patches miss
+its security fixes. On Windows the cache directories are private through your user profile's access
+control list (owner, SYSTEM, Administrators), not through `0700`/`0600` modes. Other platforms, such
+as FreeBSD, are refused because they are untested, not because they are known to be unsafe.
 
 ## Set it up with your agent
 
@@ -29,9 +32,11 @@ store the credentials safely, write the host config after you confirm, and check
 server works:
 
 ```bash
-npx skills add kaisers-io/openapi-mcp --skill configuring-openapi-mcp
-npx skills add kaisers-io/openapi-mcp --skill debugging-openapi-mcp
+npx skills add kaisers-io/openapi-mcp
 ```
+
+The command finds both skills, `configuring-openapi-mcp` and `debugging-openapi-mcp`, and asks
+which ones to install and for which agents.
 
 <a id="install"></a><a id="quick-start"></a>
 

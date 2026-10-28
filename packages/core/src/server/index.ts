@@ -50,6 +50,8 @@ export {
 } from './dispatch.ts';
 export { createExecutor } from './execute/executor.ts';
 export type { ExecutorConfig, ExecutorDeps, UpstreamExecutor } from './execute/executor.ts';
+export { dryRunCall } from './execute/dry-run.ts';
+export type { DryRunCheck, DryRunReport } from './execute/dry-run.ts';
 export {
   markSecretScanned,
   structuredOutcome,
