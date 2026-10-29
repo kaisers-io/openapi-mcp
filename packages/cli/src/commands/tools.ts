@@ -1,3 +1,4 @@
+import type { Command } from '@commander-js/extra-typings';
 import {
   buildTools,
   publicOmission,
@@ -72,7 +73,13 @@ const toToolRow = (generated: GeneratedTool): ToolRow => ({
 });
 
 export const registerTools: CommandRegistrar = (program, ctx, state) => {
-  registerSpecOptions(program.command('tools'))
+  // The cast restores SpecCmdOpts after the extra option, as in serve.ts
+  (
+    registerSpecOptions(program.command('tools')).option(
+      '--allow-insecure-http',
+      'permit a --spec-header-env credential over cleartext http to a non-loopback origin',
+    ) as unknown as Command<[], SpecCmdOpts>
+  )
     .description(
       'preview the operation inventory an OpenAPI spec generates, with filters applied (no server)',
     )

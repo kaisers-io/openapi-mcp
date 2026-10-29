@@ -3,6 +3,7 @@
 // validator/error mapping. No orchestration lives here.
 import type { fetch as undiciFetchType } from 'undici';
 import { validationError } from '../errors.ts';
+import { isLoopbackHost } from '../http/egress.ts';
 import { VALIDATOR_RE } from '../schemas/cache.ts';
 import { findSensitiveQueryParam } from './load.ts';
 import { sanitizeSpecText } from './sanitize.ts';
@@ -25,6 +26,26 @@ export const displaySource = (url: URL): string => `${url.origin}${url.pathname}
 export const hostnameOf = (url: URL): string => {
   const raw = url.hostname;
   return raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+};
+
+// The same cleartext gate as the API path (wire.ts cleartextBlocked): a
+// --spec-header-env credential never goes over plain http to a host that is
+// not loopback unless the operator opted in with --allow-insecure-http.
+export const assertNoCleartextCredential = (
+  url: URL,
+  hasCredential: boolean,
+  allowInsecureHttp: boolean,
+): void => {
+  if (
+    hasCredential &&
+    url.protocol === 'http:' &&
+    !allowInsecureHttp &&
+    !isLoopbackHost(url.hostname)
+  ) {
+    throw validationError(
+      `refusing to send a --spec-header-env credential in cleartext to ${displaySource(url)} (use https, or pass --allow-insecure-http to override)`,
+    );
+  }
 };
 
 export const validateHopUrl = (url: URL): void => {

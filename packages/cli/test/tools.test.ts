@@ -1045,3 +1045,39 @@ describe('tools command — withheld output schema (kaisers-io/openapi-mcp-archi
     expect(row?.outputSchemaWithheld).toMatch(/nested quantifiers/u);
   });
 });
+
+describe('tools command — spec credentials over plain http', () => {
+  const argv = [
+    'node',
+    'openapi-mcp',
+    'tools',
+    '--spec',
+    'http://specs.example.test/openapi.json',
+    '--spec-header-env',
+    'Authorization=SPEC_TOKEN',
+    '--trust-spec-updates',
+  ];
+  const specCtx = () => {
+    const sent: string[] = [];
+    const fetcher = ((url: URL) => {
+      sent.push(String(url));
+      return Promise.resolve(
+        Response.json({ openapi: '3.1.0', info: { title: 'T', version: '1' }, paths: {} }),
+      );
+    }) as unknown as CliContext['fetcher'];
+    return { sent, ...fileCtx({ fetcher, env: { SPEC_TOKEN: 'example-token-not-a-secret' } }) };
+  };
+
+  it('refuses before anything is sent', async () => {
+    const { sent, errLines, ctx } = specCtx();
+    expect(await run(ctx, argv)).toBe(EXIT.VALIDATION);
+    expect(sent).toEqual([]);
+    expect(errLines.join('\n')).toContain('--allow-insecure-http');
+  });
+
+  it('fetches with --allow-insecure-http', async () => {
+    const { sent, ctx } = specCtx();
+    expect(await run(ctx, [...argv, '--allow-insecure-http'])).toBe(EXIT.OK);
+    expect(sent).toHaveLength(1);
+  });
+});

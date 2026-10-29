@@ -6,6 +6,7 @@ import type { ResolvedHeader } from '../http/headers.ts';
 import { createPinnedAgent, MAX_REDIRECTS, validateHopUrlSync } from '../http/pinned-dispatcher.ts';
 import type { PinnedPolicy } from '../http/pinned-dispatcher.ts';
 import {
+  assertNoCleartextCredential,
   describeCause,
   displaySource,
   errorName,
@@ -31,6 +32,7 @@ export type FetchSpecOptions = {
   timeoutMs?: number;
   maxBytes?: number;
   allowPrivateNetwork?: boolean;
+  allowInsecureHttp?: boolean;
 };
 
 export type FetchSpecDeps = {
@@ -101,6 +103,9 @@ const fetchChain = async (
   // security property (validate-then-advance, never the reverse).
   let url = initialUrl;
   validateHopUrl(url);
+  // Spec credentials go only on the original origin, so checking it once,
+  // before anything is sent, covers every hop that carries them
+  assertNoCleartextCredential(url, opts.headers.length > 0, opts.allowInsecureHttp === true);
   // MONOTONIC (matches the API path's monotonic stripping): once the chain
   // has left the original origin, it never regains credentials — even
   // bouncing back to the original origin later. Set once true, never reset.

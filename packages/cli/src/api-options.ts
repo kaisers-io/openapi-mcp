@@ -197,7 +197,7 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     )
     .option(
       '--allow-insecure-http',
-      'permit an operator credential (--header-env) over cleartext http to a non-loopback origin',
+      'permit an operator credential (--header-env, --spec-header-env) over cleartext http to a non-loopback origin',
     )
     .option(
       '--max-concurrency <n>',

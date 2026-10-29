@@ -234,8 +234,9 @@ export const resolveBaseUrl = (
 // shape" idiom (see spec-options.ts's comment on registerSpecOptions).
 // SpecCmdOpts's members (spec/allow/deny/strictFilters/specHeaderEnv/timeout/
 // ttl/cacheKey/trustSpecUpdates/allowPrivateNetwork) and ApiCmdOpts's members
-// (baseUrl/headerEnv/header/maxResponseBytes/allowInsecureHttp) share no name
-// with each other or with this type's own http/port/httpTokenEnv, and both
+// (baseUrl/headerEnv/header/maxResponseBytes) share no name with each other or
+// with this type's own http/port/httpTokenEnv, except allowInsecureHttp, which
+// both declare with the same `boolean | undefined` type, and both
 // share the identical `[key: string]: unknown` index signature, so the
 // three-way intersection below cannot silently collapse any inherited
 // member's type to `never`.

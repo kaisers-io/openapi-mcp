@@ -37,6 +37,8 @@ export type SpecPipelineOptions = {
   timeoutMs: number;
   cwd: string;
   allowPrivateNetwork: boolean;
+  // Lets --spec-header-env go over plain http to a host that is not loopback
+  allowInsecureHttp?: boolean;
   allow: readonly FilterPattern[];
   deny: readonly FilterPattern[];
   ttlMs: number;
@@ -378,6 +380,7 @@ const runSpecPipelineOnce = async (
           headers: opts.specHeaders,
           timeoutMs: opts.timeoutMs,
           allowPrivateNetwork: opts.allowPrivateNetwork,
+          allowInsecureHttp: opts.allowInsecureHttp === true,
           ...(decision.kind === 'revalidate' && decision.etag !== undefined
             ? { etag: decision.etag }
             : {}),

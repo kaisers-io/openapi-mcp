@@ -275,11 +275,28 @@ export const classifyAddress = (address: string): AddressClass => {
   return 'public';
 };
 
-const hostnameOf = (url: URL): string => {
-  const raw = url.hostname;
-  // URL.hostname keeps brackets around IPv6 literals; strip them for isIP()
-  return raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+// URL.hostname keeps brackets around an IPv6 literal; strip them for isIP()
+const stripBrackets = (hostname: string): string =>
+  hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+
+// The cleartext gate's own narrow "loopback" test: 'localhost'/'*.localhost',
+// an IPv4 127.0.0.0/8 literal, or the IPv6 loopback ::1. Deliberately
+// independent of the broader classifyAddress ('private' also covers
+// RFC1918/link-local/etc., which must NOT exempt an operator from the
+// cleartext-secret warning — only genuine loopback does). Shared by the API
+// executor (wire.ts) and the spec fetch (spec/fetch.ts).
+export const isLoopbackHost = (hostname: string): boolean => {
+  const bare = stripBrackets(hostname).toLowerCase();
+  if (bare === 'localhost' || bare.endsWith('.localhost')) {
+    return true;
+  }
+  if (isIP(bare) === 4) {
+    return bare.startsWith('127.');
+  }
+  return isIP(bare) === 6 && bare === '::1';
 };
+
+const hostnameOf = (url: URL): string => stripBrackets(url.hostname);
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 

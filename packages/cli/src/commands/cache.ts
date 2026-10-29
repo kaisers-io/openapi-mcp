@@ -125,6 +125,10 @@ const registerRefresh: CommandRegistrar = (program, ctx, state) => {
     .option('--timeout <duration>', 'spec fetch timeout (<int><s|m|h|d>)', '30s')
     .option('--trust-spec-updates', 'accept the refreshed spec directly instead of gating it')
     .option('--allow-private-network', 'permit private/loopback redirect targets during the fetch')
+    .option(
+      '--allow-insecure-http',
+      'permit a --spec-header-env credential over cleartext http to a non-loopback origin',
+    )
     .action(async (cmdOpts) => {
       const opts = globalOptsOf(program);
       state.exitCode = await wrapAction(ctx, opts, async () => {
@@ -156,6 +160,7 @@ const registerRefresh: CommandRegistrar = (program, ctx, state) => {
             timeoutMs: parseDuration(cmdOpts.timeout, '--timeout'),
             cwd: ctx.cwd(),
             allowPrivateNetwork: cmdOpts.allowPrivateNetwork === true,
+            allowInsecureHttp: cmdOpts.allowInsecureHttp === true,
             allow: [],
             deny: [],
             ttlMs: 0,

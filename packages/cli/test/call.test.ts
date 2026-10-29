@@ -328,8 +328,7 @@ describe('call --dry-run (issue #78)', () => {
 describe('call — secret headers with a URL spec', () => {
   const SPEC_URL = 'https://specs.example.test/openapi.json';
   const env = { API_KEY: 'example-token-not-a-secret', USER: 'demo', PASS: 'example-pass' };
-  const fetcher = (() =>
-    Promise.resolve(new Response(JSON.stringify(SPEC)))) as unknown as CliContext['fetcher'];
+  const fetcher = (() => Promise.resolve(Response.json(SPEC))) as unknown as CliContext['fetcher'];
   const urlCall = (extra: readonly string[]) =>
     callCli(['getThing', '--dry-run', '--spec', SPEC_URL, '--args-json', '{"id":"a"}', ...extra], {
       env,
@@ -384,5 +383,54 @@ describe('call — secret headers with a URL spec', () => {
   it('accepts a URL spec without secret headers and no --base-url', async () => {
     const result = await urlCall([]);
     expect(result.code).toBe(EXIT.OK);
+  });
+});
+
+// The spec fetch of serve, check and call reads the same --allow-insecure-http
+// as the API requests, or `--enable <name>=allow-insecure-http` per API.
+describe('call — spec credential over plain http', () => {
+  const SPEC_URL = 'http://specs.example.test/openapi.json';
+  const env = { SPEC_TOKEN: 'example-token-not-a-secret' };
+  const fetcher = (() => Promise.resolve(Response.json(SPEC))) as unknown as CliContext['fetcher'];
+
+  it('refuses without --allow-insecure-http and fetches with it', async () => {
+    const argv = [
+      'getThing',
+      '--dry-run',
+      '--spec',
+      SPEC_URL,
+      '--spec-header-env',
+      'Authorization=SPEC_TOKEN',
+      '--trust-spec-updates',
+      '--args-json',
+      '{"id":"a"}',
+    ];
+    const refused = await callCli(argv, { env, fetcher });
+    expect(refused.code).toBe(EXIT.VALIDATION);
+    expect(reportOf(refused.lines).error?.message).toContain('--allow-insecure-http');
+    const allowed = await callCli([...argv, '--allow-insecure-http'], { env, fetcher });
+    expect(allowed.code).toBe(EXIT.OK);
+  });
+
+  it('takes the per-API switch when several APIs are served', async () => {
+    const argv = [
+      'shop_getThing',
+      '--dry-run',
+      '--api',
+      `shop=${SPEC_URL}`,
+      '--spec-header-env',
+      'shop=Authorization=SPEC_TOKEN',
+      '--enable',
+      'shop=trust-spec-updates',
+      '--args-json',
+      '{"id":"a"}',
+    ];
+    const refused = await callCli(argv, { env, fetcher });
+    expect(refused.code).toBe(EXIT.VALIDATION);
+    const allowed = await callCli([...argv, '--enable', 'shop=allow-insecure-http'], {
+      env,
+      fetcher,
+    });
+    expect(allowed.code).toBe(EXIT.OK);
   });
 });

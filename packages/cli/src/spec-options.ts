@@ -92,6 +92,9 @@ export type SpecCmdOpts = {
   cacheKey?: string;
   trustSpecUpdates?: boolean;
   allowPrivateNetwork?: boolean;
+  // Registered by registerApiOptions (serve, check, call) or by the command
+  // itself (tools, cache refresh): it also gates the API credentials
+  allowInsecureHttp?: boolean;
   defaultResponseIsError?: boolean;
   // `true` when the flag is given without a value
   nullableResponseFields?: boolean | string;
@@ -256,6 +259,7 @@ export const parseSpecPipelineArgs = (cmdOpts: SpecCmdOpts, ctx: CliContext): Sp
       timeoutMs,
       cwd: ctx.cwd(),
       allowPrivateNetwork: cmdOpts.allowPrivateNetwork === true,
+      allowInsecureHttp: cmdOpts.allowInsecureHttp === true,
       allow: filters.allow,
       deny: filters.deny,
       ttlMs,
