@@ -795,6 +795,54 @@ describe('runSpecPipeline — cache', () => {
     expect(metaOf(cacheFs).candidate).toBeUndefined();
   });
 
+  // 900 aliases of an 80,000-character scalar: about 84 KB of YAML that
+  // serializes to about 72 MB of JSON, over the 64 MiB the cache persists
+  const aliasAmplifiedSpec = [
+    'openapi: 3.1.0',
+    'info: { title: Amplified, version: "1.0.0" }',
+    `x-big: &big "${'A'.repeat(80_000)}"`,
+    `x-copies: [${Array.from({ length: 900 }, () => '*big').join(', ')}]`,
+    'paths:',
+    '  /things:',
+    '    get:',
+    '      operationId: listThings',
+    '      responses: { "200": { description: ok } }',
+  ].join('\n');
+
+  it.each([
+    ['gated', false],
+    ['trusted', true],
+  ])(
+    'serves the last known good baseline when a %s refresh is over the persisted budget',
+    async (_label, trustSpecUpdates) => {
+      const cacheFs = memoryCacheFs();
+      let calls = 0;
+      const fetcher = (() => {
+        calls += 1;
+        return Promise.resolve(
+          new Response(calls === 1 ? remoteSpec('Remote') : aliasAmplifiedSpec),
+        );
+      }) as unknown as SpecFetcher;
+      await runSpecPipeline(specUrl, cachedOpts, { ...fileDeps, fetcher, cacheFs });
+      const second = await runSpecPipeline(
+        specUrl,
+        { ...cachedOpts, nowMs: 3_600_001, trustSpecUpdates },
+        { ...fileDeps, fetcher, cacheFs },
+      );
+      expect(second.cacheStatus).toBe('stale');
+      expect(second.spec.title).toBe('Remote');
+      expect(second.warnings.join('\n')).toContain('persisted-document budget');
+      expect(metaOf(cacheFs).candidate).toBeUndefined();
+    },
+  );
+
+  it('still serves a spec over the persisted budget when no cache is in use', async () => {
+    const { fetcher } = countingFetcher(aliasAmplifiedSpec);
+    const result = await runSpecPipeline(specUrl, baseOpts, { ...fileDeps, fetcher });
+    expect(result.cacheStatus).toBe('bypassed');
+    expect(result.spec.title).toBe('Amplified');
+  });
+
   it('propagates the failure when a refresh fails with no accepted baseline', async () => {
     const cacheFs = memoryCacheFs();
     const fetcher = (() =>

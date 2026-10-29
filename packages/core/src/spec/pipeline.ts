@@ -1,8 +1,14 @@
 import { asCacheError } from '../cache/errors.ts';
 import type { CacheFs } from '../cache/fs.ts';
-import { resolveCachePolicy } from '../cache/paths.ts';
+import { CACHE_MAX_PERSISTED_BYTES, resolveCachePolicy } from '../cache/paths.ts';
 import type { CacheLayout } from '../cache/paths.ts';
-import { readCacheEntry, touchRevalidated, writeAccepted, writeCandidate } from '../cache/store.ts';
+import {
+  readCacheEntry,
+  serializedSizeWithin,
+  touchRevalidated,
+  writeAccepted,
+  writeCandidate,
+} from '../cache/store.ts';
 import { isStaleRevisionError } from '../cache/revision.ts';
 import type { ExpectedRevision } from '../cache/revision.ts';
 import type { CacheEntry } from '../cache/store.ts';
@@ -423,9 +429,21 @@ const runSpecPipelineOnce = async (
       // failed cache write is not a failed refresh: the last-known-good rule
       // covers the network and the spec, not our own inability to persist.
       // Only the fetch and the validation may fall back.
-      processedRefresh =
-        reusableAcceptedDocument(cached, refreshed.loaded.contentHash) ??
-        (await processSpecText(refreshed.loaded.text));
+      const reused = reusableAcceptedDocument(cached, refreshed.loaded.contentHash);
+      processedRefresh = reused ?? (await processSpecText(refreshed.loaded.text));
+      // The persisted-document budget depends on the spec alone, so a document
+      // over it is a failed refresh, not a failed cache write. Checked only for
+      // a new document that a cache will persist: the accepted one already
+      // fits, and the no-cache path never persists. The writer checks again.
+      if (
+        reused === undefined &&
+        layout !== undefined &&
+        serializedSizeWithin(processedRefresh.document, CACHE_MAX_PERSISTED_BYTES) === undefined
+      ) {
+        throw validationError(
+          `the refreshed spec exceeds the ${CACHE_MAX_PERSISTED_BYTES}-byte persisted-document budget`,
+        );
+      }
     }
   } catch (error) {
     if (cached === undefined) {
