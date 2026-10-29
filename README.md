@@ -26,7 +26,7 @@ What you get without configuring anything:
 - The agent spends few tokens on the API. With many operations, `--tool-mode discover` lists a
   few fixed tools instead of one per operation, and `execute_code` lets the agent combine many
   calls in one program that returns only the result. For six tasks on GitHub's API, one agent
-  cost $0.33 this way and $2.08 with one tool per operation; see
+  spent 2.7 cents per task this way and 23.5 cents with one tool per operation; see
   [the measurements](docs/tool-modes.md#why-it-is-on-by-default).
 
 It supports OpenAPI 3.0, 3.1 and 3.2, from a URL or a local file. Swagger 2.0 is not

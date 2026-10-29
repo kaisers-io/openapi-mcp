@@ -18,8 +18,8 @@ uses it.
 
 The agent also spends few tokens on the API. With many operations, `--tool-mode discover` lists
 a few fixed tools instead of one per operation, and `execute_code` combines many calls in one
-program that returns only the result. For six tasks on GitHub's API, one agent cost $0.33 this
-way and $2.08 with one tool per operation
+program that returns only the result. For six tasks on GitHub's API, one agent spent 2.7 cents
+per task this way and 23.5 cents with one tool per operation
 ([measurements](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/tool-modes.md#why-it-is-on-by-default)).
 
 > **Only use a description you trust.** Its operation names and texts reach the model, and a

@@ -30,9 +30,9 @@ Every mode lists `execute_code`. With it, the agent writes a short JavaScript pr
 calls several read-only operations and gets back only the program's result. Details:
 [docs/tool-modes.md](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/tool-modes.md#scripts-execute_code).
 
-Keep it on. In every measurement, on a test API, GitHub and PokeAPI, both agents answered as
-correctly with it and needed fewer tool calls, and one agent's cost fell by 20% to 80%. The
-gain is largest when the agent pages through lists, follows ids from one operation or API to
+Keep it on. In the measurements on a test API, GitHub and PokeAPI, every answer was correct
+with it, one agent's cost per task fell by 25% to 86%, and the other agent used fewer tokens in
+most comparisons. The gain is largest when the agent pages through lists, follows ids from one operation or API to
 another, counts or sums.
 
 Tell the user three things:
@@ -41,8 +41,9 @@ Tell the user three things:
 - Every call inside a program goes through the same filters, rate limit and redaction as a
   direct call.
 - A program can make at most 50 calls and runs at most 30 s. Every call counts against
-  `--rate-limit` (120 a minute by default), so propose a higher limit when the agent will read
-  hundreds of items one by one.
+  `--rate-limit` (120 a minute by default). A call the limit stops waits and goes again, so a
+  program slows down near the limit. Propose a higher limit when the agent will read hundreds
+  of items one by one.
 
 Propose `--no-execute` only when the API changes data on `GET`, or when the user wants exactly
 one tool per operation.

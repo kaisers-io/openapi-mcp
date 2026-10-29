@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { sanitizeSpecText } from '../../spec/sanitize.ts';
 import type { CallRequest, DispatcherDeps } from '../dispatch.ts';
@@ -14,7 +15,7 @@ import {
 } from '../discovery-schemas.ts';
 import type { ExecuteInput } from '../discovery-schemas.ts';
 import { structuredOutcome, textOutcome } from '../result.ts';
-import type { ToolCallOutcome } from '../result.ts';
+import type { DispatchResult, ToolCallOutcome } from '../result.ts';
 import type { SnapshotTool, ToolMode } from '../types.ts';
 import { runScript, SCRIPT_LIMITS } from './run.ts';
 import type { NestedCall } from './run.ts';
@@ -40,6 +41,15 @@ export const executeTool = (toolMode: ToolMode): SnapshotTool => ({
     annotations: { readOnlyHint: true, openWorldHint: true },
   },
 });
+
+// The wait a rate-limited call names, or undefined for any other result
+const retryAfter = (result: DispatchResult): number | undefined => {
+  if (result.kind !== 'outcome' || result.outcome.meta?.['openapi-mcp/error'] !== 'rate_limited') {
+    return undefined;
+  }
+  const wait = result.outcome.meta['openapi-mcp/retryAfterMs'];
+  return typeof wait === 'number' ? Math.max(wait, 1) : 1000;
+};
 
 const jsonOrText = (text: string): unknown => {
   try {
@@ -116,14 +126,32 @@ export const executeCode = async (
       };
     }
     const target = args === undefined ? {} : { arguments: args };
-    const result = await dispatch({
-      ...(discover
-        ? { name: CALL_TOOL_NAME, arguments: { name: entry.name, ...target } }
-        : { name: entry.name, arguments: args ?? {} }),
-      signal,
-      textBytes: SCRIPT_LIMITS.receivedBytes,
-      ...(request.trace === undefined ? {} : { trace: request.trace }),
-    });
+    const send = () =>
+      dispatch({
+        ...(discover
+          ? { name: CALL_TOOL_NAME, arguments: { name: entry.name, ...target } }
+          : { name: entry.name, arguments: args ?? {} }),
+        signal,
+        textBytes: SCRIPT_LIMITS.receivedBytes,
+        ...(request.trace === undefined ? {} : { trace: request.trace }),
+      });
+    let result = await send();
+    // A call the rate limit stops waits for the time the limiter names and
+    // goes again, so a program that reads many items slows down instead of
+    // failing. The limiter still decides every call, and the program's own
+    // deadline ends the wait (the signal).
+    for (
+      let wait = retryAfter(result);
+      wait !== undefined && !signal.aborted;
+      wait = retryAfter(result)
+    ) {
+      try {
+        await sleep(wait, undefined, { signal });
+      } catch {
+        return { ok: false, error: 'cancelled' };
+      }
+      result = await send();
+    }
     if (result.kind !== 'outcome') {
       return { ok: false, error: 'the call failed unexpectedly' };
     }

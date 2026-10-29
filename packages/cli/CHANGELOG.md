@@ -39,8 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **`tools/list` has one more tool, `execute_code` (#60).** We measured two coding agents on a
-  test API, GitHub and PokeAPI. With the tool, every tool mode answered as many tasks correctly
-  and needed fewer tool calls, and one agent cost 20% to 80% less.
+  test API, GitHub and PokeAPI. With the tool, every answer was correct in every tool mode, one
+  agent cost 25% to 86% less per task, and the other used fewer tokens in 9 of 11 comparisons.
   [tool-modes.md](docs/tool-modes.md#why-it-is-on-by-default) explains why it is on by
   default. `--no-execute` keeps the earlier tool list.
 - **`execute` is a reserved API name (#60).** `--api execute=...` could form the tool name

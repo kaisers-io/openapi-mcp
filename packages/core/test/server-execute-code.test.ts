@@ -103,7 +103,7 @@ const setup = (
   const records: CallRecord[] = [];
   const dispatcher = createDispatcher({
     snapshot: options.snapshot ?? snapshotFor('discover', true, ['path:/**'], ['method:delete']),
-    limiter: { consume: options.consume ?? (() => true), retryAfterMs: () => 1000 },
+    limiter: { consume: options.consume ?? (() => true), retryAfterMs: () => 20 },
     now: () => 0,
     executor:
       options.executor ??
@@ -130,7 +130,7 @@ const setup = (
     }
     return result.outcome;
   };
-  return { execute, sent, records };
+  return { execute, sent, records, dispatcher };
 };
 
 const textOf = (outcome: ToolCallOutcome): string =>
@@ -237,26 +237,37 @@ describe('execute_code — nested calls', () => {
     expect(sent).toStrictEqual([]);
   });
 
-  it('charges the rate limit once per nested call, as for separate calls', async () => {
-    let budget = 3;
-    const { execute, sent } = setup({ consume: () => budget-- > 0 });
-    const outcome = await execute(`
-      const results = [];
-      for (let i = 0; i < 4; i++) {
-        try { await api.call('listThings'); results.push('ok'); } catch (error) { results.push(error.message); }
-      }
-      return results;
-    `);
-    // One for execute_code itself, two for nested calls, then none left
-    expect(outcome.structuredContent).toMatchObject({
-      result: [
-        'ok',
-        'ok',
-        'rate limit exceeded — too many tool calls; retry after 1s',
-        'rate limit exceeded — too many tool calls; retry after 1s',
-      ],
+  it('charges the rate limit for every nested call, and a refused one waits and goes again', async () => {
+    // The tool call itself, then two nested calls, then two refusals, then free
+    const decisions = [true, true, true, false, false];
+    let asked = 0;
+    const { execute, sent } = setup({
+      consume: () => {
+        asked += 1;
+        return decisions.shift() ?? true;
+      },
     });
-    expect(sent).toHaveLength(2);
+    const outcome = await execute(`
+      for (let i = 0; i < 3; i++) await api.call('listThings');
+      return 'done';
+    `);
+    expect(outcome.structuredContent).toMatchObject({ result: 'done' });
+    // Every attempt asked the limiter: 1 + 2 + 2 refused + 1
+    expect(asked).toBe(6);
+    expect(sent).toHaveLength(3);
+  });
+
+  it('stops waiting for the rate limit when the tool call is cancelled', async () => {
+    let budget = 1;
+    const { dispatcher } = setup({ consume: () => budget-- > 0 });
+    const started = performance.now();
+    const result = await dispatcher.call({
+      name: EXECUTE_TOOL_NAME,
+      arguments: { code: `await api.call('listThings'); return 1;` },
+      signal: AbortSignal.timeout(200),
+    });
+    expect(result).toMatchObject({ kind: 'outcome', outcome: { isError: true } });
+    expect(performance.now() - started).toBeLessThan(5000);
   });
 
   it('never hands a script a result holding a registered secret', async () => {

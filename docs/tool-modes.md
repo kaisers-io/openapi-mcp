@@ -168,8 +168,11 @@ the argument validation, `--rate-limit`, the egress rules and the redaction. `--
 writes one line for each call. The program itself has no network, file, timer, environment or
 module access. The [security model](security.md#scripts-execute_code) explains the sandbox.
 
-Every call in a program counts against `--rate-limit` (120 calls a minute by default). A task
-that reads more than 100 items one by one can reach it. Raise `--rate-limit` for such tasks.
+Every call in a program counts against `--rate-limit` (120 calls a minute by default). A call
+that the limit stops waits for the time the limiter names and goes again, until the program's
+30 s are up, so a program that reads many items gets slower instead of failing. A task that
+reads more than about 100 items one by one can still run out of time; raise `--rate-limit` for
+such tasks.
 
 ### Limits
 
@@ -206,47 +209,45 @@ model reads only the program's result.
 ### Why it is on by default
 
 We measured every tool mode with and without `execute_code`, with two coding agents, on a test
-API and on two public APIs. Each task ran in English and in German. The test API is a local
-shop with customers, orders, stock and tickets (`scripts/evals`). On GitHub and PokeAPI, the
-harness reads the right answers from the API when a run starts.
+API and on two public APIs. The test API is a local shop with customers, orders, stock and
+tickets (`scripts/evals`). Every task ran in English and in German. On GitHub and PokeAPI, the
+harness reads the right answers from the API when a run starts. An answer counts only when the
+server's call log shows at least one API request, so an answer from the agent's memory counts
+as wrong.
 
-With `execute_code`, every tool mode answered as many tasks correctly or more, and the agents
-needed fewer tool calls. The one exception is a run in which agent 2 answered from memory
-without calling the API, which counts as wrong. Agent 1 cost less in every measurement, between
-20% and 80% less. Agent 2 sends a large prompt of its own with every task, so its token counts
-moved less. They fell in every measurement but one.
+With `execute_code`, every answer was correct, for both agents and in every set of tasks.
+Without it, three runs failed. Agent 1 cost less per run in every set, between 25% and 86%
+less, and needed fewer tool calls. Agent 2 sends a large prompt of its own with every task, so
+its token counts moved less. They fell in 9 of the 11 comparisons and rose by 3% and 4% in the
+other two.
 
-Cost of all runs of agent 1:
+Cost per run of agent 1:
 
 | API | Operations | `per-operation` | with `execute_code` | `discover` | with `execute_code` |
 |---|---|---|---|---|---|
-| Test API, 9 tasks | 36 | $0.51 | $0.41 | not measured | not measured |
-| Test API as two specs, 13 tasks | 36 | $1.10 | $0.67 | $1.42 | $0.81 |
-| Test API, 6 tasks | 261 | $1.80 | not measured | $1.63 | $0.78 |
-| GitHub, 6 tasks | 185 | $2.08 | $0.53 | $1.29 | $0.33 |
-| GitHub, 6 tasks | 655 | does not start | does not start | $1.29 | $0.35 |
-| PokeAPI, 5 tasks | 102 | $1.57 | $0.31 | $1.13 | $0.32 |
+| Test API, 9 tasks | 36 | $0.027 | $0.020 | $0.032 | $0.024 |
+| Test API as two specs, 13 tasks | 36 | $0.050 | $0.025 | $0.060 | $0.033 |
+| Test API, 6 tasks | 261 | $0.077 | $0.042 | $0.075 | $0.033 |
+| GitHub, 6 tasks | 185 | $0.235 | $0.062 | $0.187 | $0.027 |
+| GitHub, 6 tasks | 655 | does not start | does not start | $0.113 | $0.030 |
+| PokeAPI, 5 tasks | 102 | $0.149 | $0.037 | $0.094 | $0.044 |
 
 Input tokens of agent 2, median per run:
 
 | API | Operations | `per-operation` | with `execute_code` | `discover` | with `execute_code` |
 |---|---|---|---|---|---|
-| Test API | 36 | 88k | 74k | not measured | not measured |
-| Test API as two specs | 36 | 89k | 88k | 193k | 159k |
-| Test API | 261 | 159k | not measured | 165k | 160k |
-| GitHub | 185 | 107k | 97k | 102k | 118k |
-| GitHub | 655 | does not start | does not start | 185k | 115k |
-| PokeAPI | 102 | 102k | 92k | not usable | not usable |
-
-The exception is GitHub with 185 operations under `discover`, where agent 2 used 118k tokens
-with `execute_code` and 102k without it. Under `discover`, agent 2 answered most PokeAPI tasks
-from memory, without calling the API, so those runs count as wrong and give no token numbers.
+| Test API, 9 tasks | 36 | 51k | 53k | 105k | 83k |
+| Test API as two specs, 13 tasks | 36 | 54k | 53k | 108k | 91k |
+| Test API, 6 tasks | 261 | 122k | 100k | 105k | 97k |
+| GitHub, 6 tasks | 185 | 145k | 132k | 117k | 86k |
+| GitHub, 6 tasks | 655 | does not start | does not start | 96k | 99k |
+| PokeAPI, 5 tasks | 102 | 98k | 81k | 122k | 84k |
 
 The gain grows with the number of calls a task needs. On the test API with 261 operations,
-summing the orders of all customers in one country takes about 40 calls. Under `discover`,
-agent 1 needed 58k input tokens and 17 s for it with `execute_code`, and 102k tokens and 40 s
-without. A task that needs one call costs about the
-same either way. `per-operation` cannot serve more than 512 operations at all, which is why
+summing the orders of all customers in one country takes about 40 API requests. Under
+`discover`, agent 1 needed 42 tool calls, 85k input tokens and 26 s for it without
+`execute_code`, and 7 tool calls, 59k tokens and 12 s with it. A task that needs one call costs
+about the same either way. `per-operation` cannot serve more than 512 operations, which is why
 GitHub's 655 reads do not start in that mode.
 
 `--no-execute` leaves the tool out. Use it for an API whose `GET` operations change data, or
