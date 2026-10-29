@@ -24,6 +24,26 @@ Details:
 | `rate limit exceeded`, `overloaded` | `--rate-limit` or `--max-concurrency` reached | wait `retryAfterMs`; raise the limit if the user agrees |
 | `its result was withheld because it contained a registered secret` | the API echoed a credential | do not retry; tell the user |
 
+## `execute_code` errors
+
+A failed program returns `error` and `calls`, the operations it called with their status. A
+call inside a program fails with the same text as a `call_operation` call, see above.
+
+| Error text | Cause | Fix |
+|---|---|---|
+| `is not read-only: execute_code calls read-only operations only` | the program called a write | the agent uses `call_operation` for writes; nothing was sent |
+| `call limit reached: at most 50 api.call() per script` | too many calls in one program | split the work over several programs, or filter in the API (query parameters) |
+| `time limit reached` after many calls | the program's calls count against `--rate-limit` (120 a minute by default); a call the limit stops waits, and the waits used up the 30 s | fewer calls per program, or raise `--rate-limit` if the user agrees |
+| `time limit reached` | the program, its calls included, ran over 30 s | fewer or faster calls; `--request-timeout` bounds each call |
+| `result too large` | the returned JSON is over 50 KB | return only the fields needed |
+| `results too large` | the program received over 8 MB of results | smaller pages, fewer calls |
+| `memory limit reached`, `out of memory` | the program built too large values | keep less in memory |
+| `scripts are already running` | four programs run at once in this server | wait for one to finish |
+| `SyntaxError`, `TypeError` and other script errors | a bug in the program | the agent fixes the program |
+| no `execute_code` tool | `--no-execute` is set, an operation of the spec is named `execute_code` (startup says so), or the version is older than the one that added the tool | remove `--no-execute`; `--tool-mode discover` for the name; update the version |
+| `the result is not a JSON value` | the program returned a function, a symbol or other data JSON cannot hold | the agent returns plain data |
+| `returned an image, which a program cannot read` | a program called an operation with an image result | the agent calls that operation directly |
+
 ## More detail
 
 `--log json` on the entry writes one line per call to stderr: `outcome`, `status`, timings, and

@@ -215,7 +215,11 @@ describe('serve — OpenAPI 3.2 QUERY, querystring and additionalOperations (iss
       try {
         const list = await request(1, 'tools/list', {});
         const tools = list['tools'] as { name: string; annotations?: Record<string, unknown> }[];
-        expect(tools.map((tool) => tool.name)).toEqual(['openapi_mcp_status', 'linkOrders']);
+        expect(tools.map((tool) => tool.name)).toEqual([
+          'openapi_mcp_status',
+          'linkOrders',
+          'execute_code',
+        ]);
         expect(tools.find((tool) => tool.name === 'linkOrders')?.annotations).toEqual({
           destructiveHint: true,
           openWorldHint: true,

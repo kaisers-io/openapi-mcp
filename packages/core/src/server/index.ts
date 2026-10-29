@@ -12,6 +12,7 @@ export {
   CALL_TOOL_NAME,
   DESCRIBE_TOOL_NAME,
   discoverApprovalWarning,
+  EXECUTE_TOOL_NAME,
   resolveToolMode,
   SEARCH_TOOL_NAME,
   TOOL_MODES,
@@ -39,7 +40,11 @@ export type {
   CallTelemetry,
 } from './telemetry.ts';
 export type { RateLimiter, RateLimiterOptions } from './rate-limit.ts';
-export { BOUNDARY_WITHHELD_ERROR_TEXT, BOUNDARY_WITHHELD_SUCCESS_TEXT } from './withheld.ts';
+export {
+  BOUNDARY_WITHHELD_ERROR_TEXT,
+  BOUNDARY_WITHHELD_READ_TEXT,
+  BOUNDARY_WITHHELD_SUCCESS_TEXT,
+} from './withheld.ts';
 export {
   createDispatcher,
   createMetaExecutor,

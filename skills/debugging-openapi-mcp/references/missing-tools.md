@@ -20,7 +20,7 @@ below that explains it, and propose the fix.
 | `decision: withheld` | a refreshed spec waits as a candidate and removed it | ask the user to review it: `openapi-mcp cache promote` |
 | `decision: head-without-get` | a `HEAD` whose every URL also matches a `GET` that is not exposed; its calls would be refused | allow the `GET` too, or leave it out |
 | `deadPatterns` | a pattern matches nothing | use the suggestion |
-| `check` reports `toolMode: discover` | the host lists four tools, not one per operation | expected; or `--tool-mode per-operation` if the user wants one tool each |
+| `check` reports `toolMode: discover` | the host lists five tools (four with `--no-execute`), not one per operation | expected; or `--tool-mode per-operation` if the user wants one tool each |
 | the host lists the first tools only | `--tools-page-size` and a host that ignores `nextCursor` | remove `--tools-page-size` |
 | Codex `enabled_tools`, Gemini `includeTools` | the host hides tools | adjust the host setting (host file) |
 | the CLI lists the tool, the host does not | the host was not restarted, or the server failed | host status (host file) |

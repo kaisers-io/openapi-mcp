@@ -14,7 +14,10 @@ export default defineConfig({
       customProviderModule: './vitest.coverage.ts',
       reporter: ['text', 'lcov'],
       include: ['packages/*/src/**/*.ts'],
-      exclude: ['packages/cli/src/index.ts'],
+      // The worker of execute_code runs only inside a worker thread, which the v8
+      // provider does not measure; test/code-run.test.ts drives it through
+      // every path, and the packed-CLI smoke test runs it on each platform
+      exclude: ['packages/cli/src/index.ts', 'packages/core/src/server/code/worker.ts'],
       thresholds: {
         // Aggregate over all included files
         branches: 90,

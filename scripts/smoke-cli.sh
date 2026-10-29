@@ -86,3 +86,38 @@ node -e '
   });
   child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "smoke", version: "1" } } }) + "\n");
 ' "$SPEC"
+
+# execute_code (issue #60) runs scripts in a worker loaded from its own bundle entry
+# (dist/execute-worker.mjs): run one script, so a worker file missing from the tarball, or one that
+# does not load on this platform, fails here.
+node -e '
+  const { spawn } = require("node:child_process");
+  const args = ["serve", "--spec", process.argv[1], "--base-url", "https://api.example.com", "--tool-mode", "discover"];
+  const child = process.platform === "win32"
+    ? spawn(args.reduce((command, arg) => `${command} "${arg}"`, "openapi-mcp"), { shell: true })
+    : spawn("openapi-mcp", args);
+  const timer = setTimeout(() => { console.error("execute smoke FAILED: no answer"); child.kill(); process.exit(1); }, 30000);
+  const send = (message) => child.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
+  let out = "";
+  child.stdout.on("data", (chunk) => {
+    out += chunk;
+    for (const line of out.split("\n").slice(0, -1)) {
+      const reply = JSON.parse(line);
+      if (reply.id === 1) {
+        send({ method: "notifications/initialized" });
+        send({ id: 2, method: "tools/call", params: { name: "execute_code", arguments: { code: "return [1, 2, 3].reduce((a, b) => a + b);" } } });
+      }
+      if (reply.id === 2) {
+        clearTimeout(timer);
+        child.stdin.end();
+        if (reply.result?.structuredContent?.result !== 6) {
+          console.error("execute smoke FAILED:", line);
+          process.exit(1);
+        }
+        console.log("execute smoke OK — a script ran in the bundled worker");
+      }
+    }
+    out = out.slice(out.lastIndexOf("\n") + 1);
+  });
+  send({ id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "smoke", version: "1" } } });
+' "$SPEC"

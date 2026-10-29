@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`execute_code` runs a short program over several read-only calls (#60).** The model writes
+  JavaScript that calls the API's operations with `api.call(name, args)`, and only the
+  program's result goes back: paging, following ids, filtering, counting and summing take one
+  tool call, also across several APIs. Every `api.call()` is a whole tool call, with the
+  filters, validation, rate limit, egress rules, redaction and call log. The server refuses a
+  write before it sends anything. The program runs in QuickJS (WebAssembly) in its own worker,
+  without network, file, timer, environment or module access, and ends at fixed limits: 50
+  calls, 30 s and a capped memory. Every tool mode lists the
+  tool, and `--no-execute` leaves it out. See
+  [tool-modes.md](docs/tool-modes.md#scripts-execute_code) and
+  [security.md](docs/security.md#scripts-execute_code).
 - **`--omit-unsupported-parameters <pattern>` builds an operation without the optional
   parameters the server cannot send (#67).** Such an operation was omitted. Stripe's `expand`,
   a `deepObject` over an array that OpenAPI leaves undefined, kept every Stripe read out, so the
@@ -24,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `configuring-openapi-mcp` counts the confirmed operations and the tools, names each gap with
   its cause and proposes a fix, `--omit-unsupported-parameters` included, before it writes the
   config. `debugging-openapi-mcp` starts a missing-tools diagnosis the same way.
+
+### Changed
+
+- **`tools/list` has one more tool, `execute_code` (#60).** We measured two coding agents on a
+  test API, GitHub and PokeAPI. With the tool, every answer was correct in every tool mode, one
+  agent cost 25% to 86% less per task, and the other used fewer tokens in 9 of 11 comparisons.
+  [tool-modes.md](docs/tool-modes.md#why-it-is-on-by-default) explains why it is on by
+  default. `--no-execute` keeps the earlier tool list.
+- **`execute` is a reserved API name (#60).** `--api execute=...` could form the tool name
+  `execute_code`, like the names reserved before.
 
 ### Fixed
 

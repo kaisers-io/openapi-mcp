@@ -23,7 +23,7 @@ export type WireTool = {
   readonly annotations: Readonly<Record<string, unknown>>;
 };
 
-// `discovery` is one of the three package-authored tools that stand in for
+// `discovery` is one of the package-authored tools that stand in for
 // the per-operation tools under --tool-mode discover (see discovery.ts).
 export type SnapshotToolKind = 'meta' | 'upstream' | 'discovery';
 
@@ -56,7 +56,7 @@ export type SnapshotTool = {
   // Present only for an upstream (OpenAPI-generated) tool; the meta tool has
   // no OpenAPI mapper to execute against.
   readonly generated?: RuntimeTool;
-  // Present only for a `discovery` tool: which of the three it is.
+  // Present only for a `discovery` tool: which one it is.
   readonly discovery?: DiscoveryToolName;
 };
 
@@ -124,8 +124,9 @@ export type ServerSnapshot = {
   readonly bareOutputSchemas?: true;
   // What tools/list returns and tools/call can name. Under `per-operation`
   // this is the meta tool followed by every operation; under `discover` it is
-  // the meta tool and the three discovery tools only, so an operation's own
-  // name is an unknown TOOL there (it is reachable only via call_operation).
+  // the meta tool and the discovery tools only, so an operation's own
+  // name is an unknown TOOL there (it is reachable only via call_operation
+  // and execute_code).
   readonly tools: readonly SnapshotTool[];
   // A frozen, null-prototype lookup record — NOT a `Map` (see snapshot.ts's
   // `buildSnapshot` for why: a `Map`'s entries live outside its own

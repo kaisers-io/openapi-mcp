@@ -150,7 +150,7 @@ installed, `npx skills add kaisers-io/openapi-mcp --skill debugging-openapi-mcp`
 |---|---|
 | choosing `--allow` and `--deny`, building the operations table | `references/filtering.md` |
 | the API needs credentials | `references/auth.md` |
-| the spec has more than 64 operations, or the user asks about tool modes | `references/tool-mode.md` |
+| the spec has more than 64 operations, the agent will analyze data over many calls or several APIs, or the user asks about tool modes | `references/tool-mode.md` |
 | the user connects more than one API | `references/several-apis.md` |
 | the host is Claude Code | `references/host-claude-code.md` |
 | the host is Codex | `references/host-codex.md` |

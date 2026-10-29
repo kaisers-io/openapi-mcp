@@ -162,18 +162,21 @@ const fixtures = entries.filter(
 );
 const CORRUPT = join(import.meta.dirname, 'corrupt.ts');
 const ALL = ['--allow', 'path:/**'];
-const DISCOVER_TOOLS = 'call_operation,describe_operation,openapi_mcp_status,search_operations';
+const DISCOVER_TOOLS =
+  'call_operation,describe_operation,execute_code,openapi_mcp_status,search_operations';
 
 // The tools a client must see: one per operation as `openapi-mcp tools` reports them, plus the
-// status tool, or the discover tools. The Inspector drops a tool it cannot read and keeps the
-// rest, so "no issue and some tools" would pass with the operation tools gone.
+// status tool and execute_code, or the discover tools. The Inspector drops a tool it cannot read
+// and keeps the rest, so "no issue and some tools" would pass with the operation tools gone.
 const expectedTools = async (spec: string, mode: string): Promise<string> => {
   if (mode === 'discover') {
     return DISCOVER_TOOLS;
   }
   const output = await runNode([BIN, '--json', 'tools', '--spec', spec, ...ALL]);
   const report = JSON.parse(output.stdout) as { data: { tools: { name: string }[] } };
-  return [...report.data.tools.map((tool) => tool.name), 'openapi_mcp_status'].toSorted().join(',');
+  return [...report.data.tools.map((tool) => tool.name), 'openapi_mcp_status', 'execute_code']
+    .toSorted()
+    .join(',');
 };
 const listedTools = (output: Run): string =>
   (parse(output).result?.tools ?? [])

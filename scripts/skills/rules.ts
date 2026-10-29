@@ -84,11 +84,12 @@ export const frontmatterOf = (text: string): { data: Frontmatter; body: string }
   return { data, body: match.groups['body'] ?? '' };
 };
 
-// GitHub's heading anchors: lower case, punctuation dropped, spaces to hyphens
+// GitHub's heading anchors: lower case, punctuation but `_` and `-` dropped,
+// spaces to hyphens
 const anchorOf = (heading: string): string =>
   heading
     .toLowerCase()
-    .replaceAll(/[^\p{L}\p{N}\s-]/gu, '')
+    .replaceAll(/[^\p{L}\p{N}\s_-]/gu, '')
     .replaceAll(' ', '-');
 
 const anchorsOf = (markdown: string): Set<string> =>

@@ -31,7 +31,8 @@ startup_timeout_sec = 60
   `args` is empty.
 - Windows: `command = "cmd"`, `args = ["/d", "/c", "npx", ...]`.
 - `enabled_tools` and `disabled_tools` act on the tools the host lists. Under
-  `--tool-mode discover` those are the four discovery tools, so restrict operations with
+  `--tool-mode discover` those are the discovery tools and `execute_code`, so
+  restrict operations with
   `--allow` and `--deny` instead.
 
 ## Status

@@ -47,6 +47,7 @@ export const SUBPROCESS_E2E_FILES = [
   'test/serve-oauth.test.ts',
   'test/serve-openapi-3.2.test.ts',
   'test/serve-route-authorization.test.ts',
+  'test/serve-execute.test.ts',
   'test/serve-tool-mode.test.ts',
   'test/serve-upload.test.ts',
   'test/serve-write-effect.test.ts',

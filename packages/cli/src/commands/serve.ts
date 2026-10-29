@@ -90,6 +90,10 @@ export const registerServeOptions = (base: Command) => {
       'per-operation',
     )
     .option(
+      '--no-execute',
+      'do not offer execute_code, which runs a short JavaScript program in a sandbox that calls read-only operations and returns only its result',
+    )
+    .option(
       '--image-responses <mode>',
       'an upstream PNG, JPEG, GIF or WebP image: off (an unsupported media type, the default), inline (returned as an MCP image) or file (saved under ~/.kaisers-io/openapi-mcp/images/, and its path returned)',
       'off',

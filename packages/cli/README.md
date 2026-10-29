@@ -16,6 +16,12 @@ credentials come only from environment variables, every call is checked against 
 operation's schema, and a changed API description waits for your approval before the server
 uses it.
 
+The agent also spends few tokens on the API. With many operations, `--tool-mode discover` lists
+a few fixed tools instead of one per operation, and `execute_code` combines many calls in one
+program that returns only the result. For six tasks on GitHub's API, one agent spent 2.7 cents
+per task this way and 23.5 cents with one tool per operation
+([measurements](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/tool-modes.md#why-it-is-on-by-default)).
+
 > **Only use a description you trust.** Its operation names and texts reach the model, and a
 > hostile description can try to steer the agent.
 
@@ -117,7 +123,8 @@ when there is no usable operationId (`get_users_by_id`).
   the [security model](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/security.md).
 - [Filtering](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/filtering.md).
 - [Large APIs and tool modes](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/tool-modes.md):
-  `--tool-mode discover` lists three tools instead of one per operation.
+  `--tool-mode discover` lists a few tools instead of one per operation, among them
+  `execute_code`, which runs a short program over several read-only calls.
 - [Spec updates and the cache](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/spec-updates.md):
   `openapi-mcp cache promote` accepts a changed description.
 - [Serving over HTTP](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/http.md).

@@ -133,6 +133,7 @@ describe('serve — several APIs (#16)', () => {
       const tools = await session.listTools();
       expect(tools.toSorted()).toStrictEqual([
         'crm_listContacts',
+        'execute_code',
         'openapi_mcp_status',
         'shop_createOrder',
         'shop_getOrder',
@@ -391,7 +392,9 @@ describe('serve — several APIs (#16)', () => {
         inputSchema: unknown;
       }[];
     });
-    const operations = listed.filter((tool) => tool.name !== 'openapi_mcp_status');
+    const operations = listed.filter(
+      (tool) => tool.name !== 'openapi_mcp_status' && tool.name !== 'execute_code',
+    );
     const qualifiedBytes = operations.reduce(
       (sum, tool) =>
         sum +

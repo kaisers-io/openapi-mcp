@@ -142,7 +142,8 @@ startup_timeout_sec = 60
 - With a start script that loads the credentials, `command` is the script's absolute path and
   `args` is empty.
 - `enabled_tools` and `disabled_tools` act on the tools the host lists. Under
-  `--tool-mode discover` those are the four discovery tools, so restrict operations with
+  `--tool-mode discover` those are the discovery tools and `execute_code`, so
+  restrict operations with
   `--allow` and `--deny` instead.
 - `openapi-mcp` does not use an HTTP proxy for spec fetches or API calls, so `HTTPS_PROXY`
   in `env_vars` does not route its traffic through a proxy.

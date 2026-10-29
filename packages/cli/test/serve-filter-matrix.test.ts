@@ -288,11 +288,55 @@ describe('serve — --allow and --deny end to end', () => {
     }
   };
 
+  // The execute_code tool (issue #60) reaches exactly the exposed reads: one
+  // script calls every operation; an exposed write is refused, any other is
+  // unknown, and only the exposed reads reach the upstream
+  const expectScript = async (
+    session: McpSession,
+    expected: readonly string[],
+    discover: boolean,
+  ) => {
+    upstream.requests.length = 0;
+    const names = [...ALL, ...NEVER];
+    const calls = JSON.stringify(names.map((name) => [name, argsOf(name)]));
+    const reply = await session.callTool('execute_code', {
+      code: `const out = {};
+        for (const [name, args] of ${calls}) {
+          try { await api.call(name, args); out[name] = 'ok'; } catch (error) { out[name] = error.message; }
+        }
+        return out;`,
+    });
+    const reads = expected.filter((name) =>
+      ['GET', 'HEAD', 'QUERY'].includes(ROUTES[name]?.[0] ?? ''),
+    );
+    const outcomeOf = (name: string): string => {
+      if (reads.includes(name)) {
+        return 'ok';
+      }
+      if (expected.includes(name)) {
+        return `${name} is not read-only: execute_code calls read-only operations only; ${discover ? 'use call_operation for it' : 'call its tool directly'}`;
+      }
+      return discover
+        ? `unknown operation "${name}" — use search_operations to find an operation name`
+        : `unknown operation "${name}" — use the name of an operation tool`;
+    };
+    expect(reply).toMatchObject({
+      kind: 'result',
+      isError: false,
+      structured: { result: Object.fromEntries(names.map((name) => [name, outcomeOf(name)])) },
+    });
+    expect(sent()).toStrictEqual(expectedRequests(reads));
+    upstream.requests.length = 0;
+  };
+
   it.each(CASES)('per-operation: $title', async ({ args, expected }) => {
     upstream.requests.length = 0;
     await withServe(serveArgs(args), home, async (session) => {
       const tools = await session.listTools();
-      expect(tools.toSorted()).toStrictEqual(['openapi_mcp_status', ...expected].toSorted());
+      expect(tools.toSorted()).toStrictEqual(
+        ['execute_code', 'openapi_mcp_status', ...expected].toSorted(),
+      );
+      await expectScript(session, expected, false);
       for (const name of [...without(ALL, expected), ...NEVER]) {
         await expectRefusedPerOperation(session, name);
       }
@@ -311,9 +355,11 @@ describe('serve — --allow and --deny end to end', () => {
       expect(tools.toSorted()).toStrictEqual([
         'call_operation',
         'describe_operation',
+        'execute_code',
         'openapi_mcp_status',
         'search_operations',
       ]);
+      await expectScript(session, expected, true);
       // Fewer than the search limit, so one search lists every exposed one
       const search = await session.callTool('search_operations', { limit: 25, detail: 'names' });
       const found = JSON.stringify(search);

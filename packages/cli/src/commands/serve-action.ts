@@ -16,6 +16,7 @@ import {
   lazyEnvelopeValidators,
   MAX_REDACTED_SECRETS,
   discoverApprovalWarning,
+  EXECUTE_TOOL_NAME,
   createExecutor,
   createCallStats,
   createMetaExecutor,
@@ -253,6 +254,7 @@ export type ServeCmdOpts = SpecCmdOpts &
     responseProjection?: boolean;
     allowOffsiteRedirects?: boolean;
     toolMode: string;
+    execute?: boolean;
     outputSchema: string;
     outputSchemaDescriptions: boolean;
     imageResponses: string;
@@ -895,6 +897,9 @@ const prepareServe = async (
     : first.pipeline;
   const snapshot = buildSnapshot(built, pipeline, {
     toolMode,
+    // On by default: in every measured set of tasks, each mode answered as
+    // correctly with it and needed fewer tool calls (issue #60)
+    execute: cmdOpts.execute !== false,
     compactOutputSchemas,
     bareOutputSchemas: !cmdOpts.outputSchemaDescriptions,
     ...(multi
@@ -1027,6 +1032,11 @@ const prepareServe = async (
           `${String(longNames.length)} tool name(s) are longer than ${String(QUALIFIED_NAME_WARN_LENGTH)} characters (e.g. "${longNames[0]?.name ?? ''}"); hosts add their own prefix and accept 64, so use shorter API names or --tool-mode discover`,
         ]),
     ...(httpConfig === undefined ? [] : noRequiredScopeWarning(httpConfig)),
+    ...(cmdOpts.execute !== false && snapshot.toolsByName[EXECUTE_TOOL_NAME]?.kind === 'upstream'
+      ? [
+          `operation "${EXECUTE_TOOL_NAME}" has the name of the program tool, so this server lists the operation and no program tool; --tool-mode discover lists both`,
+        ]
+      : []),
     ...[discoverApprovalWarning(snapshot.toolMode, snapshot.operations)].filter(
       (line): line is string => line !== undefined,
     ),
