@@ -216,7 +216,9 @@ describe('serve — request authorization (issue #40)', () => {
       );
       // After a POST the text says the request may already have been applied
       expect(afterWrite?.text).toContain('may have been applied, so do not retry it blindly');
-      expect(received).toEqual(['api GET /safe', 'api POST /orders']);
+      // Both calls are written at once and run in parallel, so their order
+      // at the upstream is not fixed
+      expect(received.toSorted()).toEqual(['api GET /safe', 'api POST /orders']);
     },
     SUBPROCESS_TEST_TIMEOUT_MS,
   );
