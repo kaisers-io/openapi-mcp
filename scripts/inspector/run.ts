@@ -166,8 +166,8 @@ const DISCOVER_TOOLS =
   'call_operation,describe_operation,execute_code,openapi_mcp_status,search_operations';
 
 // The tools a client must see: one per operation as `openapi-mcp tools` reports them, plus the
-// status tool and execute_code, or the discover tools. The Inspector drops a tool it cannot read and keeps the
-// rest, so "no issue and some tools" would pass with the operation tools gone.
+// status tool and execute_code, or the discover tools. The Inspector drops a tool it cannot read
+// and keeps the rest, so "no issue and some tools" would pass with the operation tools gone.
 const expectedTools = async (spec: string, mode: string): Promise<string> => {
   if (mode === 'discover') {
     return DISCOVER_TOOLS;

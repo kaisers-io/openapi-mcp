@@ -96,7 +96,12 @@ const runTask = async (
       { model: values.model, maxTurns: values['max-turns'], env: [] },
     );
     const ms = Math.round(performance.now() - started);
-    const verdict = task.check(result.answer, api);
+    // As for the real APIs: an answer counts only after an API request
+    const checked = task.check(result.answer, api);
+    const verdict =
+      api.requests.length === 0
+        ? { ...checked, correct: false, note: 'answered without an API request' }
+        : checked;
     const writes = api.requests.filter((request) => request.method !== 'GET').length;
     return {
       api: values.api,
@@ -135,13 +140,13 @@ const realSetup = real
   : undefined;
 
 // Well-known facts (a famous Pokémon's stats, a popular repository's
-// license) can be answered from memory: an answer without a single API call
-// does not count
-const checkReal = (task: RealTask, result: { answer: string; toolCalls: string[] }) => {
+// license) can be answered from memory. An answer counts only when the
+// server sent at least one API request in the run: a search, a describe or a
+// program without api.call() is not one.
+const checkReal = (task: RealTask, result: { answer: string; apiRequests: string[] }) => {
   const verdict = task.check(result.answer, realSetup!.truth);
-  const fromMemory = !result.toolCalls.some((name) => name !== 'Read' && name !== 'Grep');
-  return fromMemory
-    ? { ...verdict, correct: false, note: 'answered without calling the API' }
+  return result.apiRequests.length === 0
+    ? { ...verdict, correct: false, note: 'answered without an API request' }
     : verdict;
 };
 

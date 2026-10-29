@@ -469,3 +469,59 @@ describe('createProtocolSession — discover tool mode (issue kaisers-io/openapi
     ).rejects.toMatchObject({ code: ProtocolErrorCode.InvalidParams });
   });
 });
+
+// The execute_code tool (issue #60) through a real client: the instructions
+// name it only when it is listed, and its result passes the client's own
+// check against the tool's output schema
+describe('createProtocolSession — execute_code', () => {
+  const readOp = (toolName: string): NamedOperation => ({
+    toolName,
+    operation: {
+      method: 'get',
+      path: `/${toolName}`,
+      tags: [],
+      deprecated: false,
+      parameters: [],
+      responses: { '200': { description: 'ok' } },
+    },
+  });
+  const snapshotWith = (toolName: string, execute: boolean) =>
+    buildSnapshot(
+      buildTools([readOp(toolName)], { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' }),
+      {
+        spec: { title: FIXTURE_SPEC_TITLE, specVersion: '1', omitted: [] },
+        contentHash: 'h',
+        displaySource: 's',
+        deadPatterns: [],
+      },
+      { toolMode: 'per-operation', execute },
+    );
+
+  it('names execute_code in the instructions only when the program tool is listed', async () => {
+    const listed = await connectPair({ snapshot: snapshotWith('listThings', true) });
+    expect(listed.client.getInstructions()).toContain(
+      'execute_code runs a short JavaScript program',
+    );
+    const off = await connectPair({ snapshot: snapshotWith('listThings', false) });
+    expect(off.client.getInstructions()).not.toContain('execute_code');
+    // An operation that is itself named execute_code is no program tool
+    const collision = await connectPair({ snapshot: snapshotWith('execute_code', true) });
+    expect(collision.client.getInstructions()).not.toContain('execute_code runs');
+  });
+
+  it('returns a result the client accepts against the output schema', async () => {
+    const executor = vi.fn<ToolExecutor>(() =>
+      Promise.resolve({ isError: false, content: [{ type: 'text', text: '{"n":1}' }] as const }),
+    );
+    const { client } = await connectPair({ executor, snapshot: snapshotWith('listThings', true) });
+    const result = await client.callTool({
+      name: 'execute_code',
+      arguments: { code: "const r = await api.call('listThings'); return r.data.n + 1;" },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toStrictEqual({
+      result: 2,
+      calls: [{ name: 'listThings', status: 'ok' }],
+    });
+  });
+});

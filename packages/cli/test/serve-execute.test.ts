@@ -177,6 +177,25 @@ describe('serve --execute (#60)', () => {
     ]);
   });
 
+  it('joins two APIs by their tool names under --tool-mode per-operation', async () => {
+    requests.length = 0;
+    const perOperation = severalApis().map((arg) => (arg === 'discover' ? 'per-operation' : arg));
+    await withServe(perOperation, home, async (session) => {
+      const reply = await session.callTool('execute_code', {
+        code: `
+          const orders = (await api.call('shop_listOrders')).data;
+          const first = await api.call('crm_getCustomer', { id: orders[0].customerId });
+          return first.data.country;
+        `,
+      });
+      expect(reply).toMatchObject({ isError: false, structured: { result: 'AT' } });
+    });
+    expect(requests.toSorted((a, b) => a.url.localeCompare(b.url))).toStrictEqual([
+      { method: 'GET', url: '/crm/customers/c-1', authorization: CRM_TOKEN },
+      { method: 'GET', url: '/shop/orders', authorization: SHOP_TOKEN },
+    ]);
+  });
+
   it('never sends a write from a script, though call_operation may', async () => {
     requests.length = 0;
     await withServe(severalApis(), home, async (session) => {
@@ -250,5 +269,45 @@ describe('serve --execute (#60)', () => {
       },
     );
     expect(requests).toStrictEqual([{ method: 'GET', url: '/shop/orders' }]);
+  });
+
+  it('starts with an operation named execute_code, which keeps its name', async () => {
+    const spec = join(home, 'collide.json');
+    writeFileSync(
+      spec,
+      JSON.stringify({
+        openapi: '3.1.0',
+        info: { title: 'Collide', version: '1' },
+        paths: {
+          '/run': { get: { operationId: 'execute_code', responses: json({ type: 'object' }) } },
+        },
+      }),
+    );
+    for (const mode of ['per-operation', 'auto']) {
+      requests.length = 0;
+      await withServe(
+        [
+          '--spec',
+          spec,
+          '--base-url',
+          `${url}/run`,
+          '--allow-private-network',
+          '--allow-insecure-http',
+          '--tool-mode',
+          mode,
+        ],
+        home,
+        async (session) => {
+          const listed = await session.listTools();
+          expect(listed.toSorted()).toStrictEqual(['execute_code', 'openapi_mcp_status']);
+          // The listed execute_code is the operation: it takes no code and calls the API
+          expect(await session.callTool('execute_code', {})).toMatchObject({ isError: false });
+          expect(session.stderr()).toContain(
+            'operation "execute_code" has the name of the program tool, so this server lists the operation and no program tool',
+          );
+        },
+      );
+      expect(requests).toStrictEqual([{ method: 'GET', url: '/run/run' }]);
+    }
   });
 });

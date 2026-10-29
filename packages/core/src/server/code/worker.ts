@@ -157,7 +157,13 @@ if (started.error) {
     finish({ ok: false, error: describe(result.error) });
     result.error.dispose();
   } else {
-    finish({ ok: true, result: vm.getString(result.value) });
+    // JSON.stringify gives no text for a function or a symbol, and the
+    // script may have replaced it; the host checks the text again
+    if (vm.typeof(result.value) === 'string') {
+      finish({ ok: true, result: vm.getString(result.value) });
+    } else {
+      finish({ ok: false, error: 'the result is not a JSON value: return plain data' });
+    }
     result.value.dispose();
   }
 }

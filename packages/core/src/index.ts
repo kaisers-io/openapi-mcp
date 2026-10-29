@@ -279,6 +279,7 @@ export {
   chooseToolMode,
   definitionBytes,
   BOUNDARY_WITHHELD_ERROR_TEXT,
+  BOUNDARY_WITHHELD_READ_TEXT,
   BOUNDARY_WITHHELD_SUCCESS_TEXT,
   buildSnapshot,
   CALL_TOOL_NAME,

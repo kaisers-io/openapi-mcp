@@ -292,11 +292,11 @@ This report comes from a spec with 70 `GET` operations; `exposed` is cut to thre
 }
 ```
 
-`toolModeReason` is `count` or `size`, and it is present only when `auto` chose the mode. `apis`
-has one entry per API, with `name` when `--api` names it. `exposed` lists the tool names of the
-exposed operations. `listedTools` lists the tools a host sees, which under `discover` are the
-five tools above, or four with `--no-execute`. With `--api`, each variable also carries the `api` it belongs to. `warnings`
-holds every warning `serve` prints at startup.
+`toolModeReason` is `count` or `size`, and it is present only when `auto` chose the mode. `apis` has
+one entry per API, with `name` when `--api` names it. `exposed` lists the tool names of the exposed
+operations. `listedTools` lists the tools a host sees, which under `discover` are the five tools
+above, or four with `--no-execute`. With `--api`, each variable also carries the `api` it belongs
+to. `warnings` holds every warning `serve` prints at startup.
 
 When a stage fails, the `--json` report has `"ok": false`, `environment.status` is `failed` or
 `startup.status` is `failed` with an `error` object, and a skipped stage has the status

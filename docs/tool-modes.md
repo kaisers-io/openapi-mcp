@@ -14,8 +14,8 @@ model up front, before the model has done anything. For DigitalOcean's read-only
 that is about 30k tokens.
 
 With `--tool-mode discover`, the server lists a few fixed tools instead: `search_operations`,
-`describe_operation`, `call_operation` and `execute_code`. `tools/list` then stays at about
-6 KB however many operations are exposed, up to 4096. The filters, argument validation and redaction work
+`describe_operation`, `call_operation` and `execute_code`. `tools/list` then stays at about 6 KB
+however many operations are exposed, up to 4096. The filters, argument validation and redaction work
 exactly as they do for a direct call. `--tool-mode auto` picks `discover` when more than 64
 operations are exposed, or when the tool definitions take more than 40,000 bytes.
 
@@ -136,19 +136,25 @@ operation the way `call_operation` does. Under `per-operation`, it uses the oper
 name. With [several APIs](several-apis.md) in one server, one program can read from all of
 them. `--no-execute` leaves the tool out.
 
+An operation of the spec can itself be named `execute_code`. Under `per-operation`, that
+operation keeps the name, the server lists no program tool, and `serve` says so at startup.
+Under `discover` both exist, because operations are not tool names there.
+
 ### How a program works
 
 `execute_code` takes `{ code }`, the body of an async function of at most 20,000 characters.
-`await api.call(name, args)` returns the operation's result `{ status, contentType, data,
-headers?, pagination? }`, with the response body in `data`. For an operation without an
-output schema, the result has `data`, `headers` and `pagination` only, and `data` holds the
-body parsed as JSON, or as text when it is not JSON. A failed call throws an error with the
+`await api.call(name, args)` returns the operation's result, with the response body in
+`data`. For an operation with an output schema, the result also has `status` and
+`contentType`, and `headers` and `pagination` when the response has them. For an operation
+without one, the result has `data`, `headers` and `pagination` only, and `data` holds the body
+parsed as JSON, or as text when it is not JSON. An operation that returns an image fails in a
+program; the model calls it directly. A failed call throws an error with the
 text a direct call would return. `return` gives the tool's result, which must be JSON;
 `console.log` output comes back too.
 
-A call's status in `calls` is `ok`, `error`, `refused` (a limit stopped it before it was
-sent) or `cancelled` (the program ended while the call waited or ran). The list is complete
-also when the program fails, so the model knows what ran.
+A call's status in `calls` is `ok`, `error` or `cancelled`. `cancelled` means the program ended
+while the call waited or ran. A call that a limit stopped before it was sent is not in the
+list. The list is complete also when the program fails, so the model knows what ran.
 
 ### What a program can do
 
@@ -179,7 +185,13 @@ that reads more than 100 items one by one can reach it. Raise `--rate-limit` for
 | `console.log` output | 10 KB |
 | Programs running at once in one server | 4 |
 
-A program past a limit ends with an error that names the limit. The values are fixed.
+A call past the call limit, the argument limit or the received-data limit fails with an error that
+names the limit, and the program can catch it and go on. A program past the time or memory limit
+ends. A result past 50 KB fails the whole program. The server cuts an error text to 8,192 characters
+and a call's name in `calls` to 128 characters. The values are fixed.
+
+The limit of four programs at once holds for the whole server. Over HTTP, programs of all
+clients count together, and a fifth program gets an error that asks to try again.
 
 ### What it costs
 

@@ -35,9 +35,16 @@ export type NestedCall = (
   signal: AbortSignal,
 ) => Promise<{ ok: true; value: unknown } | { ok: false; error: string }>;
 
-// A refused call was never sent to the dispatcher (a budget); a cancelled
-// one was still waiting or in flight when the script ended
-export type CallStatus = 'ok' | 'error' | 'refused' | 'cancelled';
+// A cancelled call was still waiting or in flight when the script ended. A
+// call the worker refused (a budget) never reaches the host, so it has none.
+export type CallStatus = 'ok' | 'error' | 'cancelled';
+
+// The report repeats what the script passed, so both are bounded like the
+// rest of it: a name at the length of an operation name, an error text at the
+// size a tool error has
+const NAME_MAX = 128;
+const ERROR_MAX = 8192;
+const NOT_JSON = 'the result is not a JSON value: return plain data';
 
 export type ScriptReport = {
   ok: boolean;
@@ -156,7 +163,7 @@ const supervise = (
     return freed.promise;
   };
   const answer = async (id: number, name: string, args: string | undefined): Promise<void> => {
-    const record: (typeof calls)[number] = { name, status: 'queued' };
+    const record: (typeof calls)[number] = { name: name.slice(0, NAME_MAX), status: 'queued' };
     calls.push(record);
     while (inFlight >= limits.concurrentCalls && !ended.signal.aborted) {
       await slot();
@@ -183,7 +190,7 @@ const supervise = (
       const value = JSON.stringify(outcome.value) ?? 'null';
       received += Buffer.byteLength(value);
       if (received > limits.receivedBytes) {
-        record.status = 'refused';
+        record.status = 'error';
         reply({
           id,
           ok: false,
@@ -226,7 +233,7 @@ const supervise = (
       ...(message.logsTruncated ? { logsTruncated: true as const } : {}),
     };
     if (!message.ok) {
-      finish({ ok: false, error: message.error, ...extras });
+      finish({ ok: false, error: message.error.slice(0, ERROR_MAX), ...extras });
       return;
     }
     const size = Buffer.byteLength(message.result);
@@ -237,7 +244,16 @@ const supervise = (
         ...extras,
       });
     } else {
-      finish({ ok: true, result: JSON.parse(message.result), ...extras });
+      // The script can replace JSON.stringify, or return what JSON cannot
+      // hold (a function, a symbol): its text may not parse
+      let result: unknown;
+      try {
+        result = JSON.parse(message.result) as unknown;
+      } catch {
+        finish({ ok: false, error: NOT_JSON, ...extras });
+        return;
+      }
+      finish({ ok: true, result, ...extras });
     }
   });
   worker.on('error', (error: Error & { code?: string }) => {

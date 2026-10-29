@@ -6,12 +6,14 @@ import {
   createDispatcher,
   createMetaExecutor,
   createRedactor,
+  BOUNDARY_WITHHELD_READ_TEXT,
   EXECUTE_TOOL_NAME,
   parseFilterPattern,
   structuredOutcome,
   SYSTEM_HEADERS,
   textOutcome,
 } from '../src/index.ts';
+import { SCRIPT_LIMITS } from '../src/server/code/run.ts';
 import type {
   CallRecord,
   DispatchResult,
@@ -288,6 +290,31 @@ describe('execute_code — nested calls', () => {
   });
 });
 
+describe('execute_code — an operation with the same name', () => {
+  it('keeps an operation named execute_code and lists no program tool next to it', () => {
+    const { exposed } = applyFilters([op('execute_code', { method: 'get', path: '/run' })], [], []);
+    const built = buildTools(exposed, { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
+    const pipeline = {
+      spec: { title: 't', specVersion: '1', omitted: [] },
+      contentHash: 'h',
+      displaySource: 's',
+      deadPatterns: [],
+    };
+    const perOperation = buildSnapshot(built, pipeline, {
+      toolMode: 'per-operation',
+      execute: true,
+    });
+    expect(perOperation.tools.map((tool) => [tool.name, tool.kind])).toStrictEqual([
+      ['openapi_mcp_status', 'meta'],
+      [EXECUTE_TOOL_NAME, 'upstream'],
+    ]);
+    // Under discover the operation is a call_operation name, and both exist
+    const discover = buildSnapshot(built, pipeline, { toolMode: 'discover', execute: true });
+    expect(discover.toolsByName[EXECUTE_TOOL_NAME]?.kind).toBe('discovery');
+    expect(Object.keys(discover.operationsByName)).toStrictEqual([EXECUTE_TOOL_NAME]);
+  });
+});
+
 describe('execute_code — next to the operation tools', () => {
   it('calls an operation through its own tool, with the same checks', async () => {
     const { execute, sent, records } = setup({
@@ -362,6 +389,51 @@ describe('execute_code — results without an output schema', () => {
     expect(outcome.structuredContent).toMatchObject({
       result: [{ data: { id: 'a', n: 1 } }, { data: 'plain words' }],
     });
+  });
+});
+
+describe('execute_code — what a nested call gets', () => {
+  it('asks the executor for whole text results, while a direct call keeps the display cap', async () => {
+    const limits: (number | undefined)[] = [];
+    const { execute } = setup({
+      executor: (_tool, _args, _signal, _trace, _report, textBytes) => {
+        limits.push(textBytes);
+        return Promise.resolve(envelope({}));
+      },
+    });
+    await execute(`await api.call('listThings'); return 1;`);
+    expect(limits).toStrictEqual([SCRIPT_LIMITS.receivedBytes]);
+  });
+
+  it('fails a call whose result is an image, and skips a header line it cannot read', async () => {
+    const results: ToolCallOutcome[] = [
+      { isError: false, content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] },
+      {
+        isError: false,
+        content: [
+          { type: 'text', text: '{"a":1}' },
+          { type: 'text', text: 'headers:\netag: W/"1"\nbroken line' },
+        ],
+      },
+    ];
+    const { execute } = setup({ executor: () => Promise.resolve(results.shift()!) });
+    const outcome = await execute(`
+      let image;
+      try { await api.call('listThings'); } catch (error) { image = error.message; }
+      return { image, text: await api.call('listThings') };
+    `);
+    expect(outcome.structuredContent).toMatchObject({
+      result: {
+        image: 'listThings returned an image, which a program cannot read; call it directly',
+        text: { data: { a: 1 }, headers: { etag: 'W/"1"' } },
+      },
+    });
+  });
+
+  it('withholds a result with a secret without claiming that anything changed', async () => {
+    const { execute } = setup();
+    const outcome = await execute(`return 'example-token' + '-not-a-secret';`);
+    expect(outcome.content).toStrictEqual([{ type: 'text', text: BOUNDARY_WITHHELD_READ_TEXT }]);
   });
 });
 

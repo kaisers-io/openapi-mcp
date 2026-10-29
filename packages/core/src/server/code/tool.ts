@@ -24,7 +24,7 @@ import type { NestedCall } from './run.ts';
 // is a change to measure again. Under `per-operation` a script names an
 // operation by its tool name; under `discover` by its call_operation name.
 const executeDescription = (toolMode: ToolMode): string =>
-  `Run JavaScript to combine several read-only operation calls in one step, for example paging, following ids, filtering or summing, so only the final answer comes back. \`code\` is the body of an async function. \`await api.call(name, args)\` calls one operation (${toolMode === 'discover' ? 'the same name and arguments as call_operation' : "an operation tool's name and the arguments that tool takes"}) and returns its structured result \`{ status, contentType, data, headers?, pagination? }\`, with the response body in \`data\`; it throws on an error. Use \`return\` to give back a JSON value, which becomes this tool's result; console.log output is returned too. Only read-only operations can be called; ${toolMode === 'discover' ? 'use call_operation for writes' : 'call write tools directly'}. No network, files, timers or modules. Limits: ${String(SCRIPT_LIMITS.calls)} api.call() per script, ${String(SCRIPT_LIMITS.ms / 1000)} s, a result of at most ${String(SCRIPT_LIMITS.resultBytes / 1000)} KB.`;
+  `Run JavaScript to combine several read-only operation calls in one step, for example paging, following ids, filtering or summing, so only the final answer comes back. \`code\` is the body of an async function. \`await api.call(name, args)\` calls one operation (${toolMode === 'discover' ? 'the same name and arguments as call_operation' : "an operation tool's name and the arguments that tool takes"}) and returns its result \`{ data, status?, contentType?, headers?, pagination? }\`, with the response body in \`data\`; it throws on an error. Use \`return\` to give back a JSON value, which becomes this tool's result; console.log output is returned too. Only read-only operations can be called; ${toolMode === 'discover' ? 'use call_operation for writes' : 'call write tools directly'}. No network, files, timers or modules. Limits: ${String(SCRIPT_LIMITS.calls)} api.call() per script, ${String(SCRIPT_LIMITS.ms / 1000)} s, a result of at most ${String(SCRIPT_LIMITS.resultBytes / 1000)} KB.`;
 
 export const executeTool = (toolMode: ToolMode): SnapshotTool => ({
   kind: 'discovery',
@@ -53,19 +53,28 @@ const jsonOrText = (text: string): unknown => {
 // `headers:` and `pagination:` blocks (decorateTextOutcome). A script gets
 // them in the shape of a structured result, the body in `data`, as the tool
 // description promises.
-const textEnvelope = (outcome: ToolCallOutcome): Record<string, unknown> => {
-  const [body, ...rest] = outcome.content.map((block) => (block.type === 'text' ? block.text : ''));
-  const envelope: Record<string, unknown> = { data: jsonOrText(body ?? '') };
+// An image result (--image-responses inline) has no text a program could
+// read, so it is undefined here and the call fails
+const textEnvelope = (outcome: ToolCallOutcome): Record<string, unknown> | undefined => {
+  const [first, ...rest] = outcome.content;
+  if (first?.type !== 'text') {
+    return undefined;
+  }
+  const envelope: Record<string, unknown> = { data: jsonOrText(first.text) };
   for (const block of rest) {
-    if (block.startsWith('headers:\n')) {
+    if (block.type !== 'text') {
+      continue;
+    }
+    if (block.text.startsWith('headers:\n')) {
       envelope['headers'] = Object.fromEntries(
-        block
+        block.text
           .slice('headers:\n'.length)
           .split('\n')
+          .filter((line) => line.includes(': '))
           .map((line) => [line.slice(0, line.indexOf(': ')), line.slice(line.indexOf(': ') + 2)]),
       );
-    } else if (block.startsWith('pagination: ')) {
-      envelope['pagination'] = jsonOrText(block.slice('pagination: '.length));
+    } else if (block.text.startsWith('pagination: ')) {
+      envelope['pagination'] = jsonOrText(block.text.slice('pagination: '.length));
     }
   }
   return envelope;
@@ -124,7 +133,13 @@ export const executeCode = async (
     if (outcome.isError === true) {
       return { ok: false, error: text };
     }
-    return { ok: true, value: outcome.structuredContent ?? textEnvelope(outcome) };
+    const value = outcome.structuredContent ?? textEnvelope(outcome);
+    return value === undefined
+      ? {
+          ok: false,
+          error: `${entry.name} returned an image, which a program cannot read; call it directly`,
+        }
+      : { ok: true, value };
   };
   const report = await runScript((data as ExecuteInput).code, nested, request.signal);
   const { ok, ...payload } = report;

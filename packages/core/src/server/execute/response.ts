@@ -699,8 +699,12 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   // The text block is the backwards-compatibility serialization (the MCP
   // spec's SHOULD), not a second full copy of the payload: it is capped at
   // the same maxTextBytes as an unstructured result, with the truncation
-  // marker, while structuredContent carries the complete data.
-  return structuredOutcome(jsonPreview(envelope, maxTextBytes, bodyBytes.byteLength), envelope);
+  // marker, while structuredContent carries the complete data. A larger
+  // limit (an execute_code program's call) only concerns text results.
+  return structuredOutcome(
+    jsonPreview(envelope, Math.min(maxTextBytes, DISPLAY_TEXT_MAX), bodyBytes.byteLength),
+    envelope,
+  );
 };
 
 const mapBody = (

@@ -23,12 +23,19 @@ export const BOUNDARY_WITHHELD_SUCCESS_TEXT =
 // itself (issue #25), so it is withheld without claiming success
 export const BOUNDARY_WITHHELD_UNCERTAIN_TEXT =
   'the tool call returned a result, but it was withheld because it contained a registered secret; the request may have reached the upstream and been applied, so do not retry it blindly';
+// An execute_code program calls read-only operations only, so nothing it did
+// changed data
+export const BOUNDARY_WITHHELD_READ_TEXT =
+  'the program ran, but its result was withheld because it contained a registered secret; it only read data, so it changed nothing';
 export const BOUNDARY_WITHHELD_ERROR_TEXT =
   'the tool call failed, and its error details were withheld because they contained a registered secret';
 
 // The effect survives the withholding (issue #25): a withheld success is a
 // reported success, a withheld error keeps what the executor recorded
-export const withheld = (outcome: ToolCallOutcome): ToolCallOutcome => {
+export const withheld = (outcome: ToolCallOutcome, readOnly = false): ToolCallOutcome => {
+  if (!outcome.isError && readOnly) {
+    return tagOutcome(textOutcome(BOUNDARY_WITHHELD_READ_TEXT, true), 'secret_withheld');
+  }
   if (!outcome.isError) {
     // A 2xx after a redirect or a retry is no proof the write succeeded
     if (rememberedEffect(outcome) === 'outcome_unknown') {

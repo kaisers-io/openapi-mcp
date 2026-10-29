@@ -80,14 +80,18 @@ const scanForSecretSafely = (redactor: Redactor, value: unknown): boolean => {
   }
 };
 
-const scanAndRedact = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOutcome => {
+const scanAndRedact = (
+  outcome: ToolCallOutcome,
+  redactor: Redactor,
+  readOnly: boolean,
+): ToolCallOutcome => {
   if (
     (outcome.structuredContent !== undefined &&
       !wasSecretScanned(outcome.structuredContent, redactor) &&
       scanForSecretSafely(redactor, outcome.structuredContent)) ||
     (outcome.meta !== undefined && scanForSecretSafely(redactor, outcome.meta))
   ) {
-    return withheld(outcome);
+    return withheld(outcome, readOnly);
   }
   // An image cannot be redacted without breaking it: one with a secret in
   // its bytes withholds the whole result, like a structured one
@@ -99,7 +103,7 @@ const scanAndRedact = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOu
         imageHasSecret(redactor, Buffer.from(block.data, 'base64')),
     )
   ) {
-    return withheld(outcome);
+    return withheld(outcome, readOnly);
   }
   const redactedContent = outcome.content.map((block) =>
     block.type === 'text' ? { ...block, text: redactor.redactString(block.text) } : block,
@@ -118,7 +122,7 @@ const scanAndRedact = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOu
       (block) => block.type === 'text' && scanForSecretSafely(redactor, block.text),
     )
   ) {
-    return withheld(outcome);
+    return withheld(outcome, readOnly);
   }
   return carryOutcomeTag(outcome, {
     ...outcome,
@@ -128,8 +132,13 @@ const scanAndRedact = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOu
 
 // The last step for every outcome: the internal effect note (issue #25) has
 // served its purpose and does not leave the dispatcher
-const finalizeOutcome = (outcome: ToolCallOutcome, redactor: Redactor): ToolCallOutcome => {
-  const scanned = scanAndRedact(outcome, redactor);
+// `readOnly`: an execute_code result, which only read-only calls produced
+const finalizeOutcome = (
+  outcome: ToolCallOutcome,
+  redactor: Redactor,
+  readOnly = false,
+): ToolCallOutcome => {
+  const scanned = scanAndRedact(outcome, redactor, readOnly);
   const { effectNote: _note, ...finished } = scanned;
   return carryOutcomeTag(scanned, finished);
 };
@@ -201,7 +210,10 @@ const createUnobservedDispatcher = (
       const outcome = await validateAndExecute(tool, request.arguments, (data) =>
         routeExecutor(deps, tool, data, request),
       );
-      return { kind: 'outcome', outcome: finalizeOutcome(outcome, deps.redactor) };
+      return {
+        kind: 'outcome',
+        outcome: finalizeOutcome(outcome, deps.redactor, tool.discovery === 'execute'),
+      };
     } catch {
       // Redacts any throw from the lookup/rate stage above (deps.now/consume,
       // or even the `Object.hasOwn(deps.snapshot.toolsByName, ...)` lookup)

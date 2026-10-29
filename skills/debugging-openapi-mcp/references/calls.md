@@ -40,7 +40,9 @@ call inside a program fails with the same text as a `call_operation` call, see a
 | `memory limit reached`, `out of memory` | the program built too large values | keep less in memory |
 | `scripts are already running` | four programs run at once in this server | wait for one to finish |
 | `SyntaxError`, `TypeError` and other script errors | a bug in the program | the agent fixes the program |
-| no `execute_code` tool | `--no-execute` is set, or the version is older than the one that added the tool | remove `--no-execute`, or update the version |
+| no `execute_code` tool | `--no-execute` is set, an operation of the spec is named `execute_code` (startup says so), or the version is older than the one that added the tool | remove `--no-execute`; `--tool-mode discover` for the name; update the version |
+| `the result is not a JSON value` | the program returned a function, a symbol or other data JSON cannot hold | the agent returns plain data |
+| `returned an image, which a program cannot read` | a program called an operation with an image result | the agent calls that operation directly |
 
 ## More detail
 

@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { describe, expect, it } from 'vitest';
+import { Worker } from 'node:worker_threads';
+import { describe, expect, it, vi } from 'vitest';
 import {
   MAX_RUNNING_SCRIPTS,
   runScript,
@@ -272,7 +273,7 @@ describe('runScript — limits', () => {
       ok: false,
       error: expect.stringMatching(/^Error: results too large/u),
     });
-    expect(report.calls.map((entry) => entry.status)).toStrictEqual(['ok', 'refused']);
+    expect(report.calls.map((entry) => entry.status)).toStrictEqual(['ok', 'error']);
   });
 
   it('caps the logs, empty lines included', async () => {
@@ -343,5 +344,51 @@ describe('runScript — failures on the host side', () => {
     expect(workerFailure(new Error('Cannot set memory limit to negative number'))).toBe(
       'the script failed unexpectedly',
     );
+  });
+});
+
+describe('runScript — the report stays bounded and the host stays up', () => {
+  it('reports a result that is not JSON text instead of ending the server', async () => {
+    for (const code of [
+      'return () => 1;',
+      'return Symbol("x");',
+      'return { toJSON() { return undefined; } };',
+      "JSON.stringify = () => 'not json'; return 1;",
+      'JSON.stringify = () => 5; return 1;',
+    ]) {
+      expect(await run(code)).toStrictEqual({
+        ok: false,
+        error: 'the result is not a JSON value: return plain data',
+        calls: [],
+      });
+    }
+  });
+
+  it('cuts an oversized operation name in the call record', async () => {
+    const report = await run(
+      `try { await api.call('x'.repeat(100000), {}); } catch {} return 1;`,
+      () => Promise.resolve({ ok: false, error: 'unknown operation' }),
+    );
+    expect(report.calls).toStrictEqual([{ name: 'x'.repeat(128), status: 'error' }]);
+  });
+
+  it('cuts the error text of a script', async () => {
+    for (const code of ["throw new Error('z'.repeat(3e6));", "throw 'z'.repeat(3e6);"]) {
+      const report = await run(code);
+      expect(report.ok).toBe(false);
+      expect(report.error!.length).toBeLessThanOrEqual(8192);
+    }
+  });
+
+  it('terminates the worker of every script, whatever ended it', async () => {
+    const terminate = vi.spyOn(Worker.prototype, 'terminate');
+    try {
+      await run('return 1;');
+      await run('throw new Error("stop");');
+      await run('for (;;) {}', echo, { ...LIMITS, ms: 200 });
+      expect(terminate).toHaveBeenCalledTimes(3);
+    } finally {
+      terminate.mockRestore();
+    }
   });
 });

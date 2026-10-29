@@ -11,7 +11,7 @@ import {
   metaWireTool,
   OMITTED_REASONS_CAP,
 } from './wire-tools.ts';
-import { buildDiscoveryTools, executeTool } from './discovery.ts';
+import { buildDiscoveryTools, EXECUTE_TOOL_NAME, executeTool } from './discovery.ts';
 import { buildSearchIndex } from './search-index.ts';
 import type { ApiSummary, MetaSummary, ServerSnapshot, SnapshotTool, ToolMode } from './types.ts';
 
@@ -118,7 +118,12 @@ export const buildSnapshot = (
       : [
           metaTool,
           ...upstreamTools.toSorted(byToolName),
-          ...(options.execute === true ? [executeTool(toolMode)] : []),
+          // An operation already named execute_code keeps its name: the spec
+          // still starts, without the program tool (serve says so)
+          ...(options.execute === true &&
+          !upstreamTools.some((tool) => tool.name === EXECUTE_TOOL_NAME)
+            ? [executeTool(toolMode)]
+            : []),
         ];
   // Two separate namespaces under `discover`: an operation that happens to
   // be named `call_operation` is reached as call_operation's `name` argument

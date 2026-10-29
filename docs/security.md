@@ -594,9 +594,10 @@ direct call.
   `per-operation`. The program reaches only exposed operations. The server validates the
   arguments with the operation's schema and charges each call to `--rate-limit`. The executor
   applies the egress, redirect and size rules, and the dispatcher redacts each result before
-  the program sees it. A result that holds a registered secret reaches the program as an error,
-  so the program never gets the secret to change it past the scan. The server scans the
-  program's own result again before it returns it.
+  the program sees it. A structured result that holds a registered secret reaches the program
+  as an error, so the program never gets the secret to change it past the scan. A text result
+  reaches it with the secret replaced, as for a direct call. The server scans the program's own
+  result again before it returns it.
 - **Reads only.** A program can call only operations whose method is `GET`, `HEAD` or `QUERY`.
   The server refuses any other operation before it sends anything. This check rests on the
   HTTP method, so it does not protect an API whose `GET` changes data. Use `--no-execute` for

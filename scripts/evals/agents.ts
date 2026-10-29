@@ -4,11 +4,42 @@
 
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
 const CLI = path.resolve(import.meta.dirname, '../../packages/cli/bin/openapi-mcp.mjs');
+const SERVE_LOG = path.resolve(import.meta.dirname, 'serve-log.ts');
+
+// The server command: serve-log.ts writes its call records next to the run
+const serverArgs = (cwd: string, serveArgs: string[]) => [
+  SERVE_LOG,
+  path.join(cwd, 'calls.log'),
+  CLI,
+  'serve',
+  ...serveArgs,
+];
+
+// The API requests the server sent in a run, by operation: every call record
+// with an upstream status, also the calls inside an execute_code program
+const apiRequestsOf = async (cwd: string): Promise<string[]> => {
+  let text = '';
+  try {
+    text = await readFile(path.join(cwd, 'calls.log'), 'utf8');
+  } catch {
+    return [];
+  }
+  return text.split('\n').flatMap((line) => {
+    try {
+      const record = JSON.parse(line) as { event?: string; tool?: string; status?: number };
+      return record.event === 'tool_call' && record.status !== undefined
+        ? [String(record.tool)]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+};
 
 export interface AgentOptions {
   model: string | undefined;
@@ -26,6 +57,8 @@ interface Usage {
 export interface AgentResult {
   answer: string;
   toolCalls: string[];
+  // The API requests the server sent (serve-log.ts)
+  apiRequests: string[];
   turns?: number | undefined;
   usage: Usage;
   costUsd?: number | undefined;
@@ -87,7 +120,7 @@ export const claude = async (
   await writeFile(
     config,
     JSON.stringify({
-      mcpServers: { api: { command: process.execPath, args: [CLI, 'serve', ...serveArgs] } },
+      mcpServers: { api: { command: process.execPath, args: serverArgs(cwd, serveArgs) } },
     }),
   );
   const args = [
@@ -132,6 +165,7 @@ export const claude = async (
   return {
     answer: String(result?.result ?? ''),
     toolCalls,
+    apiRequests: await apiRequestsOf(cwd),
     turns: result?.num_turns,
     usage: {
       input: reported['input_tokens'] ?? 0,
@@ -161,10 +195,24 @@ export const codex = async (
     '--ignore-rules',
     '--sandbox',
     'read-only',
+    // Only the MCP server under test: no connectors from the account (a
+    // built-in GitHub app answered GitHub tasks), plugins, web search,
+    // browser, computer use or sub-agents
+    ...[
+      'apps',
+      'plugins',
+      'browser_use',
+      'computer_use',
+      'in_app_browser',
+      'multi_agent',
+      'image_generation',
+    ].flatMap((feature) => ['--disable', feature]),
+    '-c',
+    'web_search="disabled"',
     '-c',
     `mcp_servers.api.command=${toml(process.execPath)}`,
     '-c',
-    `mcp_servers.api.args=${toml([CLI, 'serve', ...serveArgs])}`,
+    `mcp_servers.api.args=${toml(serverArgs(cwd, serveArgs))}`,
     '-c',
     'approval_policy="never"',
     '-c',
@@ -213,6 +261,7 @@ export const codex = async (
     toolCalls: items
       .filter((item) => item.type === 'mcp_tool_call')
       .map((item) => String(item.tool)),
+    apiRequests: await apiRequestsOf(cwd),
     usage,
     ...(error === undefined ? {} : { error }),
   };

@@ -176,7 +176,10 @@ export const EXECUTE_OUTPUT_SCHEMA: Record<string, unknown> = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { name: { type: 'string' }, status: { type: 'string' } },
+        properties: {
+          name: { type: 'string' },
+          status: { type: 'string', enum: ['ok', 'error', 'cancelled'] },
+        },
         required: ['name', 'status'],
         additionalProperties: false,
       },

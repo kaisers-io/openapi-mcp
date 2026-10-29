@@ -40,9 +40,9 @@ Tell the user three things:
 - A program calls reads only. Writes still go through their own tool call and approval.
 - Every call inside a program goes through the same filters, rate limit and redaction as a
   direct call.
-- A program stops after 50 calls or 30 s. Every call counts against `--rate-limit` (120 a
-  minute by default), so propose a higher limit when the agent will read hundreds of items one
-  by one.
+- A program can make at most 50 calls and runs at most 30 s. Every call counts against
+  `--rate-limit` (120 a minute by default), so propose a higher limit when the agent will read
+  hundreds of items one by one.
 
 Propose `--no-execute` only when the API changes data on `GET`, or when the user wants exactly
 one tool per operation.

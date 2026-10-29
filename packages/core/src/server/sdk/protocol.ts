@@ -186,7 +186,7 @@ export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
       instructions: `${
         opts.snapshot.toolMode === 'discover' ? DISCOVER_INSTRUCTIONS : STATIC_INSTRUCTIONS
       }${
-        Object.hasOwn(opts.snapshot.toolsByName, EXECUTE_TOOL_NAME)
+        opts.snapshot.toolsByName[EXECUTE_TOOL_NAME]?.kind === 'discovery'
           ? ` ${EXECUTE_INSTRUCTIONS}`
           : ''
       }${
