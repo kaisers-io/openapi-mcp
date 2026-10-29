@@ -68,7 +68,7 @@
             "max": 43.53,
             "samples": [43.53, 31.78, 27.62, 42.65, 40.73]
           },
-          "toolsListBytes": 3862,
+          "toolsListBytes": 3887,
           "toolCount": 3,
           "omittedCount": 1,
           "parallelErrors": 0,
@@ -117,7 +117,7 @@
             "max": 44.03,
             "samples": [37.07, 44.03, 35.93, 33.56, 41.99]
           },
-          "toolsListBytes": 356275,
+          "toolsListBytes": 356300,
           "toolCount": 502,
           "omittedCount": 0,
           "parallelErrors": 0,
@@ -166,7 +166,7 @@
             "max": 40.29,
             "samples": [29.92, 40.29, 39.51, 35.71, 38.76]
           },
-          "toolsListBytes": 944285,
+          "toolsListBytes": 944310,
           "toolCount": 102,
           "omittedCount": 0,
           "parallelErrors": 0,
@@ -203,7 +203,7 @@
             "max": 35.35,
             "samples": [35.35, 35.34, 35.34, 35.34, 35.35]
           },
-          "toolsListBytes": 244805,
+          "toolsListBytes": 244830,
           "toolCount": 402,
           "omittedCount": 0
         }
