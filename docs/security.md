@@ -127,13 +127,19 @@ checks:
   - It removes the raw value. For a secret of 8 or more characters it also removes common
     encodings: standard Base64, URL-safe Base64, percent-encoding with upper- or lowercase hex,
     form encoding, and JSON string escaping including `\/`.
-  - In structured results it also finds a secret made only of digits that the upstream sends
-    as a JSON number, in any spelling (`987654321` or `9.87654321e8`).
   - It skips those encodings for shorter secrets, because a short value matches common
     substrings by accident. One exception remains: a short secret with `"`, `\` or a control
     character also has its JSON-escaped form removed, since that form can appear in a text or
     HTML error body. That form contains an escape the raw value lacks, so it may also match the
     escape in a body without the secret. That redacts more, never less.
+  - A text, XML or HTML body is also decoded before it is scanned, once for JSON string
+    escapes (`\u0026`, `\u003C`, `\"`, `\/`) and once for markup entities (`&amp;`, `&#38;`,
+    `&#x26;`). If either decoding rebuilds a registered secret, the server withholds a success
+    and reduces an error to its status. Entity decoding covers numeric references and the
+    named entities for `&`, `<`, `>`, `"` and `'`, plus a few typographic ones. Other named
+    entities stay as written.
+  - In structured results it also finds a secret made only of digits that the upstream sends
+    as a JSON number, in any spelling (`987654321` or `9.87654321e8`).
   - For a value shaped like an `Authorization` credential (`<scheme> <credential>`, for example
     `Bearer <token>`), it also removes the bare credential. For `Basic` it also removes the
     decoded `user:password` and the password alone, each only when it has 8 or more characters.
@@ -192,9 +198,10 @@ checks:
 - An upstream `4xx` or `5xx` response returns `isError: true` with the status and a short body
   excerpt, which goes through the same central redactor as everything else. A JSON body keeps
   up to the display budget, any other body 1 KB. An HTML page contributes its title and visible
-  text, without `<head>`, `<style>` or `<script>`. If decoding its entities rebuilds a
-  registered secret, the excerpt is dropped. For `401` and `403` the server drops the body
-  entirely and returns a message that names the environment variable to check.
+  text, without `<head>`, `<style>` or `<script>`. If decoding the JSON escapes or entities of
+  any error body rebuilds a registered secret, the excerpt is dropped. For `401` and `403` the
+  server drops the body entirely and returns a message that names the environment variable to
+  check.
 - On stdio, stdout carries only JSON-RPC messages, and every diagnostic goes to stderr. A host
   that reads stdout as the protocol stream never sees log output there.
 

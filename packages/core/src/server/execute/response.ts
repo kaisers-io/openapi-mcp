@@ -14,6 +14,7 @@ import {
 } from './forwarded-headers.ts';
 import type { PageHint, PageInput } from './forwarded-headers.ts';
 import {
+  decodedForms,
   isJsonEssence,
   isTextEssence,
   mediaEssence,
@@ -300,6 +301,14 @@ const scanSafely = (redactor: Redactor, value: unknown): boolean => {
   }
 };
 
+// A text body is only string-redacted, so a secret it echoes in an encoder's
+// own spelling (Go's `\u0026`, Python's `\uXXXX` for non-ASCII, an XML or
+// HTML `&amp;` or `&#38;`) matches no needle. The WHOLE text is decoded each
+// way and scanned before any cut, so an escaped secret across the cut cannot
+// leave a fragment either.
+const escapedSecretIn = (redactor: Redactor, text: string): boolean =>
+  decodedForms(text).some((form) => scanSafely(redactor, form));
+
 const mapHttpError = (
   status: number,
   contentType: string | undefined,
@@ -339,6 +348,9 @@ const mapHttpError = (
   // this redaction, over the already-secret-free text, so a secret cannot
   // be split across the excerpt boundary and leak a surviving fragment.
   const redacted = redactor.redactString(decoded.ok);
+  if (escapedSecretIn(redactor, redacted)) {
+    return textOutcome(`upstream request failed with status ${status}`, true);
+  }
   // An HTML page shows its title and visible text, not its markup (issue
   // #63). Decoding entities can rebuild a redacted secret: the whole text is
   // scanned before the cut, so a secret across the excerpt boundary cannot
@@ -427,6 +439,9 @@ const mapNoSchemaSuccess = (
   // Redact BEFORE truncating, same rationale as mapHttpError above: the
   // text/JSON success path must never return the raw body either.
   const redacted = redactor.redactString(decoded.ok);
+  if (escapedSecretIn(redactor, redacted)) {
+    return withheldSuccess();
+  }
   const truncated = truncateUtf8(redacted, maxTextBytes);
   if (scanSafely(redactor, truncated)) {
     return withheldSuccess();
