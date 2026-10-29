@@ -54,10 +54,11 @@ const jsonOrText = (text: string): unknown => {
 // them in the shape of a structured result, the body in `data`, as the tool
 // description promises.
 // An image result (--image-responses inline) has no text a program could
-// read, so it is undefined here and the call fails
+// read, so it is undefined here and the call fails. Its first block is a
+// text line about the image, so the image block is what tells it apart.
 const textEnvelope = (outcome: ToolCallOutcome): Record<string, unknown> | undefined => {
   const [first, ...rest] = outcome.content;
-  if (first?.type !== 'text') {
+  if (first?.type !== 'text' || rest.some((block) => block.type === 'image')) {
     return undefined;
   }
   const envelope: Record<string, unknown> = { data: jsonOrText(first.text) };

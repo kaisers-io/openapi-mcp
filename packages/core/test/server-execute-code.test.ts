@@ -149,6 +149,14 @@ describe('execute_code — listing', () => {
     ]);
     for (const toolMode of ['discover', 'per-operation'] as const) {
       const tool = snapshotFor(toolMode, true).toolsByName[EXECUTE_TOOL_NAME];
+      // The statuses a call record can have, and no other
+      expect(tool?.wireTool.outputSchema).toMatchObject({
+        properties: {
+          calls: {
+            items: { properties: { status: { enum: ['ok', 'error', 'cancelled'] } } },
+          },
+        },
+      });
       expect(tool?.wireTool.annotations).toStrictEqual({ readOnlyHint: true, openWorldHint: true });
       expect(tool?.wireTool.description).toContain('Only read-only operations can be called');
       expect(tool?.wireTool.inputSchema).toMatchObject({
@@ -407,7 +415,14 @@ describe('execute_code — what a nested call gets', () => {
 
   it('fails a call whose result is an image, and skips a header line it cannot read', async () => {
     const results: ToolCallOutcome[] = [
-      { isError: false, content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] },
+      // The shape --image-responses inline gives: a text line, then the image
+      {
+        isError: false,
+        content: [
+          { type: 'text', text: 'image image/png, 1x1, 70 bytes' },
+          { type: 'image', data: 'AAAA', mimeType: 'image/png' },
+        ],
+      },
       {
         isError: false,
         content: [
@@ -422,11 +437,15 @@ describe('execute_code — what a nested call gets', () => {
       try { await api.call('listThings'); } catch (error) { image = error.message; }
       return { image, text: await api.call('listThings') };
     `);
-    expect(outcome.structuredContent).toMatchObject({
+    expect(outcome.structuredContent).toStrictEqual({
       result: {
         image: 'listThings returned an image, which a program cannot read; call it directly',
         text: { data: { a: 1 }, headers: { etag: 'W/"1"' } },
       },
+      calls: [
+        { name: 'listThings', status: 'error' },
+        { name: 'listThings', status: 'ok' },
+      ],
     });
   });
 

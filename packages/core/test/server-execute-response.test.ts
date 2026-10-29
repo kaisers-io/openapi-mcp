@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import { describe, expect, it } from 'vitest';
+import { DISPLAY_TEXT_MAX } from '../src/spec/sanitize.ts';
 import { envelopeHasSecret } from '../src/server/execute/response.ts';
 import { BOUNDARY_WITHHELD_SUCCESS_TEXT } from '../src/server/withheld.ts';
 import {
@@ -975,6 +976,16 @@ describe('mapResponse — large structured results: one secret scan, bounded tex
       true,
     );
     expect(result.structuredContent?.['data']).toHaveLength(2000);
+  });
+
+  // An execute_code program's calls raise maxTextBytes for text results; the
+  // text copy of a structured one stays a display-sized preview
+  it('keeps the text copy at the display cap when maxTextBytes is larger', () => {
+    const items = Array.from({ length: 4000 }, (_unused, index) => ({ id: index }));
+    const result = structured(JSON.stringify(items), 8 * 1024 * 1024);
+    const text = result.content[0]?.text ?? '';
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(DISPLAY_TEXT_MAX);
+    expect(result.structuredContent?.['data']).toHaveLength(4000);
   });
 
   it('leaves a small result text complete', () => {
