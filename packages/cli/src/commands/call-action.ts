@@ -13,7 +13,7 @@ import {
 import type { DryRunCheck, DryRunReport, ToolExecutor } from '@kaisers-io/openapi-mcp-core';
 import type { Occurrence } from '../api-options.ts';
 import type { CliContext } from '../context.ts';
-import { emitError, getGlobalOpts } from '../output.ts';
+import { emitError, getGlobalOpts, jsonLine } from '../output.ts';
 import type { RunState } from '../main.ts';
 import { prepareServe } from './serve-action.ts';
 import type { ServeCmdOpts } from './serve-action.ts';
@@ -153,7 +153,7 @@ export const runCall = async (
     if (opts.json) {
       const { warningReasons } = prepared;
       ctx.out(
-        JSON.stringify({
+        jsonLine({
           ok: !refused,
           data: { tool, ...report },
           warnings,

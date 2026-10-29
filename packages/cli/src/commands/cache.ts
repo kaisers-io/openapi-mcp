@@ -41,7 +41,7 @@ const registerList: CommandRegistrar = (program, ctx, state) => {
         const data = { cacheRoot: root, entryCount: entries.length, entries };
         // The root is environment-derived (homeDir()), so it is untrusted
         // display text on the human path exactly like a spec title is. JSON
-        // mode stays raw because JSON encoding escapes controls.
+        // mode keeps the raw value; jsonLine escapes the controls.
         const displayRoot = sanitizeSpecText(root, CACHE_DISPLAY_MAX);
         if (entries.length === 0) {
           return { data, humanLines: [`no cache entries under ${displayRoot}`] };

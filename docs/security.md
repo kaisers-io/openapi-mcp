@@ -29,6 +29,9 @@ Every defense below comes on top of this requirement. None of them replaces it.
   before it attaches it: operation `summary` and `description`, parameter and property
   `description`, `enum`, `format` and `example`. It strips control characters and
   bidirectional-override characters and caps the length.
+- The CLI strips the same characters from spec text it prints for people. With `--json` it keeps
+  the raw text and escapes C1 controls, bidi characters, U+2028 and U+2029 as `\uXXXX`, so a
+  terminal never receives them raw. A JSON parser still reads back the original strings.
 - Parsing enforces resource budgets before the server trusts or caches anything:
 
   | Budget | Limit |

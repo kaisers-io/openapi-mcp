@@ -169,7 +169,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           // Hints are already sanitized by describeSecurityScheme.
           ...security.map((entry) => `auth: ${entry.hint}`),
           // Paths are untrusted spec text: sanitize the display copy only (the
-          // JSON envelope keeps raw paths — JSON encoding escapes controls)
+          // JSON envelope keeps raw paths and jsonLine escapes the controls)
           ...tools.map(
             (tool) =>
               `  ${tool.name.padEnd(nameWidth)}  ${tool.method.padEnd(6)} ${sanitizeSpecText(tool.path, PATH_DISPLAY_MAX)}${

@@ -66,6 +66,20 @@ export const emitWarnings = (ctx: CliContext, warnings: readonly string[]): void
   }
 };
 
+// JSON.stringify escapes only C0 controls. A terminal can still act on C1
+// controls (U+009B CSI, U+009D OSC), and bidi controls and U+2028/U+2029
+// reorder or break the line, so every --json writer escapes those as \uXXXX.
+// The escape stays inside a JSON string, so JSON.parse returns the same value.
+const JSON_TERMINAL_UNSAFE_RE =
+  // oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it escapes them)
+  /[\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u2028\u2029]/gu;
+
+export const jsonLine = (value: unknown): string =>
+  JSON.stringify(value).replaceAll(
+    JSON_TERMINAL_UNSAFE_RE,
+    (char) => `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, '0')}`,
+  );
+
 // Frozen call shape: warnings travel inside the result, never as a side channel,
 // so a command cannot produce a warning that silently fails to be rendered.
 export const emit = (ctx: CliContext, opts: OutputOptions, result: ActionResult): void => {
@@ -73,7 +87,7 @@ export const emit = (ctx: CliContext, opts: OutputOptions, result: ActionResult)
   if (opts.json) {
     const reasons = result.warningReasons ?? [];
     ctx.out(
-      JSON.stringify({
+      jsonLine({
         ok: true,
         data: result.data,
         warnings,
@@ -119,7 +133,7 @@ export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): n
   const rendered = renderError(err, { verbose: opts.verbose });
   if (opts.json) {
     ctx.out(
-      JSON.stringify({
+      jsonLine({
         ok: false,
         error: {
           code: rendered.code,

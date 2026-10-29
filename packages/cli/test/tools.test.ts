@@ -78,6 +78,43 @@ describe('tools command — file specs', () => {
     expect(envelope.data.contentHash).toMatch(/^[0-9a-f]{64}$/u);
   });
 
+  it('escapes C1 and bidi characters from spec paths, operation ids and tags in JSON', async () => {
+    const path = '/p\u009B31mX\u202EY';
+    const spec = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Hostile', version: '1.0.0' },
+      paths: {
+        [path]: {
+          get: {
+            operationId: 'op\u009D0;T\u009C\u2066z',
+            tags: ['t\u202E'],
+            responses: { '200': { description: 'ok' } },
+          },
+        },
+      },
+    });
+    const { lines, ctx } = fileCtx({
+      readFileText: () => Promise.resolve(spec),
+      fileSizeBytes: () => Promise.resolve(spec.length),
+    });
+    const code = await run(ctx, [
+      'node',
+      'openapi-mcp',
+      '--json',
+      'tools',
+      '--spec',
+      'hostile.json',
+    ]);
+    expect(code).toBe(EXIT.OK);
+    expect(lines[0]).not.toMatch(/[\u0080-\u009F\u202A-\u202E\u2066-\u2069]/u);
+    const { data } = JSON.parse(lines[0]!) as {
+      data: { tools: { path: string; operationId: string; tags: string[] }[] };
+    };
+    expect(data.tools[0]?.path).toBe(path);
+    expect(data.tools[0]?.operationId).toBe('op\u009D0;T\u009C\u2066z');
+    expect(data.tools[0]?.tags).toEqual(['t\u202E']);
+  });
+
   it('serves an OpenAPI 3.2 spec, additionalOperations included (#33)', async () => {
     const { lines, ctx } = fileCtx();
     const code = await run(ctx, [
