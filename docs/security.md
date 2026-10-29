@@ -53,8 +53,10 @@ Every defense below comes on top of this requirement. None of them replaces it.
   that documents more. [Large APIs and tool modes](tool-modes.md) explains the modes.
 - The server dereferences only the exposed operations, and each shared `$ref` target only once.
   Two node budgets apply on every run: 500,000 unique allocated nodes, and 10,000,000 nodes for
-  the result counted as a tree. Neither large shared models nor a "billion laughs" `$ref` graph
-  can make dereferencing or tool generation run without bound.
+  the result counted as a tree. The `$ref` cycle check walks at most 10,000,000 nodes too, and
+  it treats every spelling of one pointer, such as `#/a` and `#/%61`, as one target. Neither
+  large shared models nor a "billion laughs" `$ref` graph can make dereferencing or tool
+  generation run without bound.
 - A spec that is fetched again at runtime never silently changes what a model can do. The cache
   keeps a durable accepted baseline and at most one pending candidate. The server applies only
   one kind of change on its own, a removal, because removing is the safe direction. While a

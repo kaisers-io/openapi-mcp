@@ -36,4 +36,14 @@ export const SPEC_BUDGETS = {
   maxServerUrlBytes: 2048,
 } as const;
 
+// Hard ceiling on the LOGICAL size of everything a dereferencer hands out:
+// the node count of the output read as a tree, i.e. every shared $ref target
+// counted once per place it occurs. Unique allocations are bounded by
+// SPEC_BUDGETS.maxSchemaNodes; this bounds what consumers that walk the
+// output as a tree (schema conversion, JSON Schema emission, serialization)
+// can be made to do. 2^40 occurrences of a 40-level "billion laughs" chain
+// are refused from the memoized sizes alone, without walking anything. The
+// $ref cycle check (refs.ts) walks at most this many nodes as well.
+export const MAX_EXPANDED_NODES = 10_000_000;
+
 export type SpecBudgets = typeof SPEC_BUDGETS;

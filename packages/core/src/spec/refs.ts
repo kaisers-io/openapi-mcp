@@ -2,7 +2,7 @@
 // resolution, the external-ref refusal, and the two checks that read refs
 // without expanding anything.
 import { validationError } from '../errors.ts';
-import { SPEC_BUDGETS } from './budgets.ts';
+import { MAX_EXPANDED_NODES, SPEC_BUDGETS } from './budgets.ts';
 
 const decodeSegment = (rawSegment: string, ref: string): string => {
   try {
@@ -118,12 +118,14 @@ export const resolveShallow = (document: Record<string, unknown>, node: unknown)
   return current;
 };
 
-// Every $ref string under `root`, its own and nested ones, without following any
-const refsUnder = (root: unknown): string[] => {
+// Every $ref string under `root`, its own and nested ones, without following
+// any. `charge` is called once per node walked.
+const refsUnder = (root: unknown, charge: () => void): string[] => {
   const found: string[] = [];
   const pending: unknown[] = [root];
   while (pending.length > 0) {
     const node = pending.pop();
+    charge();
     if (Array.isArray(node)) {
       pushChildren(pending, node);
     } else if (isRecord(node)) {
@@ -141,12 +143,17 @@ type TarjanFrame = { node: string; next: number };
 
 // Answers "is this $ref on a reference cycle?" — a strongly connected
 // component of more than one target, or a target that references itself.
-// Tarjan's algorithm over the ref graph (one node per distinct $ref, an edge
-// to every $ref inside its target), run lazily: a query for an unvisited ref
-// starts a search from it, which classifies everything reachable from it, and
-// later queries reuse that. So only the part of the graph the exposed
-// operations reach is ever walked, and nothing is expanded. Iterative, so a
-// deep graph cannot overflow the stack.
+// Tarjan's algorithm over the ref graph (one node per distinct target, an
+// edge to every target referenced inside it), run lazily: a query for an
+// unvisited ref starts a search from it, which classifies everything reachable
+// from it, and later queries reuse that. So only the part of the graph the
+// exposed operations reach is ever walked, and nothing is expanded. Iterative,
+// so a deep graph cannot overflow the stack.
+//
+// A node is keyed by the first ref string seen for its target, so the many
+// spellings of one pointer ("#/a", "#/%61") are one node, walked once. Targets
+// can still nest, and each nested target is walked again, so the walks count
+// against MAX_EXPANDED_NODES and fail closed past it.
 export const createCycleDetector = (
   document: Record<string, unknown>,
 ): ((ref: string) => boolean) => {
@@ -159,14 +166,33 @@ export const createCycleDetector = (
   const onStack = new Set<string>();
   const stack: string[] = [];
   let counter = 0;
-  const edgesOf = (ref: string): readonly string[] => {
-    const known = edges.get(ref);
+  let walked = 0;
+  const charge = (): void => {
+    walked += 1;
+    if (walked > MAX_EXPANDED_NODES) {
+      throw validationError(
+        `dereferenced spec exceeds the ${MAX_EXPANDED_NODES}-node budget while checking $ref cycles`,
+      );
+    }
+  };
+  const keyOfTarget = new Map<unknown, string>();
+  const keyOf = (ref: string): string => {
+    assertInternal(ref);
+    const target = resolvePointer(document, ref);
+    const key = keyOfTarget.get(target) ?? ref;
+    keyOfTarget.set(target, key);
+    return key;
+  };
+  // Called with keys only, so each target is walked once
+  const edgesOf = (key: string): readonly string[] => {
+    const known = edges.get(key);
     if (known !== undefined) {
       return known;
     }
-    assertInternal(ref);
-    const found = refsUnder(resolvePointer(document, ref));
-    edges.set(ref, found);
+    const found = [
+      ...new Set(refsUnder(resolvePointer(document, key), charge).map((ref) => keyOf(ref))),
+    ];
+    edges.set(key, found);
     return found;
   };
   const visit = (node: string, frames: TarjanFrame[]): void => {
@@ -223,10 +249,11 @@ export const createCycleDetector = (
     }
   };
   return (ref) => {
-    if (!index.has(ref)) {
-      search(ref);
+    const key = keyOf(ref);
+    if (!index.has(key)) {
+      search(key);
     }
-    return cyclic.has(ref);
+    return cyclic.has(key);
   };
 };
 

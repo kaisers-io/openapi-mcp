@@ -1,5 +1,5 @@
 import { validationError } from '../errors.ts';
-import { SPEC_BUDGETS } from './budgets.ts';
+import { MAX_EXPANDED_NODES, SPEC_BUDGETS } from './budgets.ts';
 import {
   assertInternal,
   createCycleDetector,
@@ -20,14 +20,7 @@ import type { OpenapiVersion } from './validate.ts';
 
 export { checkRefs, createCycleDetector, resolveShallow } from './refs.ts';
 
-// Hard ceiling on the LOGICAL size of everything a dereferencer hands out:
-// the node count of the output read as a tree, i.e. every shared $ref target
-// counted once per place it occurs. Unique allocations are bounded by
-// SPEC_BUDGETS.maxSchemaNodes below; this bounds what consumers that walk the
-// output as a tree (schema conversion, JSON Schema emission, serialization)
-// can be made to do. 2^40 occurrences of a 40-level "billion laughs" chain
-// are refused from the memoized sizes alone, without walking anything.
-export const MAX_EXPANDED_NODES = 10_000_000;
+export { MAX_EXPANDED_NODES } from './budgets.ts';
 
 const budgetError = (budget: number, what: string): Error =>
   validationError(`dereferenced spec exceeds the ${budget}-node budget${what}`);
