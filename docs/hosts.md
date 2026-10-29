@@ -46,7 +46,7 @@ committed file:
       "command": "npx",
       "args": [
         "-y",
-        "@kaisers-io/openapi-mcp@0.6.1",
+        "@kaisers-io/openapi-mcp@0.7.0",
         "serve",
         "--spec",
         "https://api.example.com/openapi.json",
@@ -113,7 +113,7 @@ from, then list their names in `env_vars` so Codex forwards them:
 command = "npx"
 args = [
   "-y",
-  "@kaisers-io/openapi-mcp@0.6.1",
+  "@kaisers-io/openapi-mcp@0.7.0",
   "serve",
   "--spec",
   "https://api.example.com/openapi.json",
@@ -200,7 +200,7 @@ Cursor expands `${env:NAME}`:
   "mcpServers": {
     "petstore": {
       "command": "npx",
-      "args": ["-y", "@kaisers-io/openapi-mcp@0.6.1", "serve", "--spec", "https://api.example.com/openapi.json", "--header-env", "Authorization=API_TOKEN"],
+      "args": ["-y", "@kaisers-io/openapi-mcp@0.7.0", "serve", "--spec", "https://api.example.com/openapi.json", "--header-env", "Authorization=API_TOKEN"],
       "env": { "API_TOKEN": "${env:API_TOKEN}" }
     }
   }
@@ -230,7 +230,7 @@ which the command "MCP: Open User Configuration" opens. The key is `servers`, no
     "petstore": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@kaisers-io/openapi-mcp@0.6.1", "serve", "--spec", "https://api.example.com/openapi.json", "--header-env", "Authorization=API_TOKEN"],
+      "args": ["-y", "@kaisers-io/openapi-mcp@0.7.0", "serve", "--spec", "https://api.example.com/openapi.json", "--header-env", "Authorization=API_TOKEN"],
       "env": { "API_TOKEN": "${input:petstore-token}" }
     }
   }
@@ -256,7 +256,7 @@ every project:
   "mcpServers": {
     "petstore": {
       "command": "npx",
-      "args": ["-y", "@kaisers-io/openapi-mcp@0.6.1", "serve", "--spec", "https://api.example.com/openapi.json", "--header-env", "Authorization=API_TOKEN"],
+      "args": ["-y", "@kaisers-io/openapi-mcp@0.7.0", "serve", "--spec", "https://api.example.com/openapi.json", "--header-env", "Authorization=API_TOKEN"],
       "env": { "API_TOKEN": "$API_TOKEN" },
       "timeout": 60000
     }
@@ -297,7 +297,7 @@ skips `cmd`'s AutoRun commands, which could print into the MCP stream:
         "/c",
         "npx",
         "-y",
-        "@kaisers-io/openapi-mcp@0.6.1",
+        "@kaisers-io/openapi-mcp@0.7.0",
         "serve",
         "--spec",
         "C:\\specs\\petstore.json",
@@ -334,7 +334,7 @@ and point a host at its URL. [http.md](http.md) explains the flags and the token
 
 ```bash
 export TOKEN=$(openssl rand -base64 32)
-npx -y @kaisers-io/openapi-mcp@0.6.1 serve --spec https://api.example.com/openapi.json \
+npx -y @kaisers-io/openapi-mcp@0.7.0 serve --spec https://api.example.com/openapi.json \
   --http --http-token-env TOKEN --port 3044
 ```
 
@@ -376,12 +376,12 @@ spec URL, credentials and `--cache-key`.
 
 ## Upgrading
 
-The host examples pin an exact version, such as `npx -y @kaisers-io/openapi-mcp@0.6.1 ...`,
+The host examples pin an exact version, such as `npx -y @kaisers-io/openapi-mcp@0.7.0 ...`,
 never `latest`. The server runs with your API credentials on every start. If `npx` resolves
 to whatever was just published, a compromised release would run with those credentials
 without you noticing. To upgrade, change the pinned version in your host config on purpose. If
 you installed the package globally instead of running it through `npx`, install the new
-version explicitly, for example `npm i -g @kaisers-io/openapi-mcp@0.6.1`.
+version explicitly, for example `npm i -g @kaisers-io/openapi-mcp@0.7.0`.
 
 The `configuring-openapi-mcp` skill compares the configured version with the latest one and
 proposes the config changes an update needs.

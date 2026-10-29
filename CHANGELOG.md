@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-29
+
 ### Added
 
 - **`--basic-auth-env USER_ENV:PASSWORD_ENV` sends HTTP Basic auth.** The server builds the

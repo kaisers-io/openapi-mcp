@@ -34,6 +34,7 @@ The new version stops with an error that names the replacement. Apply it.
 
 | Version | Old | New |
 |---|---|---|
+| 0.7.0 | `--api execute=<source>` | another API name: `execute` is reserved, like `call` and `search` |
 | 0.5.0 | `--deny "DELETE /**"` | `--deny "method:delete"` |
 | 0.5.0 | `--allow "GET /orders/**"` | `--allow "route:GET /orders/**"` |
 | 0.5.0 | `--allow "**"` | `--allow "operationId:*"` (the same operations); `path:/**` also exposes operations without an operationId |
@@ -45,7 +46,8 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
-| Unreleased | The 512-tool limit counts the tools that are built, not the operations the filters pass: an operation omitted as not supported no longer counts. | Nothing in the config. A filter set that failed with `exceeds the 512-tool budget` may start now; run `CLI --json check`. |
+| 0.7.0 | Every tool mode lists one more tool, `execute_code`: it runs a short program the agent writes, over read-only operations only. Host permissions stored by tool name see a new tool. | Nothing in the config. `--no-execute` keeps the earlier tool list. |
+| 0.7.0 | The 512-tool limit counts the tools that are built, not the operations the filters pass: an operation omitted as not supported no longer counts. | Nothing in the config. A filter set that failed with `exceeds the 512-tool budget` may start now; run `CLI --json check`. |
 | 0.6.1 | A `HEAD` operation whose `GET` on the same path is not exposed is no longer a tool; its calls were always refused. | Nothing in the config; allow the `GET` too if the user needs the `HEAD`. |
 | 0.6.0 | `--tool-mode auto` also picks `discover` when the tool definitions take more than 40,000 bytes. | Run `CLI --json check`; if it now reports `discover` and the user wants approval per tool, set `--tool-mode per-operation`. |
 | 0.5.0 | Every selector ignores letter case. In `operationId:`, `name:` and `tag:` patterns, `*` also matches `/`. | Compare the tools of both versions; an `--allow` can expose more, a `--deny` can exclude more. |
