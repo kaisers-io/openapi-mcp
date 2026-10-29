@@ -41,12 +41,22 @@ const METADATA_IPV4 = new Set([
 ]);
 // GCP metadata hostnames, plus the Tencent Cloud CAM/STS credential endpoint
 // hostname (metadata.tencentyun.com) — no reliable Tencent IP is added here
-// (sources conflict and both candidates already classify 'private').
+// (sources conflict and both candidates already classify 'private'). So the
+// Tencent deny holds by name only: an IP literal or another name for that
+// address is 'private', which --allow-private-network admits.
 export const METADATA_HOSTNAMES = new Set([
   'metadata.google.internal',
   'metadata.goog',
   'metadata.tencentyun.com',
 ]);
+
+// One spelling for a hostname before any deny-set lookup: lowercase, minus a
+// single trailing dot. URL.hostname keeps the dot of an absolute name
+// ("metadata.tencentyun.com."), which DNS resolves to the same host.
+export const canonicalHostname = (hostname: string): string => {
+  const lower = hostname.toLowerCase();
+  return lower.endsWith('.') ? lower.slice(0, -1) : lower;
+};
 
 const classifyIpv4 = (address: string): AddressClass => {
   if (METADATA_IPV4.has(address)) {
@@ -280,7 +290,7 @@ export const assertAllowedRedirectTarget = async (
   signal: AbortSignal,
 ): Promise<void> => {
   const hostname = hostnameOf(url);
-  const lower = hostname.toLowerCase();
+  const lower = canonicalHostname(hostname);
   const check = (address: string): void => {
     if (isIP(address) === 0) {
       // Fail closed: a DnsLookup implementation must return IP addresses

@@ -194,6 +194,17 @@ describe('assertAllowedRedirectTarget', () => {
     },
   );
 
+  it.each(['metadata.tencentyun.com.', 'Metadata.TencentYun.com.', 'METADATA.GOOGLE.INTERNAL.'])(
+    'rejects the metadata hostname %s in any case and with a trailing dot',
+    async (host) => {
+      await expect(
+        assertAllowedRedirectTarget(new URL(`http://${host}/x`), allow, noLookup, signal),
+      ).rejects.toMatchObject({
+        message: expect.stringContaining('is a cloud-metadata endpoint') as string,
+      });
+    },
+  );
+
   it.each(['localhost', 'dev.localhost'])('treats %s as loopback by name', async (host) => {
     await expect(
       assertAllowedRedirectTarget(new URL(`http://${host}/x`), deny, noLookup, signal),

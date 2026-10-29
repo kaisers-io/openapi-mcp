@@ -1435,6 +1435,22 @@ describe('validateHopUrlSync', () => {
     ).toBe('"metadata.tencentyun.com" is a cloud-metadata endpoint');
   });
 
+  it.each(['metadata.tencentyun.com.', 'Metadata.TencentYun.com.', 'metadata.goog.'])(
+    'rejects the metadata hostname %s in any case and with a trailing dot',
+    (host) => {
+      expect(
+        validateHopUrlSync(new URL(`http://${host}/`), {
+          allowPrivateNetwork: true,
+          trusted: true,
+        }),
+      ).toMatch(/is a cloud-metadata endpoint/u);
+    },
+  );
+
+  it('still allows an ordinary hostname with a trailing dot', () => {
+    expect(validateHopUrlSync(new URL('http://api.example.test./'), untrusted)).toBeUndefined();
+  });
+
   it('allows a public IP literal', () => {
     expect(validateHopUrlSync(new URL('http://93.184.216.34/'), untrusted)).toBeUndefined();
   });
