@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import Ajv2020Module from 'ajv/dist/2020.js';
 import type { ErrorObject, Options, ValidateFunction } from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
+import { fullFormats } from 'ajv-formats/dist/formats.js';
 
 export type { ErrorObject } from 'ajv/dist/2020.js';
 
@@ -18,6 +19,7 @@ export type { ErrorObject } from 'ajv/dist/2020.js';
 // OpenAPI meta-schemas vs. one compiled validator per tool outputSchema).
 type AjvInstance = {
   compile: (schema: object) => ValidateFunction;
+  addFormat: (name: string, format: RegExp) => unknown;
 };
 type AjvConstructor = new (opts: Options) => AjvInstance;
 
@@ -28,6 +30,19 @@ const unwrapDefault = <Unwrapped>(moduleValue: unknown): Unwrapped => {
 
 const Ajv2020 = unwrapDefault<AjvConstructor>(Ajv2020Module);
 const addFormats = unwrapDefault<(ajv: AjvInstance) => unknown>(addFormatsModule);
+
+// Ajv runs formats synchronously on upstream data, after the request timeout
+// (the reason for the response `pattern` gate, toolgen/pattern-safety.ts).
+// The user-info part of the ajv-formats `url` regex, `(?:\S+(?::\S*)?@)?`,
+// has two ways to match a colon and backtracks quadratically: 32,000 colons
+// after `http://` blocked the event loop for 1.6 s. `\S+` already matches
+// colons, so `(?:\S+@)?` accepts exactly the same strings in linear time. A
+// test fails if an ajv-formats update changes the regex.
+const AJV_URL = fullFormats.url as RegExp;
+const LINEAR_URL = new RegExp(
+  AJV_URL.source.replace(String.raw`(?:\S+(?::\S*)?@)?`, String.raw`(?:\S+@)?`),
+  AJV_URL.flags,
+);
 
 // `onErrors` sees Ajv's errors of a failed validation, synchronously, before
 // the shared compiled function validates anything else (issue #24): the
@@ -77,6 +92,7 @@ export type EnvelopeCompiler = (
 export const createEnvelopeCompiler = (): EnvelopeCompiler => {
   const ajv = new Ajv2020({ strict: false, addUsedSchema: false, code: { optimize: false } });
   addFormats(ajv);
+  ajv.addFormat('url', LINEAR_URL);
   const compiled = new Map<string, ValidateFunction>();
   return (outputSchema): EnvelopeValidator | undefined => {
     if (outputSchema === undefined) {

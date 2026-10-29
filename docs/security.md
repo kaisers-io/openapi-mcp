@@ -192,6 +192,9 @@ checks:
     backreferences.
   - In request schemas (tool inputs) the server shows `pattern` and `format` to the model in
     the input schema but never runs them, so they cost no CPU here.
+  - In response schemas the server enforces `format` with the checks of ajv-formats. Its `url`
+    check backtracked quadratically on a long string, so the server runs an equivalent check
+    that takes linear time and accepts the same URLs.
 - A response over `--max-response-bytes` (default `10MB`) is a tool error. The server never
   returns a truncated payload that would be silently invalid.
 - A binary or unknown media type is a tool error that names the media type. The one exception

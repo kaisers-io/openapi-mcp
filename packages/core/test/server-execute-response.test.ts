@@ -234,6 +234,30 @@ describe('createEnvelopeCompiler — identical schemas (issue #7)', () => {
   });
 });
 
+describe('createEnvelopeCompiler — the url format', () => {
+  const validate = createEnvelopeCompiler()({
+    type: 'object',
+    properties: { homepage: { type: 'string', format: 'url' } },
+  }) as EnvelopeValidator;
+
+  it('accepts and rejects what ajv-formats does', () => {
+    for (const url of ['https://api.example.test/a?b', 'http://u:p@api.example.test:8080/']) {
+      expect(validate({ homepage: url })).toBe(true);
+    }
+    for (const url of ['http://10.0.0.1/', 'mailto:a@api.example.test', 'http://', 'http:// x']) {
+      expect(validate({ homepage: url })).toBe(false);
+    }
+  });
+
+  it('takes linear time on a long near-match from the upstream', () => {
+    const started = performance.now();
+    expect(validate({ homepage: `http://${':'.repeat(100_000)}` })).toBe(false);
+    expect(validate({ homepage: `http://${'@:'.repeat(50_000)} ` })).toBe(false);
+    // Generous bound: the regex of ajv-formats 3.0.1 takes over 10 s here
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+});
+
 describe('lazyEnvelopeValidators (issue #8)', () => {
   const ok = { status: 200, contentType: 'application/json', data: { id: 1 } };
   const broken = { type: 'object', oneOf: 'not-an-array' };
