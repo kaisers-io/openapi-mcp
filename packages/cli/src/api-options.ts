@@ -1,6 +1,7 @@
 import type { Command } from '@commander-js/extra-typings';
 import {
   HEADER_NAME_RE,
+  isEnvVarName,
   NON_LATIN1_RE,
   parseByteSize,
   parseDuration,
@@ -155,6 +156,7 @@ export type ApiCmdOpts = OAuthCmdOpts & {
   [key: string]: unknown;
   baseUrl?: string;
   headerEnv: readonly string[];
+  basicAuthEnv?: string;
   header: readonly string[];
   maxResponseBytes: string;
   allowInsecureHttp?: boolean;
@@ -177,6 +179,10 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
       'API auth header, value read from env (repeatable, secret)',
       collect,
       [] as readonly string[],
+    )
+    .option(
+      '--basic-auth-env <USER_ENV:PASSWORD_ENV>',
+      'HTTP Basic auth for API requests: the user name and the password read from these env vars (secret; without :PASSWORD_ENV the password is empty)',
     )
     .option(
       '--header <Header:value>',
@@ -457,8 +463,75 @@ const parseRequestTimeout = (raw: string): number => {
 // Parses and cross-validates every API-request flag into one trusted config.
 // Every failure here is a startup usageError (exit 2), before any network
 // call or credential use.
+// --basic-auth-env (RFC 7617): the Authorization header built from a user
+// name and a password, both read from the environment. It then is one more
+// secret header, so the cleartext gate, the conflict checks, the 401 hint and
+// the redaction (which also covers the decoded user and password, redact.ts)
+// treat it like a --header-env Authorization value.
+const parseBasicAuth = (
+  raw: string | undefined,
+  env: Readonly<Record<string, string | undefined>>,
+): ApiSecretHeader | undefined => {
+  if (raw === undefined) {
+    return undefined;
+  }
+  const [userEnv = '', passwordEnv, ...rest] = raw.split(':');
+  if (
+    rest.length > 0 ||
+    !isEnvVarName(userEnv) ||
+    (passwordEnv !== undefined && !isEnvVarName(passwordEnv))
+  ) {
+    throw usageError(
+      `invalid --basic-auth-env "${raw}" — expected <USER_ENV>:<PASSWORD_ENV> or <USER_ENV>`,
+    );
+  }
+  const read = (name: string, what: string, required: boolean): string => {
+    const value = env[name];
+    if (value === undefined || (required && value === '')) {
+      throw usageError(
+        `environment variable "${name}" (the ${what} of --basic-auth-env) is not set or empty`,
+        'env_missing',
+      );
+    }
+    // Never echo the value: it is a secret
+    if (CONTROL_CHAR_RE.test(value)) {
+      throw usageError(`value of environment variable "${name}" contains control characters`);
+    }
+    return value;
+  };
+  const user = read(userEnv, 'user name', true);
+  if (user.includes(':')) {
+    throw usageError(
+      `the user name in environment variable "${userEnv}" contains ":", which HTTP Basic auth cannot carry`,
+    );
+  }
+  const password = passwordEnv === undefined ? '' : read(passwordEnv, 'password', false);
+  const value = `Basic ${Buffer.from(`${user}:${password}`, 'utf8').toString('base64')}`;
+  assertHeaderSizeBudget('Authorization', value, true);
+  return { name: 'Authorization', value, envVar: passwordEnv ?? userEnv };
+};
+
 export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): ResolvedApiConfig => {
-  const secretHeaders = parseSecretHeaders(cmdOpts.headerEnv, ctx.env);
+  const fromEnv = parseSecretHeaders(cmdOpts.headerEnv, ctx.env);
+  const basic = parseBasicAuth(cmdOpts.basicAuthEnv, ctx.env);
+  if (
+    basic !== undefined &&
+    fromEnv.some((header) => header.name.toLowerCase() === 'authorization')
+  ) {
+    throw usageError(
+      '--basic-auth-env cannot be combined with --header-env Authorization=... (both set the Authorization header)',
+    );
+  }
+  if (
+    basic !== undefined &&
+    (cmdOpts.upstreamOauthClientIdEnv !== undefined ||
+      cmdOpts.upstreamOauthClientSecretEnv !== undefined)
+  ) {
+    throw usageError(
+      '--basic-auth-env cannot be combined with --upstream-oauth-* (the OAuth2 access token is sent in Authorization)',
+    );
+  }
+  const secretHeaders = basic === undefined ? fromEnv : [...fromEnv, basic];
   const staticHeaders = parseStaticHeaders(cmdOpts.header);
   const reservedHeaderNames = crossValidateHeaders(staticHeaders, secretHeaders);
   // Marker-collision startup footgun: a --header-env value is ALWAYS a real

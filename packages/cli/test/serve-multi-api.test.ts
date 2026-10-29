@@ -170,6 +170,31 @@ describe('serve — several APIs (#16)', () => {
     ]);
   });
 
+  // HTTP Basic auth (RFC 7617) from two env vars, per API: --basic-auth-env
+  it('sends HTTP Basic auth built from --basic-auth-env, to its own API only', async () => {
+    upstream.requests.length = 0;
+    process.env['CRM_USER'] = 'crm-user';
+    process.env['CRM_PASSWORD'] = 'crm-password-example-not-a-secret';
+    try {
+      const basic = args().map((arg) =>
+        arg === 'crm=Authorization=CRM_TOKEN' ? 'crm=CRM_USER:CRM_PASSWORD' : arg,
+      );
+      basic[basic.indexOf('crm=CRM_USER:CRM_PASSWORD') - 1] = '--basic-auth-env';
+      await withServe(basic, home, async (session) => {
+        await session.callTool('crm_listContacts', {});
+        await session.callTool('shop_listOrders', {});
+      });
+    } finally {
+      delete process.env['CRM_USER'];
+      delete process.env['CRM_PASSWORD'];
+    }
+    const expected = `Basic ${Buffer.from('crm-user:crm-password-example-not-a-secret').toString('base64')}`;
+    expect(upstream.requests).toStrictEqual([
+      { method: 'GET', url: '/crm/contacts', authorization: expected },
+      { method: 'GET', url: '/shop/orders', authorization: SHOP_TOKEN },
+    ]);
+  });
+
   it('searches, describes and calls qualified names in discover mode', async () => {
     upstream.requests.length = 0;
     await withServe(args(['--tool-mode', 'discover']), home, async (session) => {

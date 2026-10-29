@@ -76,9 +76,23 @@ export API_TOKEN="Bearer $RAW_TOKEN"
 unset RAW_TOKEN
 ```
 
-For HTTP Basic authentication the value is `Basic <base64 of user:password>`. For an API key in
-a header such as `X-API-Key`, the value is the bare key and the flag is
+For an API key in a header such as `X-API-Key`, the value is the bare key and the flag is
 `--header-env X-API-Key=API_KEY`.
+
+### HTTP Basic authentication
+
+`--basic-auth-env API_USER:API_PASSWORD` reads the user name from `API_USER` and the password
+from `API_PASSWORD`, and the server sends `Authorization: Basic <base64 of user:password>`. A
+secret manager that stores the two as separate fields can fill both variables, for example
+`op run` of the 1Password CLI with an env file of `op://` references. For an API that takes a
+key as the user name and no password, name only the user variable: `--basic-auth-env API_KEY`.
+
+The user name cannot contain `:`, because HTTP Basic auth separates the two at the first one.
+The server treats the header like a `--header-env` credential: it is never sent over cleartext
+`http` without `--allow-insecure-http`, it cannot be combined with another `Authorization`
+header or `--upstream-oauth-*`, and the redaction covers the header, the user name and the
+password. `--header-env Authorization=VAR` with a variable that holds the finished
+`Basic <base64 of user:password>` value works as well.
 
 To see what an API expects, run `openapi-mcp tools --spec <url|file>`. It prints one `auth:` line
 per security scheme of the spec with the flag to use, for example:

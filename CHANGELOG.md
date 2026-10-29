@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--basic-auth-env USER_ENV:PASSWORD_ENV` sends HTTP Basic auth.** The server builds the
+  `Authorization` header from a user name and a password in two environment variables, so a
+  secret manager that stores them as separate fields, such as the 1Password CLI's `op run`,
+  can fill them without a start script. It is a secret header like `--header-env`, and
+  `tools` names it for an `http` `basic` scheme. See
+  [credentials.md](docs/credentials.md#http-basic-authentication).
 - **`execute_code` runs a short program over several read-only calls (#60).** The model writes
   JavaScript that calls the API's operations with `api.call(name, args)`, and only the
   program's result goes back: paging, following ids, filtering, counting and summing take one
