@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { HTTP_METHODS } from '../spec/normalize.ts';
 
-// Input and output schemas of the three discovery tools (issue
+// Input and output schemas of the discovery tools (issue
 // kaisers-io/openapi-mcp-archive#38). Every field a caller controls is bounded
 // here, before any search or lookup runs.
 
@@ -150,3 +150,37 @@ export const multiApiSearchInputSchema = (apiNames: readonly [string, ...string[
 
 export type SearchInput = z.infer<typeof SEARCH_INPUT_SCHEMA> & { api?: string };
 export type DescribeInput = z.infer<typeof DESCRIBE_INPUT_SCHEMA>;
+
+// The input of execute_code (issue #60), offered unless --no-execute: a script is the body of
+// an async function, capped like any other caller-supplied text
+export const EXECUTE_CODE_MAX_LENGTH = 20_000;
+
+export const EXECUTE_INPUT_SCHEMA = z.strictObject({
+  code: z
+    .string()
+    .min(1)
+    .max(EXECUTE_CODE_MAX_LENGTH)
+    .describe('The body of an async JavaScript function; `return` gives the result.'),
+});
+
+export type ExecuteInput = z.infer<typeof EXECUTE_INPUT_SCHEMA>;
+
+export const EXECUTE_OUTPUT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    result: {},
+    logs: { type: 'array', items: { type: 'string' } },
+    logsTruncated: { type: 'boolean' },
+    calls: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { name: { type: 'string' }, status: { type: 'string' } },
+        required: ['name', 'status'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['result', 'calls'],
+  additionalProperties: false,
+};

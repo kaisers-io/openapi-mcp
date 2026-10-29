@@ -251,6 +251,7 @@ const runUpstreamCall = async (
   report: (telemetry: CallTelemetry) => void,
   // What is left of the call's time budget after any queue wait.
   timeoutMs: number,
+  textBytes: number,
 ): Promise<ToolCallOutcome> => {
   const { generated } = tool;
   if (generated === undefined) {
@@ -504,7 +505,7 @@ const runUpstreamCall = async (
       ...(tool.generated?.outputSchemaAssumesDefaultIsError === true
         ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
         : {}),
-      maxTextBytes: DISPLAY_TEXT_MAX,
+      maxTextBytes: textBytes,
       baseUrl: config.baseUrl,
       // `_fields` was validated by the tool's input schema (toolgen/projection.ts)
       // and is never mapped onto the request (buildRequest only reads mapped
@@ -597,7 +598,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
   // The wait is capped at half the budget, so a call that does get a slot
   // still has at least the other half for the upstream request.
   const maxQueueWaitMs = Math.ceil(config.timeoutMs / 2);
-  const execute: ToolExecutor = async (tool, args, signal, trace, report) => {
+  const execute: ToolExecutor = async (tool, args, signal, trace, report, textBytes) => {
     const queuedAt = now();
     const slot = await slots.acquire(signal, () => deps.transport.timeoutSignal(maxQueueWaitMs));
     const queuedMs = Math.max(0, now() - queuedAt);
@@ -638,6 +639,7 @@ export const createExecutor = (config: ExecutorConfig, deps: ExecutorDeps): Upst
         trace,
         upstreamReport,
         remainingMs,
+        textBytes ?? DISPLAY_TEXT_MAX,
       );
       if (!reported) {
         report?.({ outcome: outcome.isError ? 'validation_error' : 'ok', queuedMs });

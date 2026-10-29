@@ -10,13 +10,14 @@ import { TOOL_NAME_MAX_LENGTH } from './naming.ts';
 export const API_NAME_PATTERN = /^[a-z][a-z0-9-]{0,31}$/u;
 
 // API names that could form a fixed tool name (`openapi_mcp_status`,
-// `search_operations`, `describe_operation`, `call_operation`) with an
-// operation's own name (review of #16)
+// `search_operations`, `describe_operation`, `call_operation`,
+// `execute_code`) with an operation's own name (review of #16)
 export const RESERVED_API_NAMES: ReadonlySet<string> = new Set([
   'openapi',
   'search',
   'describe',
   'call',
+  'execute',
 ]);
 
 const capped = (full: string, hashLength: number): string => {

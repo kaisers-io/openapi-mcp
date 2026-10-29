@@ -11,7 +11,7 @@ import {
   metaWireTool,
   OMITTED_REASONS_CAP,
 } from './wire-tools.ts';
-import { buildDiscoveryTools } from './discovery.ts';
+import { buildDiscoveryTools, executeTool } from './discovery.ts';
 import { buildSearchIndex } from './search-index.ts';
 import type { ApiSummary, MetaSummary, ServerSnapshot, SnapshotTool, ToolMode } from './types.ts';
 
@@ -78,6 +78,9 @@ export type SnapshotOptions = {
   // Several APIs behind one server (issue #16): their names, so a search can
   // name one; every tool name starts with `<api>_`
   apiNames?: readonly [string, ...string[]];
+  // Also offer execute_code (issue #60), next to the discovery tools or the
+  // operation tools
+  execute?: boolean;
   // Under `discover`, sees an operation whose output side fails to build on
   // first use (the call or description that needed it gets a tool error)
   onDeferredError?: (toolName: string, error: unknown) => void;
@@ -103,12 +106,20 @@ export const buildSnapshot = (
   // depends only on WHICH operations exist, never on the order of keys in
   // the spec document — a YAML-to-JSON round trip or a registry that
   // re-serializes the spec cannot reorder the list. Under `discover` the
-  // operations leave tools/list; the three discovery tools take their place.
+  // operations leave tools/list; the discovery tools take their place.
   const sortedEntries = entries.toSorted(byToolName);
   const all =
     toolMode === 'discover'
-      ? [metaTool, ...buildDiscoveryTools(sortedEntries, options.apiNames)]
-      : [metaTool, ...upstreamTools.toSorted(byToolName)];
+      ? [
+          metaTool,
+          ...buildDiscoveryTools(sortedEntries, options.apiNames),
+          ...(options.execute === true ? [executeTool(toolMode)] : []),
+        ]
+      : [
+          metaTool,
+          ...upstreamTools.toSorted(byToolName),
+          ...(options.execute === true ? [executeTool(toolMode)] : []),
+        ];
   // Two separate namespaces under `discover`: an operation that happens to
   // be named `call_operation` is reached as call_operation's `name` argument
   // and never collides with the listed tool of that name.

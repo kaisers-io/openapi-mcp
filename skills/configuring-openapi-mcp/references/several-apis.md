@@ -12,8 +12,8 @@ agent uses the APIs together and the user wants one entry.
 ## Syntax
 
 - `--api <name>=<source>` declares an API. Names are lower case, start with a letter, use
-  `a-z`, `0-9` and `-`, and are at most 32 characters. `openapi`, `search`, `describe` and
-  `call` are reserved.
+  `a-z`, `0-9` and `-`, and are at most 32 characters. `openapi`, `search`, `describe`,
+  `call` and `execute` are reserved.
 - Every per-API option starts with the name: `--allow shop=tag:Orders`,
   `--header-env shop=Authorization=SHOP_TOKEN`, `--base-url shop=https://shop.example.test`.
 - Switches use `--enable <name>=<switch>`, for example `--enable shop=allow-private-network`.
@@ -30,3 +30,6 @@ works with or without it, `enable` is a switch.
 the same `--cache-key`. Give each API its own `--cache-key` then.
 
 Credentials stay with their API: a header of one API is never sent to another one's base URL.
+
+One `execute_code` program can read from every API of the server, for example orders from one
+and the matching customers from another. Each call keeps its own API's credentials and filters.

@@ -17,6 +17,8 @@ export type ToolExecutor = (
   signal: AbortSignal,
   trace?: TraceContext,
   report?: (telemetry: CallTelemetry) => void,
+  // The most bytes of a text result; DISPLAY_TEXT_MAX when not set
+  textBytes?: number,
 ) => Promise<ToolCallOutcome>;
 
 export type MetaExecutor = (
@@ -37,6 +39,9 @@ export type DispatcherDeps = {
   redactor: Redactor;
   // Receives one record per tools/call (opt-in logging and counters).
   onCall?: CallObserver;
+  // The dispatcher itself, set by createDispatcher: execute_code sends each
+  // nested call through it, observed like a call from the client
+  dispatch?: (request: CallRequest) => Promise<DispatchResult>;
 };
 
 export type CallRequest = {
@@ -47,6 +52,9 @@ export type CallRequest = {
   trace?: TraceContext;
   // Set by observeCalls (server/telemetry.ts) when call logging is on.
   report?: (telemetry: CallTelemetry) => void;
+  // A text result's size limit. An execute_code script's calls raise it: their
+  // results never reach the model, and a cut JSON text cannot be parsed
+  textBytes?: number;
 };
 
 // The dispatch-boundary finalizer, the LAST step before ANY outcome leaves
@@ -141,7 +149,7 @@ const routeExecutor = (
     }
     case 'upstream': {
       return executeWithEffect(tool, () =>
-        deps.executor(tool, data, request.signal, request.trace, request.report),
+        deps.executor(tool, data, request.signal, request.trace, request.report, request.textBytes),
       );
     }
   }
@@ -209,8 +217,15 @@ const createUnobservedDispatcher = (
 export const createDispatcher = (
   deps: DispatcherDeps,
 ): { call: (request: CallRequest) => Promise<DispatchResult> } => {
-  const { call } = createUnobservedDispatcher(deps);
-  return { call: deps.onCall === undefined ? call : observeCalls(call, deps.onCall, deps.now) };
+  // The dispatcher hands itself to execute_code, so a nested call is
+  // observed and logged like any other
+  const self = { call: (request: CallRequest): Promise<DispatchResult> => observed(request) };
+  const unobserved = createUnobservedDispatcher({ ...deps, dispatch: self.call });
+  const observed =
+    deps.onCall === undefined
+      ? unobserved.call
+      : observeCalls(unobserved.call, deps.onCall, deps.now);
+  return self;
 };
 
 export { createMetaExecutor } from './meta.ts';

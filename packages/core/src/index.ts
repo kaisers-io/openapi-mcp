@@ -294,6 +294,7 @@ export {
   DEFAULT_RATE_LIMIT,
   DESCRIBE_TOOL_NAME,
   discoverApprovalWarning,
+  EXECUTE_TOOL_NAME,
   evaluateHostOrigin,
   evaluateRequest,
   extractBearerToken,

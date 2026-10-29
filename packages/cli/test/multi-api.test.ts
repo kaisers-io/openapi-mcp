@@ -92,6 +92,7 @@ describe('apiViews (#16)', () => {
     [{ api: ['a=x.json', 'a=y.json'] }, [], '--api names "a" twice'],
     [{ api: ['openapi=x.json'] }, [], '--api name "openapi" is reserved'],
     [{ api: ['call=x.json'] }, [], '--api name "call" is reserved'],
+    [{ api: ['execute=x.json'] }, [], '--api name "execute" is reserved'],
     [{ api: two, allow: ['tag:repos'] }, [], 'does not start with the name of an API'],
     [{ api: two, allow: ['crm=tag:repos'] }, [], 'does not start with the name of an API'],
     [{ api: two, deny: ['crm=method:delete'] }, [], 'does not start with the name of an API'],

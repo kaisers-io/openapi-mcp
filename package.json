@@ -9,9 +9,9 @@
   },
   "scripts": {
     "lint": "oxlint",
-    "fmt": "oxfmt packages scripts/bench scripts/versions scripts/inspector scripts/skills vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
-    "fmt:check": "oxfmt --check packages scripts/bench scripts/versions scripts/inspector scripts/skills vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
-    "typecheck": "pnpm -r run typecheck && tsc -p scripts/bench && tsc -p scripts/versions && tsc -p scripts/inspector && tsc -p scripts/skills",
+    "fmt": "oxfmt packages scripts/bench scripts/evals scripts/versions scripts/inspector scripts/skills vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
+    "fmt:check": "oxfmt --check packages scripts/bench scripts/evals scripts/versions scripts/inspector scripts/skills vitest.config.ts vitest.shared.ts vitest.coverage.ts vitest.coverage-merge.ts",
+    "typecheck": "pnpm -r run typecheck && tsc -p scripts/bench && tsc -p scripts/versions && tsc -p scripts/inspector && tsc -p scripts/skills && tsc -p scripts/evals",
     "bench": "node scripts/bench/run.ts",
     "bench:compare": "node scripts/bench/compare.ts",
     "bench:baseline": "node scripts/bench/run.ts --out scripts/bench/baseline.json",

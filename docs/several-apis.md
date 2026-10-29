@@ -82,9 +82,9 @@ of the full name. The server decides the names over every operation of the spec,
 keeps naming the same operation however the spec is ordered and whatever the filters expose.
 A name that fits wins over a shortened one that would land on the same text.
 
-The API names `openapi`, `search`, `describe` and `call` are reserved, because they could
-form one of this server's own tool names (`openapi_mcp_status`, `search_operations`,
-`describe_operation`, `call_operation`).
+The API names `openapi`, `search`, `describe`, `call` and `execute` are reserved, because they
+could form one of this server's own tool names (`openapi_mcp_status`, `search_operations`,
+`describe_operation`, `call_operation`, `execute_code`).
 
 The server joins the parts with `_` because the common hosts rewrite `.` in tool names to `_`,
 and one of them drops a tool whose rewritten name collides with another. Hosts also add their
@@ -117,6 +117,11 @@ One redactor holds the secrets of every API, so all APIs together may configure 
 secret values. The count includes `--header-env` values, `--header` values of 8 characters or
 more, `--spec-header-env` values, the HTTP bearer token, and two values for each API that uses
 `--upstream-oauth-*` (the client secret and its Basic encoding).
+
+One `execute_code` program can call operations of every API, for example list the orders in
+one API and look up their customers in another. Each call in the program uses only its own
+API's credentials and filters, and a program can only read. See
+[tool-modes.md](tool-modes.md#scripts-execute_code).
 
 ## Startup
 

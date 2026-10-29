@@ -106,6 +106,7 @@ const SERVE_OPTIONS = [
   '--allow-offsite-redirects',
   '--tools-page-size',
   '--tool-mode',
+  '--no-execute',
   '--image-responses',
   '--uploads',
   '--image-dir-max-bytes',

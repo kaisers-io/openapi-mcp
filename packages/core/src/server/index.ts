@@ -12,6 +12,7 @@ export {
   CALL_TOOL_NAME,
   DESCRIBE_TOOL_NAME,
   discoverApprovalWarning,
+  EXECUTE_TOOL_NAME,
   resolveToolMode,
   SEARCH_TOOL_NAME,
   TOOL_MODES,

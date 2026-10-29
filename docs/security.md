@@ -552,7 +552,7 @@ on paths, exclude by method: `--deny "method:delete"`.
 `describe_operation` and `call_operation` ([Large APIs and tool modes](tool-modes.md) explains
 the mode). Its calls go through the same checks as a direct call:
 
-- The three tools only ever see the exposed operations, after filtering.
+- The discovery tools only ever see the exposed operations, after filtering.
 - `call_operation` runs the target through the same rate limit, strict input validation,
   executor and redaction as a direct call. An operation that `--allow`, `--deny` or the
   read-only default excluded is an unknown operation, and the server sends no upstream request.
@@ -572,12 +572,49 @@ default, or with an `--allow` set you would approve as a whole. Use
 warning that names the operations that are not read-only whenever `discover`, or `auto` resolving
 to it, exposes any.
 
-This server deliberately offers no code-execution mode, in which a model writes code that calls
-the API. Such a mode would bypass per-call validation, filtering, rate limiting and redaction.
-
 With `--http-auth oauth`, the HTTP transport authenticates every MCP request, `call_operation`
 included, before it reaches a tool. `--oauth-required-scope` applies to the whole server, not
 per operation: a scope cannot grant some operations behind `call_operation` and not others.
+
+### Scripts: `execute_code`
+
+`execute_code` runs a JavaScript program the model writes.
+[tool-modes.md](tool-modes.md#scripts-execute_code) explains the tool. Every tool mode lists
+it, and `--no-execute` leaves it out. The server treats the program as untrusted code. It runs
+the program in a sandbox, and the program reaches the API only through the same checks as a
+direct call.
+
+- **The engine.** The program runs in QuickJS, a JavaScript engine compiled to WebAssembly.
+  The server starts a new worker thread for each program. The program sees `api.call`,
+  `console.log` and the standard JavaScript built-ins. It has no `require`, `import`,
+  `process` or `fetch`, no timers, and no access to files, the environment or credentials.
+  Values pass between the program and the server as JSON text only.
+- **Every call is a whole tool call.** The dispatcher handles each `api.call()` as a
+  `call_operation` call under `discover`, or as a call of the operation's own tool under
+  `per-operation`. The program reaches only exposed operations. The server validates the
+  arguments with the operation's schema and charges each call to `--rate-limit`. The executor
+  applies the egress, redirect and size rules, and the dispatcher redacts each result before
+  the program sees it. A result that holds a registered secret reaches the program as an error,
+  so the program never gets the secret to change it past the scan. The server scans the
+  program's own result again before it returns it.
+- **Reads only.** A program can call only operations whose method is `GET`, `HEAD` or `QUERY`.
+  The server refuses any other operation before it sends anything. This check rests on the
+  HTTP method, so it does not protect an API whose `GET` changes data. Use `--no-execute` for
+  such an API. `execute_code` carries `readOnlyHint: true`.
+- **Limits.** The server terminates the program's worker after 30 s, whatever the program is
+  doing. It aborts the calls still in flight and never starts the calls still waiting. The
+  WebAssembly memory has a fixed maximum, and the engine's heap limit sits below it. In a test,
+  the engine's own limit alone let a program grow the process by more than a gigabyte. The
+  server also caps the number of calls, the calls in flight, the size of arguments, results
+  and log output, and runs at most four programs at once.
+  [tool-modes.md](tool-modes.md#limits) lists the values.
+
+With [several APIs](several-apis.md), a program can read from one API and pass what it read
+as arguments to another. A model can do the same with two `call_operation` calls, and a
+program does it in one step. Each call still uses only its own API's credentials and filters.
+
+A host that asks for approval per tool sees one `execute_code` tool for every read the filters
+expose.
 
 ## Windows
 
@@ -627,6 +664,9 @@ behave the same on Windows as on POSIX (measured).
 - SSRF through the spec's origin or through redirects: deny-by-default egress and DNS pinning,
 - unauthenticated local access to your API credentials in HTTP mode: a required bearer token,
   compared in constant time.
+- with `execute_code`, a model-written program that tries to reach more than the reads the filters
+  expose, or to run without bounds: a sandbox without ambient authority, every call through the
+  same checks as a direct call, and fixed limits.
 
 You still must:
 
@@ -634,6 +674,8 @@ You still must:
   description from a prompt-injection payload written in valid English.
 - choose `--allow` patterns deliberately instead of exposing write operations by default.
 - review a spec's diff before you run `cache promote`.
+- use `--no-execute` for an API whose `GET` operations change data: a program can make up to
+  50 reads in one tool call.
 - treat any `--base-url` you set as an explicit, trusted decision. It skips the private-range
   check that applies to origins taken from the spec.
 

@@ -13,9 +13,9 @@ By default, every exposed operation is its own MCP tool. An exposed operation is
 model up front, before the model has done anything. For DigitalOcean's read-only operations
 that is about 30k tokens.
 
-With `--tool-mode discover`, the server lists three fixed tools instead, `search_operations`,
-`describe_operation` and `call_operation`. `tools/list` then stays under 5 KB however many
-operations are exposed, up to 4096. The filters, argument validation and redaction work
+With `--tool-mode discover`, the server lists a few fixed tools instead: `search_operations`,
+`describe_operation`, `call_operation` and `execute_code`. `tools/list` then stays at about
+6 KB however many operations are exposed, up to 4096. The filters, argument validation and redaction work
 exactly as they do for a direct call. `--tool-mode auto` picks `discover` when more than 64
 operations are exposed, or when the tool definitions take more than 40,000 bytes.
 
@@ -26,8 +26,8 @@ operations are exposed, or when the tool definitions take more than 40,000 bytes
 
 | Mode | What `tools/list` carries | Most operations exposed |
 |---|---|---|
-| `per-operation` | `openapi_mcp_status` and one tool per exposed operation, each with its full input schema, output schema and description | 512 |
-| `discover` | `openapi_mcp_status` and the three fixed tools, whatever the number of operations | 4096 |
+| `per-operation` | `openapi_mcp_status`, `execute_code` and one tool per exposed operation, each with its full input schema, output schema and description | 512 |
+| `discover` | `openapi_mcp_status`, the three discovery tools and `execute_code`, whatever the number of operations | 4096 |
 | `auto` | Whatever the mode it picks carries | 4096 |
 
 ### `per-operation`
@@ -37,8 +37,9 @@ call it in one step. At most 512 operations may be exposed in this mode.
 
 ### `discover`
 
-The server lists `openapi_mcp_status` and three fixed tools. The model finds an operation with
-the first, reads its definition with the second, and calls it with the third.
+The server lists `openapi_mcp_status`, three discovery tools and `execute_code`. The model
+finds an operation with `search_operations`, reads its definition with `describe_operation`,
+and calls it with `call_operation`, or with a program in `execute_code`.
 
 `search_operations` takes `{ query?, tags?, method?, limit?, detail? }`. It ranks the exposed
 operations by keyword, matching the operation name, path, tags, parameter names, summary and
@@ -92,6 +93,153 @@ about 40 KB. Of 278 configurations with at most 64 operations, 20 took more, up 
 
 Since `auto` can pick `discover`, it allows up to 4096 exposed operations, like `discover`.
 
+## Scripts: `execute_code`
+
+### What it is
+
+`execute_code` is a tool that runs a short JavaScript program the model writes. In the
+program, `api.call(name, args)` calls one of the API's operations. The program can page
+through a list, follow ids from one operation to another, filter, count and sum, and then
+return only what the task needs. The responses on the way stay inside the program; the model
+sees only the result.
+
+Without it, the model makes every call itself and reads every response. A question such as
+"what did all customers in Austria spend" can take 40 calls, and all 40 responses go through
+the model's context. With `execute_code`, the model writes one program instead:
+
+```js
+const customers = [];
+for (let page = 1; ; page += 1) {
+  const result = await api.call('listCustomers', { country: 'AT', page });
+  customers.push(...result.data.items);
+  if (page >= result.data.totalPages) break;
+}
+const orders = await Promise.all(
+  customers.map((customer) => api.call('listCustomerOrders', { customerId: customer.id })),
+);
+return orders.flatMap((result) => result.data.items).reduce((sum, order) => sum + order.total, 0);
+```
+
+The tool returns the program's result and every call it made:
+
+```json
+{ "result": 15390, "calls": [{ "name": "listCustomers", "status": "ok" }, ...] }
+```
+
+A program reads only: it can call the `GET`, `HEAD` and `QUERY` operations the filters expose,
+and nothing else. The model makes a write with its own tool call, as before.
+
+### When it is offered
+
+`execute_code` is in `tools/list` in every tool mode. Under `discover`, a program names an
+operation the way `call_operation` does. Under `per-operation`, it uses the operation's tool
+name. With [several APIs](several-apis.md) in one server, one program can read from all of
+them. `--no-execute` leaves the tool out.
+
+### How a program works
+
+`execute_code` takes `{ code }`, the body of an async function of at most 20,000 characters.
+`await api.call(name, args)` returns the operation's result `{ status, contentType, data,
+headers?, pagination? }`, with the response body in `data`. For an operation without an
+output schema, the result has `data`, `headers` and `pagination` only, and `data` holds the
+body parsed as JSON, or as text when it is not JSON. A failed call throws an error with the
+text a direct call would return. `return` gives the tool's result, which must be JSON;
+`console.log` output comes back too.
+
+A call's status in `calls` is `ok`, `error`, `refused` (a limit stopped it before it was
+sent) or `cancelled` (the program ended while the call waited or ran). The list is complete
+also when the program fails, so the model knows what ran.
+
+### What a program can do
+
+A program can call the `GET`, `HEAD` and `QUERY` operations the filters expose. It cannot call
+any other operation. The server refuses such a call before it sends anything, and the model
+makes the write with `call_operation` or the operation's own tool, so every write keeps its own
+tool call and its own approval.
+
+Each `api.call()` goes through the same checks as a direct call of that operation: the filters,
+the argument validation, `--rate-limit`, the egress rules and the redaction. `--log json`
+writes one line for each call. The program itself has no network, file, timer, environment or
+module access. The [security model](security.md#scripts-execute_code) explains the sandbox.
+
+Every call in a program counts against `--rate-limit` (120 calls a minute by default). A task
+that reads more than 100 items one by one can reach it. Raise `--rate-limit` for such tasks.
+
+### Limits
+
+| Limit | Value |
+|---|---|
+| `api.call()` per program | 50 |
+| Calls in flight at once | 4 |
+| Run time, calls included | 30 s |
+| Memory of the program | 48 MB, inside a WebAssembly memory of at most 80 MB |
+| Arguments of one call | 100 KB of JSON |
+| Call results one program receives | 8 MB of JSON together |
+| Result | 50 KB of JSON |
+| `console.log` output | 10 KB |
+| Programs running at once in one server | 4 |
+
+A program past a limit ends with an error that names the limit. The values are fixed.
+
+### What it costs
+
+Each program starts a fresh worker with its own engine, which takes about 50 ms. The server
+loads the engine only when a program runs, so a server that never runs one starts as fast as
+before. `execute_code` adds about 1.5 KB to `tools/list`.
+
+A call in a program gets the whole response body, up to the 8 MB limit. A direct call cuts a
+text result at 8 KB, because the model reads it. A program can parse the whole body, and the
+model reads only the program's result.
+
+### Why it is on by default
+
+We measured every tool mode with and without `execute_code`, with two coding agents, on a test
+API and on two public APIs. Each task ran in English and in German. The test API is a local
+shop with customers, orders, stock and tickets (`scripts/evals`). On GitHub and PokeAPI, the
+harness reads the right answers from the API when a run starts.
+
+With `execute_code`, every tool mode answered as many tasks correctly or more, and the agents
+needed fewer tool calls. The one exception is a run in which agent 2 answered from memory
+without calling the API, which counts as wrong. Agent 1 cost less in every measurement, between
+20% and 80% less. Agent 2 sends a large prompt of its own with every task, so its token counts
+moved less. They fell in every measurement but one.
+
+Cost of all runs of agent 1:
+
+| API | Operations | `per-operation` | with `execute_code` | `discover` | with `execute_code` |
+|---|---|---|---|---|---|
+| Test API, 9 tasks | 36 | $0.51 | $0.41 | not measured | not measured |
+| Test API as two specs, 13 tasks | 36 | $1.10 | $0.67 | $1.42 | $0.81 |
+| Test API, 6 tasks | 261 | $1.80 | not measured | $1.63 | $0.78 |
+| GitHub, 6 tasks | 185 | $2.08 | $0.53 | $1.29 | $0.33 |
+| GitHub, 6 tasks | 655 | does not start | does not start | $1.29 | $0.35 |
+| PokeAPI, 5 tasks | 102 | $1.57 | $0.31 | $1.13 | $0.32 |
+
+Input tokens of agent 2, median per run:
+
+| API | Operations | `per-operation` | with `execute_code` | `discover` | with `execute_code` |
+|---|---|---|---|---|---|
+| Test API | 36 | 88k | 74k | not measured | not measured |
+| Test API as two specs | 36 | 89k | 88k | 193k | 159k |
+| Test API | 261 | 159k | not measured | 165k | 160k |
+| GitHub | 185 | 107k | 97k | 102k | 118k |
+| GitHub | 655 | does not start | does not start | 185k | 115k |
+| PokeAPI | 102 | 102k | 92k | not usable | not usable |
+
+The exception is GitHub with 185 operations under `discover`, where agent 2 used 118k tokens
+with `execute_code` and 102k without it. Under `discover`, agent 2 answered most PokeAPI tasks
+from memory, without calling the API, so those runs count as wrong and give no token numbers.
+
+The gain grows with the number of calls a task needs. On the test API with 261 operations,
+summing the orders of all customers in one country takes about 40 calls. Under `discover`,
+agent 1 needed 58k input tokens and 17 s for it with `execute_code`, and 102k tokens and 40 s
+without. A task that needs one call costs about the
+same either way. `per-operation` cannot serve more than 512 operations at all, which is why
+GitHub's 655 reads do not start in that mode.
+
+`--no-execute` leaves the tool out. Use it for an API whose `GET` operations change data, or
+when a host should list exactly one tool per operation.
+
 ## Filters still decide what the model can reach
 
 `--allow`, `--deny` and the read-only default work the same way in every mode. An operation
@@ -138,7 +286,8 @@ own.
 
 ## Measured `tools/list` sizes
 
-Measured on 2026-10-24 as the whole stdio response line. Tokens are estimated as bytes / 4.
+Measured on 2026-10-24 as the whole stdio response line, before `execute_code` existed. It adds
+about 1.5 KB to each column. Tokens are estimated as bytes / 4.
 
 | Spec | Exposed | `per-operation` | `discover` |
 |---|---|---|---|
@@ -174,8 +323,8 @@ candidates.
 ## Paging `tools/list`
 
 Paging of `tools/list` is off by default, so every tool comes in one response. In
-`per-operation` mode that is at most 513 tools, the 512 operations plus `openapi_mcp_status`,
-and in `discover` mode it is four. Several MCP
+`per-operation` mode that is at most 514 tools, the 512 operations plus `openapi_mcp_status`
+and `execute_code`, and in `discover` mode it is five. Several MCP
 hosts call `tools/list` once and never follow `nextCursor`, so on those hosts paging would
 hide every tool after the first page without any error.
 

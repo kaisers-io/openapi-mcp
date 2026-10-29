@@ -59,6 +59,7 @@ value, `prefix-or-all` applies to every API without one, `enable` is set with
 | `--allow-offsite-redirects` |  |  |  | enable | follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply |
 | `--tools-page-size <n>` |  |  |  |  | page tools/list with n tools per page (only for MCP hosts that follow nextCursor); default: all tools in one response |
 | `--tool-mode <mode>` | `"per-operation"` | per-operation, discover, auto |  |  | per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above 64 operations or 40 KB of tool definitions) |
+| `--no-execute` | `true` |  |  |  | do not offer execute_code, which runs a short JavaScript program in a sandbox that calls read-only operations and returns only its result |
 | `--image-responses <mode>` | `"off"` | off, inline, file |  |  | an upstream PNG, JPEG, GIF or WebP image: off (an unsupported media type, the default), inline (returned as an MCP image) or file (saved under ~/.kaisers-io/openapi-mcp/images/, and its path returned) |
 | `--uploads` |  |  |  |  | let binary request fields take {"file": "<name>"} for a file read from ~/.kaisers-io/openapi-mcp/uploads/<api>/ instead of base64; files there older than 24 hours are removed at startup |
 | `--image-dir-max-bytes <size>` | `"100MB"` |  |  |  | with --image-responses file: the most the image folder of this API may hold; the oldest saved images go first |

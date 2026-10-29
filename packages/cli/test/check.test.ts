@@ -176,7 +176,7 @@ describe('check (issue #77)', () => {
       startup: { status: 'ok' },
       toolMode: 'per-operation',
       apis: [{ baseUrl: 'https://api.example.test/', exposed: ['getItem0', 'getItem1'] }],
-      listedTools: ['openapi_mcp_status', 'getItem0', 'getItem1'],
+      listedTools: ['openapi_mcp_status', 'getItem0', 'getItem1', 'execute_code'],
     });
     expect(report.data.toolModeReason).toBeUndefined();
     expect([...result.lines, ...result.errLines].join('\n')).not.toContain(SENTINEL);
@@ -259,6 +259,7 @@ describe('check (issue #77)', () => {
       'search_operations',
       'describe_operation',
       'call_operation',
+      'execute_code',
     ]);
     expect(byCount.data.apis?.[0]?.exposed).toHaveLength(70);
     const large = await check(['--spec', 'large.json', ...BASE, '--tool-mode', 'auto']);
@@ -331,7 +332,7 @@ describe('check (issue #77)', () => {
       'startup: ok',
       'tool mode: per-operation',
       'api a: https://a.example.test/, 2 operations exposed',
-      'tools the host lists: 3',
+      'tools the host lists: 4',
     ]);
   });
 
@@ -384,7 +385,7 @@ describe('check (issue #77)', () => {
       'startup: ok',
       'tool mode: discover (auto: count)',
       'api: https://api.example.test/, 70 operations exposed',
-      'tools the host lists: 4',
+      'tools the host lists: 5',
     ]);
     expect(
       result.errLines.some((line) => line.startsWith('openapi-mcp: warning: --tool-mode auto')),

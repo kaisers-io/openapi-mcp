@@ -253,6 +253,7 @@ export type ServeCmdOpts = SpecCmdOpts &
     responseProjection?: boolean;
     allowOffsiteRedirects?: boolean;
     toolMode: string;
+    execute?: boolean;
     outputSchema: string;
     outputSchemaDescriptions: boolean;
     imageResponses: string;
@@ -895,6 +896,9 @@ const prepareServe = async (
     : first.pipeline;
   const snapshot = buildSnapshot(built, pipeline, {
     toolMode,
+    // On by default: in every measured set of tasks, each mode answered as
+    // correctly with it and needed fewer tool calls (issue #60)
+    execute: cmdOpts.execute !== false,
     compactOutputSchemas,
     bareOutputSchemas: !cmdOpts.outputSchemaDescriptions,
     ...(multi

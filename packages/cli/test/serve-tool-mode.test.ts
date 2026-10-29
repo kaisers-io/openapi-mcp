@@ -126,7 +126,7 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
     return child;
   };
 
-  it('discover: lists four tools, then search -> describe -> call_operation reaches the real upstream', async () => {
+  it('discover: lists five tools, then search -> describe -> call_operation reaches the real upstream', async () => {
     const upstream = await startUpstream();
     try {
       const proc = await spawnServe(
@@ -150,6 +150,7 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
         'search_operations',
         'describe_operation',
         'call_operation',
+        'execute_code',
       ]);
 
       const found = await request('tools/call', {
@@ -266,7 +267,7 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
         const proc = await spawnServe([...base, '--tool-mode', mode]);
         const { request } = session(proc);
         const list = await request('tools/list');
-        expect(list.result?.['tools']).toHaveLength(4);
+        expect(list.result?.['tools']).toHaveLength(5);
         const status = await request('tools/call', { name: 'openapi_mcp_status', arguments: {} });
         expect(status.result?.['structuredContent']).toMatchObject({ toolCount: 600 });
         proc.kill('SIGTERM');
@@ -312,8 +313,8 @@ describe('serve --tool-mode — stdio subprocess E2E', () => {
       );
       const base = ['--spec', specPath, '--base-url', 'http://127.0.0.1:9', '--allow', 'path:/**'];
       for (const [mode, count] of [
-        ['auto', 4],
-        ['per-operation', 4],
+        ['auto', 5],
+        ['per-operation', 5],
       ] as const) {
         const proc = await spawnServe([...base, '--tool-mode', mode]);
         const { request, stderr } = session(proc);

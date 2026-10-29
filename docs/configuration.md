@@ -126,6 +126,7 @@ flags are explained in [requests-and-responses.md](requests-and-responses.md).
 | Flag | Repeatable | Meaning | Default |
 |---|---|---|---|
 | `--tool-mode <mode>` | no | `per-operation`, `discover` or `auto`; see [Tool modes](#tool-modes) | `per-operation` |
+| `--no-execute` | no | do not offer `execute_code`, which runs a JavaScript program that calls read-only operations and returns only its result; see [tool-modes.md](tool-modes.md#scripts-execute_code) | offered |
 | `--tools-page-size <n>` | no | split `tools/list` into pages of `n` tools, from 1 to 512; only for MCP hosts that follow `nextCursor` | off (all tools in one response) |
 | `--output-schema <form>` | no | how output schemas are shown to the host: `inline`, or `defs` (a repeated subschema once under `$defs`); see [Output schema form](#output-schema-form) | `inline` |
 | `--no-output-schema-descriptions` | no | show output schemas without their field descriptions | descriptions shown |
@@ -208,7 +209,7 @@ openapi-mcp serve --spec https://api.example.com/openapi.json --http --http-toke
 ### Tool modes
 
 The tool modes (`per-operation`, `discover` and `auto`), their limits and their costs are
-explained in [tool-modes.md](tool-modes.md).
+explained in [tool-modes.md](tool-modes.md), and so is `execute_code`.
 
 ### Output schema form
 
@@ -294,7 +295,7 @@ This report comes from a spec with 70 `GET` operations; `exposed` is cut to thre
 `toolModeReason` is `count` or `size`, and it is present only when `auto` chose the mode. `apis`
 has one entry per API, with `name` when `--api` names it. `exposed` lists the tool names of the
 exposed operations. `listedTools` lists the tools a host sees, which under `discover` are the
-four tools above. With `--api`, each variable also carries the `api` it belongs to. `warnings`
+five tools above, or four with `--no-execute`. With `--api`, each variable also carries the `api` it belongs to. `warnings`
 holds every warning `serve` prints at startup.
 
 When a stage fails, the `--json` report has `"ok": false`, `environment.status` is `failed` or

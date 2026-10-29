@@ -32,11 +32,17 @@ import { withoutDefaultDialect } from './tool-list.ts';
 // the target through the dispatcher's own validation and executor
 // (dispatch.ts) — never through anything defined here.
 
+// The execute_code tool lives in code/tool.ts; listed with the others
+export { executeTool } from './code/tool.ts';
+
 export const SEARCH_TOOL_NAME = 'search_operations';
 export const DESCRIBE_TOOL_NAME = 'describe_operation';
 export const CALL_TOOL_NAME = 'call_operation';
+// Offered next to them, or next to the operation tools, unless --no-execute
+// (issue #60)
+export const EXECUTE_TOOL_NAME = 'execute_code';
 
-export type DiscoveryToolName = 'search' | 'describe' | 'call';
+export type DiscoveryToolName = 'search' | 'describe' | 'call' | 'execute';
 
 // `--tool-mode auto` switches to discover above this many exposed operations.
 // A fixed constant, not a setting: published tool search guidance reports

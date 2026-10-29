@@ -5,8 +5,8 @@ How the host sees the exposed operations. Details:
 
 | Mode | The host lists | Use when |
 |---|---|---|
-| `per-operation` (default) | one tool per operation, plus `openapi_mcp_status` | up to about 64 operations; each write needs its own approval |
-| `discover` | `search_operations`, `describe_operation`, `call_operation`, `openapi_mcp_status` | many operations; the agent searches for the one it needs |
+| `per-operation` (default) | one tool per operation, plus `openapi_mcp_status` and `execute_code` | up to about 64 operations; each write needs its own approval |
+| `discover` | `search_operations`, `describe_operation`, `call_operation`, `execute_code`, `openapi_mcp_status` | many operations; the agent searches for the one it needs |
 | `auto` | `discover` above 64 exposed operations or 40,000 bytes of tool definitions, otherwise `per-operation` | the size is unknown or changes |
 
 `per-operation` allows at most 512 tools. `discover` allows up to 4,096 operations.
@@ -23,6 +23,29 @@ who clicks "always allow" for it allows every exposed write. Recommend:
 
 `CLI --json check` reports the mode `auto` picks and why (`toolModeReason` is `count` or
 `size`). Show it to the user.
+
+## Scripts: `execute_code`
+
+Every mode lists `execute_code`. With it, the agent writes a short JavaScript program that
+calls several read-only operations and gets back only the program's result. Details:
+[docs/tool-modes.md](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/tool-modes.md#scripts-execute_code).
+
+Keep it on. In every measurement, on a test API, GitHub and PokeAPI, both agents answered as
+correctly with it and needed fewer tool calls, and one agent's cost fell by 20% to 80%. The
+gain is largest when the agent pages through lists, follows ids from one operation or API to
+another, counts or sums.
+
+Tell the user three things:
+
+- A program calls reads only. Writes still go through their own tool call and approval.
+- Every call inside a program goes through the same filters, rate limit and redaction as a
+  direct call.
+- A program stops after 50 calls or 30 s. Every call counts against `--rate-limit` (120 a
+  minute by default), so propose a higher limit when the agent will read hundreds of items one
+  by one.
+
+Propose `--no-execute` only when the API changes data on `GET`, or when the user wants exactly
+one tool per operation.
 
 ## Smaller tool definitions
 

@@ -2,7 +2,12 @@ import { chmod } from 'node:fs/promises';
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: { 'openapi-mcp': 'src/index.ts' },
+  // The worker of execute_code (issue #60) is its own entry: a Worker loads it by
+  // file name, next to the chunk that starts it (core/src/server/code/run.ts)
+  entry: {
+    'openapi-mcp': 'src/index.ts',
+    'execute-worker': '../core/src/server/code/worker.ts',
+  },
   format: 'esm',
   platform: 'node',
   target: 'node22.19',

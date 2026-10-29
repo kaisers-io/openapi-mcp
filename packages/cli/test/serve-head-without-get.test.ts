@@ -196,7 +196,9 @@ describe('serve — a HEAD whose GET is not a tool (issue #68)', () => {
     upstream.requests.length = 0;
     await withServe(options(args), home, async (session) => {
       const tools = await session.listTools();
-      expect(tools.toSorted()).toStrictEqual(['openapi_mcp_status', ...expected].toSorted());
+      expect(tools.toSorted()).toStrictEqual(
+        ['execute_code', 'openapi_mcp_status', ...expected].toSorted(),
+      );
       for (const name of [...without(ALL, expected), ...NEVER]) {
         const reply = await session.callTool(name, CALLS[name]?.args ?? {});
         expect({ name, reply }).toMatchObject({ name, reply: { kind: 'rpc-error' } });

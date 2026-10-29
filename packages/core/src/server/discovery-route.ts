@@ -2,6 +2,7 @@ import type { CallRequest, DispatcherDeps } from './dispatch.ts';
 import { describeOperation, resolveOperation } from './discovery.ts';
 import { executeWithEffect } from './effect.ts';
 import type { CallInput } from './discovery-schemas.ts';
+import { executeCode } from './code/tool.ts';
 import { textOutcome } from './result.ts';
 import type { ToolCallOutcome } from './result.ts';
 import { searchOperations } from './search-index.ts';
@@ -9,7 +10,7 @@ import type { CallTelemetry } from './telemetry.ts';
 import type { SnapshotTool } from './types.ts';
 import { validateAndExecute } from './validation.ts';
 
-// Routing for the three discover-mode tools
+// Routing for the discover-mode tools
 // (kaisers-io/openapi-mcp-archive#38), split out of dispatch.ts.
 
 // The call_operation path: resolve the target among the snapshot's EXPOSED
@@ -22,7 +23,7 @@ import { validateAndExecute } from './validation.ts';
 const callOperation = (
   deps: DispatcherDeps,
   data: unknown,
-  { signal, trace, report }: CallRequest,
+  { signal, trace, report, textBytes }: CallRequest,
 ): Promise<ToolCallOutcome> => {
   const input = data as CallInput;
   const resolved = resolveOperation(deps.snapshot.operationsByName, input.name);
@@ -38,7 +39,9 @@ const callOperation = (
           report({ ...telemetry, tool: target.name });
         };
   return validateAndExecute(target, input.arguments, (targetData) =>
-    executeWithEffect(target, () => deps.executor(target, targetData, signal, trace, reportTarget)),
+    executeWithEffect(target, () =>
+      deps.executor(target, targetData, signal, trace, reportTarget, textBytes),
+    ),
   );
 };
 
@@ -64,6 +67,9 @@ export const runDiscoveryTool = (
     }
     case 'call': {
       return callOperation(deps, data, request);
+    }
+    case 'execute': {
+      return executeCode(deps, data, request);
     }
     default: {
       return Promise.resolve(textOutcome('tool execution failed unexpectedly', true));

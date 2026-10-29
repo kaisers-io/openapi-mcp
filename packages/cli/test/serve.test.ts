@@ -90,7 +90,7 @@ const sendModern = (
 // document order (`legacyList` is omitted upstream — it carries a cookie parameter). Pinning the exact array
 // (not a containment check) is what makes a reordering of the derived list a
 // test failure rather than an invisible change for every cached client.
-const EXPECTED_TOOL_ORDER = ['openapi_mcp_status', 'createPet', 'listPets'];
+const EXPECTED_TOOL_ORDER = ['openapi_mcp_status', 'createPet', 'listPets', 'execute_code'];
 
 type Collected = {
   stdoutLines: string[];
