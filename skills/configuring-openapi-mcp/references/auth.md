@@ -17,7 +17,7 @@ top-level list in the output) gives the flag for each scheme an exposed operatio
 | Scheme | Flag | The variable holds |
 |---|---|---|
 | `http` `bearer` | `--header-env Authorization=VAR` | `Bearer <token>` |
-| `http` `basic` | `--header-env Authorization=VAR` | `Basic <base64 of user:password>` |
+| `http` `basic` | `--basic-auth-env USER_VAR:PASSWORD_VAR` | the user name and the password, in two variables |
 | `apiKey` in header `X-Key` | `--header-env X-Key=VAR` | the key |
 | `apiKey` in cookie `sid` | `--header-env Cookie=VAR` | `sid=<value>`; several cookies joined with `; ` |
 | `oauth2` with `clientCredentials` | `--upstream-oauth-client-id-env ID_VAR --upstream-oauth-client-secret-env SECRET_VAR` | client ID, client secret |

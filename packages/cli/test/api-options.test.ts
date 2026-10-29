@@ -518,3 +518,103 @@ describe('--no-trace-propagation', () => {
     expect(resolve(['--no-trace-propagation']).propagateTraceContext).toBe(false);
   });
 });
+
+// --basic-auth-env: HTTP Basic auth (RFC 7617) from two env vars, sent as one
+// more secret Authorization header
+describe('resolveApiConfig — --basic-auth-env', () => {
+  const basic = (user: string, password: string) =>
+    `Basic ${Buffer.from(`${user}:${password}`, 'utf8').toString('base64')}`;
+
+  it('builds the Authorization header from the user name and the password', () => {
+    const config = resolve(['--basic-auth-env', 'API_USER:API_PASSWORD'], {
+      API_USER: 'shop-user',
+      API_PASSWORD: 'example-password-not-a-secret',
+    });
+    expect(config.secretHeaders).toStrictEqual([
+      {
+        name: 'Authorization',
+        value: basic('shop-user', 'example-password-not-a-secret'),
+        envVar: 'API_PASSWORD',
+      },
+    ]);
+    // Registered for redaction; the redactor also derives the decoded parts
+    expect(config.secretValues).toContain(basic('shop-user', 'example-password-not-a-secret'));
+  });
+
+  it('takes an empty password when only the user variable is named, and UTF-8 text', () => {
+    expect(
+      resolve(['--basic-auth-env', 'API_KEY'], { API_KEY: 'example-key-not-a-secret' })
+        .secretHeaders[0]?.value,
+    ).toBe(basic('example-key-not-a-secret', ''));
+    expect(
+      resolve(['--basic-auth-env', 'U:P'], { U: 'jürgen', P: 'pässwort-example' }).secretHeaders[0]
+        ?.value,
+    ).toBe(basic('jürgen', 'pässwort-example'));
+  });
+
+  it('refuses a bad mapping, a missing variable, a colon in the user name and control characters', () => {
+    expectUsageError(
+      () => resolve(['--basic-auth-env', 'A:B:C']),
+      'expected <USER_ENV>:<PASSWORD_ENV>',
+    );
+    expectUsageError(
+      () => resolve(['--basic-auth-env', '1BAD:P']),
+      'expected <USER_ENV>:<PASSWORD_ENV>',
+    );
+    expectUsageError(
+      () => resolve(['--basic-auth-env', 'U:P'], { P: 'x' }),
+      'environment variable "U" (the user name of --basic-auth-env) is not set or empty',
+    );
+    expectUsageError(
+      () => resolve(['--basic-auth-env', 'U:P'], { U: 'u' }),
+      'environment variable "P" (the password of --basic-auth-env) is not set or empty',
+    );
+    expectUsageError(
+      () => resolve(['--basic-auth-env', 'U:P'], { U: 'a:b', P: 'p' }),
+      'contains ":"',
+    );
+    expectUsageError(
+      () => resolve(['--basic-auth-env', 'U:P'], { U: 'u', P: 'p\nq' }),
+      'contains control characters',
+    );
+  });
+
+  it('cannot be combined with another Authorization header', () => {
+    const env = {
+      U: 'u',
+      P: 'example-password-not-a-secret',
+      T: 'Bearer example-token-not-a-secret',
+    };
+    expectUsageError(
+      () => resolve(['--basic-auth-env', 'U:P', '--header-env', 'Authorization=T'], env),
+      '--basic-auth-env cannot be combined with --header-env Authorization=...',
+    );
+    expectUsageError(
+      () => resolve(['--basic-auth-env', 'U:P', '--header', 'Authorization:Basic xyz'], env),
+      '',
+    );
+    expectUsageError(
+      () =>
+        resolve(
+          [
+            '--basic-auth-env',
+            'U:P',
+            '--upstream-oauth-client-id-env',
+            'C',
+            '--upstream-oauth-client-secret-env',
+            'K',
+          ],
+          { ...env, C: 'id', K: 'example-secret-not-a-secret' },
+        ),
+      '--basic-auth-env cannot be combined with --upstream-oauth-*',
+    );
+  });
+
+  it('never puts a value into an error message', () => {
+    try {
+      resolve(['--basic-auth-env', 'U:P'], { U: 'u', P: 'example-password\u0007' });
+    } catch (error) {
+      expect(String(error)).not.toContain('example-password');
+    }
+  });
+});

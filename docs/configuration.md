@@ -94,6 +94,7 @@ How headers and secrets work is in [credentials.md](credentials.md). How request
 |---|---|---|---|
 | `--base-url <url>` | no | the base URL for API requests, instead of the one the spec names; an absolute `http` or `https` URL | `servers[0]` from the spec |
 | `--header-env <Header=ENV>` | yes | an API header whose value is read from the environment variable `ENV`; treated as a secret | `[]` |
+| `--basic-auth-env <USER_ENV:PASSWORD_ENV>` | no | HTTP Basic auth: the server builds the `Authorization` header from the user name and the password in these variables; without `:PASSWORD_ENV` the password is empty; see [credentials.md](credentials.md#http-basic-authentication) | none |
 | `--header <Header:value>` | yes | a static API header that is not a secret; a name that looks like a credential is refused | `[]` |
 | `--allow-insecure-http` | no | allow a `--header-env` credential over cleartext `http` to an origin that is not loopback | off |
 | `--allow-offsite-redirects` | no | follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply, and a later hop back onto the API is checked again; see [security.md](security.md#request-authorization) | off |
@@ -158,7 +159,7 @@ Both features are explained in [requests-and-responses.md](requests-and-response
 With `--api`, each of these flags starts its value with the API's name and `=`, for example
 `--allow github=tag:repos`: `--allow`, `--spec-header-env`, `--ttl`, `--cache-key`,
 `--nullable-response-fields`, `--omit-output-schema`, `--omit-unsupported-parameters`,
-`--base-url`, `--header-env`, `--header`
+`--base-url`, `--header-env`, `--basic-auth-env`, `--header`
 and every `--upstream-oauth-*` flag. `--deny` may also be given without a name, and then applies
 to every API. These switches are set per API with `--enable`: `trust-spec-updates`,
 `allow-private-network`, `default-response-is-error`, `allow-insecure-http` and

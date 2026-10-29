@@ -18,6 +18,7 @@ export const MAX_APIS = 32;
 // captured (captureOccurrences) and split here
 export const PER_API_SCALARS: Readonly<Record<string, string>> = {
   '--base-url': 'baseUrl',
+  '--basic-auth-env': 'basicAuthEnv',
   '--cache-key': 'cacheKey',
   '--ttl': 'ttl',
   '--nullable-response-fields': 'nullableResponseFields',

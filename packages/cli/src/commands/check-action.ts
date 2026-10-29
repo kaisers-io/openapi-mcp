@@ -63,6 +63,10 @@ const variablesOf = (
     for (const raw of options.headerEnv) {
       add(parseHeaderEnvMapping(raw).envVar, '--header-env', api);
     }
+    // The format is checked when the API's options are resolved
+    for (const name of (options.basicAuthEnv ?? '').split(':').filter(Boolean)) {
+      add(name, '--basic-auth-env', api);
+    }
     if (options.upstreamOauthClientIdEnv !== undefined) {
       add(options.upstreamOauthClientIdEnv, '--upstream-oauth-client-id-env', api);
     }

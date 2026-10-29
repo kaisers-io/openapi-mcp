@@ -88,6 +88,9 @@ const supplyHint = (scheme: SecurityScheme): string => {
         : `pass --header-env ${show(scheme.paramName)}=<ENV>`;
     }
     case 'http': {
+      if (scheme.scheme.toLowerCase() === 'basic') {
+        return 'pass --basic-auth-env <USER_ENV>:<PASSWORD_ENV>';
+      }
       return authorizationHint(
         HTTP_EXAMPLES.get(scheme.scheme) ?? `${show(scheme.scheme)} <credentials>`,
       );

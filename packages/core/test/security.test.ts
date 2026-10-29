@@ -119,7 +119,7 @@ describe('describeSecurityScheme', () => {
     expect(hint('key')).toContain('pass --header-env X-API-Key=<ENV>');
     expect(hint('cookie')).toContain('--header-env Cookie=<ENV> holding "sid=<value>"');
     expect(hint('bearer')).toContain('--header-env Authorization=<ENV> holding "Bearer <token>"');
-    expect(hint('basic')).toContain('holding "Basic <base64 user:password>"');
+    expect(hint('basic')).toContain('pass --basic-auth-env <USER_ENV>:<PASSWORD_ENV>');
     expect(hint('cookie')).toContain('several cookie schemes go into that one Cookie value');
     expect(hint('cc')).toContain('(oauth2 clientCredentials)');
     expect(hint('oidc')).toContain('with a token obtained elsewhere');

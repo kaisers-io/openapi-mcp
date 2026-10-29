@@ -39,7 +39,7 @@ These options take the `<name>=` prefix and apply to that API only:
 
 - `--allow`, `--deny`, `--spec-header-env`, `--cache-key`, `--ttl`
 - `--nullable-response-fields`, for example `shop=all`
-- `--omit-output-schema`, `--base-url`, `--header-env`, `--header`
+- `--omit-output-schema`, `--base-url`, `--header-env`, `--basic-auth-env`, `--header`
 - every `--upstream-oauth-*` option
 
 These switches are turned on per API with `--enable <name>=<switch>`:

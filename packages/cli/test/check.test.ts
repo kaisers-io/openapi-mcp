@@ -163,6 +163,18 @@ describe('check (issue #77)', () => {
     expect([...result.lines, ...result.errLines].join('\n')).not.toContain(SENTINEL);
   });
 
+  it('lists both variables of --basic-auth-env', async () => {
+    const result = await check(
+      ['--spec', 'small.json', ...BASE, '--basic-auth-env', 'API_USER:API_PASSWORD'],
+      { API_USER: SENTINEL },
+    );
+    expect(reportOf(result.lines).data.environment.variables).toEqual([
+      { name: 'API_USER', flag: '--basic-auth-env', set: true },
+      { name: 'API_PASSWORD', flag: '--basic-auth-env', set: false },
+    ]);
+    expect([...result.lines, ...result.errLines].join('\n')).not.toContain(SENTINEL);
+  });
+
   it('reports the tools, the base URL and the tool mode of a working setup', async () => {
     const result = await check(
       ['--spec', 'small.json', ...BASE, '--header-env', 'Authorization=TOKEN'],
