@@ -60,30 +60,102 @@ const ARRAY_INDEX_RE = /^(?:0|[1-9]\d*)$/u;
 // oxlint-disable-next-line unicorn/no-null -- JSON null is the documented value for a missing path
 const MISSING = null;
 
+// A selection can repeat or overlap parts of the response, and `*` over a
+// missing key yields one null per element, so 32 pointers could otherwise
+// turn a capped body into about 80 times as much output. The result may be at
+// most twice the body plus this allowance (room for pointer keys and nulls on
+// a small body), counted while it is built: before an array is mapped and
+// over each selected value. The count is approximate serialized size (an
+// escaped character counts once), so the output stays within a small multiple
+// of the body.
+const BUDGET_ALLOWANCE = 64 * 1024;
+
+export const PROJECTION_TOO_LARGE =
+  'tool execution failed: _fields would return more than twice the size of the response; ' +
+  'select fewer or narrower fields';
+
+// Thrown to unwind the evaluation, and caught in project()
+const OVER_BUDGET = new Error('projection over budget');
+
+const spend = (budget: { left: number }, bytes: number): void => {
+  budget.left -= bytes;
+  if (budget.left < 0) {
+    throw OVER_BUDGET;
+  }
+};
+
+// Iterative, and stops as soon as the budget runs out
+const spendOn = (budget: { left: number }, value: unknown): void => {
+  const pending: unknown[] = [value];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (Array.isArray(node)) {
+      spend(budget, 2 + node.length);
+      for (const child of node) {
+        pending.push(child);
+      }
+    } else if (isRecord(node)) {
+      spend(budget, 2);
+      for (const [key, child] of Object.entries(node)) {
+        spend(budget, key.length + 4);
+        pending.push(child);
+      }
+    } else {
+      spend(budget, typeof node === 'string' ? node.length + 2 : String(node).length);
+    }
+  }
+};
+
 // Only OWN properties are ever read (never the prototype chain, so a
 // `__proto__` or `constructor` segment simply finds nothing), and a path
 // that does not exist yields null, deterministically.
-const evaluate = (value: unknown, segments: readonly string[]): unknown => {
+const evaluate = (
+  value: unknown,
+  segments: readonly string[],
+  budget: { left: number },
+): unknown => {
   const [head, ...rest] = segments;
   if (head === undefined) {
+    spendOn(budget, value);
     return value;
   }
   if (Array.isArray(value)) {
     if (head === '*') {
-      return value.map((item: unknown) => evaluate(item, rest));
+      spend(budget, 2 + value.length);
+      return value.map((item: unknown) => evaluate(item, rest, budget));
     }
     const element: unknown = ARRAY_INDEX_RE.test(head) ? value[Number(head)] : undefined;
-    return element === undefined ? MISSING : evaluate(element, rest);
+    return element === undefined ? evaluate(MISSING, [], budget) : evaluate(element, rest, budget);
   }
   if (isRecord(value) && Object.hasOwn(value, head)) {
-    return evaluate(value[head], rest);
+    return evaluate(value[head], rest, budget);
   }
-  return MISSING;
+  return evaluate(MISSING, [], budget);
 };
 
-// `{ "<pointer>": <selected value>, ... }` in the order requested.
-export const project = (data: unknown, pointers: readonly string[]): Record<string, unknown> =>
-  Object.fromEntries(pointers.map((pointer) => [pointer, evaluate(data, segmentsOf(pointer))]));
+// `{ "<pointer>": <selected value>, ... }` in the order requested, or
+// undefined when it would exceed the budget for a body of `bodyBytes`.
+// A repeated pointer is one key, so it is evaluated once.
+export const project = (
+  data: unknown,
+  pointers: readonly string[],
+  bodyBytes: number,
+): Record<string, unknown> | undefined => {
+  const budget = { left: 2 * bodyBytes + BUDGET_ALLOWANCE };
+  try {
+    return Object.fromEntries(
+      [...new Set(pointers)].map((pointer) => [
+        pointer,
+        evaluate(data, segmentsOf(pointer), budget),
+      ]),
+    );
+  } catch (error) {
+    if (error === OVER_BUDGET) {
+      return undefined;
+    }
+    throw error;
+  }
+};
 
 // Appended to a truncated result of a projectable tool. A structured result
 // is complete in structuredContent (only its text copy is cut), so the two

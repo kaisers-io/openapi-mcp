@@ -394,6 +394,11 @@ counts as the array of its items, with or without an output schema. The server s
 validates the full response against the tool's output schema first, and then checks only the
 selected values for secrets.
 
+A selection can return at most twice the size of the response body, plus 64 KiB. A repeated
+pointer counts once. Past that, the call fails with an error that asks for fewer or narrower
+fields, before the server builds the result. Overlapping pointers, or `*` over a key that most
+items lack, would otherwise return many times the response.
+
 The server instructions explain the pointer grammar once. Each tool's schema carries only a
 one-line description, and its output schema gains one `projection` branch.
 

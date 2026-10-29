@@ -3,6 +3,7 @@ import {
   project,
   PROJECTION_HINT_STRUCTURED,
   PROJECTION_HINT_TEXT,
+  PROJECTION_TOO_LARGE,
 } from '../../toolgen/projection.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText, TRUNCATION_MARKER } from '../../spec/sanitize.ts';
@@ -519,6 +520,7 @@ const projectEnvelope = (
   envelope: Record<string, unknown>,
   data: unknown,
   fields: readonly string[],
+  bodyBytes: number,
   check: () => ReturnType<typeof checkEnvelope>,
   redactor: Redactor,
   maxTextBytes: number,
@@ -534,8 +536,12 @@ const projectEnvelope = (
       checked.mismatch,
     );
   }
+  const projection = project(data, fields, bodyBytes);
+  if (projection === undefined) {
+    return textOutcome(PROJECTION_TOO_LARGE, true);
+  }
   const { data: _full, ...rest } = envelope;
-  const projected: Record<string, unknown> = { ...rest, projection: project(data, fields) };
+  const projected: Record<string, unknown> = { ...rest, projection };
   if (scanSafely(redactor, projected)) {
     return withheldSuccess();
   }
@@ -548,6 +554,9 @@ const projectedText = (
   redactor: Redactor,
   maxTextBytes: number,
 ): ToolCallOutcome => {
+  if (projection === undefined) {
+    return textOutcome(PROJECTION_TOO_LARGE, true);
+  }
   if (scanSafely(redactor, projection)) {
     return withheldSuccess();
   }
@@ -578,13 +587,13 @@ const mapNoSchemaProjection = (
         true,
       );
     }
-    return projectedText(project(items, fields), redactor, maxTextBytes);
+    return projectedText(project(items, fields, bodyBytes.byteLength), redactor, maxTextBytes);
   }
   const parsed = 'error' in decoded ? { ok: false as const } : tryParseJson(decoded.ok);
   if (!parsed.ok) {
     return textOutcome('tool execution failed: projection requires a JSON response', true);
   }
-  return projectedText(project(parsed.value, fields), redactor, maxTextBytes);
+  return projectedText(project(parsed.value, fields, bodyBytes.byteLength), redactor, maxTextBytes);
 };
 
 // The mapSchemaSuccess helper takes one options object (the caller's MapResponseOptions
@@ -693,7 +702,15 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   const check = (): ReturnType<typeof checkEnvelope> =>
     checkEnvelope(envelope, validator, branch.index, diagnose === true ? { redactor } : undefined);
   if (fields !== undefined) {
-    return projectEnvelope(envelope, parseAttempt.value, fields, check, redactor, maxTextBytes);
+    return projectEnvelope(
+      envelope,
+      parseAttempt.value,
+      fields,
+      bodyBytes.byteLength,
+      check,
+      redactor,
+      maxTextBytes,
+    );
   }
   // A secret anywhere in the structured data downgrades to a generic
   // isError — never a redacted-but-successful structuredContent. The

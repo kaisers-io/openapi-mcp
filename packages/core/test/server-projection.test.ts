@@ -16,6 +16,7 @@ import {
   PROJECTION_FIELDS_SCHEMA,
   PROJECTION_HINT_STRUCTURED,
   PROJECTION_HINT_TEXT,
+  PROJECTION_TOO_LARGE,
 } from '../src/toolgen/projection.ts';
 
 // Per-call response projection (`_fields`) end to end: input schema,
@@ -160,7 +161,11 @@ describe('JSON Pointer projection', () => {
 
   it('selects values, maps "*" over arrays, honours ~0/~1 escapes, and yields null for missing paths', () => {
     expect(
-      project(data, ['/items/*/id', '/items/1/id', '/a~1b', '/m~0n', '/*', '/nope', '/items/9']),
+      project(
+        data,
+        ['/items/*/id', '/items/1/id', '/a~1b', '/m~0n', '/*', '/nope', '/items/9'],
+        bytesOf(data),
+      ),
     ).toEqual({
       '/items/*/id': ['a', 'b'],
       '/items/1/id': 'b',
@@ -173,12 +178,30 @@ describe('JSON Pointer projection', () => {
   });
 
   it('never reads inherited properties (__proto__, constructor, toString)', () => {
-    expect(project({ a: 1 }, ['/__proto__', '/constructor', '/toString', '/a/__proto__'])).toEqual({
+    expect(
+      project({ a: 1 }, ['/__proto__', '/constructor', '/toString', '/a/__proto__'], 7),
+    ).toEqual({
       '/__proto__': null,
       '/constructor': null,
       '/toString': null,
       '/a/__proto__': null,
     });
+  });
+
+  it('refuses a selection larger than twice the response, and keeps a large plain one', () => {
+    const ids = { ids: Array.from({ length: 1000 }, () => 0) };
+    const missing = Array.from({ length: 32 }, (_unused, index) => `/ids/*/k${index}`);
+    expect(project(ids, missing, bytesOf(ids))).toBeUndefined();
+    // Overlapping pointers repeat one subtree, without any `*`
+    let nested: unknown = { leaf: 'x'.repeat(100_000) };
+    for (let depth = 0; depth < 32; depth += 1) {
+      nested = { a: nested };
+    }
+    const overlapping = Array.from({ length: 32 }, (_unused, index) => '/a'.repeat(index + 1));
+    expect(project(nested, overlapping, bytesOf(nested))).toBeUndefined();
+    const large = { ids: Array.from({ length: 500_000 }, () => 0) };
+    const repeated = Array.from({ length: 32 }, () => '/ids');
+    expect(project(large, repeated, bytesOf(large))).toEqual({ '/ids': large.ids });
   });
 
   it.each([
@@ -239,6 +262,15 @@ describe('_fields on a tool with an outputSchema', () => {
     const blobs = await callWith(listItems(true), leaky, { _fields: ['/items/*/blob'] });
     expect(blobs.outcome.isError).toBe(true);
     expect(JSON.stringify(blobs.outcome)).not.toContain(SECRET);
+  });
+
+  it('refuses a selection larger than twice the response before building it', async () => {
+    const { outcome } = await callWith(listItems(true), wide(20_000, 'b'), {
+      _fields: Array.from({ length: 32 }, (_unused, index) => `/items/*/k${index}`),
+    });
+    expect(outcome.isError).toBe(true);
+    expect(outcome.structuredContent).toBeUndefined();
+    expect(outcome.content[0]?.text).toBe(PROJECTION_TOO_LARGE);
   });
 
   it('rejects malformed _fields with the usual redacted validation message', async () => {
