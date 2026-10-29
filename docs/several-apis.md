@@ -18,9 +18,11 @@ with `--enable <name>=<switch>`.
 ```json
 "args": ["serve",
   "--api", "github=https://raw.githubusercontent.com/github/rest-api-description/<commit>/descriptions/api.github.com/api.github.com.json",
+  "--base-url", "github=https://api.github.com",
   "--header-env", "github=Authorization=GITHUB_TOKEN",
   "--allow", "github=tag:repos",
   "--api", "shop=https://shop.example.test/openapi.yaml",
+  "--base-url", "shop=https://shop.example.test",
   "--header-env", "shop=Authorization=SHOP_TOKEN",
   "--allow", "shop=path:/orders/**",
   "--enable", "shop=trust-spec-updates",

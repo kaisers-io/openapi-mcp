@@ -67,6 +67,8 @@ Claude Code (`.mcp.json`, which expands `${VAR}`):
         "serve",
         "--spec",
         "https://api.example.com/openapi.json",
+        "--base-url",
+        "https://api.example.com",
         "--header-env",
         "Authorization=SHOP_TOKEN"
       ],
@@ -85,16 +87,16 @@ in `env_vars` from the environment you start it in:
 command = "npx"
 args = [
   "-y", "@kaisers-io/openapi-mcp@0.7.0", "serve",
-  "--spec", "https://api.example.com/openapi.json",
+  "--spec", "https://api.example.com/openapi.json", "--base-url", "https://api.example.com",
   "--header-env", "Authorization=SHOP_TOKEN",
 ]
 env_vars = ["SHOP_TOKEN"]
 ```
 
 `--header-env` sends the variable's value unchanged, so for a bearer token the variable holds
-`Bearer ` followed by the token. If the description has no absolute `servers` URL, add
-`--base-url`. Run the same arguments with `check` instead of `serve` to see whether the server
-would start.
+`Bearer ` followed by the token. With a spec from a URL, `--base-url` is required next to
+`--header-env`, so the spec cannot choose where the token goes. Run the same arguments with
+`check` instead of `serve` to see whether the server would start.
 
 On Windows, a host that starts commands without a shell cannot run `npx`, which is a `.cmd`
 script. Use `"command": "cmd"` with `"args": ["/d", "/c", "npx", "-y", ...]` there, keep

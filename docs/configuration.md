@@ -92,7 +92,7 @@ How headers and secrets work is in [credentials.md](credentials.md). How request
 
 | Flag | Repeatable | Meaning | Default |
 |---|---|---|---|
-| `--base-url <url>` | no | the base URL for API requests, instead of the one the spec names; an absolute `http` or `https` URL | `servers[0]` from the spec |
+| `--base-url <url>` | no | the base URL for API requests, instead of the one the spec names; an absolute `http` or `https` URL; required with a spec URL and `--header-env` or `--basic-auth-env` | `servers[0]` from the spec |
 | `--header-env <Header=ENV>` | yes | an API header whose value is read from the environment variable `ENV`; treated as a secret | `[]` |
 | `--basic-auth-env <USER_ENV:PASSWORD_ENV>` | no | HTTP Basic auth: the server builds the `Authorization` header from the user name and the password in these variables; without `:PASSWORD_ENV` the password is empty; see [credentials.md](credentials.md#http-basic-authentication) | none |
 | `--header <Header:value>` | yes | a static API header that is not a secret; a name that looks like a credential is refused | `[]` |
@@ -189,6 +189,7 @@ A server with an authenticated spec, an API token and filters:
 ```bash
 openapi-mcp serve \
   --spec https://api.example.com/openapi.json \
+  --base-url https://api.example.com \
   --spec-header-env Authorization=SPEC_TOKEN \
   --header-env Authorization=API_TOKEN \
   --allow "method:get" --allow "tag:Orders" \
@@ -251,6 +252,7 @@ itself keeps `serve`.
 
 ```bash
 openapi-mcp --json check --spec https://api.example.com/openapi.json \
+  --base-url https://api.example.com \
   --header-env Authorization=EXAMPLE_TOKEN --tool-mode auto
 ```
 
@@ -316,6 +318,7 @@ several APIs. In `discover` mode it is the operation name that `call_operation` 
 ```bash
 openapi-mcp --json call createPet --dry-run --args-json '{"name": "Rex"}' \
   --spec https://api.example.com/openapi.json --allow "method:post" \
+  --base-url https://api.example.com \
   --header-env Authorization=EXAMPLE_TOKEN
 ```
 

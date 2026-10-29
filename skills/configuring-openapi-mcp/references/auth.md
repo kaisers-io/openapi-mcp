@@ -26,6 +26,10 @@ top-level list in the output) gives the flag for each scheme an exposed operatio
 `--header-env` sends the value exactly as stored. For a bearer token the variable must contain
 the word `Bearer`, a space and the token. Tell the user this when they store it.
 
+A spec loaded from a URL needs `--base-url` with `--header-env` or `--basic-auth-env`, so that
+the spec alone does not decide where the credential goes. Take the URL from the spec's
+`servers` and ask the user to confirm it.
+
 Not supported: API keys in the query string, client certificates (`mutualTLS`), and
 challenge schemes such as `digest` or `ntlm`. Say so and stop if the allowed operations need
 only those.

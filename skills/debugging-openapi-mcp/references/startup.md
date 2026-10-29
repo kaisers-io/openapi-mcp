@@ -31,6 +31,7 @@ Read the `check` output first: `environment` lists every variable, `startup` the
 | `OpenAPI 2.0 (swagger) documents are not supported` | Swagger 2.0 | convert it to OpenAPI 3 first |
 | `external $ref "..." is not supported` | the spec spans several files | bundle it into one file first |
 | `has no absolute server URL ... pass --base-url` | no usable `servers` entry | `--base-url https://...` |
+| `the spec alone would decide where --header-env/--basic-auth-env credentials are sent` | a spec URL with a credential and no `--base-url` | `--base-url https://...`, the API base URL the user confirms |
 | `an authenticated spec source ... requires an explicit cache decision` | `--spec-header-env` without a cache key | `--cache-key <name>` |
 | `N tools would be exposed ... exceeds the 512-tool budget` | too many operations for `per-operation` | narrow `--allow`, or `--tool-mode discover` |
 | `matches no operation` under `--strict-filters` | a pattern names nothing | fix the pattern with the suggestion it prints |

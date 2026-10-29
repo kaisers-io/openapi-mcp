@@ -44,7 +44,7 @@ token="$(/usr/bin/security find-generic-password -a "$USER" -s shop-api-token -w
 SHOP_API_TOKEN="Bearer $token"
 export SHOP_API_TOKEN
 unset token
-exec npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --header-env 'Authorization=SHOP_API_TOKEN'
+exec npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --base-url 'https://shop.example.test' --header-env 'Authorization=SHOP_API_TOKEN'
 ```
 
 - Set `PATH` to the output of `dirname "$(node -p process.execPath)"`: `npx` starts `node`

@@ -34,6 +34,7 @@ The new version stops with an error that names the replacement. Apply it.
 
 | Version | Old | New |
 |---|---|---|
+| 0.7.1 | a spec URL with `--header-env` or `--basic-auth-env` and no `--base-url` | add `--base-url <API base URL>`; take it from the spec's `servers` and ask the user to confirm it |
 | 0.7.0 | `--api execute=<source>` | another API name: `execute` is reserved, like `call` and `search` |
 | 0.5.0 | `--deny "DELETE /**"` | `--deny "method:delete"` |
 | 0.5.0 | `--allow "GET /orders/**"` | `--allow "route:GET /orders/**"` |

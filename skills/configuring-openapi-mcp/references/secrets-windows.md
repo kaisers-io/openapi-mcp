@@ -39,7 +39,7 @@ $token = $credential.GetNetworkCredential().Password
 if ([string]::IsNullOrEmpty($token)) { exit 1 }
 $env:SHOP_API_TOKEN = "Bearer $token"
 Remove-Variable token, credential
-& npx.cmd -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --header-env 'Authorization=SHOP_API_TOKEN'
+& npx.cmd -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --base-url 'https://shop.example.test' --header-env 'Authorization=SHOP_API_TOKEN'
 exit $LASTEXITCODE
 ```
 

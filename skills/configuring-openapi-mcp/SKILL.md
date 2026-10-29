@@ -93,10 +93,11 @@ Ask these, skipping what step 2 already answered:
 6. This project only, or every project?
 7. Will it send files or receive images?
 
-If the user names the API's base URL, pass it with `--base-url`. If the user has only a
-website, look for the OpenAPI document (often `openapi.json`, `openapi.yaml` or a link in the
-API docs). An HTML page is not a spec. Show the user the URL you found and use it only after
-they confirm it belongs to the service: its operation names and texts reach the agent.
+If the user names the API's base URL, pass it with `--base-url`. A spec URL with a credential
+always needs `--base-url`. If the user has only a website, look for the OpenAPI document
+(often `openapi.json`, `openapi.yaml` or a link in the API docs). An HTML page is not a spec.
+Show the user the URL you found and use it only after they confirm it belongs to the service:
+its operation names and texts reach the agent.
 
 ### 4. Operations
 
