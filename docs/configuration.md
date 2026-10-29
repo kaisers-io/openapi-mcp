@@ -396,8 +396,10 @@ With the global `--json` flag each tool is an object. Besides `name`, `method`, 
 `outputSchemaAdmitsNullFields: true`, under either scope. The text output does not mark it,
 because with the flag that is nearly every tool. A tool whose output schema was withheld because
 a response `pattern` has nested quantifiers (see
-[security.md](security.md#response-envelope-and-redacted-errors)) carries `outputSchemaWithheld`
-with the sentence its description starts with.
+[security.md](security.md#response-envelope-and-redacted-errors)), or because a name or value in
+a response schema holds a control or bidirectional-override character (see
+[security.md](security.md#untrusted-spec-text)), carries `outputSchemaWithheld` with the sentence
+its description starts with.
 
 ### Operations that are not exposed
 

@@ -10,7 +10,7 @@ import type { NamedOperation } from './naming.ts';
 import type { JsonSchemaRecord, NullableFieldScope } from './output-schema.ts';
 import { detectPagination } from './pagination.ts';
 import type { PaginationPlan } from './pagination.ts';
-import { toWireJsonSchema, withConvertMemo } from './schema.ts';
+import { hasControlOrBidi, toWireJsonSchema, withConvertMemo } from './schema.ts';
 
 export type WireSchema = ReturnType<typeof z.toJSONSchema<z.ZodType>>;
 
@@ -181,6 +181,13 @@ const buildToolEntry = (
   const wireResult = toWireSchema(layout.ok.inputSchema);
   if ('error' in wireResult) {
     return omitted(`input schema cannot be represented as JSON Schema: ${wireResult.error}`);
+  }
+  // Every spec-derived name and value of the input schema, whichever path
+  // built it: descriptions are sanitized already, and the rest is sent as is
+  if (hasControlOrBidi(wireResult.ok)) {
+    return omitted(
+      'a name or value in the input schema has a control or bidirectional-override character',
+    );
   }
   const pagination = detectPagination(named.operation, layout.ok.mapper, wireResult.ok);
   const core = {

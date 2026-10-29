@@ -988,9 +988,8 @@ describe('createExecutor — fail-closed wiring', () => {
   // named with an RLO (right-to-left override, U+202E) would otherwise
   // reach the client raw. Built via String.fromCodePoint per the
   // escape-sequence discipline — never pasted.
-  it('sanitizes a spec-derived wireName containing an RLO out of the buildRequest error text', async () => {
+  it('never builds a tool for a spec-derived wireName containing an RLO', () => {
     const rlo = String.fromCodePoint(0x20_2e);
-    const hostileName = `x-hdr${rlo}evil`;
     const hostileOp: NamedOperation = {
       toolName: 'hostileThing',
       operation: {
@@ -999,25 +998,14 @@ describe('createExecutor — fail-closed wiring', () => {
         tags: [],
         deprecated: false,
         parameters: [
-          { name: hostileName, in: 'header', required: true, schema: { type: 'string' } },
+          { name: `x-hdr${rlo}evil`, in: 'header', required: true, schema: { type: 'string' } },
         ],
         responses: { '204': { description: 'no content' } },
       },
     };
+    // A header name is sent as is, so the operation is omitted instead
     const snapshot = buildToolSnapshot([hostileOp]);
-    const tool = snapshot.toolsByName['hostileThing'] as SnapshotTool;
-    const fieldName = fieldNameFor(
-      (tool.generated as NonNullable<SnapshotTool['generated']>).mapper,
-      'header',
-      hostileName,
-    );
-    const { deps, calls } = recordingTransport(() => textResponse(200, ''));
-    const executor = createExecutor(baseConfig({ validators: validatorsFor(snapshot) }), deps);
-    const outcome = await executor(tool, { [fieldName]: 'value' }, freshSignal());
-    expect(outcome.isError).toBe(true);
-    const text = outcome.content[0]?.text ?? '';
-    expect(text).not.toContain(rlo);
-    expect(calls).toHaveLength(0);
+    expect(snapshot.toolsByName['hostileThing']).toBeUndefined();
   });
 
   it('rejects a final assembled request that exceeds the outbound header byte budget', async () => {

@@ -27,8 +27,12 @@ Every defense below comes on top of this requirement. None of them replaces it.
   text. The server uses `info.title` only as a display name, sanitized and capped in length.
 - The server sanitizes every piece of spec text that reaches a tool definition or description
   before it attaches it: operation `summary` and `description`, parameter and property
-  `description`, `enum`, `format` and `example`. It strips control characters and
-  bidirectional-override characters and caps the length.
+  `description` and `example`. It strips control characters and bidirectional-override
+  characters and caps the length.
+- Names and values the server sends as they are, such as parameter and property names, `enum`,
+  `const`, `pattern` and `format`, are never rewritten. If one of them in an input schema holds a
+  control or bidirectional-override character, the server omits the operation. If one in a
+  response schema does, the tool gets no output schema and returns its result as text.
 - The CLI strips the same characters from spec text it prints for people. With `--json` it keeps
   the raw text and escapes C1 controls, bidi characters, U+2028 and U+2029 as `\uXXXX`, so a
   terminal never receives them raw. A JSON parser still reads back the original strings.

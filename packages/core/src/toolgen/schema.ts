@@ -1447,6 +1447,11 @@ export const toWireJsonSchema = (schema: z.ZodType) =>
     },
   });
 
+// A wire schema carries only sanitized descriptions, so a control or bidi
+// character left in it sits in a name or value the server sends as is. Both
+// the input and the output side refuse such a schema with this check.
+export { hasControlOrBidi } from '../spec/sanitize.ts';
+
 // z.toJSONSchema of one Zod schema instance, once per build. Callers must not
 // mutate the result: it is shared by every tool whose schema converted to the
 // same instance (the server snapshot freezes it).

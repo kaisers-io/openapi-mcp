@@ -3,6 +3,7 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 import { sequenceKind } from './media-type.ts';
 import {
   convertSchema,
+  hasControlOrBidi,
   memoizedJsonSchema,
   toWireJsonSchema,
   UNSAFE_PATTERN_REASON,
@@ -19,6 +20,10 @@ export const isSequenceContentType = (contentType: string): boolean =>
   /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u.test(contentType) &&
   sequenceKind(contentType) !== undefined;
 
+// Stands in for a data schema with a control or bidi character in a name or
+// value. Memoized like any emitted schema, so a shared node is walked once.
+const UNSAFE_TEXT_SCHEMA: JsonSchemaRecord = Object.freeze({});
+
 // Isolates the one throwing step (z.toJSONSchema) behind an Option-shaped
 // result so the caller never needs a `let` to survive the try/catch.
 const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
@@ -28,7 +33,7 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
     // allows it only at a resource root, and `data` sits inside the
     // envelope (it cost 3 KB per GitHub tool list, issue #49).
     const { $schema: _dialect, ...data } = toWireJsonSchema(schema);
-    return data;
+    return hasControlOrBidi(data) ? UNSAFE_TEXT_SCHEMA : data;
   } catch {
     // Defensive: our schemas are representable (proven upstream); fail
     // closed rather than emit a nonconforming outputSchema.
@@ -42,6 +47,9 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
 // and need no explanation.
 export const OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN =
   'No output schema: a response regex "pattern" has nested quantifiers (unbounded matching cost), so results are returned as text only.';
+
+export const OUTPUT_SCHEMA_WITHHELD_UNSAFE_TEXT =
+  'No output schema: a name or value in a response schema has a control or bidirectional-override character, so results are returned as text only.';
 
 // One response schema as the JSON Schema of `data`, or why it cannot be.
 // Response mode: undeclared fields stay allowed unless the spec says
@@ -58,6 +66,9 @@ export const responseDataSchema = (schema: unknown, version: OpenapiVersion): Da
   // The same response schema (one shared node, one memoized Zod schema) is
   // emitted once per build, not once per operation that returns it
   const json = memoizedJsonSchema(converted.ok, toDataSchema);
+  if (json === UNSAFE_TEXT_SCHEMA) {
+    return { withheld: OUTPUT_SCHEMA_WITHHELD_UNSAFE_TEXT };
+  }
   return json === undefined ? {} : { ok: json };
 };
 
