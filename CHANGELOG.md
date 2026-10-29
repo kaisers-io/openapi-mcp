@@ -14,12 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a `deepObject` over an array that OpenAPI leaves undefined, kept every Stripe read out, so the
   read-only default exposed nothing; with `--omit-unsupported-parameters "method:get"` its 271
   reads are tools. The agent cannot set a left-out parameter: the tool refuses it as an argument,
-  the server puts it into no request, and the tool's description names it. It is never the default, because a left-out parameter can be a
-  filter or a dry run. A required or path parameter, a header the operator or the HTTP client
-  sets, and a parameter that another query parameter could also send still omit the operation. `--json
-  tools` lists `leftOutParameters` per tool and `omittableParameters` per omitted operation, and
-  the startup names the operations the flag would build. See
-  [filtering.md](docs/filtering.md#operations-omitted-for-an-optional-parameter).
+  the server puts it into no request, and the tool's description names it. It is never the default,
+  because a left-out parameter can be a filter or a dry run. A required or path parameter, a header
+  the operator or the HTTP client sets, and a parameter that another query parameter could also send
+  still omit the operation. `--json tools` lists `leftOutParameters` per tool and
+  `omittableParameters` per omitted operation, and the startup names the operations the flag would
+  build. See [filtering.md](docs/filtering.md#operations-omitted-for-an-optional-parameter).
 - **The skills compare what the server delivers with what the user wants (#67).**
   `configuring-openapi-mcp` counts the confirmed operations and the tools, names each gap with
   its cause and proposes a fix, `--omit-unsupported-parameters` included, before it writes the
