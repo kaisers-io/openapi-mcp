@@ -157,7 +157,9 @@ that.
 Another query parameter could send the name when it is an object sent as separate keys
 (`style: form`, `explode: true`), a `deepObject` such as `filter` next to a left-out
 `filter[dryRun]`, or a name that a server reads as part of it, such as `expand[]` next to a
-left-out `expand`. Names are compared without letter case, as some servers read them.
+left-out `expand`. Names are compared as PHP reads them, the widest of the common parsers: without
+letter case, a space or a dot in the name as `_` (`dry.run` sends a left-out `dry_run`), and
+without text after the last `]` (`filter[dryRun]x` sends a left-out `filter[dryRun]`).
 
 The flag never exposes an operation. `--deny` and the read-only default decide first. A pattern
 that matches no exposed operation is a dead pattern. One that matches only operations that send

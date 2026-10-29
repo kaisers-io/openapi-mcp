@@ -305,31 +305,65 @@ const parameterProblem = (
   return { ok: { style, explode, schema: converted.ok } };
 };
 
+// A query key as a bracket-parsing server reads it: the name and the index
+// of each `[...]` that follows, lower-cased, with '' for `[]`. PHP's rules
+// are the widest (https://www.php.net/manual/en/language.variables.external.php):
+// leading spaces are dropped and spaces and dots in the name become `_`, an
+// unclosed `[` becomes `_` with the rest kept as it is, and text after the
+// last closed `]` is ignored. Rack and qs read the same brackets.
+const keyPath = (key: string): string[] => {
+  const trimmed = key.replace(/^ +/u, '');
+  const open = trimmed.indexOf('[');
+  const name = (open === -1 ? trimmed : trimmed.slice(0, open)).replaceAll(/[ .]/gu, '_');
+  if (open === -1 || !trimmed.includes(']', open)) {
+    return [(open === -1 ? name : `${name}_${trimmed.slice(open + 1)}`).toLowerCase()];
+  }
+  const path = [name.toLowerCase()];
+  let rest = trimmed.slice(open);
+  for (
+    let close = rest.indexOf(']');
+    rest.startsWith('[') && close !== -1;
+    close = rest.indexOf(']')
+  ) {
+    path.push(rest.slice(1, close).toLowerCase());
+    rest = rest.slice(close + 1);
+  }
+  return path;
+};
+
 // Whether a kept query field can send a query key that a server reads as
-// the left-out parameter `name` (reviews of #67): the key itself, or one
-// that starts with `name[`, which a bracket-parsing server (Rack, PHP, qs)
-// reads as part of it. Compared without letter case, as some servers bind
-// query names. A kept `form` object with explode=true sends each property as
-// its own key, so any key; a deepObject `k` sends `k[property]` for any
-// property without brackets (request.ts rejects one with brackets); every
-// other kept field sends only its own name.
+// the left-out parameter `name` (reviews of #67): a key whose path (keyPath)
+// starts with the path of `name`, so the server finds the key's value at
+// `name`, or within it. Compared without letter case, as some servers bind
+// query names. `[]` stands for any index. A kept `form` object with
+// explode=true sends each property as its own key, so any key; a deepObject
+// `k` sends `k[property]` for any property without brackets (request.ts
+// rejects one with brackets); every other kept field sends only its own name.
 const couldSend = (field: Field, schema: unknown, name: string): boolean => {
   if (field.mapping.destination !== 'query') {
     return false;
   }
-  const own = field.mapping.wireName.toLowerCase();
-  const target = name.toLowerCase();
-  if (own === target || own.startsWith(`${target}[`)) {
-    return true;
+  if (field.mapping.style === 'form' && field.mapping.explode) {
+    const node = isRecord(schema) ? schema : {};
+    if (!(isScalarSchema(node) || (node['type'] === 'array' && isScalarSchema(node['items'])))) {
+      return true;
+    }
   }
+  const sent: (string | undefined)[] = keyPath(field.mapping.wireName);
   if (field.mapping.style === 'deepObject') {
-    return target.startsWith(`${own}[`) && /^\[[^[\]]*\]$/u.test(target.slice(own.length));
+    // Any property
+    sent.push(undefined);
   }
-  if (field.mapping.style !== 'form' || !field.mapping.explode) {
-    return false;
-  }
-  const node = isRecord(schema) ? schema : {};
-  return !(isScalarSchema(node) || (node['type'] === 'array' && isScalarSchema(node['items'])));
+  const target = keyPath(name);
+  return (
+    sent.length >= target.length &&
+    target.every(
+      (index, at) =>
+        sent[at] === undefined ||
+        sent[at] === index ||
+        (at > 0 && (index === '' || sent[at] === '')),
+    )
+  );
 };
 
 export const paramFields = (

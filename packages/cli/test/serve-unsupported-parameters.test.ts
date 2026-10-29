@@ -73,6 +73,17 @@ const SPEC = {
         responses: ok,
       },
     },
+    // PHP reads `dry.run` as `dry_run`: omitted whatever the flag says
+    '/runs': {
+      get: {
+        operationId: 'listRuns',
+        parameters: [
+          { ...expand, name: 'dry_run' },
+          { name: 'dry.run', in: 'query', schema: { type: 'boolean' } },
+        ],
+        responses: ok,
+      },
+    },
     '/pets': { get: { operationId: 'listPets', parameters: [limit], responses: ok } },
   },
 };
@@ -84,6 +95,7 @@ const CALLS: Readonly<Record<string, { args: Record<string, unknown>; request: s
   getItem: { args: { id: 'i-1' }, request: 'GET /items/i-1' },
   getReport: { args: { expand: ['a'] }, request: 'GET /reports' },
   search: { args: {}, request: 'GET /search' },
+  listRuns: { args: { 'dry.run': false }, request: 'GET /runs?dry.run=false' },
   listPets: { args: { limit: 1 }, request: 'GET /pets?limit=1' },
 };
 const ALL = Object.keys(CALLS);

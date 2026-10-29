@@ -249,6 +249,42 @@ describe('paramFields with optional parameters left out', () => {
     });
   });
 
+  // PHP turns spaces and dots in a name into `_`, drops leading spaces,
+  // turns an unclosed `[` into `_`, and ignores text after the last `]`
+  const scalar = (name: string) => ({ name, in: 'query', schema: { type: 'boolean' } });
+
+  it.each([
+    ['a dot', scalar('dry.run'), 'dry_run'],
+    ['a space', scalar('dry run'), 'dry_run'],
+    ['a dot in the left-out name', scalar('dry_run'), 'dry.run'],
+    ['a leading space', scalar(' dry_run'), 'dry_run'],
+    ['an unclosed bracket', scalar('dry[run'), 'dry_run'],
+    ['text after the brackets', scalar('filter[dryRun]suffix'), 'filter[dryRun]'],
+    ['text after the brackets of the left-out name', scalar('filter[dryRun]'), 'filter[dryRun]x'],
+    ['a dot before the brackets', { ...filterObject, name: 'fil.ter' }, 'fil_ter[dryRun]'],
+    ['an append and an index', scalar('ids[]'), 'ids[0]'],
+  ])('omits the operation for a PHP alias with %s, in either order', (_name, kept, leftOutName) => {
+    const unrepresentable = `parameter "${leftOutName}" cannot be left out: the query parameter "${kept.name}" could send it`;
+    const left = unsendable(leftOutName);
+    for (const parameters of [
+      [kept, left],
+      [left, kept],
+    ]) {
+      expect(paramFields(op(parameters), new Set(), '3.1', true)).toStrictEqual({
+        unrepresentable,
+      });
+    }
+  });
+
+  it.each([
+    ['a dot inside the brackets', scalar('filter[dry.run]'), 'filter[dry_run]'],
+    ['another index', scalar('filter[a]'), 'filter[b]'],
+    ['a name deeper than the kept one', scalar('filter'), 'filter[dryRun]'],
+  ])('keeps %s next to a left-out parameter', (_name, kept, leftOutName) => {
+    const result = fieldsOf(withLeftOut(kept, leftOutName));
+    expect(result.leftOut.map((entry) => entry.name)).toStrictEqual([leftOutName]);
+  });
+
   it.each([
     ['a deepObject with another name', filterObject, 'expand'],
     // Request.ts refuses a property with brackets, so `filter[a][b]` is never sent
