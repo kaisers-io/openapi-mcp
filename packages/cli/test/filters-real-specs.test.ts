@@ -311,7 +311,8 @@ describe.each(SPECS)('filters against the real $name spec', ({ name, omitted, co
         name: string;
         inputSchema: Record<string, unknown>;
       }[];
-      for (const tool of tools.filter((entry) => entry.name !== 'openapi_mcp_status')) {
+      const fixed = new Set(['openapi_mcp_status', 'execute_code']);
+      for (const tool of tools.filter((entry) => !fixed.has(entry.name))) {
         exposed.set(tool.name, tool.inputSchema);
       }
       return exposed;

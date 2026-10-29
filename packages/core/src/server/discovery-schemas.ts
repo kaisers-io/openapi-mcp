@@ -168,7 +168,8 @@ export type ExecuteInput = z.infer<typeof EXECUTE_INPUT_SCHEMA>;
 export const EXECUTE_OUTPUT_SCHEMA: Record<string, unknown> = {
   type: 'object',
   properties: {
-    result: {},
+    // Any JSON value, spelled out: an empty schema is flagged by strict clients
+    result: { type: ['object', 'array', 'string', 'number', 'boolean', 'null'] },
     logs: { type: 'array', items: { type: 'string' } },
     logsTruncated: { type: 'boolean' },
     calls: {
