@@ -1334,6 +1334,21 @@ describe('createExecutor — forwarded upstream response headers', () => {
     expect(outcome.content.at(-1)?.text).toBe('headers:\nx-total-count: 1');
   });
 
+  it('drops a header whose secret crosses the forwarded length cap', async () => {
+    // The 512-character cap would cut the secret, leaving a prefix no scan matches
+    const etag = `"${'B'.repeat(490)}${SECRET}"`;
+    const { outcome } = await run(
+      pingOp,
+      () =>
+        new Response('pong', {
+          status: 200,
+          headers: { 'content-type': 'text/plain', etag, 'x-total-count': '1' },
+        }),
+    );
+    expect(outcome.content.at(-1)?.text).toBe('headers:\nx-total-count: 1');
+    expect(JSON.stringify(outcome)).not.toContain(SECRET.slice(0, 9));
+  });
+
   it('drops a header whose NAME carries a registered secret, in a structured result too', async () => {
     const { outcome, tool } = await run(
       idPathOp,
