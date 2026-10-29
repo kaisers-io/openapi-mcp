@@ -9,18 +9,39 @@
 // text — the pattern is never run.
 //
 // "Nested" means a quantified group that itself contains a quantifier, where
-// at least one of the two is unbounded:
+// at least one of the two is unbounded, or both are bounded but wide:
 //   - a group repeated more than once (`*`, `+`, `{n,}`, `{n,m}` with m > 1)
 //     that contains an UNBOUNDED quantifier (`*`, `+`, `{n,}`): `(a+)+`,
 //     `(\w+\s?)*`, `(a*){2}`;
 //   - an UNBOUNDED repetition of a group that contains any VARIABLE quantifier
-//     (`?`, `{n,m}` with n < m, or unbounded): `(a?)+`, `(\d{1,3})*`.
-// Small bounded nestings stay supported because their cost is bounded by
-// constants: `(\d{1,3}\.){3}` (IPv4), `(-[0-9a-f]{4}){3}` (UUID).
+//     (`?`, `{n,m}` with n < m, or unbounded): `(a?)+`, `(\d{1,3})*`;
+//   - a BOUNDED repetition (max > 1) of a group that contains a variable
+//     quantifier, when the ways to split one match exceed CHOICE_BUDGET:
+//     `(a{1,20}){1,20}`, `([a-z0-9]{1,63}\.?){1,8}`. Bounds alone do not keep
+//     the cost small: the first has more than 20^20 ways.
+// Small bounded nestings stay supported: `(\d{1,3}\.){3}` (IPv4, 3^3 = 27
+// ways), `(-[0-9a-f]{4}){3}` (UUID, fixed width).
 // Not detected (documented limits of a star-height heuristic): overlapping
 // alternation under one quantifier (`(a|a)+`) and backreferences.
 
-type GroupSummary = { unbounded: boolean; variable: boolean };
+// `choices` multiplies the spans (max - min + 1) of the quantifiers in the
+// current alternative; `alternatives` sums those of the alternatives before
+// it. Both are counts of ways to match, so an overflow to Infinity refuses.
+type GroupSummary = {
+  unbounded: boolean;
+  variable: boolean;
+  choices: number;
+  alternatives: number;
+};
+
+const CHOICE_BUDGET = 64;
+
+const openGroup = (): GroupSummary => ({
+  unbounded: false,
+  variable: false,
+  choices: 1,
+  alternatives: 0,
+});
 
 type Quantifier = { min: number; max: number };
 
@@ -98,7 +119,7 @@ const groupOpenLength = (pattern: string, index: number): number => {
 
 export const hasNestedQuantifier = (pattern: string): boolean => {
   // One summary per open group; index 0 is the whole pattern.
-  const stack: GroupSummary[] = [{ unbounded: false, variable: false }];
+  const stack: GroupSummary[] = [openGroup()];
   // The atom a following quantifier applies to: a closed group's summary, a
   // plain atom (`undefined` summary), or nothing (start of a group / after a
   // quantifier).
@@ -119,7 +140,7 @@ export const hasNestedQuantifier = (pattern: string): boolean => {
     }
     if (char === '(') {
       index += groupOpenLength(pattern, index);
-      stack.push({ unbounded: false, variable: false });
+      stack.push(openGroup());
       previous = undefined;
       continue;
     }
@@ -128,12 +149,19 @@ export const hasNestedQuantifier = (pattern: string): boolean => {
       const parent = stack.at(-1) as GroupSummary;
       parent.unbounded ||= closed.unbounded;
       parent.variable ||= closed.variable;
+      // One occurrence of the group; a following quantifier adds the rest
+      closed.choices += closed.alternatives;
+      parent.choices *= closed.choices;
       index += 1;
       previous = { group: closed };
       continue;
     }
     const read = readQuantifier(pattern, index);
     if (read === undefined || previous === undefined) {
+      if (char === '|') {
+        top.alternatives += top.choices;
+        top.choices = 1;
+      }
       index += 1;
       previous = char === '|' ? undefined : {};
       continue;
@@ -141,12 +169,23 @@ export const hasNestedQuantifier = (pattern: string): boolean => {
     const { min, max } = read.quantifier;
     const unbounded = max === Infinity;
     const variable = min !== max;
+    const span = max - min + 1;
     const inner = previous.group;
-    if (inner !== undefined && ((max > 1 && inner.unbounded) || (unbounded && inner.variable))) {
+    const body = inner?.choices ?? 1;
+    if (
+      inner !== undefined &&
+      ((max > 1 && inner.unbounded) ||
+        (unbounded && inner.variable) ||
+        (max > 1 && inner.variable && body ** max * span > CHOICE_BUDGET))
+    ) {
       return true;
     }
     top.unbounded ||= unbounded;
     top.variable ||= variable;
+    // The group's first occurrence is already counted. A `{0}` group still
+    // counts once, which only errs on the side of refusing. 1 ** Infinity is
+    // NaN, which would compare as within budget.
+    top.choices *= body === 1 || max === 0 ? span : body ** (max - 1) * span;
     index += read.length;
     // A lazy (`?`) suffix belongs to this quantifier.
     if (pattern[index] === '?') {

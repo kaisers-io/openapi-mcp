@@ -184,12 +184,14 @@ checks:
     nests quantifiers when a group repeated more than once (`*`, `+`, `{n,}`, or `{n,m}` with m
     over 1) contains an unbounded quantifier (`(a+)+`, `(\w+\s?)*`, `(a*){2}`), or when an
     unbounded repetition of a group contains any variable quantifier (`(a?)+`, `(\d{1,3})*`).
-    Small bounded nestings stay supported: `(\d{1,3}\.){3}` (IPv4) and `(-[0-9a-f]{4}){3}`
-    (UUID).
+    A bounded repetition of a group with a variable quantifier nests quantifiers too when a
+    match can be split in more than 64 ways, as in `(a{1,20}){1,20}` or
+    `([a-z0-9]{1,63}\.?){1,8}`. Small bounded nestings stay supported: `(\d{1,3}\.){3}` (IPv4,
+    27 ways) and `(-[0-9a-f]{4}){3}` (UUID).
   - This check counts nesting depth, in the style of the safe-regex library. It errs on the
-    side of refusing: some unambiguous patterns, such as `^[a-z]+(-[a-z]+)*$`, are refused too.
-    It does not detect overlapping alternatives under a single quantifier (`(a|a)+`) or
-    backreferences.
+    side of refusing: some unambiguous patterns, such as `^[a-z]+(-[a-z]+)*$` and
+    `^([a-z]{1,63}\.){3}$`, are refused too. It does not detect overlapping alternatives under
+    a single quantifier (`(a|a)+`) or backreferences.
   - In request schemas (tool inputs) the server shows `pattern` and `format` to the model in
     the input schema but never runs them, so they cost no CPU here.
   - In response schemas the server enforces `format` with the checks of ajv-formats. Its `url`

@@ -25,6 +25,14 @@ describe('hasNestedQuantifier', () => {
     '(a{2,})*',
     // Conservative: unambiguous at runtime, but star height 2 all the same.
     '^[a-z]+(-[a-z]+)*$',
+    // Bounded on both sides, but with more than 64 ways to split a match
+    '^([a-z0-9]{1,63}\\.?){1,8}$',
+    '^(a{1,20}){1,20}$',
+    '^((a{1,4}){2}){2}$',
+    '^(a{1,2}|a){6}$',
+    '^((?:a{1,9}){0}a{1,9}){2}$',
+    // Conservative too: the dot ends every label, but 63^3 ways all the same
+    '^([a-z]{1,63}\\.){3}$',
   ])('flags %s', (pattern) => {
     expect(hasNestedQuantifier(pattern)).toBe(true);
   });
@@ -33,6 +41,8 @@ describe('hasNestedQuantifier', () => {
     '^[a-z]+$',
     '^\\d{3}-\\d{4}$',
     '^(\\d{1,3}\\.){3}\\d{1,3}$',
+    '^(a{1,4}){2}$',
+    '^(\\d{1,2}|x){3}$',
     '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$',
     '^(abc)+$',
     '^(a|b)*$',
