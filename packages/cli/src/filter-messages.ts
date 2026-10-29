@@ -11,13 +11,16 @@ const PATTERN_DISPLAY_MAX = 256;
 // worded identically regardless of which command produced it.
 export const deadPatternMessage = (dead: DeadPattern): string => {
   const raw = sanitizeSpecText(dead.raw, PATTERN_DISPLAY_MAX);
-  // --omit-output-schema acts on the exposed tools only (issue #13)
-  const scope = dead.flag === 'omit-output-schema' ? 'exposed operation' : 'operation';
+  // --omit-output-schema and --omit-unsupported-parameters act on the
+  // exposed operations only (issues #13 and #67)
+  const exposedOnly =
+    dead.flag === 'omit-output-schema' || dead.flag === 'omit-unsupported-parameters';
+  const scope = exposedOnly ? 'exposed operation' : 'operation';
   const base = `--${dead.flag} "${raw}" matches no ${scope}`;
   if (dead.notExposed === true) {
     // --allow and --deny see every operation the filters decide on, so for
     // them only one omitted as not supported is not exposed (issue #41)
-    return dead.flag === 'omit-output-schema'
+    return exposedOnly
       ? `${base}; it names only operations that are filtered out or omitted`
       : `${base}; it names only operations that are omitted as not supported`;
   }

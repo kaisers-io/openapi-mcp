@@ -2,8 +2,8 @@
 
 `--allow` and `--deny` decide which operations of a spec become tools. This page explains the
 pattern syntax, the order in which the server decides, what it reports, and recipes for common
-goals. Read it before you expose write operations. `--omit-output-schema` uses the same
-patterns to pick from the exposed tools.
+goals. Read it before you expose write operations. `--omit-output-schema` and
+`--omit-unsupported-parameters` use the same patterns to pick from the exposed operations.
 
 Every pattern names what it selects, so a configuration reads as what it does:
 
@@ -66,7 +66,10 @@ The server goes through these steps for each operation of the spec, in this orde
    replaces the read-only default entirely, so write operations that match are exposed too.
    Without any `--allow`, the read-only default applies: `GET`, `HEAD` and `QUERY` operations,
    minus the denied ones.
-4. Tool generation can still omit an operation whose schema it cannot represent.
+4. Tool generation can still omit an operation whose schema it cannot represent. With
+   `--omit-unsupported-parameters`, an operation omitted only for optional parameters becomes a
+   tool without them (see
+   [below](#operations-omitted-for-an-optional-parameter)).
 5. While a changed spec waits for `openapi-mcp cache promote`, the server withholds every
    operation the new version removed.
 6. At call time the server checks every request a tool sends, and every redirect, against
@@ -109,6 +112,8 @@ values.
 |---|---|---|---|
 | Operations that are not tools | one summary line with counts | `notExposed`: each with `decision` and `reason` | `notExposedCounts` |
 | Unsupported operations | one line each | `omitted` | `omittedCount`, `omittedReasons` |
+| Operations omitted only for optional parameters | one line naming them and the flag | `notExposed[].omittableParameters` | not reported |
+| Parameters `--omit-unsupported-parameters` left out | one line naming the tools | `tools[].leftOutParameters` | not reported |
 | Patterns that match nothing | one line each, with a suggestion | `deadPatterns` | `deadPatternCount` |
 | Patterns that match values differing only by case | one line each | `caseCollisions` | not reported |
 | Tools whose path overlaps one that is not exposed | one line each | `overlaps` | not reported |
@@ -121,8 +126,49 @@ that is omitted as unsupported, the warning says so instead of suggesting anothe
 A dead pattern, a case collision and an overlap are warnings. Pass `--strict-filters` to make
 each of them stop the start instead, with exit code 3. This also applies to an overlap check
 that ran out of its work budget (`overlapCheckComplete` is `false` in `--json tools`), and to
-dead `--omit-output-schema` patterns. Turn it on once a filter set is stable, so that a spec
+dead `--omit-output-schema` and `--omit-unsupported-parameters` patterns. Turn it on once a filter set is stable, so that a spec
 change that makes a pattern stale fails at startup instead of passing with a warning.
+
+## Operations omitted for an optional parameter
+
+The server omits an operation when one of its parameters is something it cannot send. Some of
+those parameters are optional. Stripe's `expand`, for example, is a `deepObject` over an array,
+which OpenAPI leaves undefined, so every Stripe read is omitted, and the read-only default
+exposes nothing. `--json tools` names such parameters under `notExposed[].omittableParameters`,
+and the startup prints one line with the operations and the flag that builds them.
+
+`--omit-unsupported-parameters <pattern>` builds the exposed operations the pattern matches
+without those optional parameters. The agent then cannot set them: the tool refuses them as
+arguments, and the server puts none of them into a request it builds. A redirect from the API
+is followed as for every call (see [security.md](security.md#request-authorization)), so the
+API itself can still add one. Its description starts with
+`[Parameters not available here: expand.]`, and `--json tools` lists each one under
+`leftOutParameters` with its reason. Leaving one out can take a filter or a dry run away from
+the agent, so it is never the default: the flag names the operations where the user accepts
+that.
+
+| A parameter the server cannot send | Without the flag | With the flag |
+|---|---|---|
+| optional, in the query or a header | the operation is omitted | the tool has no such argument |
+| required, or in the path | the operation is omitted | the operation is omitted |
+| a header the operator sets with `--header` or `--header-env`, or one the HTTP client sends by itself (`Accept-Language`, `User-Agent`, `Accept-Encoding`, `Sec-Fetch-Mode`, `Cache-Control`, `Pragma`) | the operation is omitted | the operation is omitted |
+| optional, when another query parameter could send its name | the operation is omitted | the operation is omitted |
+
+Another query parameter could send the name when it is an object sent as separate keys
+(`style: form`, `explode: true`), a `deepObject` such as `filter` next to a left-out
+`filter[dryRun]`, or a name that a server reads as part of it, such as `expand[]` next to a
+left-out `expand`. Names are compared as PHP reads them, the widest of the common parsers: without
+letter case, a space or a dot in the name as `_` (`dry.run` sends a left-out `dry_run`), and
+without text after the last `]` (`filter[dryRun]x` sends a left-out `filter[dryRun]`).
+
+The flag never exposes an operation. `--deny` and the read-only default decide first. A pattern
+that matches no exposed operation is a dead pattern. One that matches only operations that send
+every parameter changes nothing, and the startup says so.
+
+```bash
+openapi-mcp serve --spec https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json \
+  --omit-unsupported-parameters "method:get"
+```
 
 ## Examples
 

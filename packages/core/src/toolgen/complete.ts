@@ -47,7 +47,7 @@ export const completeTool = (
     inputSchema: core.inputSchema,
     wireSchema: core.wireSchema,
     mapper: core.mapper,
-    description: composeDescription(operation, withheld),
+    description: composeDescription(operation, withheld, core.leftOutParameters),
     annotations: core.annotations,
     ...(outputSchema === undefined ? {} : { outputSchema }),
     ...(assumesDefaultIsError ? { outputSchemaAssumesDefaultIsError: true as const } : {}),
@@ -55,5 +55,6 @@ export const completeTool = (
     ...(withheld === undefined ? {} : { outputSchemaWithheld: withheld }),
     ...(core.pagination === undefined ? {} : { pagination: core.pagination }),
     ...(core.projection === true ? { projection: true } : {}),
+    ...(core.leftOutParameters === undefined ? {} : { leftOutParameters: core.leftOutParameters }),
   });
 };

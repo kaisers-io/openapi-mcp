@@ -7,7 +7,7 @@ import {
   SYSTEM_HEADERS,
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
-import type { GeneratedTool } from '@kaisers-io/openapi-mcp-core';
+import type { GeneratedTool, LeftOutParameter } from '@kaisers-io/openapi-mcp-core';
 import { factsOf, inventoryCounts, schemeInventory, withFacts } from '../inventory-facts.ts';
 import type { OperationFacts } from '../inventory-facts.ts';
 import { getGlobalOpts, wrapAction } from '../output.ts';
@@ -19,6 +19,8 @@ import {
   PATH_DISPLAY_MAX,
   registerSpecOptions,
   nullableOption,
+  toolsBuiltInPipeline,
+  unsupportedParameterLines,
   withOutputSchemaOptOut,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
@@ -43,6 +45,8 @@ type ToolRow = OperationFacts & {
   outputSchemaWithheld?: string;
   // --omit-output-schema took this tool's output schema (issue #13)
   outputSchemaOptedOut?: true;
+  // --omit-unsupported-parameters left these out (issue #67)
+  leftOutParameters?: readonly LeftOutParameter[];
 };
 
 const toToolRow = (generated: GeneratedTool): ToolRow => ({
@@ -62,6 +66,9 @@ const toToolRow = (generated: GeneratedTool): ToolRow => ({
     ? {}
     : { outputSchemaWithheld: generated.outputSchemaWithheld }),
   ...(generated.outputSchemaOptedOut === true ? { outputSchemaOptedOut: true as const } : {}),
+  ...(generated.leftOutParameters === undefined
+    ? {}
+    : { leftOutParameters: generated.leftOutParameters }),
 });
 
 export const registerTools: CommandRegistrar = (program, ctx, state) => {
@@ -73,18 +80,28 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
       const opts = getGlobalOpts(program);
       state.exitCode = await wrapAction(ctx, opts, async () => {
         const args = parseSpecPipelineArgs(cmdOpts, ctx);
-        const result = await runSpecPipeline(args.source, args.options, args.deps);
-        const deadMessages = filterMessages(result);
+        const building = toolsBuiltInPipeline(
+          args.filters.omitUnsupportedParameters,
+          (exposed, omitUnsupportedParameters) =>
+            buildTools(exposed.namedOperations, {
+              omitUnsupportedParameters,
+              reservedHeaders: SYSTEM_HEADERS,
+              openapiVersion: exposed.spec.openapiVersion,
+              defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
+              ...nullableOption(cmdOpts.nullableResponseFields),
+            }),
+        );
+        const result = await runSpecPipeline(
+          args.source,
+          { ...args.options, countTools: building.countTools },
+          args.deps,
+        );
+        const { built: generated, optIn, optInWarnings } = building.take();
+        const deadMessages = [...filterMessages(result), ...optInWarnings];
         if (cmdOpts.strictFilters === true && deadMessages.length > 0) {
           // Dead patterns under --strict-filters must exit 3
           throw validationError(deadMessages.join('\n'));
         }
-        const generated = buildTools(result.namedOperations, {
-          reservedHeaders: SYSTEM_HEADERS,
-          openapiVersion: result.spec.openapiVersion,
-          defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
-          ...nullableOption(cmdOpts.nullableResponseFields),
-        });
         const optOut = withOutputSchemaOptOut(
           generated,
           args.filters.omitOutputSchema,
@@ -125,9 +142,13 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           notExposed,
           overlaps: exposure.overlaps,
           overlapCheckComplete: exposure.overlapCheckComplete,
-          deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns],
+          deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns, ...optIn.deadPatterns],
           // Patterns that match values differing only by case (issue #42)
-          caseCollisions: [...result.caseCollisions, ...optOut.caseCollisions],
+          caseCollisions: [
+            ...result.caseCollisions,
+            ...optOut.caseCollisions,
+            ...optIn.caseCollisions,
+          ],
           security,
           ...schemeInventory(result.spec, tools, notExposed),
         };
@@ -150,7 +171,11 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
                 tool.outputSchemaAssumesDefaultIsError === true
                   ? ' [output schema assumes default = error]'
                   : ''
-              }${tool.outputSchemaOptedOut === true ? ' [output schema omitted]' : ''}`,
+              }${tool.outputSchemaOptedOut === true ? ' [output schema omitted]' : ''}${
+                tool.leftOutParameters === undefined
+                  ? ''
+                  : ` [${String(tool.leftOutParameters.length)} optional ${tool.leftOutParameters.length === 1 ? 'parameter' : 'parameters'} left out]`
+              }`,
           ),
         ];
         // Omissions, dead patterns, and cache degradation are all non-fatal
@@ -162,6 +187,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
             ...result.warnings,
             ...deadMessages,
             ...omissionWarningLines(allOmitted),
+            ...unsupportedParameterLines(built.tools, built.omitted, optIn),
             ...optOut.warnings,
             ...exposure.warnings,
           ],

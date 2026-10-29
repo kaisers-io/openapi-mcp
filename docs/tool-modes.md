@@ -152,9 +152,10 @@ The server checks two limits on a spec:
 
 - A spec may document at most 4096 operations. This is a hard stop before anything is cached,
   whatever the filters. A spec with more operations has to be split.
-- After `--allow`/`--deny` filtering, at most 512 operations may be exposed in
+- After `--allow`/`--deny` filtering, at most 512 tools may be exposed in
   `per-operation` mode (the server lists `openapi_mcp_status` next to them), and at most 4096
-  in `discover` and `auto` mode. Above the limit,
+  in `discover` and `auto` mode. An operation omitted as not supported is no tool and does not
+  count. Above the limit,
   `serve` and `check` stop with an error such as
   `N tools would be exposed after filtering — exceeds the 512-tool budget; narrow the set with --allow or --deny`.
 

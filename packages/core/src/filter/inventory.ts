@@ -24,6 +24,9 @@ const fromOmission = (
   tags: omission.tags ?? [],
   decision,
   reason: omission.reason,
+  ...(omission.omittableParameters === undefined
+    ? {}
+    : { omittableParameters: omission.omittableParameters }),
 });
 
 export const notExposedOperations = (

@@ -53,6 +53,7 @@ import type {
   RequestedToolMode,
   OAuthGuardOptions,
   RequestGuardOptions,
+  UnsupportedParameterOptIn,
 } from '@kaisers-io/openapi-mcp-core';
 import pkg from '../../package.json' with { type: 'json' };
 import {
@@ -78,7 +79,8 @@ import {
   OUTPUT_SCHEMA_FORMS,
   parseSpecPipelineArgs,
   reachableTools,
-  unreachableHeads,
+  toolsBuiltInPipeline,
+  unsupportedParameterLines,
   withOutputSchemaOptOut,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
@@ -474,6 +476,8 @@ type LoadedApi = {
   // The HEADs no call can pass (issue #68): left out of the tools, so the
   // tool mode is decided without them
   unreachable: ReadonlyMap<string, string>;
+  // --omit-unsupported-parameters, matched on this API's operations
+  optIn: UnsupportedParameterOptIn;
   // Built in full when `--tool-mode auto` sizes the tool definitions; reused
   // in either mode, never built twice (issue #61)
   completed?: ReturnType<typeof completeTools>;
@@ -493,29 +497,6 @@ const loadApi = async (
   // tool's input schema, not merely rejected later at call time.
   const apiConfig = resolveApiConfig(cmdOpts, ctx);
   const args = parseSpecPipelineArgs(cmdOpts, ctx);
-  // The exposed-set budget follows the tool mode: one tool per operation
-  // keeps the 512-tool budget; discover (and auto, which only ever picks
-  // per-operation at or below its 64-operation threshold) lifts it, since
-  // its tools/list no longer grows with the operation count.
-  const result = await runSpecPipeline(
-    args.source,
-    {
-      ...args.options,
-      maxToolCount:
-        requestedToolMode === 'per-operation'
-          ? SPEC_BUDGETS.maxToolCount
-          : SPEC_BUDGETS.maxDiscoverToolCount,
-    },
-    args.deps,
-  );
-  // Sanitized + suggestion-bearing, matching `tools`' strict-filters
-  // throw exactly (deadPatternMessage is the shared renderer): building
-  // the message inline instead would put unsanitized spec-derived text
-  // straight into a thrown error's message.
-  const filterWarnings = filterMessages(result);
-  if (cmdOpts.strictFilters === true && filterWarnings.length > 0) {
-    throw validationError(withApi(name, filterWarnings).join('\n'));
-  }
   // Before the tools are built: their binary fields name this folder
   const uploadInput = {
     enabled: cmdOpts.uploads === true,
@@ -538,19 +519,52 @@ const loadApi = async (
       ]),
     );
   }
-  // Union: a spec header parameter named e.g. "X-Api-Key" is dropped from
-  // the tool's input schema when that same name is configured as an
-  // operator auth header (--header/--header-env) — SYSTEM_HEADERS alone
-  // would let it reappear as a caller-settable input, silently colliding
-  // with the credential the executor injects.
-  const deferred = buildToolsDeferred(result.namedOperations, {
-    reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
-    openapiVersion: result.spec.openapiVersion,
-    projection: cmdOpts.responseProjection === true,
-    ...(uploadDir === undefined ? {} : { uploadDir }),
-    defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
-    ...nullableOption(cmdOpts.nullableResponseFields),
-  });
+  // Built inside the pipeline, so the tool budget counts these tools before
+  // anything is cached (issue #67). Union: a spec header parameter named
+  // e.g. "X-Api-Key" is dropped from the tool's input schema when that same
+  // name is configured as an operator auth header (--header/--header-env) —
+  // SYSTEM_HEADERS alone would let it reappear as a caller-settable input,
+  // silently colliding with the credential the executor injects.
+  const building = toolsBuiltInPipeline(
+    args.filters.omitUnsupportedParameters,
+    (exposed, omitUnsupportedParameters) =>
+      buildToolsDeferred(exposed.namedOperations, {
+        omitUnsupportedParameters,
+        reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
+        openapiVersion: exposed.spec.openapiVersion,
+        projection: cmdOpts.responseProjection === true,
+        ...(uploadDir === undefined ? {} : { uploadDir }),
+        defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
+        ...nullableOption(cmdOpts.nullableResponseFields),
+      }),
+  );
+  // The exposed-set budget follows the tool mode: one tool per operation
+  // keeps the 512-tool budget; discover (and auto, which only ever picks
+  // per-operation at or below its 64-operation threshold) lifts it, since
+  // its tools/list no longer grows with the operation count.
+  const result = await runSpecPipeline(
+    args.source,
+    {
+      ...args.options,
+      maxToolCount:
+        requestedToolMode === 'per-operation'
+          ? SPEC_BUDGETS.maxToolCount
+          : SPEC_BUDGETS.maxDiscoverToolCount,
+      countTools: building.countTools,
+    },
+    args.deps,
+  );
+  const { built: deferred, optIn, optInWarnings, unreachable } = building.take();
+  // Sanitized + suggestion-bearing, matching `tools`' strict-filters
+  // throw exactly (deadPatternMessage is the shared renderer): building
+  // the message inline instead would put unsanitized spec-derived text
+  // straight into a thrown error's message.
+  // --omit-unsupported-parameters (issue #67): its dead patterns are
+  // filter diagnostics like the others
+  const filterWarnings = [...filterMessages(result), ...optInWarnings];
+  if (cmdOpts.strictFilters === true && filterWarnings.length > 0) {
+    throw validationError(withApi(name, filterWarnings).join('\n'));
+  }
   return {
     name,
     cmdOpts,
@@ -560,7 +574,8 @@ const loadApi = async (
     filterWarnings,
     uploads,
     generated: deferred,
-    unreachable: unreachableHeads(result, deferred.tools),
+    unreachable,
+    optIn,
   };
 };
 
@@ -666,6 +681,7 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
     ...result.warnings,
     ...api.filterWarnings,
     ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
+    ...unsupportedParameterLines(exposure.built.tools, exposure.built.omitted, api.optIn),
     ...optOut.warnings,
     ...exposure.warnings,
     // Exposed operations whose `security` requirement no configured
@@ -684,7 +700,7 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
     // The status tool counts the --omit-output-schema dead patterns too
     pipeline: {
       ...result,
-      deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns],
+      deadPatterns: [...result.deadPatterns, ...optOut.deadPatterns, ...api.optIn.deadPatterns],
       notExposedCounts: exposure.counts,
     },
     resolvedBase,
@@ -792,6 +808,7 @@ const prepareServe = async (
     requestedToolMode === 'per-operation'
       ? SPEC_BUDGETS.maxToolCount
       : SPEC_BUDGETS.maxDiscoverToolCount;
+  // One API's budget is enforced in its pipeline, on its built tools
   if (views !== undefined && toolCount > budget) {
     throw validationError(
       `${String(toolCount)} tools would be exposed by all APIs together — exceeds the ${String(budget)}-tool budget; narrow them with --allow or --deny`,

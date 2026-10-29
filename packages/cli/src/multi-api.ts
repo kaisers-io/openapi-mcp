@@ -33,6 +33,7 @@ export const PER_API_LISTS: Readonly<Record<string, string>> = {
   '--allow': 'allow',
   '--spec-header-env': 'specHeaderEnv',
   '--omit-output-schema': 'omitOutputSchema',
+  '--omit-unsupported-parameters': 'omitUnsupportedParameters',
   '--header-env': 'headerEnv',
   '--header': 'header',
   '--upstream-oauth-scope': 'upstreamOauthScope',

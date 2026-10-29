@@ -5,7 +5,7 @@ import { deriveAnnotations } from './annotations.ts';
 import type { ToolAnnotations } from './annotations.ts';
 import { completeTool } from './complete.ts';
 import { buildLayout } from './layout.ts';
-import type { RequestMapper } from './layout.ts';
+import type { LeftOutParameter, RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
 import type { JsonSchemaRecord, NullableFieldScope } from './output-schema.ts';
 import { detectPagination } from './pagination.ts';
@@ -46,6 +46,9 @@ export type GeneratedTool = {
   // True when the tool takes the optional `_fields` projection argument
   // (toolgen/projection.ts).
   projection?: boolean;
+  // The optional parameters left out under --omit-unsupported-parameters
+  // (issue #67), named in the description too
+  leftOutParameters?: readonly LeftOutParameter[];
 };
 
 export type BuildToolsResult = {
@@ -139,6 +142,7 @@ const buildToolEntry = (
   nullableResponseFields: NullableFieldScope | undefined,
   projection: boolean,
   uploadDir: string | undefined,
+  omitUnsupported: boolean,
 ): DeferredTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
   // Provenance for filter diagnostics (issue #41)
@@ -158,9 +162,21 @@ const buildToolEntry = (
     openapiVersion,
     projection,
     uploadDir,
+    omitUnsupported,
   );
   if (!('ok' in layout)) {
-    return omitted(layout.unrepresentable);
+    // Built again with optional parameters left out, to name the ones
+    // --omit-unsupported-parameters would leave out; only for an omitted
+    // operation, so a supported spec pays nothing
+    const leaving = omitUnsupported
+      ? undefined
+      : buildLayout(named.operation, reservedHeaders, openapiVersion, false, uploadDir, true);
+    return leaving !== undefined && 'ok' in leaving
+      ? {
+          ...omitted(layout.unrepresentable),
+          omittableParameters: leaving.ok.leftOut.map((parameter) => parameter.name),
+        }
+      : omitted(layout.unrepresentable);
   }
   const wireResult = toWireSchema(layout.ok.inputSchema);
   if ('error' in wireResult) {
@@ -176,6 +192,7 @@ const buildToolEntry = (
     annotations: deriveAnnotations(named.operation.method),
     ...(pagination === undefined ? {} : { pagination }),
     ...(layout.ok.projection ? { projection: true } : {}),
+    ...(layout.ok.leftOut.length === 0 ? {} : { leftOutParameters: layout.ok.leftOut }),
   };
   let completed: GeneratedTool | undefined;
   return {
@@ -212,6 +229,9 @@ export const buildToolsDeferred = (
     projection?: boolean;
     // --uploads (#29): binary fields also take a file name in this folder
     uploadDir?: string;
+    // --omit-unsupported-parameters (issue #67): the tools, by name, that
+    // leave out an optional parameter they cannot send instead of being omitted
+    omitUnsupportedParameters?: ReadonlySet<string>;
   },
 ): DeferredToolsResult => {
   // HTTP header names are case-insensitive, and the header drop in paramFields
@@ -236,6 +256,7 @@ export const buildToolsDeferred = (
         opts.nullableResponseFields,
         opts.projection === true,
         opts.uploadDir,
+        opts.omitUnsupportedParameters?.has(named.toolName) === true,
       ),
     ),
   );

@@ -49,7 +49,18 @@ export type SpecPipelineOptions = {
   // discover|auto` passes SPEC_BUDGETS.maxDiscoverToolCount, since its
   // tools/list size does not grow with the operation count.
   maxToolCount?: number | undefined;
+  // How many tools the exposed operations become (issue #67): an operation
+  // omitted as not supported is no tool, so counting the operations refused
+  // a start whose tools fit. The caller builds its tools here, before
+  // anything is cached, and keeps them. Omitted counts the operations.
+  countTools?: ((exposed: ExposedOperations) => number) | undefined;
 };
+
+// What the filters expose, as `countTools` receives it
+export type ExposedOperations = Pick<
+  SpecPipelineResult,
+  'spec' | 'namedOperations' | 'withheldOperations'
+>;
 
 export type SpecPipelineDeps = {
   // Matches FetchSpecDeps.fetcher — undici's own fetch, never Node's global
@@ -121,18 +132,18 @@ const describeCause = (err: unknown): string => (err instanceof Error ? err.mess
 // bounds what is exposed and runs after filtering (see finish), so --allow can
 // carve a small tool set out of an API that documents more operations than the
 // budget.
-const enforceOperationBudget = (spec: NormalizedSpec): void => {
-  if (spec.operations.length > SPEC_BUDGETS.maxOperationCount) {
-    throw validationError(
-      `spec defines ${spec.operations.length} operations — exceeds the ${SPEC_BUDGETS.maxOperationCount}-operation limit`,
-    );
-  }
-};
-
 const enforceToolBudget = (exposedCount: number, maxToolCount: number): void => {
   if (exposedCount > maxToolCount) {
     throw validationError(
       `${exposedCount} tools would be exposed after filtering — exceeds the ${maxToolCount}-tool budget; narrow the set with --allow or --deny`,
+    );
+  }
+};
+
+const enforceOperationBudget = (spec: NormalizedSpec): void => {
+  if (spec.operations.length > SPEC_BUDGETS.maxOperationCount) {
+    throw validationError(
+      `spec defines ${spec.operations.length} operations — exceeds the ${SPEC_BUDGETS.maxOperationCount}-operation limit`,
     );
   }
 };
@@ -598,10 +609,6 @@ const finish = (
   const pending = input.cached?.meta.candidate;
   const candidateContentHash = input.candidateContentHash ?? pending?.contentHash;
   const withholding = withholdRemoved(filtered.exposed, input.candidateOperationKeys);
-  // Every result, fresh or cached, passes through here: this is the one place
-  // the exposed set is known, so the tool budget is enforced on it here,
-  // after withholding, on the tools that would actually be served (issue #41)
-  enforceToolBudget(withholding.exposed.length, opts.maxToolCount ?? SPEC_BUDGETS.maxToolCount);
   // Every served path (fresh, cached, refreshed) ends here, so the rejected
   // server URL is reported on each of them, not only when it was first seen
   const rejected = spec.serverUrlRejected;
@@ -623,6 +630,20 @@ const finish = (
     ...entry,
     operation: materialize(entry.operation, dereferencer),
   }));
+  // Every result, fresh or cached, passes through here, before the accepted
+  // write: the tool budget is enforced on the tools that would actually be
+  // served (issues #41 and #67), so a run that refuses to serve leaves no
+  // baseline behind (kaisers-io/openapi-mcp-archive#32)
+  enforceToolBudget(
+    opts.countTools === undefined
+      ? exposed.length
+      : opts.countTools({
+          spec,
+          namedOperations: exposed,
+          withheldOperations: withholding.withheld,
+        }),
+    opts.maxToolCount ?? SPEC_BUDGETS.maxToolCount,
+  );
   return {
     spec,
     namedOperations: exposed,
@@ -687,7 +708,9 @@ const candidateBudgetWarning = (
   if (exposedCount <= budget) {
     return undefined;
   }
-  return `the candidate spec would expose ${exposedCount} tools under the current filters — over the ${budget}-tool budget; after "openapi-mcp cache promote" this server will refuse to start unless --allow or --deny narrows the set`;
+  // An upper bound: an operation omitted as not supported is no tool, and
+  // only building the tools would tell, which is not worth it for a warning
+  return `${exposedCount} operations of the candidate spec pass the current filters — over the ${budget}-tool budget; after "openapi-mcp cache promote" this server may refuse to start unless --allow or --deny narrows the set`;
 };
 
 // Decides what a successfully fetched-and-validated spec becomes: the accepted
