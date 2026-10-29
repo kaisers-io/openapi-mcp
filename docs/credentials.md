@@ -162,10 +162,10 @@ The server only sends a credential where you pointed it.
   startup with exit code 2. A spec file needs no `--base-url` for this.
 - When one server serves several APIs (`--api`), each API's credentials go only to that API's
   own base URL. See [several-apis.md](several-apis.md).
-- The server refuses to send a `--header-env` value or an OAuth2 access token over plain `http`
-  to a host that is not loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). The call
-  fails without sending anything. `--allow-insecure-http` permits it, for an API you can only
-  reach that way.
+- The server refuses to send a `--header-env` value, a `--spec-header-env` value or an OAuth2
+  access token over plain `http` to a host that is not loopback (`localhost`, `*.localhost`,
+  `127.0.0.0/8`, `::1`). The call or the spec fetch fails without sending anything.
+  `--allow-insecure-http` permits it, for an API or a spec you can only reach that way.
 
 Outbound requests also follow an egress policy. An address that comes from the spec (its
 `servers` URL) or from a redirect is refused when it is private, loopback or a cloud-metadata

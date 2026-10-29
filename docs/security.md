@@ -102,8 +102,8 @@ checks:
   (see above). The server reports it and never applies it on its own.
 - With a spec fetched from a URL, the server starts with `--header-env` or `--basic-auth-env`
   only when `--base-url` is set. The spec then cannot choose where the credential goes.
-- The server refuses to send an operator credential (`--header-env`) over plain `http://` to a
-  host that is not loopback. `--allow-insecure-http` allows it.
+- The server refuses to send an operator credential (`--header-env`, `--spec-header-env`) over
+  plain `http://` to a host that is not loopback. `--allow-insecure-http` allows it.
 
 ## Credential hygiene
 

@@ -96,7 +96,7 @@ How headers and secrets work is in [credentials.md](credentials.md). How request
 | `--header-env <Header=ENV>` | yes | an API header whose value is read from the environment variable `ENV`; treated as a secret | `[]` |
 | `--basic-auth-env <USER_ENV:PASSWORD_ENV>` | no | HTTP Basic auth: the server builds the `Authorization` header from the user name and the password in these variables; without `:PASSWORD_ENV` the password is empty; see [credentials.md](credentials.md#http-basic-authentication) | none |
 | `--header <Header:value>` | yes | a static API header that is not a secret; a name that looks like a credential is refused | `[]` |
-| `--allow-insecure-http` | no | allow a `--header-env` credential over cleartext `http` to an origin that is not loopback | off |
+| `--allow-insecure-http` | no | allow a `--header-env` or `--spec-header-env` credential over cleartext `http` to an origin that is not loopback | off |
 | `--allow-offsite-redirects` | no | follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply, and a later hop back onto the API is checked again; see [security.md](security.md#request-authorization) | off |
 | `--no-trace-propagation` | no | do not forward a call's W3C trace context (`_meta.traceparent` and `tracestate`) to the upstream API | forwarded |
 | `--upstream-oauth-client-id-env <ENV>` | no | OAuth2 client credentials: the environment variable that holds the client ID; needs `--upstream-oauth-client-secret-env` | none |
@@ -367,6 +367,7 @@ An inventory that only `serve --tool-mode discover` can expose fails here; narro
 | `--cache-key <name>` | no | a name for the cache entry; required for an authenticated spec | none |
 | `--trust-spec-updates` | no | accept a changed spec automatically instead of holding it back | off |
 | `--allow-private-network` | no | allow private and loopback redirect targets during the spec fetch; cloud metadata addresses stay refused | off |
+| `--allow-insecure-http` | no | allow a `--spec-header-env` credential over cleartext `http` to an origin that is not loopback | off |
 | `--default-response-is-error` | no | derive an output schema for an operation that declares a `default` response, assuming that response covers only errors; see [requests-and-responses.md](requests-and-responses.md) | off |
 | `--nullable-response-fields [all\|optional]` | no | let object properties in derived output schemas be `null`: every property (`all`, also the value of the bare flag) or only those not listed in `required` (`optional`) | off |
 | `--omit-output-schema <pattern>` | yes | declare no output schema for the exposed tools this selector matches | `[]` |
@@ -510,6 +511,7 @@ a candidate, but does not activate it. See [spec-updates.md](spec-updates.md) an
 | `--timeout <duration>` | the time limit for the spec fetch | `30s` |
 | `--trust-spec-updates` | accept the changed spec directly instead of storing it as a candidate | off |
 | `--allow-private-network` | allow private and loopback redirect targets during the fetch | off |
+| `--allow-insecure-http` | allow a `--spec-header-env` credential over cleartext `http` to an origin that is not loopback | off |
 
 ```bash
 openapi-mcp cache refresh --spec https://api.example.com/openapi.json --cache-key petstore-prod
