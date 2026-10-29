@@ -48,6 +48,13 @@ describe('createRedactor', () => {
     expect(redactor.scanForSecret(42)).toBe(false);
   });
 
+  it('scanForSecret finds a numeric secret in a JSON number, in any spelling', () => {
+    const redactor = createRedactor(['987654321']);
+    expect(redactor.scanForSecret({ pin: 987_654_321 })).toBe(true);
+    expect(redactor.scanForSecret([JSON.parse('9.87654321e8')])).toBe(true);
+    expect(redactor.scanForSecret({ pin: 123_456_789 })).toBe(false);
+  });
+
   it('redacts the longest matching needle first, whole, when it contains a shorter secret as a substring', () => {
     const longSecret = 'anotherlongsecretvalue';
     const std = Buffer.from(longSecret, 'utf8').toString('base64');

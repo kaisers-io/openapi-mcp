@@ -434,14 +434,20 @@ const mapNoSchemaSuccess = (
   return textOutcome(truncated, false);
 };
 
-// One secret check for a parsed JSON body. Without a backslash anywhere in
-// the decoded text, JSON has no escape sequences, so every key and string
-// value appears in the raw text exactly as it does after parsing: one
-// substring scan of the raw text then finds every secret the recursive tree
-// walk would find over `data` (and possibly more — a needle spanning two
-// tokens — which only fails closed). With any backslash present, an escaped
-// secret (`\/`, `\uXXXX`) differs from its parsed form, so the tree walk
-// runs over the whole envelope instead. Every OTHER envelope field (status,
+// A digit followed by `e` in the raw text. It also matches inside a string
+// (`3e4f`), which only costs the slower scan below.
+const EXPONENT_RE = /\d[eE]/u;
+
+// One secret check for a parsed JSON body. Without a backslash or an
+// exponent anywhere in the decoded text, JSON has no escape sequences and a
+// number's digits read as they do after parsing, so every key, string and
+// number appears in the raw text exactly as it does after parsing: one substring
+// scan of the raw text then finds every secret the recursive tree walk would
+// find over `data` (and possibly more — a needle spanning two tokens — which
+// only fails closed). With any backslash present, an escaped secret (`\/`,
+// `\uXXXX`) differs from its parsed form, and with a digit followed by `e`,
+// a number may (`9.87654321e8` parses to 987654321), so the tree walk runs
+// over the whole envelope instead. Every OTHER envelope field (status,
 // contentType, and anything a later layer adds, such as forwarded headers or
 // pagination hints) is always tree-scanned: the raw text only stands in for
 // `data`, so a new field can never silently skip the scan.
@@ -450,7 +456,7 @@ export const envelopeHasSecret = (
   rawJson: string,
   envelope: Record<string, unknown>,
 ): boolean => {
-  if (rawJson.includes('\\')) {
+  if (rawJson.includes('\\') || EXPONENT_RE.test(rawJson)) {
     return scanSafely(redactor, envelope);
   }
   const { data: _data, ...rest } = envelope;

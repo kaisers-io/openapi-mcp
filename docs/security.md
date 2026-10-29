@@ -127,6 +127,8 @@ checks:
   - It removes the raw value. For a secret of 8 or more characters it also removes common
     encodings: standard Base64, URL-safe Base64, percent-encoding with upper- or lowercase hex,
     form encoding, and JSON string escaping including `\/`.
+  - In structured results it also finds a secret made only of digits that the upstream sends
+    as a JSON number, in any spelling (`987654321` or `9.87654321e8`).
   - It skips those encodings for shorter secrets, because a short value matches common
     substrings by accident. One exception remains: a short secret with `"`, `\` or a control
     character also has its JSON-escaped form removed, since that form can appear in a text or

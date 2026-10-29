@@ -1029,6 +1029,25 @@ describe('mapResponse — large structured results: one secret scan, bounded tex
     ).toBe(true);
   });
 
+  it.each([
+    ['next to an escape', '{"pin":987654321,"note":"a\\/b"}', undefined],
+    ['in exponent form', '{"pin":9.87654321e8}', undefined],
+    ['selected with _fields', '{"pin":987654321}', ['/pin']],
+  ])('refuses a body that echoes a numeric secret as a number %s', (_label, body, fields) => {
+    const outputSchema = anyDataSchema();
+    const result = mapResponse(
+      defaultOpts({
+        outcome: response(200, 'application/json', body),
+        outputSchema,
+        validator: compileEnvelopeValidator(outputSchema),
+        redactor: createRedactor(['987654321']),
+        ...(fields === undefined ? {} : { fields }),
+      }),
+    );
+    expect(isError(result)).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
+    expect(JSON.stringify(result)).not.toContain('987654321');
+  });
+
   it('accepts a secret-free body that contains escapes (tree-scan fallback, no false positive)', () => {
     const result = structured('{"path":"a\\/b","quote":"\\"x\\""}');
     expect(result.isError).toBe(false);
