@@ -1617,9 +1617,7 @@ const convertUncached = (
     meta['anyOf'] = alternatives.map((names) => ({ required: [...names] }));
   }
   const advertised = Object.keys(meta).length > 0 ? built.ok.meta(meta) : built.ok;
-  // The description of an annotated single-member allOf replaces the member's,
-  // so the member's note on a pattern it left out is carried over.
-  const note =
-    unenforced ?? (isAllOfWrapper(node) ? unenforcedPattern(node['allOf'][0], mode) : undefined);
-  return { ok: withDescription(advertised, node, note) };
+  // The description of an annotated single-member allOf replaces the member's;
+  // unenforcedPattern carries the member's note over (issue #104).
+  return { ok: withDescription(advertised, node, unenforced) };
 };
