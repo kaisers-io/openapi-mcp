@@ -1295,6 +1295,19 @@ const isAllOfWrapper = (
   node['allOf'].length === 1 &&
   Object.keys(node).every((key) => key.startsWith('x-') || ALLOF_WRAPPER_SIBLINGS.has(key));
 
+// A response pattern left out of the advertised schema (issue #104), or of the
+// member of an annotated single-member allOf, which converts as that member.
+const unenforcedPattern = (node: unknown, mode: SchemaMode): string | undefined => {
+  if (!isRecord(node) || mode !== 'response') {
+    return undefined;
+  }
+  const { pattern } = node;
+  if (typeof pattern === 'string') {
+    return !hasControlOrBidi(pattern) && !isEnforceablePattern(pattern) ? pattern : undefined;
+  }
+  return isAllOfWrapper(node) ? unenforcedPattern(node['allOf'][0], mode) : undefined;
+};
+
 // Admits null next to a determiner's own values (see build).
 const withNull = (result: SchemaResult, admitNull: boolean): SchemaResult =>
   admitNull && 'ok' in result ? { ok: result.ok.nullable() } : result;
@@ -1571,13 +1584,7 @@ const convertUncached = (
   // (output-data.ts) as for any such value. See pattern-safety.ts.
   const meta: Record<string, unknown> = {};
   const pattern = typeof node['pattern'] === 'string' ? node['pattern'] : undefined;
-  const unenforced =
-    pattern !== undefined &&
-    mode === 'response' &&
-    !hasControlOrBidi(pattern) &&
-    !isEnforceablePattern(pattern)
-      ? pattern
-      : undefined;
+  const unenforced = unenforcedPattern(node, mode);
   if (pattern !== undefined && unenforced === undefined) {
     meta['pattern'] = pattern;
   }
@@ -1610,5 +1617,9 @@ const convertUncached = (
     meta['anyOf'] = alternatives.map((names) => ({ required: [...names] }));
   }
   const advertised = Object.keys(meta).length > 0 ? built.ok.meta(meta) : built.ok;
-  return { ok: withDescription(advertised, node, unenforced) };
+  // The description of an annotated single-member allOf replaces the member's,
+  // so the member's note on a pattern it left out is carried over.
+  const note =
+    unenforced ?? (isAllOfWrapper(node) ? unenforcedPattern(node['allOf'][0], mode) : undefined);
+  return { ok: withDescription(advertised, node, note) };
 };
