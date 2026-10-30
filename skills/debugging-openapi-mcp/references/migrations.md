@@ -49,7 +49,7 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
-| Unreleased | A response `pattern` with quantifiers side by side that can match the same characters (`^\d*\.?\d+$`, `.*:.*`) is no longer in the output schema; the field description ends with `Pattern (not enforced): <pattern>`. Neither the server nor the client checks it. | Nothing in the config. |
+| Unreleased | A response `pattern` with quantifiers side by side that can match the same characters (`^\d*\.?\d+$`, `.*:.*`), or without `^` and with something that can fail after an unbounded quantifier (`\s+$`), is no longer in the output schema; the field description ends with `Pattern (not enforced): <pattern>`. Neither the server nor the client checks it. | Nothing in the config. |
 | Unreleased | A response `format: url` is no longer in the output schema; the field description ends with `Format (not enforced): url`. A response value that is not a URL is no longer an error. | Nothing in the config. |
 | Unreleased | More results that echo a registered secret are withheld: an escaped or entity-encoded secret in a structured result, a `_fields` selection or a response header (the header is dropped), JSON inside a JSON string, and a digit-only secret of more than 15 digits as a JSON number. | Nothing in the config. |
 | Unreleased | A `_fields` selection over a response with many escaped control characters, lone surrogates or multi-byte characters can now fail with the "more than twice the size of the response" error where it was accepted before. | Nothing in the config. The agent selects fewer or narrower fields. |

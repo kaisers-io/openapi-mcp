@@ -230,8 +230,14 @@ checks:
     required or optional character it can match does not stop it, so `^a*aa*b$`,
     `^\d*\.?\d+$` and `arn:aws:.*:.*:[0-9]+:.*` are refused. This check errs on the side of
     refusing too: `.*\S.*` is refused although a failing match never backtracks into the final
-    `.*`. Of the 402 response patterns in 246 public API descriptions that the nesting and RE2
-    checks keep, it refuses 18.
+    `.*`.
+  - A pattern **without `^`** can match anywhere, so the client's engine retries it at every
+    start. One unbounded quantifier then takes about n^2 steps when something after it can
+    fail: `\s+$` took 8 seconds on 100,000 characters. So nothing required and no `$` may
+    follow an unbounded quantifier that the retry can reach. `.*`, `[0-9]+`, `abc\d+x` (`\d`
+    cannot match the `c` before it) and optional groups at the end stay; `\s+$`, `[a-z]+@x`
+    and `[a-z]+_token_[0-9]+` are refused. Of the 402 response patterns in 246 public API
+    descriptions that the nesting and RE2 checks keep, these two checks refuse 32.
   - RE2 cannot run lookahead, lookbehind, backreferences, `\cX`, `[\b]` and Unicode property
     names such as `\p{Script=Greek}` (`\p{L}` works). A pattern that is not valid JavaScript
     with the `u` flag is not enforced either, because the client could not compile it.

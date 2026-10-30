@@ -25,6 +25,10 @@ import { groupOpenLength, readQuantifier } from './pattern-syntax.ts';
 // (the group starts with `-`) and `^(\d{1,3}\.){3}\d{1,3}$` (the group ends
 // with `.`) stay advertised.
 //
+// Without `^` the engine retries at every start: an unbounded quantifier that
+// trades with that retry is quadratic when anything after it can fail (`\s+$`,
+// 8 s on 100k characters), so nothing mandatory and no `$` may follow it.
+// `.*` and `abc\d+x` stay; `[a-z]+@x` and a mandatory group (`(?:\d+)`) do not.
 // Not detected, as for nested quantifiers: overlapping alternation (`(a|a)`)
 // beyond the ways it adds. Conservative: `.*\S.*` is refused, although no
 // failing match backtracks into a final `.*`, which matches any rest.
@@ -38,8 +42,10 @@ const CHOICE_BUDGET = 64;
 // items after it can give away, its last characters, how many unbounded
 // quantifiers its chain holds and the product of the bounded ranges.
 // `unbounded` and `ways` are the most any chain inside the item reached.
-type Entry = { chars: CharSet; last: CharSet; unbounded: number; ways: number };
+// `anywhere` marks the retry entry; `trailing`, a quantifier open after it.
+type Entry = { chars: CharSet; last: CharSet; unbounded: number; ways: number; anywhere?: boolean };
 type Item = Entry & { first: CharSet; min: number; max: number; run: readonly Entry[] };
+type Sequence = Item & { trailing?: boolean };
 
 const MAX_ENTRIES = 8;
 const EMPTY: Item = {
@@ -52,6 +58,9 @@ const EMPTY: Item = {
   unbounded: 0,
   ways: 1,
 };
+// Where an alternative of the whole pattern starts, before a `^`
+const RETRY: Entry = { chars: ANY, last: ANY, unbounded: 1, ways: 1, anywhere: true };
+const ANYWHERE: Sequence = { ...EMPTY, run: [RETRY] };
 const atom = (chars: CharSet): Item => ({
   ...EMPTY,
   first: chars,
@@ -95,20 +104,32 @@ const chain = (entry: Entry, item: Item): Entry | undefined =>
       }
     : undefined;
 
-// `item` appended to `sequence`, or `undefined` when that forms a refused chain.
-const append = (sequence: Item, item: Item): Item | undefined => {
+// `item` appended to `sequence`, or `undefined` when that forms a refused
+// chain. `quantified` says that `item` is one quantified character or class.
+const append = (sequence: Sequence, item: Item, quantified: boolean): Sequence | undefined => {
   if (item.max === 0) {
     return sequence;
   }
+  if (sequence.trailing === true && item.min > 0) {
+    return undefined;
+  }
   // The longest chain `item` joins, raised onto the entries it leaves open.
   let reached: Count = { unbounded: 0, ways: 1 };
+  let { trailing } = sequence;
   if (item.min !== item.max) {
     for (const entry of sequence.run) {
       const chained = chain(entry, item);
-      if (chained !== undefined && refused(chained)) {
+      if (chained !== undefined && entry.anywhere === true) {
+        // Bounded steps per start; an optional group cannot fail
+        if (item.unbounded > 0 && item.min > 0 && !quantified) {
+          return undefined;
+        }
+        trailing = item.unbounded > 0 ? true : trailing;
+      } else if (chained !== undefined && refused(chained)) {
         return undefined;
+      } else {
+        reached = chained === undefined ? reached : most(reached, chained);
       }
-      reached = chained === undefined ? reached : most(reached, chained);
     }
   }
   // A mandatory item ends each entry that cannot match its first character;
@@ -124,6 +145,7 @@ const append = (sequence: Item, item: Item): Item | undefined => {
             last: item.last,
             unbounded: entry.unbounded,
             ways: entry.ways,
+            anywhere: entry.anywhere,
           }));
   return {
     first: sequence.min === 0 ? union(sequence.first, item.first) : sequence.first,
@@ -140,6 +162,7 @@ const append = (sequence: Item, item: Item): Item | undefined => {
       })),
     ]),
     ...most(most(sequence, item), reached),
+    trailing: trailing === true,
   };
 };
 
@@ -200,16 +223,19 @@ const repeat = (item: Item, min: number, max: number): Item | undefined => {
   };
 };
 
-type Frame = { sequence: Item; group: Item | undefined; count: number };
+type Frame = { sequence: Sequence; group: Item | undefined; count: number };
 
 export const hasAmbiguousSequence = (pattern: string): boolean => {
-  const stack: Frame[] = [{ sequence: EMPTY, group: undefined, count: 0 }];
-  // The item a following quantifier applies to, not yet appended.
+  const stack: Frame[] = [{ sequence: ANYWHERE, group: undefined, count: 0 }];
+  // The item a following quantifier applies to, not yet appended, and
+  // whether it is a character or class rather than a group.
   let pending: Item | undefined;
+  let quantified = false;
   let index = 0;
   const flush = (): boolean => {
     const frame = stack.at(-1) as Frame;
-    const next = pending === undefined ? frame.sequence : append(frame.sequence, pending);
+    const next =
+      pending === undefined ? frame.sequence : append(frame.sequence, pending, quantified);
     pending = undefined;
     if (next === undefined) {
       return false;
@@ -236,6 +262,7 @@ export const hasAmbiguousSequence = (pattern: string): boolean => {
     }
     const char = pattern[index];
     const frame = stack.at(-1) as Frame;
+    quantified = char !== ')';
     if (char === '(') {
       index += groupOpenLength(pattern, index);
       stack.push({ sequence: EMPTY, group: undefined, count: 0 });
@@ -245,9 +272,14 @@ export const hasAmbiguousSequence = (pattern: string): boolean => {
       index += 1;
     } else if (char === '|') {
       frame.group = alternative(frame.group, frame.sequence);
-      frame.sequence = EMPTY;
+      frame.sequence = stack.length === 1 ? ANYWHERE : EMPTY;
       frame.count += 1;
       index += 1;
+    } else if (char === '^' && stack.length === 1) {
+      frame.sequence = { ...frame.sequence, run: [] };
+      index += 1;
+    } else if (char === '$' && frame.sequence.trailing === true) {
+      return true;
     } else if (char === '^' || char === '$') {
       index += 1;
     } else if (char === '\\') {

@@ -85,12 +85,20 @@ describe('hasAmbiguousSequence', () => {
     // Bounded, but more than 64 ways
     '\\d{1,9}\\d{1,9}\\d{1,9}',
     '^(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)$',
+    // One repetition's end trades with the next one's start
+    '^(?:\\d+\\.?){2}$',
     // Escapes and classes name the same characters
     '^\\u0061+a+$',
     '^[\\x41-\\x5A]+A+$',
     '^[^/]+[^*]*$',
     // Unknown characters overlap everything
     '^\\p{L}+[a-z]+$',
+    // Without `^` the match can start anywhere
+    '\\s+$',
+    '[a-z]+@x',
+    '[a-z]+_token_[0-9]+',
+    '^a+|b+$',
+    '(s3://|http(s*)://).+',
   ])('flags %s', (pattern) => {
     expect(hasAmbiguousSequence(pattern)).toBe(true);
   });
@@ -109,10 +117,16 @@ describe('hasAmbiguousSequence', () => {
     // One unbounded quantifier among bounded ones
     '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$',
     '^[a-z]+(-[a-z]+)?-[a-z]+-[0-9]$',
-    '(s3://|http(s*)://).+',
+    '^(s3://|http(s*)://).+',
     '^\\p{Lu}\\p{L}*$',
     '^[^\\s]+$',
     '^[\\d-z]+$',
+    // Without `^`, where a failed start fails at its first character
+    'abc\\d+',
+    'v\\d+',
+    'prefix_[a-zA-Z0-9]{32}',
+    '[A-Z]{2}\\d{4}',
+    '^a+|^b+',
     '',
   ])('accepts %s', (pattern) => {
     expect(hasAmbiguousSequence(pattern)).toBe(false);
@@ -276,6 +290,17 @@ describe('output schema with an unsafe response pattern (issue #104)', () => {
       type: 'string',
       description: 'Outer. — Pattern (not enforced): ^(?=x)x$',
     });
+  });
+
+  it.each([
+    [{ pattern: '^(?=x)x$' }, 'A code. — Pattern (not enforced): ^(?=x)x$'],
+    [{ format: 'url' }, 'A code. — Format (not enforced): url'],
+  ])('keeps the member description under an unannotated allOf (%o)', (keyword, description) => {
+    const result = explainOutputSchema(
+      op({ allOf: [{ allOf: [{ type: 'string', description: 'A code.', ...keyword }] }] }),
+      '3.1',
+    );
+    expect(dataOf(result.outputSchema)).toEqual({ type: 'string', description });
   });
 
   it('keeps the tool and its description unchanged', () => {

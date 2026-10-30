@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A response `pattern` whose quantifiers side by side can match the same characters is no
   longer advertised.** A backtracking engine tries every split among them (`^a*a*a*b$`,
   `^\d*\.?\d+$`, `arn:aws:.*:.*:[0-9]+:.*`), so the MCP client could block on a short value.
-  Only the keyword leaves the output schema; the field description ends with
-  `Pattern (not enforced): <pattern>`.
+  The same holds for a pattern without `^` with something that can fail after an unbounded
+  quantifier (`\s+$`, `[a-z]+@x`): the engine retries it at every start. Only the keyword
+  leaves the output schema; the field description ends with `Pattern (not enforced): <pattern>`.
 - **A response `format: url` is no longer advertised.** The client's ajv-formats `url` check
   slows down quadratically on long values the server accepts. The field description ends with
   `Format (not enforced): url`, and the server no longer checks the value either. Request
