@@ -58,7 +58,7 @@ value), 3 validation (the spec, the cache, a budget, `--strict-filters`), 4 not 
 | `operations ... exceeds the 4096-operation limit` | over 4,096 operations | a smaller spec; filters do not help here |
 | `has no absolute server URL ... pass --base-url` | no usable `servers` entry, or `servers[0].url` over 2,048 bytes | `--base-url https://...` |
 | `the resolved API base URL (...) is invalid`, `invalid --base-url` | a query string, a fragment, user and password, or a scheme other than `http(s)` | `--base-url` with only scheme, host and path |
-| `the spec alone would decide where --header-env/--basic-auth-env credentials are sent` | a spec URL with a credential and no `--base-url` | `--base-url https://...`, the API base URL the user confirms |
+| `the spec alone would decide where --header-env/--basic-auth-env/--upstream-oauth-* credentials are sent` | a spec URL with `--header-env`, `--basic-auth-env` or `--upstream-oauth-*` (also with `--upstream-oauth-token-url`) and no `--base-url` | `--base-url https://...`, the API base URL the user confirms |
 | `has an output schema that cannot be compiled` | a response schema the validator cannot build | `--omit-output-schema "operationId:<id>"` for that tool, after the user agrees |
 | `could not derive unique tool names` | operationIds that still collide after hashing | rename the operations (overlay) |
 | `is not object-rooted`, `duplicate tool name` | a broken generated tool | report it with the spec, as a bug |
@@ -101,7 +101,7 @@ An unknown flag, command or missing value fails with the parser's text, such as 
 | `both --upstream-oauth-client-id-env <ENV> and --upstream-oauth-client-secret-env <ENV>` | an `--upstream-oauth-*` flag without both variables | add both |
 | `cannot be combined with --header-env Authorization=...` | OAuth and a static `Authorization` header | keep one |
 | `must use https (http is accepted for loopback only)`, `must not embed credentials in the URL`, `must not contain a fragment` | the token URL is not a plain `https` URL | the token URL from the API docs |
-| `is not on the API origin`, `the spec alone would decide where the client secret is sent` | the token URL comes from the spec and points elsewhere, or the spec is a URL | `--upstream-oauth-token-url <url>` after the user confirms it, or `--base-url` |
+| `is not on the API origin` | the token URL comes from the spec and points elsewhere | `--upstream-oauth-token-url <url>` after the user confirms it |
 | `declares several client-credentials schemes`, `does not name an oauth2 scheme` | the spec has several such schemes | `--upstream-oauth-scheme <name>` from the list it prints |
 | `declares no oauth2 clientCredentials flow`, `the spec token URL is invalid` | the spec has no usable token URL | `--upstream-oauth-token-url <url>` |
 | `too many --upstream-oauth-scope values`, `a scope is one RFC 6749 scope-token` | over 64 scopes, or a scope with a space or quote | one flag per scope |

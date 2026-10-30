@@ -11,6 +11,7 @@ import { tagOutcome } from './telemetry.ts';
 
 // A result whose image carries a secret is withheld as a whole (#14)
 export { imageHasSecret } from '../images/scan.ts';
+export { someDecodedForm } from './execute/response-media.ts';
 
 // A fixed message — never the withheld content itself — for the case a
 // registered secret is found anywhere in a result. It tells the caller what

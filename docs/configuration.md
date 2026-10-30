@@ -92,7 +92,7 @@ How headers and secrets work is in [credentials.md](credentials.md). How request
 
 | Flag | Repeatable | Meaning | Default |
 |---|---|---|---|
-| `--base-url <url>` | no | the base URL for API requests, instead of the one the spec names; an absolute `http` or `https` URL; required with a spec URL and `--header-env` or `--basic-auth-env` | `servers[0]` from the spec |
+| `--base-url <url>` | no | the base URL for API requests, instead of the one the spec names; an absolute `http` or `https` URL; required with a spec URL and `--header-env`, `--basic-auth-env` or `--upstream-oauth-*` | `servers[0]` from the spec |
 | `--header-env <Header=ENV>` | yes | an API header whose value is read from the environment variable `ENV`; treated as a secret | `[]` |
 | `--basic-auth-env <USER_ENV:PASSWORD_ENV>` | no | HTTP Basic auth: the server builds the `Authorization` header from the user name and the password in these variables; without `:PASSWORD_ENV` the password is empty; see [credentials.md](credentials.md#http-basic-authentication) | none |
 | `--header <Header:value>` | yes | a static API header that is not a secret; a name that looks like a credential is refused | `[]` |
@@ -639,7 +639,7 @@ The `--json doctor` output looks like this:
 {
   "ok": true,
   "data": {
-    "cliVersion": "0.8.0",
+    "cliVersion": "0.8.1",
     "nodeVersion": "24.12.0",
     "appRoot": "/Users/you/.kaisers-io/openapi-mcp",
     "cacheRoot": "/Users/you/.kaisers-io/openapi-mcp/cache",

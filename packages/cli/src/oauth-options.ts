@@ -209,7 +209,9 @@ export const resolveOAuthConfig = (
 // API is refused unless the operator confirms it with --upstream-oauth-token-url —
 // otherwise whoever controls the spec controls where the secret is sent.
 // For the same reason, a spec fetched from a URL with no --base-url (so the
-// spec author chose the API origin too) needs --upstream-oauth-token-url.
+// spec author chose the API origin too) may not pick the token URL. This only
+// guards the client secret: startup (finishApi) refuses that setup before this
+// runs, since the access token goes to the API base whatever the token URL is.
 export const resolveTokenUrl = (
   oauth: ResolvedOAuthConfig,
   spec: Pick<NormalizedSpec, 'securitySchemes'>,
@@ -234,7 +236,7 @@ export const resolveTokenUrl = (
   }
   if (!specSourceIsFile && !apiBase.trusted) {
     throw usageError(
-      'the spec is fetched from a URL and no --base-url is set, so the spec alone would decide where the client secret is sent — pass --base-url <url> or --upstream-oauth-token-url <url>',
+      'the spec is fetched from a URL and no --base-url is set, so the spec alone would decide where the client secret is sent — pass --base-url <url>',
     );
   }
   if (

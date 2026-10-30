@@ -7,6 +7,8 @@ import {
   SYSTEM_HEADERS,
 } from '../src/index.ts';
 import type { EnvelopeValidator, OperationRecord } from '../src/index.ts';
+import { hasAmbiguousSequence } from '../src/toolgen/pattern-ambiguity.ts';
+import { ANY, readClass, readEscape } from '../src/toolgen/pattern-chars.ts';
 import { compileRe2Pattern, isEnforceablePattern } from '../src/toolgen/pattern-safety.ts';
 
 // Issue kaisers-io/openapi-mcp-archive#39: response patterns with nested
@@ -56,6 +58,161 @@ describe('hasNestedQuantifier', () => {
     '',
   ])('accepts %s', (pattern) => {
     expect(hasNestedQuantifier(pattern)).toBe(false);
+  });
+});
+
+// Quantifiers side by side that can match the same characters backtrack in
+// the client's engine too: k of them take about n^k steps on a near match.
+describe('hasAmbiguousSequence', () => {
+  it.each([
+    '^a*a*a*a*a*a*b$',
+    '\\d+\\d+\\d+\\d+\\d+x',
+    '^\\s*\\S*\\s*\\S*\\s*\\S*!$',
+    '^a*a*b$',
+    '\\d+\\d+x',
+    '^\\w+\\d+$',
+    '^.*.*$',
+    // A mandatory atom the first quantifier can match does not separate them
+    '^a*aa*b$',
+    '\\d+\\d\\d+',
+    // An optional atom does not either
+    '^\\d*\\.?\\d+$',
+    // Through groups, alternatives and repetitions
+    '(?:ab)*(?:ab)*',
+    '\\d+(?:x|\\d+)',
+    '\\d+(?:\\d+x)',
+    '^\\d*(?:\\.?\\d+)$',
+    // Bounded, but more than 64 ways
+    '\\d{1,9}\\d{1,9}\\d{1,9}',
+    '^(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)(?:a|aa)$',
+    // One repetition's end trades with the next one's start
+    '^(?:\\d+\\.?){2}$',
+    // Escapes and classes name the same characters
+    '^\\u0061+a+$',
+    '^[\\x41-\\x5A]+A+$',
+    '^[^/]+[^*]*$',
+    // Unknown characters overlap everything
+    '^\\p{L}+[a-z]+$',
+    // Without `^` the match can start anywhere
+    '\\s+$',
+    '[a-z]+@x',
+    '[a-z]+_token_[0-9]+',
+    '^a+|b+$',
+    '(s3://|http(s*)://).+',
+  ])('flags %s', (pattern) => {
+    expect(hasAmbiguousSequence(pattern)).toBe(true);
+  });
+
+  it.each([
+    '^\\w+@\\w+\\.\\w+$',
+    '^[a-z]+-[0-9]+$',
+    '^[A-Z0-9]+(?:-[A-Z0-9]+)*$',
+    '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    '^\\d{4}-\\d{2}-\\d{2}$',
+    '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$',
+    '(\\d{1,3}\\.){3}\\d{1,3}',
+    '^((25[0-5]|2[0-4]\\d|[01]?\\d\\d?)\\.){3}(25[0-5]|2[0-4]\\d|[01]?\\d\\d?)$',
+    '^\\d{5}(-\\d{4})?$',
+    '^[+-]?\\d+(\\.\\d+)?$',
+    // One unbounded quantifier among bounded ones
+    '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$',
+    '^[a-z]+(-[a-z]+)?-[a-z]+-[0-9]$',
+    '^(s3://|http(s*)://).+',
+    '^\\p{Lu}\\p{L}*$',
+    '^[^\\s]+$',
+    '^[\\d-z]+$',
+    // Without `^`, where a failed start fails at its first character
+    'abc\\d+',
+    'v\\d+',
+    'prefix_[a-zA-Z0-9]{32}',
+    '[A-Z]{2}\\d{4}',
+    '^a+|^b+',
+    '',
+  ])('accepts %s', (pattern) => {
+    expect(hasAmbiguousSequence(pattern)).toBe(false);
+  });
+
+  it('scans a long pattern in linear time', () => {
+    const started = performance.now();
+    expect(hasAmbiguousSequence('(?:[\\s\\w]|x)'.repeat(10_000))).toBe(false);
+    expect(hasAmbiguousSequence(`${'('.repeat(5000)}a${')'.repeat(5000)}`)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+});
+
+// The characters an escape or class can match, as code point ranges; wider
+// than JavaScript's only where marked.
+describe('pattern character sets', () => {
+  it.each([
+    ['\\n', [[0x0a, 0x0a]]],
+    ['\\x41', [[0x41, 0x41]]],
+    ['\\u0041', [[0x41, 0x41]]],
+    ['\\u{1F600}', [[0x1_f6_00, 0x1_f6_00]]],
+    ['\\uD83D\\uDE00', [[0x1_f6_00, 0x1_f6_00]]],
+    ['\\.', [[0x2e, 0x2e]]],
+    ['\\d', [[0x30, 0x39]]],
+    // Wider: no RE2 equivalent, so never advertised anyway
+    ['\\p{L}', ANY],
+    ['\\k<name>', ANY],
+    ['\\1', ANY],
+    ['\\', ANY],
+  ])('reads the escape %s', (source, chars) => {
+    expect(readEscape(source, 0, false)).toEqual({ chars, end: source.length });
+  });
+
+  it('reads `\\cX` as any character', () => {
+    expect(readEscape('\\cA', 0, false).chars).toBe(ANY);
+  });
+
+  it('reads `\\b` as zero width outside a class only', () => {
+    expect(readEscape('\\b', 0, false).chars).toBeUndefined();
+    expect(readEscape('\\B', 0, false).chars).toBeUndefined();
+    expect(readEscape('\\b', 0, true).chars).toBe(ANY);
+  });
+
+  it.each([
+    ['[a-c]', [[0x61, 0x63]]],
+    ['[c-a]', [[0x61, 0x63]]],
+    [
+      '[ab-]',
+      [
+        [0x2d, 0x2d],
+        [0x61, 0x62],
+      ],
+    ],
+    [
+      '[\\d-z]',
+      [
+        [0x2d, 0x2d],
+        [0x30, 0x39],
+        [0x7a, 0x7a],
+      ],
+    ],
+    [
+      '[a-\\d]',
+      [
+        [0x2d, 0x2d],
+        [0x30, 0x39],
+        [0x61, 0x61],
+      ],
+    ],
+    ['[\\x41-\\u005A]', [[0x41, 0x5a]]],
+    ['[😀]', [[0x1_f6_00, 0x1_f6_00]]],
+    ['[^\\u0000-\\u{10FFFF}]', []],
+    ['[^]', ANY],
+    ['[]', []],
+    ['[\\b]', ANY],
+  ])('reads the class %s', (source, chars) => {
+    expect(readClass(source, 0)).toEqual({ chars, end: source.length });
+  });
+
+  it('widens a class with many ranges to one range', () => {
+    const many = `[${'acegikmoqsuwy'.split('').join('')}ACEGIKMOQSUWY]`;
+    expect(readClass(many, 0).chars).toEqual([[0x41, 0x79]]);
+  });
+
+  it('stops at the end of an unterminated class', () => {
+    expect(readClass('[ab', 0)).toEqual({ chars: [[0x61, 0x62]], end: 3 });
   });
 });
 
@@ -135,6 +292,17 @@ describe('output schema with an unsafe response pattern (issue #104)', () => {
     });
   });
 
+  it.each([
+    [{ pattern: '^(?=x)x$' }, 'A code. — Pattern (not enforced): ^(?=x)x$'],
+    [{ format: 'url' }, 'A code. — Format (not enforced): url'],
+  ])('keeps the member description under an unannotated allOf (%o)', (keyword, description) => {
+    const result = explainOutputSchema(
+      op({ allOf: [{ allOf: [{ type: 'string', description: 'A code.', ...keyword }] }] }),
+      '3.1',
+    );
+    expect(dataOf(result.outputSchema)).toEqual({ type: 'string', description });
+  });
+
   it('keeps the tool and its description unchanged', () => {
     const { tools, omitted } = buildTools(
       [{ toolName: 'getThings', operation: { ...op(unsafe), summary: 'List things' } }],
@@ -166,6 +334,9 @@ describe('output schema with an unsafe response pattern (issue #104)', () => {
     // Not a JavaScript `u` pattern, so the client's Ajv cannot compile it
     '(?i)abc',
     '\\Qa.b\\E',
+    // Quantifiers side by side that can match the same characters
+    '^a*a*a*a*a*a*b$',
+    '\\d+\\d+\\d+\\d+\\d+x',
   ])('does not advertise %s', (pattern) => {
     expect(isEnforceablePattern(pattern)).toBe(false);
   });
@@ -177,9 +348,19 @@ describe('output schema with an unsafe response pattern (issue #104)', () => {
     '^(?<year>\\d{4})-\\d{2}$',
     '^[\\u0041-\\u005A]+$',
     '^\\u{1F600}$',
+    '^\\w+@\\w+\\.\\w+$',
+    '^[a-z]+-[0-9]+$',
     '',
   ])('advertises %s', (pattern) => {
     expect(isEnforceablePattern(pattern)).toBe(true);
+  });
+
+  it('moves a pattern with quantifiers side by side into the description', () => {
+    const result = explainOutputSchema(op({ type: 'string', pattern: '^a*a*a*b$' }), '3.1');
+    expect(dataOf(result.outputSchema)).toEqual({
+      type: 'string',
+      description: 'Pattern (not enforced): ^a*a*a*b$',
+    });
   });
 
   it('keeps a pattern with a control or bidi character, so the schema is withheld', () => {
@@ -339,5 +520,74 @@ describe('output schema with an ordinary response pattern', () => {
     expect(
       explainOutputSchema({ ...op(unsafe), responses: { '204': { description: 'none' } } }, '3.1'),
     ).toEqual({});
+  });
+});
+
+// The client's Ajv checks `format: url` with the ajv-formats regex, which
+// backtracks quadratically on values the server accepts.
+describe('response format url', () => {
+  const urlSchema = {
+    type: 'object',
+    properties: {
+      link: { type: 'string', format: 'url' },
+      at: { type: 'string', format: 'date-time' },
+    },
+  };
+
+  it('is not advertised and is named in the description', () => {
+    const result = explainOutputSchema(op(urlSchema), '3.1');
+    const data = dataOf(result.outputSchema);
+    expect(data.properties['link']).toEqual({
+      type: 'string',
+      description: 'Format (not enforced): url',
+    });
+    // Other formats stay
+    expect(data.properties['at']).toEqual({ type: 'string', format: 'date-time' });
+    expect(JSON.stringify(result.outputSchema)).not.toContain('"url"');
+  });
+
+  it('joins a pattern note and keeps the note under a single-member allOf', () => {
+    const result = explainOutputSchema(
+      op({
+        description: 'A link.',
+        allOf: [{ type: 'string', format: 'url', pattern: '^(?=h)\\S+$' }],
+      }),
+      '3.1',
+    );
+    expect(dataOf(result.outputSchema)).toEqual({
+      type: 'string',
+      description: 'A link. — Pattern (not enforced): ^(?=h)\\S+$ — Format (not enforced): url',
+    });
+  });
+
+  it('leaves the value unchecked on the server, the rest of the schema enforced', () => {
+    const { tools } = buildTools([{ toolName: 'getThings', operation: op(urlSchema) }], {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    const validate = compileEnvelopeValidator(tools[0]!.outputSchema) as EnvelopeValidator;
+    const long = `http://x.example.test/${':'.repeat(32_000)}`;
+    expect(validate(envelope({ link: long }))).toBe(true);
+    expect(validate(envelope({ link: 'not a url' }))).toBe(true);
+    expect(validate(envelope({ link: 42 }))).toBe(false);
+    expect(validate(envelope({ at: 'yesterday' }))).toBe(false);
+  });
+
+  it('request mode keeps advertising it', () => {
+    const { tools } = buildTools(
+      [
+        {
+          toolName: 'createThing',
+          operation: {
+            ...op({ type: 'object' }),
+            method: 'post',
+            requestBody: { required: true, content: { 'application/json': { schema: urlSchema } } },
+          },
+        },
+      ],
+      { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' },
+    );
+    const wire = tools[0]!.wireSchema as Wire;
+    expect(wire.properties['link']).toEqual({ type: 'string', format: 'url' });
   });
 });

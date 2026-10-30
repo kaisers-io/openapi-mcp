@@ -1,4 +1,13 @@
 import { RE2JS } from 're2js';
+import { hasAmbiguousSequence } from './pattern-ambiguity.ts';
+import {
+  groupOpenLength,
+  readQuantifier,
+  skipClass,
+  skipEscape,
+  UNICODE_ESCAPE_RE,
+  unicodeEscape,
+} from './pattern-syntax.ts';
 
 // Response `pattern` safety (kaisers-io/openapi-mcp-archive#39, issue #104).
 // An output schema is compiled by Ajv, which runs every `pattern` on upstream
@@ -25,7 +34,9 @@ import { RE2JS } from 're2js';
 // Small bounded nestings stay supported: `(\d{1,3}\.){3}` (IPv4, 3^3 = 27
 // ways), `(-[0-9a-f]{4}){3}` (UUID, fixed width).
 // Not detected (documented limits of a star-height heuristic): overlapping
-// alternation under one quantifier (`(a|a)+`) and backreferences.
+// alternation under one quantifier (`(a|a)+`) and backreferences. Quantifiers
+// side by side that can match the same characters (`^a*a*b$`) are refused by
+// a second check, hasAmbiguousSequence (pattern-ambiguity.ts).
 
 // `choices` multiplies the spans (max - min + 1) of the quantifiers in the
 // current alternative; `alternatives` sums those of the alternatives before
@@ -45,80 +56,6 @@ const openGroup = (): GroupSummary => ({
   choices: 1,
   alternatives: 0,
 });
-
-type Quantifier = { min: number; max: number };
-
-const BRACE_QUANTIFIER_RE = /^\{(?<min>\d+)(?<range>,(?<max>\d*))?\}/u;
-
-// Reads the quantifier starting at `index`, if any, and its source length.
-const readQuantifier = (
-  pattern: string,
-  index: number,
-): { quantifier: Quantifier; length: number } | undefined => {
-  const char = pattern[index];
-  if (char === '*') {
-    return { quantifier: { min: 0, max: Infinity }, length: 1 };
-  }
-  if (char === '+') {
-    return { quantifier: { min: 1, max: Infinity }, length: 1 };
-  }
-  if (char === '?') {
-    return { quantifier: { min: 0, max: 1 }, length: 1 };
-  }
-  if (char === '{') {
-    const match = BRACE_QUANTIFIER_RE.exec(pattern.slice(index));
-    if (match === null) {
-      return undefined;
-    }
-    const groups = match.groups ?? {};
-    const min = Number(groups['min']);
-    const upper = groups['max'];
-    // `{n}` is exact, `{n,}` unbounded, `{n,m}` bounded.
-    const bounded = upper === undefined || upper === '' ? Infinity : Number(upper);
-    const max = groups['range'] === undefined ? min : bounded;
-    return { quantifier: { min, max }, length: match[0].length };
-  }
-  return undefined;
-};
-
-// Index just past a `\` escape starting at `index` (`\p{L}`, `\u{1F600}`,
-// `\k<name>` consume their braces/brackets so they are not read as quantifiers).
-const skipEscape = (pattern: string, index: number): number => {
-  const next = pattern[index + 1];
-  const open = pattern[index + 2];
-  if ((next === 'p' || next === 'P' || next === 'u') && open === '{') {
-    const close = pattern.indexOf('}', index + 3);
-    return close === -1 ? pattern.length : close + 1;
-  }
-  if (next === 'k' && open === '<') {
-    const close = pattern.indexOf('>', index + 3);
-    return close === -1 ? pattern.length : close + 1;
-  }
-  return Math.min(index + 2, pattern.length);
-};
-
-// Index just past a character class `[...]` starting at `index`.
-const skipClass = (pattern: string, index: number): number => {
-  let cursor = index + 1;
-  while (cursor < pattern.length && pattern[cursor] !== ']') {
-    cursor = pattern[cursor] === '\\' ? cursor + 2 : cursor + 1;
-  }
-  return Math.min(cursor + 1, pattern.length);
-};
-
-// Length of a group's opening syntax: `(`, `(?:`, `(?=`, `(?!`, `(?<=`,
-// `(?<!`, `(?<name>`.
-const groupOpenLength = (pattern: string, index: number): number => {
-  if (pattern[index + 1] !== '?') {
-    return 1;
-  }
-  const kind = pattern[index + 2];
-  if (kind === '<' && pattern[index + 3] !== '=' && pattern[index + 3] !== '!') {
-    const close = pattern.indexOf('>', index + 3);
-    return close === -1 ? pattern.length - index : close - index + 1;
-  }
-  return kind === '<' ? 4 : 3;
-};
 
 export const hasNestedQuantifier = (pattern: string): boolean => {
   // One summary per open group; index 0 is the whole pattern.
@@ -213,19 +150,6 @@ const JS_NON_WHITESPACE =
   String.raw`\x{0}-\x{8}\x{e}-\x{1f}\x{21}-\x{9f}\x{a1}-\x{167f}\x{1681}-\x{1fff}\x{200b}-\x{2027}` +
   String.raw`\x{202a}-\x{202e}\x{2030}-\x{205e}\x{2060}-\x{2fff}\x{3001}-\x{fefe}\x{ff00}-\x{10ffff}`;
 
-const UNICODE_ESCAPE_RE =
-  /\\u(?:(?<pair>[dD][89abAB][\da-fA-F]{2}\\u[dD][c-fC-F][\da-fA-F]{2})|\{(?<braced>[\da-fA-F]+)\}|(?<single>[\da-fA-F]{4}))/uy;
-
-const unicodeEscape = (match: RegExpExecArray): number => {
-  const { pair, braced, single } = match.groups ?? {};
-  if (pair !== undefined) {
-    const lead = Number.parseInt(pair.slice(0, 4), 16);
-    const trail = Number.parseInt(pair.slice(6), 16);
-    return (lead - 0xd8_00) * 0x4_00 + (trail - 0xdc_00) + 0x1_00_00;
-  }
-  return Number.parseInt(braced ?? single ?? '', 16);
-};
-
 const re2Source = (pattern: string): string | undefined => {
   let source = '';
   let inClass = false;
@@ -284,8 +208,8 @@ export const compileRe2Pattern = (pattern: string): RE2JS | undefined => {
 
 // Whether a response `pattern` stays in the advertised output schema: valid
 // JavaScript (the client's Ajv compiles it with the `u` flag), without nested
-// quantifiers (the client's engine backtracks), and runnable by RE2 (the
-// server's engine). Compiling a RegExp does not run it.
+// or side-by-side ambiguous quantifiers (the client's engine backtracks), and
+// runnable by RE2 (the server's engine). Compiling a RegExp does not run it.
 const isJavaScriptPattern = (pattern: string): boolean => {
   try {
     return new RegExp(pattern, 'u') instanceof RegExp;
@@ -297,4 +221,5 @@ const isJavaScriptPattern = (pattern: string): boolean => {
 export const isEnforceablePattern = (pattern: string): boolean =>
   isJavaScriptPattern(pattern) &&
   !hasNestedQuantifier(pattern) &&
+  !hasAmbiguousSequence(pattern) &&
   compileRe2Pattern(pattern) !== undefined;

@@ -40,8 +40,8 @@ top-level list in the output) gives the flag for each scheme an exposed operatio
 `--header-env` sends the value exactly as stored. For a bearer token the variable must contain
 the word `Bearer`, a space and the token. Tell the user this when they store it.
 
-A spec loaded from a URL needs `--base-url` with `--header-env` or `--basic-auth-env`, so that
-the spec alone does not decide where the credential goes. Take the URL from the spec's
+A spec loaded from a URL needs `--base-url` with `--header-env`, `--basic-auth-env` or
+`--upstream-oauth-*`, so that the spec alone does not decide where the credential goes. Take the URL from the spec's
 `servers` and ask the user to confirm it.
 
 Not supported: API keys in the query string, client certificates (`mutualTLS`), and
@@ -73,8 +73,9 @@ clear text.
 
 - Add `--upstream-oauth-scope` once per scope the operations need. The server requests no
   scope by default.
-- A spec loaded from a URL needs `--base-url`, or `--upstream-oauth-token-url`, so that the
-  spec alone does not decide where the client secret goes.
+- A spec loaded from a URL needs `--base-url`, so that the spec alone does not decide where
+  the access token goes. `--upstream-oauth-token-url` alone is not enough: it covers only the
+  client secret.
 - A token URL on another origin than the API needs `--upstream-oauth-token-url`. Ask the user
   to confirm that URL.
 - With several `clientCredentials` schemes, pick one with `--upstream-oauth-scheme`.

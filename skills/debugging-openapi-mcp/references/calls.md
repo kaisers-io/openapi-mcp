@@ -68,7 +68,8 @@ Nothing was sent after any of these.
 | `No structured result is returned: this status is not documented` | an undocumented 2xx under `--default-response-is-error` | the write likely happened; fix the spec, or drop that flag |
 | `used an unsupported media type` | a PDF, binary or image answer the server does not return | images: `--image-responses inline` or `file`; other types are not supported |
 | a tool returns text, `CLI --json tools` shows `outputSchemaWithheld: No output schema: ...` | a name or value in the response schema has a control or bidirectional-override character | expected; the agent reads the text |
-| a field description ends with `Pattern (not enforced): <pattern>` | the response `pattern` nests quantifiers (too costly for the client's regex engine) or RE2 cannot run it (lookaround, backreferences); only that keyword left the output schema | expected; a value that does not match is not an error |
+| a field description ends with `Pattern (not enforced): <pattern>` | the response `pattern` nests quantifiers, or has quantifiers side by side that can match the same characters (`^\d*\.?\d+$`, `.*:.*`), which is too costly for the client's regex engine, or RE2 cannot run it (lookaround, backreferences); only that keyword left the output schema | expected; a value that does not match is not an error |
+| a field description ends with `Format (not enforced): url` | the client's check of the ajv-formats `url` format slows down quadratically on long values; only that keyword left the output schema | expected; a value that is not a URL is not an error |
 | `(the response text above was truncated` | the text copy is over 8 KiB | `_fields` with `--response-projection`, or smaller pages |
 
 ## Limits, OAuth and secrets
@@ -83,7 +84,7 @@ Nothing was sent after any of these.
 | `the token endpoint could not be reached`, `the token request timed out`, `the token endpoint address is not allowed by the egress policy`, `redirected, which is never followed` | network, a private token URL, or a token URL that redirects | the final token URL; `--allow-private-network` only if the user confirms |
 | `is not a JSON object`, `carries no valid access_token`, `is not a Bearer token`, `exceeded its size budget` | the token endpoint answers in an unexpected form | the user checks the token URL |
 | `timed out waiting for an OAuth2 access token`, `fresh OAuth2 access token` | the token request took the call's time | a faster token endpoint, or a higher `--request-timeout` |
-| `its result was withheld because it contained a registered secret`, `its error details were withheld` | the API echoed a credential | do not retry; tell the user |
+| `its result was withheld because it contained a registered secret`, `its error details were withheld` | the API echoed a credential, also JSON-escaped, as markup entities (`&amp;`) or as a JSON number | do not retry; tell the user |
 
 ## Images and uploads
 

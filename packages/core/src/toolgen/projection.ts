@@ -65,9 +65,7 @@ const MISSING = null;
 // turn a capped body into about 80 times as much output. The result may be at
 // most twice the body plus this allowance (room for pointer keys and nulls on
 // a small body), counted while it is built: before an array is mapped and
-// over each selected value. The count is approximate serialized size (an
-// escaped character counts once), so the output stays within a small multiple
-// of the body.
+// over each selected value, in the UTF-8 bytes JSON.stringify writes for it.
 const BUDGET_ALLOWANCE = 64 * 1024;
 
 export const PROJECTION_TOO_LARGE =
@@ -84,6 +82,35 @@ const spend = (budget: { left: number }, bytes: number): void => {
   }
 };
 
+// \b \t \n \f \r: the control characters JSON writes as a two-byte escape
+const SHORT_ESCAPES = new Set([0x08, 0x09, 0x0a, 0x0c, 0x0d]);
+
+// UTF-8 bytes of a string as JSON.stringify writes it, quotes included: every
+// other control character and every lone surrogate becomes a six-byte \uXXXX,
+// so its length alone would undercount the output up to sixfold. One pass,
+// no copy.
+const jsonStringBytes = (text: string): number => {
+  let bytes = 2;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.codePointAt(index) ?? 0;
+    if (code > 0xff_ff) {
+      bytes += 4;
+      index += 1;
+    } else if (code < 0x20) {
+      bytes += SHORT_ESCAPES.has(code) ? 2 : 6;
+    } else if (code === 0x22 || code === 0x5c) {
+      bytes += 2;
+    } else if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x8_00) {
+      bytes += 2;
+    } else {
+      bytes += code >= 0xd8_00 && code <= 0xdf_ff ? 6 : 3;
+    }
+  }
+  return bytes;
+};
+
 // Iterative, and stops as soon as the budget runs out
 const spendOn = (budget: { left: number }, value: unknown): void => {
   const pending: unknown[] = [value];
@@ -97,11 +124,11 @@ const spendOn = (budget: { left: number }, value: unknown): void => {
     } else if (isRecord(node)) {
       spend(budget, 2);
       for (const [key, child] of Object.entries(node)) {
-        spend(budget, key.length + 4);
+        spend(budget, jsonStringBytes(key) + 2);
         pending.push(child);
       }
     } else {
-      spend(budget, typeof node === 'string' ? node.length + 2 : String(node).length);
+      spend(budget, typeof node === 'string' ? jsonStringBytes(node) : String(node).length);
     }
   }
 };

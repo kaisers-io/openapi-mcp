@@ -9,6 +9,7 @@ export const MAX_REDACTED_SECRETS = MAX_SECRETS;
 const MAX_SECRET_LENGTH = 8192; // Bound per-needle scan cost
 const MIN_VARIANT_LENGTH = 8; // Encoding variants (except JSON escaping) only for 8+ char secrets
 const REDACTED = '[redacted]';
+const LONG_DIGITS_RE = /^\d{16,}$/u;
 
 // The JSON-string-escaped forms of a secret (issue #46). For a short secret
 // they are needles only when they differ from the raw value: then they
@@ -191,12 +192,16 @@ export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor =
   // substring must still redact as the whole variant (createMatcher takes
   // the first — longest — needle matching at each position). Rebuilt only
   // when the runtime set changes (a token refresh, minutes apart), never
-  // per redaction.
+  // per redaction. A JSON number echoing a digit-only needle longer than a
+  // double holds is rounded (98765432109876543211 reads back as
+  // 98765432109876540000), so such needles are matched by value.
+  let longDigitValues = new Set<number>();
   const build = (): ((value: string, firstOnly: boolean) => Span[]) => {
     const needles = new Set([
       ...staticNeedles,
       ...[...runtime.values()].flatMap((entry) => entry.needles),
     ]);
+    longDigitValues = new Set([...needles].filter((text) => LONG_DIGITS_RE.test(text)).map(Number));
     return createMatcher([...needles].toSorted((first, second) => second.length - first.length));
   };
   let findSpans = build();
@@ -254,7 +259,7 @@ export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor =
     // (`987654321`, `9.87654321e8`): its canonical text is what the client
     // reads back.
     if (typeof value === 'number') {
-      return stringHasSecret(String(value));
+      return stringHasSecret(String(value)) || longDigitValues.has(Math.abs(value));
     }
     if (Array.isArray(value)) {
       return value.some((item) => scanForSecret(item));

@@ -150,9 +150,9 @@ type TarjanFrame = { node: string; next: number };
 // exposed operations reach is ever walked, and nothing is expanded. Iterative,
 // so a deep graph cannot overflow the stack.
 //
-// A node is keyed by the first ref string seen for its target, so the many
-// spellings of one pointer ("#/a", "#/%61") are one node, walked once. Targets
-// can still nest, and each nested target is walked again, so the walks count
+// A node is keyed by the first ref string seen for its target, so spellings
+// of one pointer ("#/a", "#/%61") are one node, walked once, and each string
+// is resolved once. Nested targets are still walked again, so the walks count
 // against MAX_EXPANDED_NODES and fail closed past it.
 export const createCycleDetector = (
   document: Record<string, unknown>,
@@ -176,12 +176,15 @@ export const createCycleDetector = (
     }
   };
   const keyOfTarget = new Map<unknown, string>();
+  const keyOfRef = new Map<string, string>();
   const keyOf = (ref: string): string => {
-    assertInternal(ref);
-    const target = resolvePointer(document, ref);
-    const key = keyOfTarget.get(target) ?? ref;
-    keyOfTarget.set(target, key);
-    return key;
+    if (!keyOfRef.has(ref)) {
+      assertInternal(ref);
+      const target = resolvePointer(document, ref);
+      keyOfTarget.set(target, keyOfTarget.get(target) ?? ref);
+      keyOfRef.set(ref, keyOfTarget.get(target) as string);
+    }
+    return keyOfRef.get(ref) as string;
   };
   // Called with keys only, so each target is walked once
   const edgesOf = (key: string): readonly string[] => {
