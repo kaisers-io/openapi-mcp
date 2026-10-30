@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.1] - 2026-10-30
-
 ### Changed
 
 - **A response `pattern` the server cannot enforce no longer withholds the output schema.** The
@@ -19,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Pattern (not enforced): <pattern>`. A pattern that is not valid JavaScript no longer fails the
   start. RE2's `\s` matches only ASCII whitespace, and its `.` also matches `\r`, U+2028 and
   U+2029. See [security.md](docs/security.md#response-envelope-and-redacted-errors).
+
+## [0.7.1] - 2026-10-30
+
+### Changed
+
 - **A spec fetched from a URL needs `--base-url` when the server sends a credential.** With a URL
   `--spec`, `--header-env` and `--basic-auth-env` now stop the start with exit code 2 unless
   `--base-url` names the API, so the spec alone cannot choose where these credentials go. The
