@@ -4,7 +4,7 @@ description: Finds out why an openapi-mcp server does not work as expected and p
 license: MIT
 compatibility: Needs Node.js 22.19 or later (or 24.11 or later) with npx, network access to npm, and an agent that can run commands and read files.
 metadata:
-  version: "0.7.0"
+  version: "0.7.1"
 ---
 
 # Debugging openapi-mcp
