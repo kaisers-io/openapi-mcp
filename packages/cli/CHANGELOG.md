@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A response `pattern` the server cannot enforce no longer withholds the output schema.** The
+  server checks response patterns with RE2 (`re2js`), whose matching time is linear in the input.
+  A pattern that nests quantifiers, which the client's backtracking regex engine could take
+  seconds on, or one RE2 cannot run (lookaround, backreferences) loses only its `pattern`
+  keyword. The rest of the output schema stays, and the field description ends with
+  `Pattern (not enforced): <pattern>`. A pattern that is not valid JavaScript no longer fails the
+  start. RE2's `\s` matches only ASCII whitespace, and its `.` also matches `\r`, U+2028 and
+  U+2029. See [security.md](docs/security.md#response-envelope-and-redacted-errors).
 - **A spec fetched from a URL needs `--base-url` when the server sends a credential.** With a URL
   `--spec`, `--header-env` and `--basic-auth-env` now stop the start with exit code 2 unless
   `--base-url` names the API, so the spec alone cannot choose where these credentials go. The

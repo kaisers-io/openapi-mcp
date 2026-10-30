@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { toWireJsonSchema } from '../src/toolgen/schema.ts';
-import { UNSAFE_PATTERN_REASON, convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
+import { convertSchema, MAX_CONVERT_DEPTH } from '../src/index.ts';
 import type { SchemaResult } from '../src/index.ts';
 
 const ok = (r: SchemaResult): z.ZodType => {
@@ -1247,18 +1247,23 @@ describe('convertSchema — oneOf exclusivity (kaisers-io/openapi-mcp-archive#43
   });
 });
 
-// kaisers-io/openapi-mcp-archive#39: a response `pattern` with nested
-// quantifiers is unrepresentable.
-describe('convertSchema — response pattern safety (kaisers-io/openapi-mcp-archive#39)', () => {
-  it('response mode: a nested-quantifier pattern is unrepresentable', () => {
-    const result = convertSchema(
-      { type: 'object', properties: { v: { type: 'string', pattern: '^(a+)+$' } } },
-      '3.1',
-      0,
-      'response',
+// kaisers-io/openapi-mcp-archive#39, issue #104: a response `pattern` with
+// nested quantifiers is not advertised, the rest of the schema stays.
+describe('convertSchema — response pattern safety (issue #104)', () => {
+  it('response mode: a nested-quantifier pattern moves into the description', () => {
+    const s = ok(
+      convertSchema(
+        { type: 'object', properties: { v: { type: 'string', pattern: '^(a+)+$' } } },
+        '3.1',
+        0,
+        'response',
+      ),
     );
-    expect(result).toEqual({
-      unrepresentable: `property "v": ${UNSAFE_PATTERN_REASON}`,
+    expect(s.safeParse({ v: 'b' }).success).toBe(true);
+    const wire = z.toJSONSchema(s) as { properties: Record<string, unknown> };
+    expect(wire.properties['v']).toEqual({
+      type: 'string',
+      description: 'Pattern (not enforced): ^(a+)+$',
     });
   });
 

@@ -7,9 +7,10 @@ import {
   SYSTEM_HEADERS,
 } from '../src/index.ts';
 import type { EnvelopeValidator, OperationRecord } from '../src/index.ts';
+import { isEnforceablePattern } from '../src/toolgen/pattern-safety.ts';
 
 // Issue kaisers-io/openapi-mcp-archive#39: response patterns with nested
-// quantifiers are never handed to Ajv.
+// quantifiers are never advertised to the client's backtracking Ajv.
 describe('hasNestedQuantifier', () => {
   it.each([
     '^(a+)+$',
@@ -69,28 +70,171 @@ const op = (schema: Record<string, unknown>): OperationRecord => ({
 
 const unsafe = {
   type: 'object',
-  properties: { code: { type: 'string', pattern: '^(a+)+$' } },
+  properties: { code: { type: 'string', pattern: '^(a+)+$' }, id: { type: 'integer' } },
+  required: ['id'],
 };
 
-describe('output schema with an unsafe response pattern (kaisers-io/openapi-mcp-archive#39)', () => {
-  it('withholds the output schema and says why', () => {
+type Wire = { properties: Record<string, Record<string, unknown>>; required?: string[] };
+const dataOf = (outputSchema: Record<string, unknown> | undefined): Wire =>
+  (outputSchema as { oneOf: [{ properties: { data: Wire } }] }).oneOf[0].properties.data;
+const envelope = (data: unknown) => ({ status: 200, contentType: 'application/json', data });
+
+// Issue #104: a pattern that is unsafe for a backtracking engine, or that RE2
+// cannot run, loses only the `pattern` keyword.
+describe('output schema with an unsafe response pattern (issue #104)', () => {
+  it('keeps the output schema and moves the pattern into the description', () => {
     const result = explainOutputSchema(op(unsafe), '3.1');
-    expect(result.outputSchema).toBeUndefined();
-    expect(result.withheld).toMatch(/nested quantifiers/u);
+    expect(result.withheld).toBeUndefined();
+    const data = dataOf(result.outputSchema);
+    expect(data.required).toEqual(['id']);
+    expect(data.properties['id']).toMatchObject({ type: 'integer' });
+    expect(data.properties['code']).toEqual({
+      type: 'string',
+      description: 'Pattern (not enforced): ^(a+)+$',
+    });
   });
 
-  it('keeps the tool, without outputSchema, and tells the agent in the description', () => {
+  it('appends the pattern to a description of the node', () => {
+    const result = explainOutputSchema(
+      op({ type: 'string', description: 'A code.', pattern: '^(?=x)\\w+$' }),
+      '3.1',
+    );
+    expect(dataOf(result.outputSchema)).toEqual({
+      type: 'string',
+      description: 'A code. — Pattern (not enforced): ^(?=x)\\w+$',
+    });
+  });
+
+  it('keeps the tool and its description unchanged', () => {
     const { tools, omitted } = buildTools(
       [{ toolName: 'getThings', operation: { ...op(unsafe), summary: 'List things' } }],
       { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' },
     );
     expect(omitted).toEqual([]);
     const tool = tools[0]!;
-    expect(tool.outputSchema).toBeUndefined();
-    expect(tool.outputSchemaWithheld).toMatch(/nested quantifiers/u);
-    expect(tool.description).toMatch(/^No output schema: .*text only\. List things$/u);
+    expect(tool.outputSchemaWithheld).toBeUndefined();
+    expect(tool.description).toBe('List things');
+    const validate = compileEnvelopeValidator(tool.outputSchema) as EnvelopeValidator;
+    expect(validate(envelope({ id: 1, code: 'not a match' }))).toBe(true);
+    expect(validate(envelope({ code: 'aaa' }))).toBe(false);
   });
 
+  it.each([
+    // Lookaround and backreferences: RE2 has neither
+    '^(?=.*\\d)\\w+$',
+    '(?<!x)y',
+    '^(a)\\1$',
+    '^(?<c>a)\\k<c>$',
+    // Valid JavaScript that RE2 refuses
+    '^\\cA$',
+    '^[\\b]$',
+    '^\\p{Script=Greek}+$',
+    // Valid RE2 that means something else: an empty class, a POSIX class
+    '^[^][a]$',
+    '^[][a]$',
+    '^[[:alpha:][x]$',
+    // Not a JavaScript `u` pattern, so the client's Ajv cannot compile it
+    '(?i)abc',
+    '\\Qa.b\\E',
+  ])('does not advertise %s', (pattern) => {
+    expect(isEnforceablePattern(pattern)).toBe(false);
+  });
+
+  it.each([
+    '^[a-z]+$',
+    '^(\\d{1,3}\\.){3}\\d{1,3}$',
+    '^\\p{Lu}\\p{L}*$',
+    '^(?<year>\\d{4})-\\d{2}$',
+    '^[\\u0041-\\u005A]+$',
+    '^\\u{1F600}$',
+    '',
+  ])('advertises %s', (pattern) => {
+    expect(isEnforceablePattern(pattern)).toBe(true);
+  });
+
+  it('keeps a pattern with a control or bidi character, so the schema is withheld', () => {
+    const result = explainOutputSchema(op({ type: 'string', pattern: '^(a+)+\u202E$' }), '3.1');
+    expect(result.outputSchema).toBeUndefined();
+    expect(result.withheld).toMatch(/control or bidirectional/u);
+  });
+
+  it('request mode keeps advertising an unsafe pattern', () => {
+    const { tools } = buildTools(
+      [
+        {
+          toolName: 'createThing',
+          operation: {
+            ...op({ type: 'object' }),
+            method: 'post',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: unsafe } },
+            },
+          },
+        },
+      ],
+      { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' },
+    );
+    const wire = tools[0]!.wireSchema as Wire;
+    expect(wire.properties['code']).toEqual({
+      type: 'string',
+      pattern: '^(a+)+$',
+    });
+  });
+});
+
+// Issue #104: the server runs response patterns with RE2.
+describe('response patterns on the server (issue #104)', () => {
+  const validatorFor = (properties: Record<string, unknown>): EnvelopeValidator =>
+    compileEnvelopeValidator({
+      type: 'object',
+      properties: { data: { type: 'object', properties } },
+    }) as EnvelopeValidator;
+
+  it('enforces a pattern', () => {
+    const validate = validatorFor({ zip: { type: 'string', pattern: '^\\d{5}$' } });
+    expect(validate(envelope({ zip: '12345' }))).toBe(true);
+    expect(validate(envelope({ zip: '1234x' }))).toBe(false);
+  });
+
+  it('enforces two patterns of one schema each with its own source', () => {
+    // Ajv caches a compiled pattern by its toString()
+    const validate = validatorFor({
+      digits: { type: 'string', pattern: '^\\d+$' },
+      letters: { type: 'string', pattern: '^[a-z]+$' },
+    });
+    expect(validate(envelope({ digits: '42', letters: 'abc' }))).toBe(true);
+    expect(validate(envelope({ digits: '42', letters: '42' }))).toBe(false);
+    expect(validate(envelope({ digits: 'abc', letters: 'abc' }))).toBe(false);
+  });
+
+  it('translates unicode escapes', () => {
+    const validate = validatorFor({
+      upper: { type: 'string', pattern: '^[\\u0041-\\u005A]+$' },
+      emoji: { type: 'string', pattern: '^\\u{1F600}\\uD83D\\uDE00$' },
+    });
+    expect(validate(envelope({ upper: 'ABC', emoji: '\u{1F600}\u{1F600}' }))).toBe(true);
+    expect(validate(envelope({ upper: 'abc' }))).toBe(false);
+    expect(validate(envelope({ emoji: '\u{1F600}' }))).toBe(false);
+  });
+
+  it('matches a catastrophic pattern in linear time', () => {
+    const validate = validatorFor({ code: { type: 'string', pattern: '^(a+)+$' } });
+    const long = envelope({ code: `${'a'.repeat(100_000)}!` });
+    const started = performance.now();
+    expect(validate(long)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(validate(envelope({ code: 'aaaa' }))).toBe(true);
+  });
+
+  it('refuses at compile a pattern RE2 cannot run', () => {
+    expect(() => validatorFor({ code: { type: 'string', pattern: '^(?=a)a$' } })).toThrow(
+      /RE2 cannot run/u,
+    );
+  });
+});
+
+describe('output schema with an ordinary response pattern', () => {
   it('an ordinary pattern keeps its output schema, with no note', () => {
     const { tools } = buildTools(
       [
@@ -107,7 +251,6 @@ describe('output schema with an unsafe response pattern (kaisers-io/openapi-mcp-
     expect(tool.description).toBe('');
     // The accepted pattern is enforced by the response validator.
     const validate = compileEnvelopeValidator(tool.outputSchema) as EnvelopeValidator;
-    const envelope = (data: unknown) => ({ status: 200, contentType: 'application/json', data });
     expect(validate(envelope('10.0.0.1'))).toBe(true);
     expect(validate(envelope('nope'))).toBe(false);
   });

@@ -61,7 +61,11 @@ const OPERATIONS: readonly NamedOperation[] = [
             'application/json': {
               schema: {
                 type: 'object',
-                properties: { code: { type: 'string', pattern: '(a+)+$' } },
+                properties: {
+                  code: { type: 'string', pattern: '(a+)+$' },
+                  // A bidi override withholds the output schema
+                  mark: { const: 'a\u202Eb' },
+                },
               },
             },
           },

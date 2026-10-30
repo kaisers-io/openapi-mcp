@@ -41,8 +41,7 @@ type ToolRow = OperationFacts & {
   // nearly every tool, so a human-output marker would be noise.
   outputSchemaAdmitsNullFields?: true;
   // Why there is no outputSchema, when the tool description tells the agent
-  // (kaisers-io/openapi-mcp-archive#39: a response pattern with nested
-  // quantifiers).
+  // (a control or bidi character in a response schema).
   outputSchemaWithheld?: string;
   // --omit-output-schema took this tool's output schema (issue #13)
   outputSchemaOptedOut?: true;

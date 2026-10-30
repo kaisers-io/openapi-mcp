@@ -13,8 +13,8 @@ import type { EnvelopeValidator, NamedOperation } from '../src/index.ts';
 // output schemas the other features generate: default responses under
 // --default-response-is-error (kaisers-io/openapi-mcp-archive#117), the
 // projection branch (kaisers-io/openapi-mcp-archive#136), the inclusive
-// response oneOf (kaisers-io/openapi-mcp-archive#102) and an output schema
-// withheld for an unsafe pattern (kaisers-io/openapi-mcp-archive#39). The
+// response oneOf (kaisers-io/openapi-mcp-archive#102) and a pattern left out
+// of the output schema for nested quantifiers (issue #104). The
 // schema objects are shared between tools, as the dereferencer hands them out.
 
 const pet: Record<string, unknown> = {
@@ -56,8 +56,7 @@ const operations: NamedOperation[] = [
       ],
     }),
   }),
-  // Issue kaisers-io/openapi-mcp-archive#39: nested quantifiers withhold the
-  // output schema
+  // Issue #104: nested quantifiers leave out only the pattern
   op('getUnsafe', { '200': json({ type: 'string', pattern: '^(a+)+$' }) }),
 ];
 
@@ -145,8 +144,17 @@ describe('shared envelope compiler × generated output schemas', () => {
     ]);
   });
 
-  it('has no validator for a tool whose output schema was withheld', () => {
-    expect(snapshot.operations.find((tool) => tool.name === 'getUnsafe')).toBeDefined();
-    expect(shared.get('getUnsafe')).toBeUndefined();
+  it('validates a tool whose unsafe pattern was left out', () => {
+    expect(verdicts('getUnsafe')).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+    ]);
   });
 });

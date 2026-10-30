@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import { SPEC_BUDGETS } from '../spec/budgets.ts';
-import { sanitizeSpecText, stripMarkdownLinks } from '../spec/sanitize.ts';
+import { hasControlOrBidi, sanitizeSpecText, stripMarkdownLinks } from '../spec/sanitize.ts';
 import type { OpenapiVersion } from '../spec/validate.ts';
-import { hasNestedQuantifier } from './pattern-safety.ts';
+import { isEnforceablePattern } from './pattern-safety.ts';
 
 // Structural nesting guard, tied to the existing parse-depth budget — not a new
 // budget. The document is already dereferenced (cycle-safe) upstream, so this
@@ -10,12 +10,6 @@ import { hasNestedQuantifier } from './pattern-safety.ts';
 export const MAX_CONVERT_DEPTH = SPEC_BUDGETS.maxParseDepth;
 
 export type SchemaResult = { ok: z.ZodType } | { unrepresentable: string };
-
-// The unrepresentable reason for a response `pattern` with nested quantifiers
-// (kaisers-io/openapi-mcp-archive#39). Output-schema derivation looks for it to
-// tell the agent why a tool has no output schema.
-export const UNSAFE_PATTERN_REASON =
-  'a "pattern" with nested quantifiers (unbounded regex matching cost)';
 
 // Which side of the HTTP exchange a schema describes. The same Schema Object
 // is routinely shared between a request body and a response (`User` with a
@@ -442,11 +436,16 @@ const alternativesMessage = (alternatives: readonly (readonly string[])[]): stri
 // before entering model context via .describe(). `format` and
 // `pattern` are surfaced through the wire schema (via .meta in convertSchema),
 // not here; enum values surface through z.enum. So the human hint is the
-// description plus example only.
-const describeText = (node: Record<string, unknown>): string | undefined => {
+// description plus example, and a response pattern that is not advertised
+// (see convertSchema).
+const describeText = (
+  node: Record<string, unknown>,
+  pattern: string | undefined,
+): string | undefined => {
   const parts = [
     typeof node['description'] === 'string' ? stripMarkdownLinks(node['description']) : undefined,
     node['example'] === undefined ? undefined : `example: ${JSON.stringify(node['example'])}`,
+    pattern === undefined ? undefined : `Pattern (not enforced): ${pattern}`,
   ].filter((part): part is string => part !== undefined);
   if (parts.length === 0) {
     return undefined;
@@ -455,8 +454,12 @@ const describeText = (node: Record<string, unknown>): string | undefined => {
   return text === '' ? undefined : text;
 };
 
-const withDescription = (schema: z.ZodType, node: Record<string, unknown>): z.ZodType => {
-  const text = describeText(node);
+const withDescription = (
+  schema: z.ZodType,
+  node: Record<string, unknown>,
+  pattern?: string,
+): z.ZodType => {
+  const text = describeText(node, pattern);
   return text === undefined ? schema : schema.describe(text);
 };
 
@@ -1526,19 +1529,6 @@ const convertUncached = (
   if (malformed !== undefined) {
     return { unrepresentable: `a malformed "${malformed}" value` };
   }
-  // kaisers-io/openapi-mcp-archive#39: a response schema is compiled by Ajv,
-  // which RUNS `pattern` on upstream data synchronously. A pattern with nested
-  // quantifiers can backtrack catastrophically, so it makes the output schema
-  // unrepresentable (fail-closed; the tool falls back to text). Request mode
-  // only advertises `pattern` and never executes it, so it is unaffected. See
-  // pattern-safety.ts.
-  if (
-    mode === 'response' &&
-    typeof node['pattern'] === 'string' &&
-    hasNestedQuantifier(node['pattern'])
-  ) {
-    return { unrepresentable: UNSAFE_PATTERN_REASON };
-  }
   // Two compositions with sibling keywords that convert faithfully once
   // rewritten (issue #20); every other combination is checked as written.
   const alternatives = requiredAlternatives(node);
@@ -1573,11 +1563,23 @@ const convertUncached = (
   // typeless z.unknown() — so z.toJSONSchema emits the keywords WITHOUT Zod
   // enforcing them (no live RegExp; no divergent format validator). For a
   // request the model sees them and nothing runs them. For a response the
-  // output schema IS compiled by Ajv, which runs `pattern` on upstream data —
-  // hence the nested-quantifier gate above (kaisers-io/openapi-mcp-archive#39).
+  // output schema IS compiled by Ajv, on the server with RE2 and on the client
+  // with a backtracking engine (issue #104): a pattern that is not safe for
+  // both moves into the description as text, the rest of the schema stays.
+  // Request mode only advertises `pattern`, so it is unaffected. A pattern
+  // with a control or bidi character stays, so the output schema is withheld
+  // (output-data.ts) as for any such value. See pattern-safety.ts.
   const meta: Record<string, unknown> = {};
-  if (typeof node['pattern'] === 'string') {
-    meta['pattern'] = node['pattern'];
+  const pattern = typeof node['pattern'] === 'string' ? node['pattern'] : undefined;
+  const unenforced =
+    pattern !== undefined &&
+    mode === 'response' &&
+    !hasControlOrBidi(pattern) &&
+    !isEnforceablePattern(pattern)
+      ? pattern
+      : undefined;
+  if (pattern !== undefined && unenforced === undefined) {
+    meta['pattern'] = pattern;
   }
   if (typeof node['format'] === 'string') {
     meta['format'] = node['format'];
@@ -1608,5 +1610,5 @@ const convertUncached = (
     meta['anyOf'] = alternatives.map((names) => ({ required: [...names] }));
   }
   const advertised = Object.keys(meta).length > 0 ? built.ok.meta(meta) : built.ok;
-  return { ok: withDescription(advertised, node) };
+  return { ok: withDescription(advertised, node, unenforced) };
 };

@@ -250,7 +250,6 @@ export {
   paramFields,
   SYSTEM_HEADERS,
   TOOL_NAME_MAX_LENGTH,
-  UNSAFE_PATTERN_REASON,
   hasNestedQuantifier,
 } from './toolgen/index.ts';
 export type {
