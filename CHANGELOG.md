@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A spec fetched from a URL needs `--base-url` when the server sends a credential.** With a URL
+  `--spec`, `--header-env` and `--basic-auth-env` now stop the start with exit code 2 unless
+  `--base-url` names the API, so the spec alone cannot choose where these credentials go. The
+  `--upstream-oauth-*` client secret already had this rule. A spec from a file is unchanged. Add
+  `--base-url <url>` to such a configuration, or `--base-url <name>=<url>` with `--api`. See
+  [credentials.md](docs/credentials.md).
+- **Link-local addresses are always refused.** `169.254.0.0/16` and `fe80::/10` hold the metadata
+  endpoints of most clouds, so `--allow-private-network` no longer admits them, under any name.
+- **An operation whose input schema has a control or bidirectional-override character is
+  omitted.** Such a character in a parameter or property name, `enum`, `const`, `pattern` or
+  `format` used to reach the tool definition as it is. A response schema with one is withheld, and
+  the tool returns text.
+- **A response `pattern` with too many ways to match withholds the output schema.** A
+  variable-width group repeated a bounded number of times, such as `^([a-z0-9]{1,63}\.?){1,8}$`,
+  could take seconds to check against one upstream string. Some unambiguous patterns are refused
+  too, and their tools return text.
+- **A `--spec-header-env` credential is not sent over plain `http` to a host that is not
+  loopback.** Pass `--allow-insecure-http` to allow it. `tools` and `cache refresh` accept that
+  flag now too.
+
+### Fixed
+
+- **Secrets in tool results.** A result that echoes a registered secret is withheld, or an error
+  is reduced to its status, in more spellings:
+  - a secret made of digits returned as a JSON number, in any notation;
+  - a secret JSON-escaped in a text or HTML body in a spelling other than JavaScript's, such as
+    Go's `\u0026`;
+  - a secret written as markup entities (`&amp;`, `&#38;`) in an XML, text or HTML body,
+    including HTML error pages with no visible text;
+  - a forwarded response header whose secret crosses the 512-character display cap.
+- **Cloud-metadata hostnames match in any letter case and with a trailing dot**, such as
+  `metadata.tencentyun.com.`.
+- **Response validation checks the `url` format in linear time** and accepts the same URLs, so a
+  long upstream string no longer blocks the server.
+- **The `$ref` cycle check treats every spelling of a pointer as one target** and stops at the
+  10,000,000-node budget, so a spec no longer makes the start take quadratic time and memory.
+- **A `_fields` selection larger than twice the response, plus 64 KiB, fails with an error** that
+  asks for fewer fields, instead of building an oversized result.
+- **A refreshed spec over the 64 MiB cache budget keeps the last accepted spec serving** with a
+  warning, instead of stopping the command.
+- **`--json` output escapes C1 controls, bidirectional formatting characters and U+2028/U+2029**
+  from spec text as `\uXXXX`. Human output also strips U+061C.
+
 ## [0.7.0] - 2026-10-29
 
 ### Added
