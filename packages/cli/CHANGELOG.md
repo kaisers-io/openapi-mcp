@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A field under a single-member `allOf` keeps its description next to a
+  `Pattern (not enforced)` or `Format (not enforced)` note.** Without a description of its own,
+  the wrapper showed only the note.
 - **A registered secret echoed with JSON escapes or markup entities is now withheld on every
   path.** Structured results, `_fields` selections and forwarded headers are decoded and
   scanned like text bodies already were, and JSON echoed inside a JSON string (escaped twice)
