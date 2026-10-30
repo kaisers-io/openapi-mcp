@@ -1,3 +1,4 @@
+import type { Command } from '@commander-js/extra-typings';
 import {
   buildTools,
   publicOmission,
@@ -72,7 +73,13 @@ const toToolRow = (generated: GeneratedTool): ToolRow => ({
 });
 
 export const registerTools: CommandRegistrar = (program, ctx, state) => {
-  registerSpecOptions(program.command('tools'))
+  // The cast restores SpecCmdOpts after the extra option, as in serve.ts
+  (
+    registerSpecOptions(program.command('tools')).option(
+      '--allow-insecure-http',
+      'permit a --spec-header-env credential over cleartext http to a non-loopback origin',
+    ) as unknown as Command<[], SpecCmdOpts>
+  )
     .description(
       'preview the operation inventory an OpenAPI spec generates, with filters applied (no server)',
     )
@@ -162,7 +169,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           // Hints are already sanitized by describeSecurityScheme.
           ...security.map((entry) => `auth: ${entry.hint}`),
           // Paths are untrusted spec text: sanitize the display copy only (the
-          // JSON envelope keeps raw paths — JSON encoding escapes controls)
+          // JSON envelope keeps raw paths and jsonLine escapes the controls)
           ...tools.map(
             (tool) =>
               `  ${tool.name.padEnd(nameWidth)}  ${tool.method.padEnd(6)} ${sanitizeSpecText(tool.path, PATH_DISPLAY_MAX)}${

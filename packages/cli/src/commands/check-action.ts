@@ -12,7 +12,7 @@ import {
 import { apiViews } from '../api-options.ts';
 import type { Occurrence } from '../api-options.ts';
 import type { CliContext } from '../context.ts';
-import { getGlobalOpts } from '../output.ts';
+import { getGlobalOpts, jsonLine } from '../output.ts';
 import type { RunState } from '../main.ts';
 import { createOAuthGuard, optionDefaults, prepareServe } from './serve-action.ts';
 import type { ServeCmdOpts, ServeCommand } from './serve-action.ts';
@@ -184,7 +184,7 @@ export const runCheck = async (
   if (opts.json) {
     const warningReasons = prepared?.warningReasons ?? [];
     ctx.out(
-      JSON.stringify({
+      jsonLine({
         ok: exitCode === EXIT.OK,
         data,
         warnings,

@@ -34,6 +34,8 @@ The new version stops with an error that names the replacement. Apply it.
 
 | Version | Old | New |
 |---|---|---|
+| 0.7.1 | a spec URL with `--header-env` or `--basic-auth-env` and no `--base-url` | add `--base-url <API base URL>`; take it from the spec's `servers` and ask the user to confirm it |
+| 0.7.1 | `--spec-header-env` with an `http://` spec URL to a host that is not loopback | an `https://` spec URL; `--allow-insecure-http` only if the spec has no other address and the user agrees |
 | 0.7.0 | `--api execute=<source>` | another API name: `execute` is reserved, like `call` and `search` |
 | 0.5.0 | `--deny "DELETE /**"` | `--deny "method:delete"` |
 | 0.5.0 | `--allow "GET /orders/**"` | `--allow "route:GET /orders/**"` |
@@ -46,6 +48,12 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
+| 0.7.1 | An operation with a control or bidirectional-override character in a parameter or property name, `enum`, `const`, `pattern` or `format` of its input schema is no longer a tool. | Compare the tool names of both versions; `tools` names the operation under `notExposed`. The spec needs a change. |
+| 0.7.1 | A tool gets no output schema and returns text when its response schema has such a character, or a `pattern` with more than 64 ways to split a match, such as `^([a-z0-9]{1,63}\.?){1,8}$`. | Nothing in the config. |
+| 0.7.1 | `--allow-private-network` no longer admits link-local addresses (`169.254.0.0/16`, `fe80::/10`). Calls to them fail with `not allowed by the egress policy`. | No flag admits them. Ask the user for an address of the API outside these ranges. |
+| 0.7.1 | A `_fields` selection larger than twice the response plus 64 KiB fails with an error. | Nothing in the config. The agent selects fewer fields. |
+| 0.7.1 | A refreshed spec over the 64 MiB cache budget keeps the last accepted spec serving, with the `spec refresh failed` warning, instead of stopping the command. | Nothing in the config. Tell the user the spec no longer updates. |
+| 0.7.1 | More results that echo a registered secret are withheld: a secret as a JSON number, in other JSON escapes (`\u0026`) or as markup entities (`&amp;`). | Nothing in the config. |
 | 0.7.0 | Every tool mode lists one more tool, `execute_code`: it runs a short program the agent writes, over read-only operations only. Host permissions stored by tool name see a new tool. | Nothing in the config. `--no-execute` keeps the earlier tool list. |
 | 0.7.0 | The 512-tool limit counts the tools that are built, not the operations the filters pass: an operation omitted as not supported no longer counts. | Nothing in the config. A filter set that failed with `exceeds the 512-tool budget` may start now; run `CLI --json check`. |
 | 0.6.1 | A `HEAD` operation whose `GET` on the same path is not exposed is no longer a tool; its calls were always refused. | Nothing in the config; allow the `GET` too if the user needs the `HEAD`. |

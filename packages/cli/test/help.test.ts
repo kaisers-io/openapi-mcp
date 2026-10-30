@@ -118,7 +118,7 @@ const SERVE_OPTIONS = [
 const EXPECTED: Record<string, string[]> = {
   '': ['--version', '--json', '--verbose'],
   doctor: [],
-  tools: SPEC_OPTIONS,
+  tools: [...SPEC_OPTIONS, '--allow-insecure-http'],
   cache: [],
   'cache list': [],
   'cache clear': ['--spec', '--id', '--cache-key', '--all'],
@@ -129,6 +129,7 @@ const EXPECTED: Record<string, string[]> = {
     '--timeout',
     '--trust-spec-updates',
     '--allow-private-network',
+    '--allow-insecure-http',
   ],
   'cache promote': ['--spec', '--cache-key', '--hash'],
   'cache unlock': ['--spec', '--id', '--cache-key', '--force'],

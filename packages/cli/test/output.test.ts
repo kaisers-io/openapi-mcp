@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { EXIT, sanitizeSpecText, usageError, validationError } from '@kaisers-io/openapi-mcp-core';
 import { testContext } from '../src/context.ts';
-import { emit, emitError, emitWarnings, wrapAction } from '../src/output.ts';
+import { emit, emitError, emitWarnings, jsonLine, wrapAction } from '../src/output.ts';
 import type { ActionResult } from '../src/output.ts';
+
+// What --json output must never carry raw (JSON.stringify already escapes C0)
+const TERMINAL_UNSAFE_RE =
+  /[\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u2028\u2029]/u;
 
 describe('emit', () => {
   it('prints human lines to stdout in human mode', () => {
@@ -135,7 +139,7 @@ describe('emitError', () => {
     }
   });
 
-  it('leaves the json envelope raw — JSON encoding already escapes controls', () => {
+  it('keeps the raw value in the json envelope and escapes C0 controls', () => {
     const lines: string[] = [];
     const ctx = testContext({ lines });
     emitError(ctx, { json: true, verbose: false }, validationError('evil\u001Bmessage'));
@@ -144,6 +148,32 @@ describe('emitError', () => {
     // The raw stdout line carries the escape only in its \u-encoded form
     expect(lines[0]).toContain('\\u001b');
     expect(lines[0]).not.toContain('\u001B');
+  });
+
+  it('escapes C1, bidi and line-separator characters in the json envelope', () => {
+    const lines: string[] = [];
+    const ctx = testContext({ lines });
+    const message = 'p\u009B31m\u009D0;T\u009C\u061C\u200E\u202E\u2066\u2028\u2029\u007F';
+    emitError(ctx, { json: true, verbose: false }, validationError(message));
+    expect(lines[0]).not.toMatch(TERMINAL_UNSAFE_RE);
+    expect(lines[0]).toContain('\\u009b');
+    const envelope = JSON.parse(lines[0]!) as { error: { message: string } };
+    expect(envelope.error.message).toBe(message);
+  });
+});
+
+describe('jsonLine', () => {
+  it('escapes every terminal-unsafe character and round-trips through JSON.parse', () => {
+    const value = {
+      path: '/p\u009B31mX\u202EY',
+      tags: ['t\u2067\u0085'],
+      plain: 'caf\u00E9 \u4E16',
+    };
+    const line = jsonLine(value);
+    expect(line).not.toMatch(TERMINAL_UNSAFE_RE);
+    expect(JSON.parse(line)).toEqual(value);
+    // Ordinary non-ASCII text stays readable
+    expect(line).toContain('caf\u00E9 \u4E16');
   });
 });
 

@@ -3,6 +3,7 @@ import {
   project,
   PROJECTION_HINT_STRUCTURED,
   PROJECTION_HINT_TEXT,
+  PROJECTION_TOO_LARGE,
 } from '../../toolgen/projection.ts';
 import type { Redactor } from '../../redact.ts';
 import { DISPLAY_TEXT_MAX, sanitizeSpecText, TRUNCATION_MARKER } from '../../spec/sanitize.ts';
@@ -14,6 +15,7 @@ import {
 } from './forwarded-headers.ts';
 import type { PageHint, PageInput } from './forwarded-headers.ts';
 import {
+  decodedForms,
   isJsonEssence,
   isTextEssence,
   mediaEssence,
@@ -300,6 +302,14 @@ const scanSafely = (redactor: Redactor, value: unknown): boolean => {
   }
 };
 
+// A text body is only string-redacted, so a secret it echoes in an encoder's
+// own spelling (Go's `\u0026`, Python's `\uXXXX` for non-ASCII, an XML or
+// HTML `&amp;` or `&#38;`) matches no needle. The WHOLE text is decoded each
+// way and scanned before any cut, so an escaped secret across the cut cannot
+// leave a fragment either.
+const escapedSecretIn = (redactor: Redactor, text: string): boolean =>
+  decodedForms(text).some((form) => scanSafely(redactor, form));
+
 const mapHttpError = (
   status: number,
   contentType: string | undefined,
@@ -339,6 +349,9 @@ const mapHttpError = (
   // this redaction, over the already-secret-free text, so a secret cannot
   // be split across the excerpt boundary and leak a surviving fragment.
   const redacted = redactor.redactString(decoded.ok);
+  if (escapedSecretIn(redactor, redacted)) {
+    return textOutcome(`upstream request failed with status ${status}`, true);
+  }
   // An HTML page shows its title and visible text, not its markup (issue
   // #63). Decoding entities can rebuild a redacted secret: the whole text is
   // scanned before the cut, so a secret across the excerpt boundary cannot
@@ -427,6 +440,9 @@ const mapNoSchemaSuccess = (
   // Redact BEFORE truncating, same rationale as mapHttpError above: the
   // text/JSON success path must never return the raw body either.
   const redacted = redactor.redactString(decoded.ok);
+  if (escapedSecretIn(redactor, redacted)) {
+    return withheldSuccess();
+  }
   const truncated = truncateUtf8(redacted, maxTextBytes);
   if (scanSafely(redactor, truncated)) {
     return withheldSuccess();
@@ -434,14 +450,20 @@ const mapNoSchemaSuccess = (
   return textOutcome(truncated, false);
 };
 
-// One secret check for a parsed JSON body. Without a backslash anywhere in
-// the decoded text, JSON has no escape sequences, so every key and string
-// value appears in the raw text exactly as it does after parsing: one
-// substring scan of the raw text then finds every secret the recursive tree
-// walk would find over `data` (and possibly more — a needle spanning two
-// tokens — which only fails closed). With any backslash present, an escaped
-// secret (`\/`, `\uXXXX`) differs from its parsed form, so the tree walk
-// runs over the whole envelope instead. Every OTHER envelope field (status,
+// A digit followed by `e` in the raw text. It also matches inside a string
+// (`3e4f`), which only costs the slower scan below.
+const EXPONENT_RE = /\d[eE]/u;
+
+// One secret check for a parsed JSON body. Without a backslash or an
+// exponent anywhere in the decoded text, JSON has no escape sequences and a
+// number's digits read as they do after parsing, so every key, string and
+// number appears in the raw text exactly as it does after parsing: one substring
+// scan of the raw text then finds every secret the recursive tree walk would
+// find over `data` (and possibly more — a needle spanning two tokens — which
+// only fails closed). With any backslash present, an escaped secret (`\/`,
+// `\uXXXX`) differs from its parsed form, and with a digit followed by `e`,
+// a number may (`9.87654321e8` parses to 987654321), so the tree walk runs
+// over the whole envelope instead. Every OTHER envelope field (status,
 // contentType, and anything a later layer adds, such as forwarded headers or
 // pagination hints) is always tree-scanned: the raw text only stands in for
 // `data`, so a new field can never silently skip the scan.
@@ -450,7 +472,7 @@ export const envelopeHasSecret = (
   rawJson: string,
   envelope: Record<string, unknown>,
 ): boolean => {
-  if (rawJson.includes('\\')) {
+  if (rawJson.includes('\\') || EXPONENT_RE.test(rawJson)) {
     return scanSafely(redactor, envelope);
   }
   const { data: _data, ...rest } = envelope;
@@ -498,6 +520,7 @@ const projectEnvelope = (
   envelope: Record<string, unknown>,
   data: unknown,
   fields: readonly string[],
+  bodyBytes: number,
   check: () => ReturnType<typeof checkEnvelope>,
   redactor: Redactor,
   maxTextBytes: number,
@@ -513,8 +536,12 @@ const projectEnvelope = (
       checked.mismatch,
     );
   }
+  const projection = project(data, fields, bodyBytes);
+  if (projection === undefined) {
+    return textOutcome(PROJECTION_TOO_LARGE, true);
+  }
   const { data: _full, ...rest } = envelope;
-  const projected: Record<string, unknown> = { ...rest, projection: project(data, fields) };
+  const projected: Record<string, unknown> = { ...rest, projection };
   if (scanSafely(redactor, projected)) {
     return withheldSuccess();
   }
@@ -527,6 +554,9 @@ const projectedText = (
   redactor: Redactor,
   maxTextBytes: number,
 ): ToolCallOutcome => {
+  if (projection === undefined) {
+    return textOutcome(PROJECTION_TOO_LARGE, true);
+  }
   if (scanSafely(redactor, projection)) {
     return withheldSuccess();
   }
@@ -557,13 +587,13 @@ const mapNoSchemaProjection = (
         true,
       );
     }
-    return projectedText(project(items, fields), redactor, maxTextBytes);
+    return projectedText(project(items, fields, bodyBytes.byteLength), redactor, maxTextBytes);
   }
   const parsed = 'error' in decoded ? { ok: false as const } : tryParseJson(decoded.ok);
   if (!parsed.ok) {
     return textOutcome('tool execution failed: projection requires a JSON response', true);
   }
-  return projectedText(project(parsed.value, fields), redactor, maxTextBytes);
+  return projectedText(project(parsed.value, fields, bodyBytes.byteLength), redactor, maxTextBytes);
 };
 
 // The mapSchemaSuccess helper takes one options object (the caller's MapResponseOptions
@@ -672,7 +702,15 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
   const check = (): ReturnType<typeof checkEnvelope> =>
     checkEnvelope(envelope, validator, branch.index, diagnose === true ? { redactor } : undefined);
   if (fields !== undefined) {
-    return projectEnvelope(envelope, parseAttempt.value, fields, check, redactor, maxTextBytes);
+    return projectEnvelope(
+      envelope,
+      parseAttempt.value,
+      fields,
+      bodyBytes.byteLength,
+      check,
+      redactor,
+      maxTextBytes,
+    );
   }
   // A secret anywhere in the structured data downgrades to a generic
   // isError — never a redacted-but-successful structuredContent. The

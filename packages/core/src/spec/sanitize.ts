@@ -1,8 +1,31 @@
 // Spec text is untrusted input that reaches model context: strip
-// C0/C1 controls (except tab/newline, collapsed below) and Unicode bidi controls.
+// C0/C1 controls (except tab/newline, collapsed below) and Unicode bidi controls,
+// including the Arabic letter mark U+061C.
 const CONTROL_AND_BIDI_RE =
   // oxlint-disable-next-line no-control-regex -- matching control and bidi characters is this regex's purpose (it strips them)
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;
+
+// Non-global, so .test() keeps no lastIndex between calls
+const HAS_CONTROL_OR_BIDI_RE = new RegExp(CONTROL_AND_BIDI_RE.source, 'u');
+
+// True when a key or string anywhere in a JSON value holds a character the
+// sanitizers strip. For names and values the server sends (enum, const,
+// pattern, parameter and property names), where stripping would change the
+// request, the caller refuses the schema instead.
+export const hasControlOrBidi = (value: unknown): boolean => {
+  if (typeof value === 'string') {
+    return HAS_CONTROL_OR_BIDI_RE.test(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasControlOrBidi(entry));
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.entries(value).some(
+      ([key, entry]) => HAS_CONTROL_OR_BIDI_RE.test(key) || hasControlOrBidi(entry),
+    );
+  }
+  return false;
+};
 
 // All ECMAScript line terminators plus tab collapse to a single space
 const WHITESPACE_RUN_RE = /[\t\r\n\u2028\u2029]+/gu;

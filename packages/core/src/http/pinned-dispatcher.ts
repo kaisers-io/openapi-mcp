@@ -3,7 +3,7 @@ import type { LookupFunction } from 'node:net';
 import { Agent } from 'undici';
 import type { fetch as undiciFetchType } from 'undici';
 import type { PinnedAgentPool } from './agent-pool.ts';
-import { classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
+import { canonicalHostname, classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
 import { captureResponseHeaders } from './response-headers.ts';
 
 // The SSRF connection-pinning core. undici's custom connect.lookup resolves
@@ -362,13 +362,12 @@ export const validateHopUrlSync = (url: URL, policy: PinnedPolicy): string | und
   if (url.username !== '' || url.password !== '') {
     return 'URL contains userinfo credentials';
   }
-  const hostname = hostnameOf(url);
-  const lower = hostname.toLowerCase();
+  const lower = canonicalHostname(hostnameOf(url));
   if (METADATA_HOSTNAMES.has(lower)) {
     return `"${lower}" is a cloud-metadata endpoint`;
   }
-  if (isIP(hostname) !== 0) {
-    const classification = classifyAddress(hostname);
+  if (isIP(lower) !== 0) {
+    const classification = classifyAddress(lower);
     if (classification === 'metadata') {
       return `"${lower}" is a cloud-metadata address`;
     }

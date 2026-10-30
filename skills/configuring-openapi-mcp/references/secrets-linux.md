@@ -34,7 +34,7 @@ token="$(secret-tool lookup service openapi-mcp account shop-api-token)" || exit
 SHOP_API_TOKEN="Bearer $token"
 export SHOP_API_TOKEN
 unset token
-exec npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --header-env 'Authorization=SHOP_API_TOKEN'
+exec npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --base-url 'https://shop.example.test' --header-env 'Authorization=SHOP_API_TOKEN'
 ```
 
 - Set `PATH` to the output of `dirname "$(node -p process.execPath)"`: `npx` starts `node`
@@ -69,7 +69,7 @@ token="$(cat "$HOME/.config/openapi-mcp/shop-api-token")" || exit 1
 SHOP_API_TOKEN="Bearer $token"
 export SHOP_API_TOKEN
 unset token
-exec npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --header-env 'Authorization=SHOP_API_TOKEN'
+exec npx -y '@kaisers-io/openapi-mcp@X.Y.Z' serve --spec 'https://shop.example.test/openapi.json' --base-url 'https://shop.example.test' --header-env 'Authorization=SHOP_API_TOKEN'
 ```
 
 The token is stored in plain text, protected by file permissions only. Say so.

@@ -234,6 +234,30 @@ describe('createEnvelopeCompiler — identical schemas (issue #7)', () => {
   });
 });
 
+describe('createEnvelopeCompiler — the url format', () => {
+  const validate = createEnvelopeCompiler()({
+    type: 'object',
+    properties: { homepage: { type: 'string', format: 'url' } },
+  }) as EnvelopeValidator;
+
+  it('accepts and rejects what ajv-formats does', () => {
+    for (const url of ['https://api.example.test/a?b', 'http://u:p@api.example.test:8080/']) {
+      expect(validate({ homepage: url })).toBe(true);
+    }
+    for (const url of ['http://10.0.0.1/', 'mailto:a@api.example.test', 'http://', 'http:// x']) {
+      expect(validate({ homepage: url })).toBe(false);
+    }
+  });
+
+  it('takes linear time on a long near-match from the upstream', () => {
+    const started = performance.now();
+    expect(validate({ homepage: `http://${':'.repeat(100_000)}` })).toBe(false);
+    expect(validate({ homepage: `http://${'@:'.repeat(50_000)} ` })).toBe(false);
+    // Generous bound: the regex of ajv-formats 3.0.1 takes over 10 s here
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+});
+
 describe('lazyEnvelopeValidators (issue #8)', () => {
   const ok = { status: 200, contentType: 'application/json', data: { id: 1 } };
   const broken = { type: 'object', oneOf: 'not-an-array' };
@@ -462,6 +486,69 @@ describe('mapResponse — HTTP error status (>=400)', () => {
     expect(text).toBe('upstream request failed with status 500');
     expect(text).not.toContain(secret);
     expect(text).not.toContain(escapedSecret);
+  });
+
+  // A text body is only string-redacted, so an encoder's own spelling of the
+  // secret (Go's `\u0026`, Python's `\uXXXX`, XML's `&amp;`) must not pass
+  describe('a text body that echoes a secret escaped', () => {
+    const secret = 'example&key<not>a"secret';
+    const goJson = String.raw`example\u0026key\u003cnot\u003ea\"secret`;
+    const entities = 'example&amp;key&lt;not&gt;a&quot;secret';
+    const map = (status: number, type: string, body: string, maxTextBytes = 4096) =>
+      mapResponse(
+        defaultOpts({
+          outcome: response(status, type, body),
+          redactor: createRedactor([secret]),
+          maxTextBytes,
+        }),
+      );
+
+    it.each([
+      ['Go JSON escapes', 'text/plain', `{"key":"${goJson}"}`],
+      ['uppercase hex', 'text/plain', `{"key":"${goJson.replaceAll('003c', '003C')}"}`],
+      ['XML entities', 'text/xml', `<Echo><Key>${entities}</Key></Echo>`],
+      ['HTML entities', 'text/html', `<p>key ${entities}</p>`],
+      [
+        'numeric references',
+        'text/plain',
+        `key ${[...secret].map((c) => `&#${c.codePointAt(0)};`).join('')}`,
+      ],
+      ['zero-padded references', 'text/plain', `key ${entities.replace('&amp;', '&#00000038;')}`],
+      [
+        'Go JSON escapes of entities',
+        'text/plain',
+        `{"key":"${entities.replaceAll('&', String.raw`\u0026`)}"}`,
+      ],
+    ])('withholds a 2xx success in %s', (_label, type, body) => {
+      expect(isError(map(200, type, body))).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
+    });
+
+    it('withholds an escaped secret that crosses the text cap', () => {
+      const result = map(200, 'text/plain', `${'x'.repeat(1000)}${goJson}`, 1024);
+      expect(isError(result)).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
+    });
+
+    it('withholds a non-ASCII secret in Python ensure_ascii form', () => {
+      const unicode = 'example-ключ-token';
+      const escaped = String.raw`example-\u043a\u043b\u044e\u0447-token`;
+      const outcome = response(200, 'text/plain', `{"key": "${escaped}"}`);
+      const result = mapResponse(defaultOpts({ outcome, redactor: createRedactor([unicode]) }));
+      expect(isError(result)).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
+    });
+
+    it.each([
+      ['Go JSON escapes in text', 'text/plain', `{"key":"${goJson}"}`],
+      ['Go JSON escapes in HTML', 'text/html', `<pre>Error {"key":"${goJson}"}</pre>`],
+      ['XML entities', 'application/xml', `<Error><Message>bad ${entities}</Message></Error>`],
+      ['an attribute only', 'text/html', `<html><body><input value="${entities}"></body></html>`],
+    ])('drops a 4xx/5xx excerpt with %s', (_label, type, body) => {
+      expect(isError(map(400, type, body))).toBe('upstream request failed with status 400');
+    });
+
+    it('keeps a secret-free body with escapes and entities as it is', () => {
+      const body = String.raw`{"note":"a\u0026b"} &amp; &lt;tag&gt;`;
+      expect(map(200, 'text/plain', body).content[0]?.text).toBe(body);
+    });
   });
 
   it('drops the excerpt entirely if scanForSecret finds residue after redaction', () => {
@@ -1027,6 +1114,25 @@ describe('mapResponse — large structured results: one secret scan, bounded tex
     expect(
       envelopeHasSecret(redactor, body, { ...clean, contentType: `application/${SECRET}` }),
     ).toBe(true);
+  });
+
+  it.each([
+    ['next to an escape', '{"pin":987654321,"note":"a\\/b"}', undefined],
+    ['in exponent form', '{"pin":9.87654321e8}', undefined],
+    ['selected with _fields', '{"pin":987654321}', ['/pin']],
+  ])('refuses a body that echoes a numeric secret as a number %s', (_label, body, fields) => {
+    const outputSchema = anyDataSchema();
+    const result = mapResponse(
+      defaultOpts({
+        outcome: response(200, 'application/json', body),
+        outputSchema,
+        validator: compileEnvelopeValidator(outputSchema),
+        redactor: createRedactor(['987654321']),
+        ...(fields === undefined ? {} : { fields }),
+      }),
+    );
+    expect(isError(result)).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
+    expect(JSON.stringify(result)).not.toContain('987654321');
   });
 
   it('accepts a secret-free body that contains escapes (tree-scan fallback, no false positive)', () => {

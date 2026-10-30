@@ -73,7 +73,8 @@ set here can still be missing in the server.
 Copy the entry's arguments. Replace `serve` with `check` and add `--json` before it:
 `CLI --json check <arguments>`. Run it in the same working directory. Then run
 `CLI --json tools` with the spec and filter options. Read `references/startup.md` or
-`references/missing-tools.md` for what the output means.
+`references/missing-tools.md` for what the output means. Read every line of `warnings` too:
+a warning often names the cause before any error does.
 
 ### 5. Host status and log
 
@@ -96,10 +97,10 @@ Then ask the user to restart the host and make the call again.
 
 | When | Read |
 |---|---|
-| the server does not start, or `check` fails | `references/startup.md` |
-| the server runs but tools are missing or unexpected | `references/missing-tools.md` |
-| a tool call returns an error | `references/calls.md` |
-| the cause is still unclear and a call must be reproduced outside the host | `references/reproduce.md` |
+| the server does not start, `check` fails, a flag is refused, or a startup warning or cache command needs explaining | `references/startup.md` |
+| the server runs but tools are missing or unexpected, or a filter warning appears | `references/missing-tools.md` |
+| a tool call returns an error, or an HTTP client gets 401, 403 or another status | `references/calls.md` |
+| the cause is still unclear, or you need the request a call would send without sending it | `references/reproduce.md` |
 | the host is Claude Code | `references/host-claude-code.md` |
 | the host is Codex | `references/host-codex.md` |
 | the host is Claude Desktop | `references/host-claude-desktop.md` |

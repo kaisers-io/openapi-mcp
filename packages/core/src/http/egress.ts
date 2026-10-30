@@ -40,25 +40,39 @@ const METADATA_IPV4 = new Set([
   '168.63.129.16',
 ]);
 // GCP metadata hostnames, plus the Tencent Cloud CAM/STS credential endpoint
-// hostname (metadata.tencentyun.com) — no reliable Tencent IP is added here
-// (sources conflict and both candidates already classify 'private').
+// hostname (metadata.tencentyun.com). No Tencent IP is listed: every candidate
+// sits in link-local 169.254.0.0/16, which classifyIpv4 denies as a whole.
 export const METADATA_HOSTNAMES = new Set([
   'metadata.google.internal',
   'metadata.goog',
   'metadata.tencentyun.com',
 ]);
 
+// One spelling for a hostname before any deny-set lookup: lowercase, minus a
+// single trailing dot. URL.hostname keeps the dot of an absolute name
+// ("metadata.tencentyun.com."), which DNS resolves to the same host.
+export const canonicalHostname = (hostname: string): string => {
+  const lower = hostname.toLowerCase();
+  return lower.endsWith('.') ? lower.slice(0, -1) : lower;
+};
+
 const classifyIpv4 = (address: string): AddressClass => {
   if (METADATA_IPV4.has(address)) {
     return 'metadata';
   }
   const [octetA = -1, octetB = -1, octetC = -1] = address.split('.').map(Number);
+  // Link-local 169.254.0.0/16 holds the metadata endpoints of most clouds and
+  // no API a client should call, so the whole range is denied like metadata:
+  // no provider's address has to be known, and --allow-private-network cannot
+  // reach one under another name
+  if (octetA === 169 && octetB === 254) {
+    return 'metadata';
+  }
   if (
     octetA === 0 || // "This network"
     octetA === 10 || // RFC1918
     octetA === 127 || // Loopback
     (octetA === 100 && octetB >= 64 && octetB <= 127) || // CGNAT 100.64/10
-    (octetA === 169 && octetB === 254) || // Link-local
     (octetA === 172 && octetB >= 16 && octetB <= 31) || // RFC1918
     (octetA === 192 && octetB === 168) || // RFC1918
     (octetA === 192 && octetB === 0 && octetC === 0) || // IETF protocol assignments 192.0.0.0/24
@@ -230,8 +244,12 @@ export const classifyAddress = (address: string): AddressClass => {
     ) {
       return 'metadata';
     }
-    if ((g0 >= 0xfc_00 && g0 <= 0xfd_ff) || (g0 >= 0xfe_80 && g0 <= 0xfe_bf) || g0 >= 0xff_00) {
-      // Unique-local fc00::/7, link-local fe80::/10, multicast ff00::/8
+    if (g0 >= 0xfe_80 && g0 <= 0xfe_bf) {
+      // Link-local fe80::/10: denied as a whole, like IPv4 169.254.0.0/16
+      return 'metadata';
+    }
+    if ((g0 >= 0xfc_00 && g0 <= 0xfd_ff) || g0 >= 0xff_00) {
+      // Unique-local fc00::/7, multicast ff00::/8
       return 'private';
     }
     // Fail-closed allow-list posture: classify public
@@ -265,11 +283,28 @@ export const classifyAddress = (address: string): AddressClass => {
   return 'public';
 };
 
-const hostnameOf = (url: URL): string => {
-  const raw = url.hostname;
-  // URL.hostname keeps brackets around IPv6 literals; strip them for isIP()
-  return raw.startsWith('[') && raw.endsWith(']') ? raw.slice(1, -1) : raw;
+// URL.hostname keeps brackets around an IPv6 literal; strip them for isIP()
+const stripBrackets = (hostname: string): string =>
+  hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+
+// The cleartext gate's own narrow "loopback" test: 'localhost'/'*.localhost',
+// an IPv4 127.0.0.0/8 literal, or the IPv6 loopback ::1. Deliberately
+// independent of the broader classifyAddress ('private' also covers
+// RFC1918/link-local/etc., which must NOT exempt an operator from the
+// cleartext-secret warning — only genuine loopback does). Shared by the API
+// executor (wire.ts) and the spec fetch (spec/fetch.ts).
+export const isLoopbackHost = (hostname: string): boolean => {
+  const bare = stripBrackets(hostname).toLowerCase();
+  if (bare === 'localhost' || bare.endsWith('.localhost')) {
+    return true;
+  }
+  if (isIP(bare) === 4) {
+    return bare.startsWith('127.');
+  }
+  return isIP(bare) === 6 && bare === '::1';
 };
+
+const hostnameOf = (url: URL): string => stripBrackets(url.hostname);
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
@@ -280,7 +315,7 @@ export const assertAllowedRedirectTarget = async (
   signal: AbortSignal,
 ): Promise<void> => {
   const hostname = hostnameOf(url);
-  const lower = hostname.toLowerCase();
+  const lower = canonicalHostname(hostname);
   const check = (address: string): void => {
     if (isIP(address) === 0) {
       // Fail closed: a DnsLookup implementation must return IP addresses

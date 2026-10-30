@@ -78,6 +78,43 @@ describe('tools command — file specs', () => {
     expect(envelope.data.contentHash).toMatch(/^[0-9a-f]{64}$/u);
   });
 
+  it('escapes C1 and bidi characters from spec paths, operation ids and tags in JSON', async () => {
+    const path = '/p\u009B31mX\u202EY';
+    const spec = JSON.stringify({
+      openapi: '3.1.0',
+      info: { title: 'Hostile', version: '1.0.0' },
+      paths: {
+        [path]: {
+          get: {
+            operationId: 'op\u009D0;T\u009C\u2066z',
+            tags: ['t\u202E'],
+            responses: { '200': { description: 'ok' } },
+          },
+        },
+      },
+    });
+    const { lines, ctx } = fileCtx({
+      readFileText: () => Promise.resolve(spec),
+      fileSizeBytes: () => Promise.resolve(spec.length),
+    });
+    const code = await run(ctx, [
+      'node',
+      'openapi-mcp',
+      '--json',
+      'tools',
+      '--spec',
+      'hostile.json',
+    ]);
+    expect(code).toBe(EXIT.OK);
+    expect(lines[0]).not.toMatch(/[\u0080-\u009F\u202A-\u202E\u2066-\u2069]/u);
+    const { data } = JSON.parse(lines[0]!) as {
+      data: { tools: { path: string; operationId: string; tags: string[] }[] };
+    };
+    expect(data.tools[0]?.path).toBe(path);
+    expect(data.tools[0]?.operationId).toBe('op\u009D0;T\u009C\u2066z');
+    expect(data.tools[0]?.tags).toEqual(['t\u202E']);
+  });
+
   it('serves an OpenAPI 3.2 spec, additionalOperations included (#33)', async () => {
     const { lines, ctx } = fileCtx();
     const code = await run(ctx, [
@@ -1043,5 +1080,41 @@ describe('tools command — withheld output schema (kaisers-io/openapi-mcp-archi
     ).data.tools;
     expect(row).toMatchObject({ name: 'listCodes', outputSchema: false });
     expect(row?.outputSchemaWithheld).toMatch(/nested quantifiers/u);
+  });
+});
+
+describe('tools command — spec credentials over plain http', () => {
+  const argv = [
+    'node',
+    'openapi-mcp',
+    'tools',
+    '--spec',
+    'http://specs.example.test/openapi.json',
+    '--spec-header-env',
+    'Authorization=SPEC_TOKEN',
+    '--trust-spec-updates',
+  ];
+  const specCtx = () => {
+    const sent: string[] = [];
+    const fetcher = ((url: URL) => {
+      sent.push(String(url));
+      return Promise.resolve(
+        Response.json({ openapi: '3.1.0', info: { title: 'T', version: '1' }, paths: {} }),
+      );
+    }) as unknown as CliContext['fetcher'];
+    return { sent, ...fileCtx({ fetcher, env: { SPEC_TOKEN: 'example-token-not-a-secret' } }) };
+  };
+
+  it('refuses before anything is sent', async () => {
+    const { sent, errLines, ctx } = specCtx();
+    expect(await run(ctx, argv)).toBe(EXIT.VALIDATION);
+    expect(sent).toEqual([]);
+    expect(errLines.join('\n')).toContain('--allow-insecure-http');
+  });
+
+  it('fetches with --allow-insecure-http', async () => {
+    const { sent, ctx } = specCtx();
+    expect(await run(ctx, [...argv, '--allow-insecure-http'])).toBe(EXIT.OK);
+    expect(sent).toHaveLength(1);
   });
 });

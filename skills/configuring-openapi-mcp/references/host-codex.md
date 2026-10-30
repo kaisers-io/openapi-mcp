@@ -15,7 +15,7 @@ The CLI, the desktop app and the IDE extension share these files.
 ```toml
 [mcp_servers.shop]
 command = "npx"
-args = ["-y", "@kaisers-io/openapi-mcp@X.Y.Z", "serve", "--spec", "https://shop.example.test/openapi.json", "--header-env", "Authorization=SHOP_API_TOKEN"]
+args = ["-y", "@kaisers-io/openapi-mcp@X.Y.Z", "serve", "--spec", "https://shop.example.test/openapi.json", "--base-url", "https://shop.example.test", "--header-env", "Authorization=SHOP_API_TOKEN"]
 env_vars = ["SHOP_API_TOKEN"]
 startup_timeout_sec = 60
 ```

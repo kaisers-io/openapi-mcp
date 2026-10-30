@@ -50,6 +50,8 @@ committed file:
         "serve",
         "--spec",
         "https://api.example.com/openapi.json",
+        "--base-url",
+        "https://api.example.com",
         "--spec-header-env",
         "Authorization=SPEC_TOKEN",
         "--header-env",
@@ -117,6 +119,8 @@ args = [
   "serve",
   "--spec",
   "https://api.example.com/openapi.json",
+  "--base-url",
+  "https://api.example.com",
   "--spec-header-env",
   "Authorization=SPEC_TOKEN",
   "--header-env",
@@ -200,7 +204,7 @@ Cursor expands `${env:NAME}`:
   "mcpServers": {
     "petstore": {
       "command": "npx",
-      "args": ["-y", "@kaisers-io/openapi-mcp@0.7.0", "serve", "--spec", "https://api.example.com/openapi.json", "--header-env", "Authorization=API_TOKEN"],
+      "args": ["-y", "@kaisers-io/openapi-mcp@0.7.0", "serve", "--spec", "https://api.example.com/openapi.json", "--base-url", "https://api.example.com", "--header-env", "Authorization=API_TOKEN"],
       "env": { "API_TOKEN": "${env:API_TOKEN}" }
     }
   }
@@ -230,7 +234,7 @@ which the command "MCP: Open User Configuration" opens. The key is `servers`, no
     "petstore": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@kaisers-io/openapi-mcp@0.7.0", "serve", "--spec", "https://api.example.com/openapi.json", "--header-env", "Authorization=API_TOKEN"],
+      "args": ["-y", "@kaisers-io/openapi-mcp@0.7.0", "serve", "--spec", "https://api.example.com/openapi.json", "--base-url", "https://api.example.com", "--header-env", "Authorization=API_TOKEN"],
       "env": { "API_TOKEN": "${input:petstore-token}" }
     }
   }
@@ -256,7 +260,7 @@ every project:
   "mcpServers": {
     "petstore": {
       "command": "npx",
-      "args": ["-y", "@kaisers-io/openapi-mcp@0.7.0", "serve", "--spec", "https://api.example.com/openapi.json", "--header-env", "Authorization=API_TOKEN"],
+      "args": ["-y", "@kaisers-io/openapi-mcp@0.7.0", "serve", "--spec", "https://api.example.com/openapi.json", "--base-url", "https://api.example.com", "--header-env", "Authorization=API_TOKEN"],
       "env": { "API_TOKEN": "$API_TOKEN" },
       "timeout": 60000
     }

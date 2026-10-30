@@ -55,7 +55,16 @@ const SPECS: Record<string, unknown> = {
     '/x': {
       get: {
         operationId: 'getX',
-        // An invalid pattern, with a terminal escape the human output must not pass on
+        // An invalid pattern
+        responses: ok({ type: 'object', properties: { id: { type: 'string', pattern: '(' } } }),
+      },
+    },
+  }),
+  'escape-pattern.json': specWith({
+    '/x': {
+      get: {
+        operationId: 'getX',
+        // An invalid pattern with a terminal escape: the output schema is withheld
         responses: ok({
           type: 'object',
           properties: { id: { type: 'string', pattern: '(\u001B[2J' } },
@@ -365,16 +374,24 @@ describe('check (issue #77)', () => {
     expect(reportOf(result.lines).data.startup.status).toBe('failed');
   });
 
-  it('prints a failed startup as one sanitized line without --json', async () => {
+  it('prints a failed startup as one line without --json', async () => {
     const result = await check(
       ['--spec', 'bad-pattern.json', ...BASE, '--tool-mode', 'discover'],
       {},
       [],
     );
     expect(result.code).toBe(EXIT.USAGE);
-    const output = result.lines.join('\n');
-    expect(output).toContain('startup: failed');
-    expect(output).not.toContain('\u001B');
+    expect(result.lines.join('\n')).toContain('startup: failed');
+  });
+
+  it('withholds a response schema with a terminal escape instead of failing the startup', async () => {
+    const result = await check(
+      ['--spec', 'escape-pattern.json', ...BASE, '--tool-mode', 'discover'],
+      {},
+      [],
+    );
+    expect(result.code).toBe(EXIT.OK);
+    expect([...result.lines, ...result.errLines].join('\n')).not.toContain('\u001B');
   });
 
   it('refuses a variable name with control characters before it reports anything', async () => {

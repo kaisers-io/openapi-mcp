@@ -1,4 +1,4 @@
-import { isIP } from 'node:net';
+import { isLoopbackHost } from '../../http/egress.ts';
 import type { HopHeaders } from '../../http/pinned-dispatcher.ts';
 import type { ExecutorConfig } from './executor.ts';
 import type { OutboundBudgets } from './request.ts';
@@ -9,27 +9,6 @@ import type { OutboundBudgets } from './request.ts';
 
 const textEncoder = new TextEncoder();
 const byteLength = (value: string): number => textEncoder.encode(value).length;
-
-// URL.hostname keeps brackets around an IPv6 literal; strip them before
-// classifying (mirrors egress.ts's/pinned-dispatcher.ts's own hostnameOf).
-const stripBrackets = (hostname: string): string =>
-  hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
-
-// The cleartext gate's own narrow "loopback" test: 'localhost'/'*.localhost',
-// an IPv4 127.0.0.0/8 literal, or the IPv6 loopback ::1. Deliberately
-// independent of egress.ts's broader classifyAddress ('private' also covers
-// RFC1918/link-local/etc., which must NOT exempt an operator from the
-// cleartext-secret warning — only genuine loopback does).
-const isLoopbackHost = (hostname: string): boolean => {
-  const bare = stripBrackets(hostname).toLowerCase();
-  if (bare === 'localhost' || bare.endsWith('.localhost')) {
-    return true;
-  }
-  if (isIP(bare) === 4) {
-    return bare.startsWith('127.');
-  }
-  return isIP(bare) === 6 && bare === '::1';
-};
 
 // CLEARTEXT gate, mandatory: a secret header sent in the clear over a
 // non-loopback http: origin is a credential-leak footgun — refuse the call

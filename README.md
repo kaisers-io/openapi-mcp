@@ -124,7 +124,9 @@ args = [
 If the description has no absolute `servers` URL, add `--base-url https://api.example.com` to
 the arguments.
 
-If the API needs a token, add `"--header-env", "Authorization=SHOP_TOKEN"` to the arguments.
+If the API needs a token, add `"--header-env", "Authorization=SHOP_TOKEN"` and
+`"--base-url", "https://api.example.com"` to the arguments. With a spec from a URL, the server
+refuses a token without `--base-url`, so the spec cannot choose where the token goes.
 The server then sends the value of the environment variable `SHOP_TOKEN` as the
 `Authorization` header, unchanged, so for a bearer token the variable holds `Bearer ` followed
 by the token. The host must pass the variable on: in Claude Code add

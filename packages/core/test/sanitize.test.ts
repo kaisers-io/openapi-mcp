@@ -18,6 +18,8 @@ describe('sanitizeSpecText', () => {
 
   it('strips bidi control characters', () => {
     expect(sanitizeSpecText('safe\u202Eevil\u202C text\u2066x\u2069', 100)).toBe('safeevil textx');
+    // The Arabic letter mark is a bidi control too
+    expect(sanitizeSpecText('a\u061Cb', 100)).toBe('ab');
   });
 
   it('collapses tabs and newlines into single spaces and trims', () => {
@@ -71,7 +73,7 @@ describe('sanitizeDisplayText', () => {
   });
 
   it('strips C0, C1, and bidi controls but keeps newlines', () => {
-    expect(sanitizeDisplayText('a\u0000b\u009Fc\nd\u202Ee', 100)).toBe('abc\nde');
+    expect(sanitizeDisplayText('a\u0000b\u009Fc\nd\u202Ee\u061C', 100)).toBe('abc\nde');
   });
 
   it('converts tabs to spaces', () => {

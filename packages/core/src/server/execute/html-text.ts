@@ -28,15 +28,20 @@ const NAMED: Record<string, string> = {
   copy: '©',
 };
 
-const decodeEntities = (text: string): string =>
-  text.replaceAll(/&(?<body>#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{2,8});/giu, (entity, body: string) => {
-    if (body.startsWith('#')) {
-      const code =
-        body[1] === 'x' || body[1] === 'X' ? Number(`0x${body.slice(2)}`) : Number(body.slice(1));
-      return code > 0 && code <= 0x10_ff_ff ? String.fromCodePoint(code) : entity;
-    }
-    return NAMED[body.toLowerCase()] ?? entity;
-  });
+// Also used to find a secret that an upstream echoes entity-escaped in any
+// text body. Leading zeros are allowed, as HTML and XML allow them.
+export const decodeEntities = (text: string): string =>
+  text.replaceAll(
+    /&(?<body>#x0*[0-9a-f]{1,6}|#0*\d{1,7}|[a-z]{2,8});/giu,
+    (entity, body: string) => {
+      if (body.startsWith('#')) {
+        const code =
+          body[1] === 'x' || body[1] === 'X' ? Number(`0x${body.slice(2)}`) : Number(body.slice(1));
+        return code > 0 && code <= 0x10_ff_ff ? String.fromCodePoint(code) : entity;
+      }
+      return NAMED[body.toLowerCase()] ?? entity;
+    },
+  );
 
 const collapse = (text: string): string => decodeEntities(text).replaceAll(/\s+/gu, ' ').trim();
 

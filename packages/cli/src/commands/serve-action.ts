@@ -234,8 +234,9 @@ export const resolveBaseUrl = (
 // shape" idiom (see spec-options.ts's comment on registerSpecOptions).
 // SpecCmdOpts's members (spec/allow/deny/strictFilters/specHeaderEnv/timeout/
 // ttl/cacheKey/trustSpecUpdates/allowPrivateNetwork) and ApiCmdOpts's members
-// (baseUrl/headerEnv/header/maxResponseBytes/allowInsecureHttp) share no name
-// with each other or with this type's own http/port/httpTokenEnv, and both
+// (baseUrl/headerEnv/header/maxResponseBytes) share no name with each other or
+// with this type's own http/port/httpTokenEnv, except allowInsecureHttp, which
+// both declare with the same `boolean | undefined` type, and both
 // share the identical `[key: string]: unknown` index signature, so the
 // three-way intersection below cannot silently collapse any inherited
 // member's type to `never`.
@@ -629,6 +630,16 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
     result.displaySource,
     specSourceIsFile,
   );
+  // Same rule as the OAuth client secret (resolveTokenUrl): a spec fetched
+  // from a URL with no --base-url chose the API origin itself, so it must not
+  // also decide where the operator's secret headers are sent.
+  if (!specSourceIsFile && !resolvedBase.trusted && apiConfig.secretHeaders.length > 0) {
+    throw usageError(
+      withApi(name, [
+        'the spec is fetched from a URL and no --base-url is set, so the spec alone would decide where --header-env/--basic-auth-env credentials are sent — pass --base-url <url>',
+      ]).join('\n'),
+    );
+  }
   assertBaseUrlShape(resolvedBase.url);
   const allowPrivateNetwork = cmdOpts.allowPrivateNetwork === true;
   if (!resolvedBase.trusted) {

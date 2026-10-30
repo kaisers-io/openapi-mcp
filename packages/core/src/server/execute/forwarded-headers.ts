@@ -85,9 +85,15 @@ export const forwardableHeaders = (opts: ForwardOptions): Record<string, string>
   for (const [name, raw] of Object.entries(opts.headers)) {
     const value = forwardedValue(name, raw, opts);
     const clean = value === undefined ? '' : sanitizeSpecText(value, MAX_FORWARDED_VALUE);
-    // The NAME is upstream-controlled too: an allowlisted prefix
-    // (`x-ratelimit-*`, `ratelimit*`) lets an upstream echo a secret in it.
-    if (clean !== '' && !hasSecret(opts.redactor, clean) && !hasSecret(opts.redactor, name)) {
+    // Scan the whole value, raw and sanitized, not just the capped one: a cut
+    // inside a secret leaves a prefix that no needle matches. The NAME is
+    // upstream-controlled too: an allowlisted prefix (`x-ratelimit-*`,
+    // `ratelimit*`) lets an upstream echo a secret in it.
+    const scanned = [raw, sanitizeSpecText(raw, Number.MAX_SAFE_INTEGER), clean, name];
+    if (value !== undefined) {
+      scanned.push(sanitizeSpecText(value, Number.MAX_SAFE_INTEGER));
+    }
+    if (clean !== '' && !scanned.some((text) => hasSecret(opts.redactor, text))) {
       out[name] = clean;
     }
   }

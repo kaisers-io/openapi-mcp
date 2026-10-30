@@ -74,6 +74,35 @@ describe('fetchSpec', () => {
     expect(loaded.text).toBe('{}');
   });
 
+  it('refuses a spec credential over plain http to a host that is not loopback', async () => {
+    const { fetcher, calls } = fakeFetcher([new Response('{}')]);
+    await expect(
+      fetchSpec(
+        new URL('http://specs.example.test/openapi.json'),
+        { headers: AUTH },
+        { fetcher, lookup: rejectingLookup },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('--allow-insecure-http') as string,
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it.each([
+    ['plain http with allowInsecureHttp', 'http://specs.example.test/openapi.json', AUTH, true],
+    ['plain http to loopback', 'http://localhost:3000/openapi.json', AUTH, false],
+    ['plain http without a spec credential', 'http://specs.example.test/openapi.json', [], false],
+  ] as const)('fetches over %s', async (_name, url, headers, allowInsecureHttp) => {
+    const { fetcher, calls } = fakeFetcher([new Response('{}')]);
+    await fetchSpec(
+      new URL(url),
+      { headers, allowInsecureHttp },
+      { fetcher, lookup: rejectingLookup },
+    );
+    expect(calls).toHaveLength(1);
+  });
+
   it('follows same-origin redirects and keeps auth headers', async () => {
     const { fetcher, calls } = fakeFetcher([redirectTo('/v2/openapi.json'), new Response('{}')]);
     const loaded = await fetchSpec(

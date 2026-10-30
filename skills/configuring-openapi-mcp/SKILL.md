@@ -93,10 +93,11 @@ Ask these, skipping what step 2 already answered:
 6. This project only, or every project?
 7. Will it send files or receive images?
 
-If the user names the API's base URL, pass it with `--base-url`. If the user has only a
-website, look for the OpenAPI document (often `openapi.json`, `openapi.yaml` or a link in the
-API docs). An HTML page is not a spec. Show the user the URL you found and use it only after
-they confirm it belongs to the service: its operation names and texts reach the agent.
+If the user names the API's base URL, pass it with `--base-url`. A spec URL with a credential
+always needs `--base-url`. If the user has only a website, look for the OpenAPI document
+(often `openapi.json`, `openapi.yaml` or a link in the API docs). An HTML page is not a spec.
+Show the user the URL you found and use it only after they confirm it belongs to the service:
+its operation names and texts reach the agent.
 
 ### 4. Operations
 
@@ -127,7 +128,9 @@ token. Then read the file for the detected OS and propose its default. The user 
 Run `CLI --json check <the same options as serve>`. Missing variables are expected until the
 user has set them: say which ones. The number of operations in `apis[].exposed` must equal the
 number of tools the comparison of step 4 ended with; if not, compare again. Resolve every other
-failure first. A `cannot resolve` error for the API host means this machine cannot reach the API:
+failure first; every error and warning names its flag or cause, and the reference files of the
+routing table explain the rules behind them. Tell the user each warning in `warnings` in plain
+words. A `cannot resolve` error for the API host means this machine cannot reach the API:
 ask the user for the right base URL or network, and do not write the config until `check` passes.
 Then show the config change from the host file, write it after the user confirms, and say how to
 undo it.
@@ -149,8 +152,8 @@ installed, `npx skills add kaisers-io/openapi-mcp --skill debugging-openapi-mcp`
 | When | Read |
 |---|---|
 | choosing `--allow` and `--deny`, building the operations table | `references/filtering.md` |
-| the API needs credentials | `references/auth.md` |
-| the spec has more than 64 operations, the agent will analyze data over many calls or several APIs, or the user asks about tool modes | `references/tool-mode.md` |
+| the API needs credentials, or the server is served over `--http` | `references/auth.md` |
+| the spec has more than 64 operations, the agent will analyze data over many calls or several APIs, the user asks about tool modes, or the agent sends files or receives images | `references/tool-mode.md` |
 | the user connects more than one API | `references/several-apis.md` |
 | the host is Claude Code | `references/host-claude-code.md` |
 | the host is Codex | `references/host-codex.md` |

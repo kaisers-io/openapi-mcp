@@ -30,8 +30,9 @@ file again.
 
 A running server does not refresh its tool list. Restart it to pick up a newer spec.
 
-If a refresh fails, because the network is down or the new document is invalid, the server keeps
-serving the last accepted version and prints a warning that starts with
+If a refresh fails, because the network is down, the new document is invalid or its JSON form is
+larger than the 64 MiB the cache stores, the server keeps serving the last accepted version and
+prints a warning that starts with
 `spec refresh failed, serving the last known good accepted baseline`.
 
 ## How a changed spec is handled

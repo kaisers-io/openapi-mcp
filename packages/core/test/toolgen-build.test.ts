@@ -432,3 +432,99 @@ describe('buildTools — no hidden zod reference in wire schemas', () => {
     expect(Object.getOwnPropertyNames(data ?? {})).not.toContain('~standard');
   });
 });
+
+describe('control and bidi characters in schema names and values', () => {
+  const opts = { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' } as const;
+  const query = (name: string, schema: Record<string, unknown>): Record<string, unknown> => ({
+    name,
+    in: 'query',
+    schema,
+  });
+  const body = (schema: Record<string, unknown>): Record<string, unknown> => ({
+    content: { 'application/json': { schema } },
+  });
+
+  it('omits an operation whose input schema would carry one', () => {
+    const { tools, omitted } = buildTools(
+      [
+        named('paramName', [query('q\u001BX', { type: 'string' })]),
+        named('enumValue', [query('q', { type: 'string', enum: ['ok', 'en\u202E'] })]),
+        named('constValue', [query('q', { const: 'cn\u009B' })]),
+        named('pattern', [query('q', { type: 'string', pattern: '^a\u001B$' })]),
+        named('format', [query('q', { type: 'string', format: 'f\u2066' })]),
+        named(
+          'bodyKey',
+          [],
+          body({ type: 'object', properties: { 'k\u200F': { type: 'string' } } }),
+        ),
+        named(
+          'mergedKey',
+          [],
+          body({
+            allOf: [
+              { type: 'object', properties: { a: { type: 'string' } } },
+              { type: 'object', properties: { 'b\u061C': { type: 'string' } } },
+            ],
+          }),
+        ),
+        // Several in one operation: a stateful global regex would miss some
+        named('several', [
+          query('a\u202E', { type: 'string' }),
+          query('b\u202E', { type: 'string' }),
+          query('c', { type: 'string', enum: ['x\u202E', 'y\u202E'] }),
+        ]),
+        // Descriptions are sanitized, not a reason to omit
+        named('clean', [query('q', { type: 'string', description: 'd\u202Ee' })]),
+      ],
+      opts,
+    );
+    expect(tools.map((tool) => tool.toolName)).toEqual(['clean']);
+    expect(omitted.map((entry) => entry.toolName)).toEqual([
+      'paramName',
+      'enumValue',
+      'constValue',
+      'pattern',
+      'format',
+      'bodyKey',
+      'mergedKey',
+      'several',
+    ]);
+    expect(omitted[0]?.reason).toMatch(/control or bidirectional/u);
+    expect(JSON.stringify(tools[0]?.wireSchema)).not.toContain('\u202E');
+  });
+
+  it('withholds an output schema that would carry one and keeps the tool', () => {
+    const { tools, omitted } = buildTools(
+      [
+        {
+          toolName: 'getThing',
+          operation: {
+            method: 'get',
+            path: '/thing',
+            tags: [],
+            deprecated: false,
+            parameters: [],
+            responses: {
+              200: {
+                description: 'ok',
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: { 'rk\u202E': { type: 'string', enum: ['re\u009B'] } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+      opts,
+    );
+    expect(omitted).toEqual([]);
+    expect(tools[0]?.outputSchema).toBeUndefined();
+    expect(tools[0]?.outputSchemaWithheld).toMatch(/control or bidirectional/u);
+    expect(tools[0]?.description).not.toMatch(/[\u009B\u202E]/u);
+  });
+});

@@ -27,8 +27,15 @@ Every defense below comes on top of this requirement. None of them replaces it.
   text. The server uses `info.title` only as a display name, sanitized and capped in length.
 - The server sanitizes every piece of spec text that reaches a tool definition or description
   before it attaches it: operation `summary` and `description`, parameter and property
-  `description`, `enum`, `format` and `example`. It strips control characters and
-  bidirectional-override characters and caps the length.
+  `description` and `example`. It strips control characters and bidirectional-override
+  characters and caps the length.
+- Names and values the server sends as they are, such as parameter and property names, `enum`,
+  `const`, `pattern` and `format`, are never rewritten. If one of them in an input schema holds a
+  control or bidirectional-override character, the server omits the operation. If one in a
+  response schema does, the tool gets no output schema and returns its result as text.
+- The CLI strips the same characters from spec text it prints for people. With `--json` it keeps
+  the raw text and escapes C1 controls, bidi characters, U+2028 and U+2029 as `\uXXXX`, so a
+  terminal never receives them raw. A JSON parser still reads back the original strings.
 - Parsing enforces resource budgets before the server trusts or caches anything:
 
   | Budget | Limit |
@@ -53,8 +60,10 @@ Every defense below comes on top of this requirement. None of them replaces it.
   that documents more. [Large APIs and tool modes](tool-modes.md) explains the modes.
 - The server dereferences only the exposed operations, and each shared `$ref` target only once.
   Two node budgets apply on every run: 500,000 unique allocated nodes, and 10,000,000 nodes for
-  the result counted as a tree. Neither large shared models nor a "billion laughs" `$ref` graph
-  can make dereferencing or tool generation run without bound.
+  the result counted as a tree. The `$ref` cycle check walks at most 10,000,000 nodes too, and
+  it treats every spelling of one pointer, such as `#/a` and `#/%61`, as one target. Neither
+  large shared models nor a "billion laughs" `$ref` graph can make dereferencing or tool
+  generation run without bound.
 - A spec that is fetched again at runtime never silently changes what a model can do. The cache
   keeps a durable accepted baseline and at most one pending candidate. The server applies only
   one kind of change on its own, a removal, because removing is the safe direction. While a
@@ -85,7 +94,11 @@ checks:
 - An origin taken from the spec must pass a deny-by-default policy. The server rejects
   loopback, link-local, the RFC 1918 and CGNAT private ranges, and cloud-metadata endpoints.
   `--allow-private-network` admits private and loopback addresses, which you usually need when
-  you develop against a local API. It never admits a cloud-metadata endpoint.
+  you develop against a local API. It never admits a cloud-metadata endpoint, and it never
+  admits link-local addresses (`169.254.0.0/16`, `fe80::/10`), where most clouds serve their
+  metadata. The server denies the whole range, so it needs no list of providers and no other
+  name for such an address gets through. Metadata hostnames match in any case and with a
+  trailing dot.
 - The server follows at most 5 redirects and checks every hop against the same policy. It does
   not forward authentication headers when a redirect changes the origin. It also authorizes a
   redirect like the request itself (see [Request authorization](#request-authorization)).
@@ -95,8 +108,10 @@ checks:
   connect time therefore cannot return a different, forbidden address.
 - A base URL or path that changes in an updated spec waits for approval like any other change
   (see above). The server reports it and never applies it on its own.
-- The server refuses to send an operator credential (`--header-env`) over plain `http://` to a
-  host that is not loopback. `--allow-insecure-http` allows it.
+- With a spec fetched from a URL, the server starts with `--header-env` or `--basic-auth-env`
+  only when `--base-url` is set. The spec then cannot choose where the credential goes.
+- The server refuses to send an operator credential (`--header-env`, `--spec-header-env`) over
+  plain `http://` to a host that is not loopback. `--allow-insecure-http` allows it.
 
 ## Credential hygiene
 
@@ -132,6 +147,14 @@ checks:
     character also has its JSON-escaped form removed, since that form can appear in a text or
     HTML error body. That form contains an escape the raw value lacks, so it may also match the
     escape in a body without the secret. That redacts more, never less.
+  - A text, XML or HTML body is also decoded before it is scanned, once for JSON string
+    escapes (`\u0026`, `\u003C`, `\"`, `\/`) and once for markup entities (`&amp;`, `&#38;`,
+    `&#x26;`). If either decoding rebuilds a registered secret, the server withholds a success
+    and reduces an error to its status. Entity decoding covers numeric references and the
+    named entities for `&`, `<`, `>`, `"` and `'`, plus a few typographic ones. Other named
+    entities stay as written.
+  - In structured results it also finds a secret made only of digits that the upstream sends
+    as a JSON number, in any spelling (`987654321` or `9.87654321e8`).
   - For a value shaped like an `Authorization` credential (`<scheme> <credential>`, for example
     `Bearer <token>`), it also removes the bare credential. For `Basic` it also removes the
     decoded `user:password` and the password alone, each only when it has 8 or more characters.
@@ -174,14 +197,19 @@ checks:
     nests quantifiers when a group repeated more than once (`*`, `+`, `{n,}`, or `{n,m}` with m
     over 1) contains an unbounded quantifier (`(a+)+`, `(\w+\s?)*`, `(a*){2}`), or when an
     unbounded repetition of a group contains any variable quantifier (`(a?)+`, `(\d{1,3})*`).
-    Small bounded nestings stay supported: `(\d{1,3}\.){3}` (IPv4) and `(-[0-9a-f]{4}){3}`
-    (UUID).
+    A bounded repetition of a group with a variable quantifier nests quantifiers too when a
+    match can be split in more than 64 ways, as in `(a{1,20}){1,20}` or
+    `([a-z0-9]{1,63}\.?){1,8}`. Small bounded nestings stay supported: `(\d{1,3}\.){3}` (IPv4,
+    27 ways) and `(-[0-9a-f]{4}){3}` (UUID).
   - This check counts nesting depth, in the style of the safe-regex library. It errs on the
-    side of refusing: some unambiguous patterns, such as `^[a-z]+(-[a-z]+)*$`, are refused too.
-    It does not detect overlapping alternatives under a single quantifier (`(a|a)+`) or
-    backreferences.
+    side of refusing: some unambiguous patterns, such as `^[a-z]+(-[a-z]+)*$` and
+    `^([a-z]{1,63}\.){3}$`, are refused too. It does not detect overlapping alternatives under
+    a single quantifier (`(a|a)+`) or backreferences.
   - In request schemas (tool inputs) the server shows `pattern` and `format` to the model in
     the input schema but never runs them, so they cost no CPU here.
+  - In response schemas the server enforces `format` with the checks of ajv-formats. Its `url`
+    check backtracked quadratically on a long string, so the server runs an equivalent check
+    that takes linear time and accepts the same URLs.
 - A response over `--max-response-bytes` (default `10MB`) is a tool error. The server never
   returns a truncated payload that would be silently invalid.
 - A binary or unknown media type is a tool error that names the media type. The one exception
@@ -190,9 +218,10 @@ checks:
 - An upstream `4xx` or `5xx` response returns `isError: true` with the status and a short body
   excerpt, which goes through the same central redactor as everything else. A JSON body keeps
   up to the display budget, any other body 1 KB. An HTML page contributes its title and visible
-  text, without `<head>`, `<style>` or `<script>`. If decoding its entities rebuilds a
-  registered secret, the excerpt is dropped. For `401` and `403` the server drops the body
-  entirely and returns a message that names the environment variable to check.
+  text, without `<head>`, `<style>` or `<script>`. If decoding the JSON escapes or entities of
+  any error body rebuilds a registered secret, the excerpt is dropped. For `401` and `403` the
+  server drops the body entirely and returns a message that names the environment variable to
+  check.
 - On stdio, stdout carries only JSON-RPC messages, and every diagnostic goes to stderr. A host
   that reads stdout as the protocol stream never sees log output there.
 

@@ -250,6 +250,12 @@ export const createRedactor = (rawSecrets: readonly string[]): RuntimeRedactor =
     if (typeof value === 'string') {
       return stringHasSecret(value);
     }
+    // A JSON number can echo a secret made of digits, in any spelling
+    // (`987654321`, `9.87654321e8`): its canonical text is what the client
+    // reads back.
+    if (typeof value === 'number') {
+      return stringHasSecret(String(value));
+    }
     if (Array.isArray(value)) {
       return value.some((item) => scanForSecret(item));
     }

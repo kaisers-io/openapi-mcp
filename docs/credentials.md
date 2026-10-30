@@ -58,6 +58,7 @@ The two header flags use different separators on purpose.
 ```bash
 openapi-mcp serve \
   --spec https://api.example.com/openapi.json \
+  --base-url https://api.example.com \
   --spec-header-env Authorization=SPEC_TOKEN \
   --header-env Authorization=API_TOKEN \
   --header "Accept-Language:en" \
@@ -156,12 +157,15 @@ The server only sends a credential where you pointed it.
   hop and every later hop.
 - If an API request is redirected to another origin, the server sends only `Accept` and
   `Content-Type` there, never a `--header`, `--header-env` or OAuth2 credential.
+- When the spec is fetched from a URL, `--header-env` and `--basic-auth-env` need `--base-url`.
+  Otherwise the spec alone would choose where the credential is sent. The server stops at
+  startup with exit code 2. A spec file needs no `--base-url` for this.
 - When one server serves several APIs (`--api`), each API's credentials go only to that API's
   own base URL. See [several-apis.md](several-apis.md).
-- The server refuses to send a `--header-env` value or an OAuth2 access token over plain `http`
-  to a host that is not loopback (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`). The call
-  fails without sending anything. `--allow-insecure-http` permits it, for an API you can only
-  reach that way.
+- The server refuses to send a `--header-env` value, a `--spec-header-env` value or an OAuth2
+  access token over plain `http` to a host that is not loopback (`localhost`, `*.localhost`,
+  `127.0.0.0/8`, `::1`). The call or the spec fetch fails without sending anything.
+  `--allow-insecure-http` permits it, for an API or a spec you can only reach that way.
 
 Outbound requests also follow an egress policy. An address that comes from the spec (its
 `servers` URL) or from a redirect is refused when it is private, loopback or a cloud-metadata
@@ -182,6 +186,7 @@ When you test the server in a terminal, keep secrets out of your shell history:
 ```bash
 API_TOKEN="Bearer $(op read op://vault/item/token)" \
   openapi-mcp serve --spec https://api.example.com/openapi.json \
+  --base-url https://api.example.com \
   --header-env Authorization=API_TOKEN --cache-key example-api
 ```
 

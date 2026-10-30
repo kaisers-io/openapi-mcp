@@ -81,6 +81,7 @@ The server does not terminate TLS. In this example it runs behind a reverse prox
 
 ```bash
 openapi-mcp serve --spec https://api.example.com/openapi.json \
+  --base-url https://api.example.com \
   --header-env Authorization=API_TOKEN \
   --http --http-auth oauth --http-host 0.0.0.0 --port 3044 \
   --oauth-issuer https://auth.example.com/realms/main \

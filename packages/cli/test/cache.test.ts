@@ -764,6 +764,27 @@ describe('cache refresh', () => {
     expect(code).toBe(EXIT.USAGE);
     expect(capture.errLines.join('\n')).toContain('--cache-key');
   });
+
+  it('refuses a spec credential over plain http unless --allow-insecure-http is set', async () => {
+    const argv = [
+      'node',
+      'openapi-mcp',
+      'cache',
+      'refresh',
+      '--spec',
+      'http://specs.example.test/openapi.json',
+      '--spec-header-env',
+      'Authorization=SPEC_TOKEN',
+      '--cache-key',
+      'demo',
+    ];
+    const env = { SPEC_TOKEN: 'Bearer example-token-not-a-secret' };
+    const refused = cacheCtx([specText], { env });
+    expect(await run(refused.ctx, argv)).toBe(EXIT.VALIDATION);
+    expect(refused.errLines.join('\n')).toContain('--allow-insecure-http');
+    const allowed = cacheCtx([specText], { env });
+    expect(await run(allowed.ctx, [...argv, '--allow-insecure-http'])).toBe(EXIT.OK);
+  });
 });
 
 describe('cache promote', () => {

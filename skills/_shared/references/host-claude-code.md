@@ -20,7 +20,7 @@ are not merged. Recommend project scope for a team, local scope for a personal s
   "mcpServers": {
     "shop": {
       "command": "npx",
-      "args": ["-y", "@kaisers-io/openapi-mcp@X.Y.Z", "serve", "--spec", "https://shop.example.test/openapi.json", "--header-env", "Authorization=SHOP_API_TOKEN"],
+      "args": ["-y", "@kaisers-io/openapi-mcp@X.Y.Z", "serve", "--spec", "https://shop.example.test/openapi.json", "--base-url", "https://shop.example.test", "--header-env", "Authorization=SHOP_API_TOKEN"],
       "env": { "SHOP_API_TOKEN": "${SHOP_API_TOKEN}" }
     }
   }

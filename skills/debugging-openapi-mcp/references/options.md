@@ -33,7 +33,7 @@ value, `prefix-or-all` applies to every API without one, `enable` is set with
 | `--basic-auth-env <USER_ENV:PASSWORD_ENV>` |  |  |  | prefix | HTTP Basic auth for API requests: the user name and the password read from these env vars (secret; without :PASSWORD_ENV the password is empty) |
 | `--header <Header:value>` |  |  | yes | prefix | static, non-secret API header (repeatable) |
 | `--max-response-bytes <size>` | `"10MB"` |  |  |  | cap the decompressed upstream response body and the outgoing request body (<int><B\|KB\|MB> or a plain byte count) |
-| `--allow-insecure-http` |  |  |  | enable | permit an operator credential (--header-env) over cleartext http to a non-loopback origin |
+| `--allow-insecure-http` |  |  |  | enable | permit an operator credential (--header-env, --spec-header-env) over cleartext http to a non-loopback origin |
 | `--max-concurrency <n>` | `"16"` |  |  |  | upstream calls in flight at once; further calls wait in a bounded queue |
 | `--rate-limit <calls/duration>` | `"120/1m"` |  |  |  | tool calls allowed per sliding window |
 | `--request-timeout <duration>` | `"30s"` |  |  |  | deadline for each upstream API request (<int><s\|m\|h\|d>); --timeout covers the spec fetch |

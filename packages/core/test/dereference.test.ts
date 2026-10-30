@@ -459,6 +459,40 @@ describe('createCycleDetector and collapseCycles', () => {
     expect(out).toEqual({ node: { $ref: '#/Node' }, leaf: { type: 'string' } });
   });
 
+  it('treats every spelling of one pointer as one target', () => {
+    // 4,000 percent-encoded spellings of a schema's own pointer, each one a
+    // property of that schema: one graph node per spelling walks the schema
+    // 4,000 times and stores 16,000,000 edges
+    const name = 'abcdefghijklmnop';
+    const spell = (bits: number): string =>
+      [...name]
+        .map((letter, at) =>
+          (bits >> at) % 2 === 1 ? `%${(letter.codePointAt(0) ?? 0).toString(16)}` : letter,
+        )
+        .join('');
+    const refs = Array.from({ length: 4000 }, (_, bits) => `#/components/schemas/${spell(bits)}`);
+    const properties = Object.fromEntries(refs.map((ref, at) => [`p${at}`, { $ref: ref }]));
+    const doc = { components: { schemas: { [name]: { type: 'object', properties } } } };
+    const started = performance.now();
+    const isCyclic = createCycleDetector(doc);
+    expect(refs.every((ref) => isCyclic(ref))).toBe(true);
+    // Generous bound: the schema is walked once
+    expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  it('refuses a ref graph whose targets overlap past the node budget', () => {
+    // 100 nested levels, each referencing the next, over a 200,000-element
+    // leaf: every level is a distinct target, and each walk crosses the leaf
+    let level: Record<string, unknown> = { leaf: Array.from({ length: 200_000 }, () => 0) };
+    for (let depth = 100; depth > 0; depth -= 1) {
+      level = { next: { $ref: `#/n${'/c'.repeat(depth)}` }, c: level };
+    }
+    const doc = { n: level };
+    expect(() => createCycleDetector(doc)('#/n')).toThrow(
+      `the ${MAX_EXPANDED_NODES}-node budget while checking $ref cycles`,
+    );
+  });
+
   it('keeps a densely cyclic model bounded, where full expansion is exponential', () => {
     // Ten schemas that all reference each other: every path closes a cycle
     // eventually, but expanding until it does visits on the order of 10! nodes

@@ -1,5 +1,5 @@
 import type { SequenceKind } from '../../toolgen/media-type.ts';
-import { htmlErrorText } from './html-text.ts';
+import { decodeEntities, htmlErrorText } from './html-text.ts';
 
 // The media-type reading of an upstream response for response.ts.
 export { isJsonEssence, sequenceKind } from '../../toolgen/media-type.ts';
@@ -17,6 +17,34 @@ export const mediaEssence = (contentType: string | undefined): string | undefine
 // media type and for a page with no text
 export const readableErrorText = (essence: string | undefined, body: string): string =>
   essence === 'text/html' || essence === 'application/xhtml+xml' ? htmlErrorText(body) : '';
+
+// What each JSON short escape stands for, by its letter's place in SHORT_ESCAPES
+const SHORT_ESCAPES = String.raw`"\/bfnrt`;
+const SHORT_DECODED = '"\\/\b\f\n\r\t';
+
+// The JSON string escapes of a text decoded, one at a time: every encoder's
+// spelling (`\u0026`, `\u003C`, `\/`) reads back as the character it stands
+// for. A surrogate pair decodes as its two units, which then form the pair.
+const decodeJsonEscapes = (text: string): string =>
+  text.replaceAll(/\\(?:u(?<hex>[0-9a-fA-F]{4})|(?<short>["\\/bfnrt]))/gu, (_escape, hex, short) =>
+    hex === undefined
+      ? (SHORT_DECODED[SHORT_ESCAPES.indexOf(short as string)] ?? '')
+      : String.fromCodePoint(Number.parseInt(hex as string, 16)),
+  );
+
+// A text body decoded each way an upstream may have escaped a secret in it:
+// as a JSON string, as markup entities, and as both. A text with neither
+// escape character yields nothing.
+export const decodedForms = (text: string): string[] => {
+  const json = text.includes('\\') ? decodeJsonEscapes(text) : undefined;
+  return [
+    ...(json === undefined ? [] : [json]),
+    ...(text.includes('&') ? [decodeEntities(text)] : []),
+    // Both, in the order an encoder applies them: Go's encoding/json writes
+    // the `&` of an HTML entity as `\u0026`
+    ...(json?.includes('&') === true ? [decodeEntities(json)] : []),
+  ];
+};
 
 export const isTextEssence = (essence: string): boolean => essence.startsWith('text/');
 
