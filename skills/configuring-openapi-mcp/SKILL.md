@@ -4,7 +4,7 @@ description: Sets up or changes an openapi-mcp server, which turns an OpenAPI de
 license: MIT
 compatibility: Needs Node.js 22.19 or later (or 24.11 or later) with npx, network access to npm, and an agent that can run commands and edit files.
 metadata:
-  version: "0.7.1"
+  version: "0.8.0"
 ---
 
 # Configuring openapi-mcp
