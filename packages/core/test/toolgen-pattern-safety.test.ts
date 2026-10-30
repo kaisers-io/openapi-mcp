@@ -105,6 +105,22 @@ describe('output schema with an unsafe response pattern (issue #104)', () => {
     });
   });
 
+  it('keeps the note under the description of a single-member allOf', () => {
+    const result = explainOutputSchema(
+      op({
+        description: 'A code.',
+        allOf: [{ type: 'string', pattern: '^(?=x)x$', minLength: 1, maxLength: 5 }],
+      }),
+      '3.1',
+    );
+    expect(dataOf(result.outputSchema)).toEqual({
+      type: 'string',
+      minLength: 1,
+      maxLength: 5,
+      description: 'A code. — Pattern (not enforced): ^(?=x)x$',
+    });
+  });
+
   it('keeps the tool and its description unchanged', () => {
     const { tools, omitted } = buildTools(
       [{ toolName: 'getThings', operation: { ...op(unsafe), summary: 'List things' } }],
@@ -216,6 +232,29 @@ describe('response patterns on the server (issue #104)', () => {
     expect(validate(envelope({ upper: 'ABC', emoji: '\u{1F600}\u{1F600}' }))).toBe(true);
     expect(validate(envelope({ upper: 'abc' }))).toBe(false);
     expect(validate(envelope({ emoji: '\u{1F600}' }))).toBe(false);
+  });
+
+  // The client checks structured content against the advertised schema with
+  // JavaScript's engine, so the server must accept exactly the same values.
+  it.each([
+    ['^.*$', ['a\rb', 'a\u2028b', 'a\u2029b', 'a\nb', 'ab']],
+    ['^a.b$', ['a\rb', 'axb', 'a\u{1F600}b']],
+    ['^\\S+$', ['a\u00A0b', 'a\u3000b', 'a\vb', 'ab']],
+    ['^\\s$', ['\v', '\u00A0', '\uFEFF', '\u2028', ' ', 'a']],
+    ['^[\\s,]+$', ['\v,', '\u00A0', 'a']],
+    ['^[.]+$', ['..', 'a']],
+  ])('accepts what JavaScript accepts for %s', (pattern, values) => {
+    const validate = validatorFor({ code: { type: 'string', pattern } });
+    for (const value of values) {
+      expect([value, validate(envelope({ code: value }))]).toEqual([
+        value,
+        new RegExp(pattern, 'u').test(value),
+      ]);
+    }
+  });
+
+  it('does not advertise \\S inside a class', () => {
+    expect(isEnforceablePattern('^[\\S]+$')).toBe(false);
   });
 
   it('matches a catastrophic pattern in linear time', () => {

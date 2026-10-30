@@ -206,8 +206,11 @@ export const hasNestedQuantifier = (pattern: string): boolean => {
 // (`[]` and `[^]` are complete classes in JavaScript) and `[:` inside a class
 // (an RE2 POSIX class such as `[[:alpha:]]`). What RE2 does not support
 // (lookaround, backreferences, `\cX`, `[\b]`, `\p{Script=...}`) fails to compile.
-// Known differences that remain: RE2's `\s` matches only ASCII whitespace, and
-// its `.` matches `\r`, U+2028 and U+2029.
+// `.` and `\s` are written out as JavaScript's sets, so server and client
+// accept the same values; `\S` inside a class has no such form and is refused.
+const JS_LINE_TERMINATORS = String.raw`\n\r\x{2028}\x{2029}`;
+const JS_WHITESPACE = String.raw`\t\n\x{b}\f\r \x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}`;
+
 const UNICODE_ESCAPE_RE =
   /\\u(?:(?<pair>[dD][89abAB][\da-fA-F]{2}\\u[dD][c-fC-F][\da-fA-F]{2})|\{(?<braced>[\da-fA-F]+)\}|(?<single>[\da-fA-F]{4}))/uy;
 
@@ -230,7 +233,14 @@ const re2Source = (pattern: string): string | undefined => {
     if (char === '\\') {
       UNICODE_ESCAPE_RE.lastIndex = index;
       const match = UNICODE_ESCAPE_RE.exec(pattern);
-      if (match === null) {
+      const escaped = pattern[index + 1];
+      if (match === null && (escaped === 's' || escaped === 'S')) {
+        if (escaped === 'S' && inClass) {
+          return undefined;
+        }
+        source += inClass ? JS_WHITESPACE : `[${escaped === 'S' ? '^' : ''}${JS_WHITESPACE}]`;
+        index += 2;
+      } else if (match === null) {
         source += pattern.slice(index, index + 2);
         index += 2;
       } else {
@@ -254,7 +264,7 @@ const re2Source = (pattern: string): string | undefined => {
       index = first;
       continue;
     }
-    source += char;
+    source += !inClass && char === '.' ? `[^${JS_LINE_TERMINATORS}]` : char;
     index += 1;
   }
   return source;
