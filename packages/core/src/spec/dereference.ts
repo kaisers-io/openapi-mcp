@@ -118,7 +118,11 @@ export const createDereferencer = (
   // budget check fires the instant a total is exceeded.
   let uniqueNodes = 0;
   let expandedNodes = 0;
-  const memo = new Map<string, MemoEntry>();
+  // The same pointer could in principle be reached as a schema and as a
+  // Reference Object target; siblings inside it are read differently. Keyed
+  // by the ref string itself: a key built from it per occurrence costs the
+  // ref's length each time, and one long ref can repeat through YAML aliases
+  const memos = { other: new Map<string, MemoEntry>(), schema: new Map<string, MemoEntry>() };
 
   const allocate = (count: number): void => {
     uniqueNodes += count;
@@ -140,10 +144,8 @@ export const createDereferencer = (
       allocate(1);
       return { value: { $ref: ref }, size: 1, open: undefined, height: 0 };
     }
-    // The same pointer could in principle be reached as a schema and as a
-    // Reference Object target; siblings inside it are read differently
-    const memoKey = `${context === 'other' ? 'o' : 's'}${ref}`;
-    const cached = memo.get(memoKey);
+    const memo = context === 'other' ? memos.other : memos.schema;
+    const cached = memo.get(ref);
     if (cached !== undefined) {
       // The deepest ref check inside it ran at stack length height - 1 above
       // this one, and a check fails at stack length >= maxRefDepth
@@ -175,7 +177,7 @@ export const createDereferencer = (
     const walked = walk(target, [...refStack, ref], context === 'schemas' ? 'schema' : context);
     const height = walked.height + 1;
     if (walked.open === undefined) {
-      memo.set(memoKey, { value: walked.value, size: walked.size, height });
+      memo.set(ref, { value: walked.value, size: walked.size, height });
     }
     return { value: walked.value, size: walked.size, open: withoutRef(walked.open, ref), height };
   };
