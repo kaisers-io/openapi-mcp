@@ -340,8 +340,7 @@ describe('buildTools — per-build memoization (issue kaisers-io/openapi-mcp-arc
 
   it('keys the memo by request/response mode: a node shared by a request body and a response converts per mode', () => {
     // A readOnly property is dropped from requests, writeOnly from open responses, and a
-    // nested-quantifier pattern withholds only the output schema
-    // (kaisers-io/openapi-mcp-archive#39).
+    // nested-quantifier pattern is left out of the output schema only (issue #104).
     const user: Record<string, unknown> = {
       type: 'object',
       required: ['id', 'password'],
@@ -364,8 +363,11 @@ describe('buildTools — per-build memoization (issue kaisers-io/openapi-mcp-arc
       const byName = new Map(tools.map((tool) => [tool.toolName, tool]));
       const input = byName.get('createUser')?.wireSchema as { properties: Record<string, unknown> };
       expect(Object.keys(input.properties).toSorted()).toEqual(['code', 'password']);
-      expect(byName.get('getUser')?.outputSchema).toBeUndefined();
-      expect(byName.get('getUser')?.outputSchemaWithheld).toMatch(/nested quantifiers/u);
+      expect(input.properties['code']).toEqual({ type: 'string', pattern: '^(a+)+$' });
+      expect(JSON.stringify(byName.get('getUser')?.outputSchema)).toContain(
+        '"code":{"type":"string","description":"Pattern (not enforced): ^(a+)+$"}',
+      );
+      expect(byName.get('getUser')?.outputSchemaWithheld).toBeUndefined();
     }
   });
 

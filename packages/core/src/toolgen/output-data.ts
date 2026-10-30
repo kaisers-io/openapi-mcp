@@ -1,13 +1,7 @@
 import type { z } from 'zod';
 import type { OpenapiVersion } from '../spec/validate.ts';
 import { sequenceKind } from './media-type.ts';
-import {
-  convertSchema,
-  hasControlOrBidi,
-  memoizedJsonSchema,
-  toWireJsonSchema,
-  UNSAFE_PATTERN_REASON,
-} from './schema.ts';
+import { convertSchema, hasControlOrBidi, memoizedJsonSchema, toWireJsonSchema } from './schema.ts';
 
 // The `data` part of a derived output schema (output-schema.ts): one
 // response Media Type Object as JSON Schema.
@@ -42,12 +36,10 @@ const toDataSchema = (schema: z.ZodType): JsonSchemaRecord | undefined => {
 };
 
 // Why an operation has no output schema, when that is worth telling the
-// agent. Only the kaisers-io/openapi-mcp-archive#39 regex policy is reported:
-// the other omissions (no JSON success, a `default` response, ...) are ordinary
-// and need no explanation.
-export const OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN =
-  'No output schema: a response regex "pattern" has nested quantifiers (unbounded matching cost), so results are returned as text only.';
-
+// agent. Only a control or bidi character is reported: the other omissions (no
+// JSON success, a `default` response, ...) are ordinary and need no
+// explanation. A response `pattern` no longer withholds the schema (issue
+// #104, see pattern-safety.ts).
 export const OUTPUT_SCHEMA_WITHHELD_UNSAFE_TEXT =
   'No output schema: a name or value in a response schema has a control or bidirectional-override character, so results are returned as text only.';
 
@@ -59,9 +51,7 @@ export type DataSchema = { ok: JsonSchemaRecord } | { withheld?: string };
 export const responseDataSchema = (schema: unknown, version: OpenapiVersion): DataSchema => {
   const converted = convertSchema(schema, version, 0, 'response');
   if (!('ok' in converted)) {
-    return converted.unrepresentable.includes(UNSAFE_PATTERN_REASON)
-      ? { withheld: OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN }
-      : {};
+    return {};
   }
   // The same response schema (one shared node, one memoized Zod schema) is
   // emitted once per build, not once per operation that returns it

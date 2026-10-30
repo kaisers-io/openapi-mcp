@@ -101,7 +101,7 @@ const leftOutNote = (leftOut: readonly { name: string }[]): string | undefined =
 };
 
 // `note` is fixed server text (never spec text) about the tool itself, e.g.
-// why it has no output schema (kaisers-io/openapi-mcp-archive#39). It is listed
+// why it has no output schema (a control or bidi character). It is listed
 // right after `[DEPRECATED]`, before the cap, so a long spec description cannot
 // truncate it away.
 export const composeDescription = (

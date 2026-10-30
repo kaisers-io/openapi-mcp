@@ -1,12 +1,15 @@
-// Response `pattern` safety (kaisers-io/openapi-mcp-archive#39). An output
-// schema is compiled by Ajv, which runs every `pattern` as a JavaScript RegExp,
-// synchronously, on upstream data — after the request timeout has stopped
-// applying. A backtracking pattern such as `^(a+)+$` can then block the event
-// loop for seconds on a short, near-matching string. The policy is fail-closed
-// at tool generation: a response schema carrying a pattern with NESTED
-// QUANTIFIERS (star height > 1, the heuristic popularised by safe-regex) is
-// unrepresentable, so the tool gets no outputSchema and returns its result as
-// text — the pattern is never run.
+import { RE2JS } from 're2js';
+
+// Response `pattern` safety (kaisers-io/openapi-mcp-archive#39, issue #104).
+// An output schema is compiled by Ajv, which runs every `pattern` on upstream
+// data, synchronously, after the request timeout has stopped applying. The
+// server's Ajv runs patterns with RE2 (re2js, compileRe2Pattern below), whose
+// matching time is linear in the input. The MCP client compiles the advertised
+// outputSchema with its own Ajv, a backtracking engine, where a pattern such as
+// `^(a+)+$` can take seconds on a short, near-matching string. So a response
+// pattern with NESTED QUANTIFIERS (star height > 1, the heuristic popularised
+// by safe-regex), or one RE2 cannot run, is not advertised: only the `pattern`
+// keyword is dropped, and the node's description carries it as text.
 //
 // "Nested" means a quantified group that itself contains a quantifier, where
 // at least one of the two is unbounded, or both are bounded but wide:
@@ -195,3 +198,103 @@ export const hasNestedQuantifier = (pattern: string): boolean => {
   }
   return false;
 };
+
+// RE2 for a JavaScript `u`-mode pattern, or `undefined` when RE2 cannot run it
+// with the same meaning (issue #104). RE2 writes `\uXXXX` and `\u{X}` as
+// `\x{X}`; a surrogate pair is one code point. Two JavaScript forms are valid
+// RE2 with another meaning, so they are refused: a class that starts with `]`
+// (`[]` and `[^]` are complete classes in JavaScript) and `[:` inside a class
+// (an RE2 POSIX class such as `[[:alpha:]]`). What RE2 does not support
+// (lookaround, backreferences, `\cX`, `[\b]`, `\p{Script=...}`) fails to compile.
+// `.`, `\s` and `\S` become JavaScript's sets: server and client agree on values.
+const JS_LINE_TERMINATORS = String.raw`\n\r\x{2028}\x{2029}`;
+const JS_WHITESPACE = String.raw`\t\n\x{b}\f\r \x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}`;
+const JS_NON_WHITESPACE =
+  String.raw`\x{0}-\x{8}\x{e}-\x{1f}\x{21}-\x{9f}\x{a1}-\x{167f}\x{1681}-\x{1fff}\x{200b}-\x{2027}` +
+  String.raw`\x{202a}-\x{202e}\x{2030}-\x{205e}\x{2060}-\x{2fff}\x{3001}-\x{fefe}\x{ff00}-\x{10ffff}`;
+
+const UNICODE_ESCAPE_RE =
+  /\\u(?:(?<pair>[dD][89abAB][\da-fA-F]{2}\\u[dD][c-fC-F][\da-fA-F]{2})|\{(?<braced>[\da-fA-F]+)\}|(?<single>[\da-fA-F]{4}))/uy;
+
+const unicodeEscape = (match: RegExpExecArray): number => {
+  const { pair, braced, single } = match.groups ?? {};
+  if (pair !== undefined) {
+    const lead = Number.parseInt(pair.slice(0, 4), 16);
+    const trail = Number.parseInt(pair.slice(6), 16);
+    return (lead - 0xd8_00) * 0x4_00 + (trail - 0xdc_00) + 0x1_00_00;
+  }
+  return Number.parseInt(braced ?? single ?? '', 16);
+};
+
+const re2Source = (pattern: string): string | undefined => {
+  let source = '';
+  let inClass = false;
+  let index = 0;
+  while (index < pattern.length) {
+    const char = pattern[index] as string;
+    if (char === '\\') {
+      UNICODE_ESCAPE_RE.lastIndex = index;
+      const match = UNICODE_ESCAPE_RE.exec(pattern);
+      const escaped = pattern[index + 1];
+      if (match === null && (escaped === 's' || escaped === 'S')) {
+        const set = escaped === 's' ? JS_WHITESPACE : JS_NON_WHITESPACE;
+        source += inClass ? set : `[${set}]`;
+        index += 2;
+      } else if (match === null) {
+        source += pattern.slice(index, index + 2);
+        index += 2;
+      } else {
+        source += `\\x{${unicodeEscape(match).toString(16)}}`;
+        index += match[0].length;
+      }
+      continue;
+    }
+    if (inClass) {
+      if (char === '[' && pattern[index + 1] === ':') {
+        return undefined;
+      }
+      inClass = char !== ']';
+    } else if (char === '[') {
+      const first = pattern[index + 1] === '^' ? index + 2 : index + 1;
+      if (pattern[first] === ']') {
+        return undefined;
+      }
+      inClass = true;
+      source += pattern.slice(index, first);
+      index = first;
+      continue;
+    }
+    source += !inClass && char === '.' ? `[^${JS_LINE_TERMINATORS}]` : char;
+    index += 1;
+  }
+  return source;
+};
+
+export const compileRe2Pattern = (pattern: string): RE2JS | undefined => {
+  const source = re2Source(pattern);
+  if (source === undefined) {
+    return undefined;
+  }
+  try {
+    return RE2JS.compile(source);
+  } catch {
+    return undefined;
+  }
+};
+
+// Whether a response `pattern` stays in the advertised output schema: valid
+// JavaScript (the client's Ajv compiles it with the `u` flag), without nested
+// quantifiers (the client's engine backtracks), and runnable by RE2 (the
+// server's engine). Compiling a RegExp does not run it.
+const isJavaScriptPattern = (pattern: string): boolean => {
+  try {
+    return new RegExp(pattern, 'u') instanceof RegExp;
+  } catch {
+    return false;
+  }
+};
+
+export const isEnforceablePattern = (pattern: string): boolean =>
+  isJavaScriptPattern(pattern) &&
+  !hasNestedQuantifier(pattern) &&
+  compileRe2Pattern(pattern) !== undefined;

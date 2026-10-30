@@ -1065,10 +1065,10 @@ describe('tools command — --omit-output-schema (#13)', () => {
   });
 });
 
-// Issue kaisers-io/openapi-mcp-archive#39: a withheld output schema is reported
-// in --json output.
-describe('tools command — withheld output schema (kaisers-io/openapi-mcp-archive#39)', () => {
-  it('reports why a response pattern with nested quantifiers left the tool without one', async () => {
+// Issue #104: a response pattern with nested quantifiers no longer withholds
+// the output schema.
+describe('tools command — unsafe response pattern (issue #104)', () => {
+  it('keeps the output schema of a tool whose response pattern is not advertised', async () => {
     const { lines, ctx } = fileCtx();
     const argv = ['node', 'openapi-mcp', '--json', 'tools', '--spec', 'unsafe-pattern.json'];
     const code = await run(ctx, argv);
@@ -1078,8 +1078,8 @@ describe('tools command — withheld output schema (kaisers-io/openapi-mcp-archi
         data: { tools: { name: string; outputSchema: boolean; outputSchemaWithheld?: string }[] };
       }
     ).data.tools;
-    expect(row).toMatchObject({ name: 'listCodes', outputSchema: false });
-    expect(row?.outputSchemaWithheld).toMatch(/nested quantifiers/u);
+    expect(row).toMatchObject({ name: 'listCodes', outputSchema: true });
+    expect(row?.outputSchemaWithheld).toBeUndefined();
   });
 });
 

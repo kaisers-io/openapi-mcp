@@ -190,21 +190,32 @@ checks:
   output that does not match the declared schema.
 - Response validation and regular expressions (`pattern`). The server validates a response
   synchronously after the upstream call has finished, so the request timeout no longer covers
-  that work. To keep its CPU cost bounded, a tool whose response schema has a `pattern` with
-  **nested quantifiers** gets no output schema. The tool still works and returns its result as
-  text, and its description starts with a sentence that says so. The rules:
-  - In response schemas the server enforces a pattern unless it nests quantifiers. A pattern
-    nests quantifiers when a group repeated more than once (`*`, `+`, `{n,}`, or `{n,m}` with m
-    over 1) contains an unbounded quantifier (`(a+)+`, `(\w+\s?)*`, `(a*){2}`), or when an
-    unbounded repetition of a group contains any variable quantifier (`(a?)+`, `(\d{1,3})*`).
-    A bounded repetition of a group with a variable quantifier nests quantifiers too when a
-    match can be split in more than 64 ways, as in `(a{1,20}){1,20}` or
+  that work. The server runs every response `pattern` with RE2 (the `re2js` library), whose
+  matching time is linear in the input, so no pattern can block it. The MCP client checks
+  `structuredContent` against the advertised output schema too, usually with Ajv, which
+  backtracks. So a response pattern stays in the output schema only when it is safe for both
+  engines. The rules:
+  - A pattern that **nests quantifiers**, or that RE2 cannot run, loses only its `pattern`
+    keyword. The rest of the output schema stays, and the field's description ends with
+    `Pattern (not enforced): <pattern>`, so the model still sees it. Neither the server nor the
+    client checks it. With `--no-output-schema-descriptions` this text goes with the other
+    descriptions.
+  - A pattern nests quantifiers when a group repeated more than once (`*`, `+`, `{n,}`, or
+    `{n,m}` with m over 1) contains an unbounded quantifier (`(a+)+`, `(\w+\s?)*`, `(a*){2}`),
+    or when an unbounded repetition of a group contains any variable quantifier (`(a?)+`,
+    `(\d{1,3})*`). A bounded repetition of a group with a variable quantifier nests quantifiers
+    too when a match can be split in more than 64 ways, as in `(a{1,20}){1,20}` or
     `([a-z0-9]{1,63}\.?){1,8}`. Small bounded nestings stay supported: `(\d{1,3}\.){3}` (IPv4,
     27 ways) and `(-[0-9a-f]{4}){3}` (UUID).
   - This check counts nesting depth, in the style of the safe-regex library. It errs on the
     side of refusing: some unambiguous patterns, such as `^[a-z]+(-[a-z]+)*$` and
     `^([a-z]{1,63}\.){3}$`, are refused too. It does not detect overlapping alternatives under
-    a single quantifier (`(a|a)+`) or backreferences.
+    a single quantifier (`(a|a)+`).
+  - RE2 cannot run lookahead, lookbehind, backreferences, `\cX`, `[\b]` and Unicode property
+    names such as `\p{Script=Greek}` (`\p{L}` works). A pattern that is not valid JavaScript
+    with the `u` flag is not enforced either, because the client could not compile it.
+  - The server and the client accept the same values. RE2's `.`, `\s` and `\S` differ from
+    JavaScript's, so the server writes them out as JavaScript's sets of characters.
   - In request schemas (tool inputs) the server shows `pattern` and `format` to the model in
     the input schema but never runs them, so they cost no CPU here.
   - In response schemas the server enforces `format` with the checks of ajv-formats. Its `url`

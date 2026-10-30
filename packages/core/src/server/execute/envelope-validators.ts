@@ -3,6 +3,7 @@ import Ajv2020Module from 'ajv/dist/2020.js';
 import type { ErrorObject, Options, ValidateFunction } from 'ajv/dist/2020.js';
 import addFormatsModule from 'ajv-formats';
 import { fullFormats } from 'ajv-formats/dist/formats.js';
+import { compileRe2Pattern } from '../../toolgen/pattern-safety.ts';
 
 export type { ErrorObject } from 'ajv/dist/2020.js';
 
@@ -31,8 +32,7 @@ const unwrapDefault = <Unwrapped>(moduleValue: unknown): Unwrapped => {
 const Ajv2020 = unwrapDefault<AjvConstructor>(Ajv2020Module);
 const addFormats = unwrapDefault<(ajv: AjvInstance) => unknown>(addFormatsModule);
 
-// Ajv runs formats synchronously on upstream data, after the request timeout
-// (the reason for the response `pattern` gate, toolgen/pattern-safety.ts).
+// Ajv runs formats synchronously on upstream data, after the request timeout.
 // The user-info part of the ajv-formats `url` regex, `(?:\S+(?::\S*)?@)?`,
 // has two ways to match a colon and backtracks quadratically: 32,000 colons
 // after `http://` blocked the event loop for 1.6 s. `\S+` already matches
@@ -42,6 +42,24 @@ const AJV_URL = fullFormats.url as RegExp;
 const LINEAR_URL = new RegExp(
   AJV_URL.source.replace(String.raw`(?:\S+(?::\S*)?@)?`, String.raw`(?:\S+@)?`),
   AJV_URL.flags,
+);
+
+// Ajv runs every `pattern` of an output schema with RE2 (issue #104): matching
+// time is linear in the input, so no pattern can block the event loop. Ajv
+// passes the JavaScript source and caches the result by its toString(), so
+// toString() must return that source, or all patterns would share the first
+// one. Tool generation advertises only patterns RE2 can run
+// (toolgen/pattern-safety.ts); another one throws at compile. `code` names the
+// engine only for standalone code, which is not generated here.
+const re2RegExp = Object.assign(
+  (source: string) => {
+    const compiled = compileRe2Pattern(source);
+    if (compiled === undefined) {
+      throw new Error(`RE2 cannot run the pattern ${JSON.stringify(source)}`);
+    }
+    return { test: (input: string) => compiled.test(input), toString: () => source };
+  },
+  { code: 're2js' },
 );
 
 // `onErrors` sees Ajv's errors of a failed validation, synchronously, before
@@ -90,7 +108,11 @@ export type EnvelopeCompiler = (
 // call. `undefined` in, `undefined` out: a tool with no outputSchema has
 // nothing to validate against.
 export const createEnvelopeCompiler = (): EnvelopeCompiler => {
-  const ajv = new Ajv2020({ strict: false, addUsedSchema: false, code: { optimize: false } });
+  const ajv = new Ajv2020({
+    strict: false,
+    addUsedSchema: false,
+    code: { optimize: false, regExp: re2RegExp },
+  });
   addFormats(ajv);
   ajv.addFormat('url', LINEAR_URL);
   const compiled = new Map<string, ValidateFunction>();

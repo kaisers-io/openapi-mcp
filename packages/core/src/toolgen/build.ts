@@ -38,8 +38,8 @@ export type GeneratedTool = {
   // by `tools`.
   outputSchemaOptedOut?: true;
   // Why the tool has no outputSchema, when the agent should know
-  // (kaisers-io/openapi-mcp-archive#39: a response `pattern` with nested
-  // quantifiers). Also folded into the description.
+  // (a control or bidi character in a response schema). Also folded into the
+  // description.
   outputSchemaWithheld?: string;
   // Present only for a paginated GET (see toolgen/pagination.ts).
   pagination?: PaginationPlan;

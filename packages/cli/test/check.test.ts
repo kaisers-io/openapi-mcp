@@ -55,7 +55,7 @@ const SPECS: Record<string, unknown> = {
     '/x': {
       get: {
         operationId: 'getX',
-        // An invalid pattern
+        // An invalid pattern: the description carries it (issue #104)
         responses: ok({ type: 'object', properties: { id: { type: 'string', pattern: '(' } } }),
       },
     },
@@ -307,9 +307,10 @@ describe('check (issue #77)', () => {
   });
 
   it('compiles every output schema under discover, which serve leaves to the first call', async () => {
+    // An invalid response pattern no longer fails the compile (issue #104)
     const result = await check(['--spec', 'bad-pattern.json', ...BASE, '--tool-mode', 'discover']);
-    expect(result.code).toBe(EXIT.USAGE);
-    expect(reportOf(result.lines).data.startup.error?.message).toContain('getX');
+    expect(result.code).toBe(EXIT.OK);
+    expect(reportOf(result.lines).data.startup.error).toBeUndefined();
   });
 
   it('lists the variables of --spec-header-env and --http-token-env', async () => {
@@ -372,16 +373,6 @@ describe('check (issue #77)', () => {
     ]);
     expect(result.code).not.toBe(EXIT.OK);
     expect(reportOf(result.lines).data.startup.status).toBe('failed');
-  });
-
-  it('prints a failed startup as one line without --json', async () => {
-    const result = await check(
-      ['--spec', 'bad-pattern.json', ...BASE, '--tool-mode', 'discover'],
-      {},
-      [],
-    );
-    expect(result.code).toBe(EXIT.USAGE);
-    expect(result.lines.join('\n')).toContain('startup: failed');
   });
 
   it('withholds a response schema with a terminal escape instead of failing the startup', async () => {

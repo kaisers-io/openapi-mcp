@@ -67,7 +67,8 @@ Nothing was sent after any of these.
 | `did not match the tool's declared output schema`, `did not match a declared output branch`, `had no body to validate`, `was not valid JSON`, `was not a valid ... sequence`, `was not valid UTF-8 text` | the API answers differently from its spec | `--log json` shows `mismatch`; a spec fix, `--nullable-response-fields`, or `--omit-output-schema` for that tool |
 | `No structured result is returned: this status is not documented` | an undocumented 2xx under `--default-response-is-error` | the write likely happened; fix the spec, or drop that flag |
 | `used an unsupported media type` | a PDF, binary or image answer the server does not return | images: `--image-responses inline` or `file`; other types are not supported |
-| a tool returns text, `CLI --json tools` shows `outputSchemaWithheld: No output schema: ...` | the response schema has a `pattern` that is too costly to check (`nested quantifiers`), or a control or bidirectional-override character | expected; the agent reads the text |
+| a tool returns text, `CLI --json tools` shows `outputSchemaWithheld: No output schema: ...` | a name or value in the response schema has a control or bidirectional-override character | expected; the agent reads the text |
+| a field description ends with `Pattern (not enforced): <pattern>` | the response `pattern` nests quantifiers (too costly for the client's regex engine) or RE2 cannot run it (lookaround, backreferences); only that keyword left the output schema | expected; a value that does not match is not an error |
 | `(the response text above was truncated` | the text copy is over 8 KiB | `_fields` with `--response-projection`, or smaller pages |
 
 ## Limits, OAuth and secrets

@@ -48,6 +48,7 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
+| Unreleased | A response `pattern` that nests quantifiers or that RE2 cannot run no longer withholds the output schema. Only that keyword is left out; the field description ends with `Pattern (not enforced): <pattern>`. The server checks the other patterns with RE2. | Nothing in the config. `tools` no longer shows `outputSchemaWithheld` for such a tool. |
 | 0.7.1 | An operation with a control or bidirectional-override character in a parameter or property name, `enum`, `const`, `pattern` or `format` of its input schema is no longer a tool. | Compare the tool names of both versions; `tools` names the operation under `notExposed`. The spec needs a change. |
 | 0.7.1 | A tool gets no output schema and returns text when its response schema has such a character, or a `pattern` with more than 64 ways to split a match, such as `^([a-z0-9]{1,63}\.?){1,8}$`. | Nothing in the config. |
 | 0.7.1 | `--allow-private-network` no longer admits link-local addresses (`169.254.0.0/16`, `fe80::/10`). Calls to them fail with `not allowed by the egress policy`. | No flag admits them. Ask the user for an address of the API outside these ranges. |

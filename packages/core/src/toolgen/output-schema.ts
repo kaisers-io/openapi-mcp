@@ -6,9 +6,8 @@ import type { NullableFieldScope } from './nullable-fields.ts';
 import { PAGINATION_SCHEMA } from './pagination.ts';
 import { isSequenceContentType, responseDataSchema, sequenceDataSchema } from './output-data.ts';
 
-// Re-exported so build.ts reads these from the module it already depends on
+// Re-exported so build.ts reads it from the module it already depends on
 export type { NullableFieldScope } from './nullable-fields.ts';
-export { OUTPUT_SCHEMA_WITHHELD_UNSAFE_PATTERN } from './output-data.ts';
 
 export type JsonSchemaRecord = Record<string, unknown>;
 
