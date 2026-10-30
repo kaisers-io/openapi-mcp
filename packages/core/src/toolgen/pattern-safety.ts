@@ -206,10 +206,12 @@ export const hasNestedQuantifier = (pattern: string): boolean => {
 // (`[]` and `[^]` are complete classes in JavaScript) and `[:` inside a class
 // (an RE2 POSIX class such as `[[:alpha:]]`). What RE2 does not support
 // (lookaround, backreferences, `\cX`, `[\b]`, `\p{Script=...}`) fails to compile.
-// `.` and `\s` are written out as JavaScript's sets, so server and client
-// accept the same values; `\S` inside a class has no such form and is refused.
+// `.`, `\s` and `\S` become JavaScript's sets: server and client agree on values.
 const JS_LINE_TERMINATORS = String.raw`\n\r\x{2028}\x{2029}`;
 const JS_WHITESPACE = String.raw`\t\n\x{b}\f\r \x{a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}`;
+const JS_NON_WHITESPACE =
+  String.raw`\x{0}-\x{8}\x{e}-\x{1f}\x{21}-\x{9f}\x{a1}-\x{167f}\x{1681}-\x{1fff}\x{200b}-\x{2027}` +
+  String.raw`\x{202a}-\x{202e}\x{2030}-\x{205e}\x{2060}-\x{2fff}\x{3001}-\x{fefe}\x{ff00}-\x{10ffff}`;
 
 const UNICODE_ESCAPE_RE =
   /\\u(?:(?<pair>[dD][89abAB][\da-fA-F]{2}\\u[dD][c-fC-F][\da-fA-F]{2})|\{(?<braced>[\da-fA-F]+)\}|(?<single>[\da-fA-F]{4}))/uy;
@@ -235,10 +237,8 @@ const re2Source = (pattern: string): string | undefined => {
       const match = UNICODE_ESCAPE_RE.exec(pattern);
       const escaped = pattern[index + 1];
       if (match === null && (escaped === 's' || escaped === 'S')) {
-        if (escaped === 'S' && inClass) {
-          return undefined;
-        }
-        source += inClass ? JS_WHITESPACE : `[${escaped === 'S' ? '^' : ''}${JS_WHITESPACE}]`;
+        const set = escaped === 's' ? JS_WHITESPACE : JS_NON_WHITESPACE;
+        source += inClass ? set : `[${set}]`;
         index += 2;
       } else if (match === null) {
         source += pattern.slice(index, index + 2);

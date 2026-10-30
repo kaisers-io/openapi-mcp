@@ -7,7 +7,7 @@ import {
   SYSTEM_HEADERS,
 } from '../src/index.ts';
 import type { EnvelopeValidator, OperationRecord } from '../src/index.ts';
-import { isEnforceablePattern } from '../src/toolgen/pattern-safety.ts';
+import { compileRe2Pattern, isEnforceablePattern } from '../src/toolgen/pattern-safety.ts';
 
 // Issue kaisers-io/openapi-mcp-archive#39: response patterns with nested
 // quantifiers are never advertised to the client's backtracking Ajv.
@@ -118,6 +118,20 @@ describe('output schema with an unsafe response pattern (issue #104)', () => {
       minLength: 1,
       maxLength: 5,
       description: 'A code. — Pattern (not enforced): ^(?=x)x$',
+    });
+  });
+
+  it('keeps the note through nested single-member allOf wrappers', () => {
+    const result = explainOutputSchema(
+      op({
+        description: 'Outer.',
+        allOf: [{ allOf: [{ type: 'string', pattern: '^(?=x)x$' }] }],
+      }),
+      '3.1',
+    );
+    expect(dataOf(result.outputSchema)).toEqual({
+      type: 'string',
+      description: 'Outer. — Pattern (not enforced): ^(?=x)x$',
     });
   });
 
@@ -253,8 +267,35 @@ describe('response patterns on the server (issue #104)', () => {
     }
   });
 
-  it('does not advertise \\S inside a class', () => {
-    expect(isEnforceablePattern('^[\\S]+$')).toBe(false);
+  it('agrees with JavaScript on every BMP code point for \\s and \\S in and outside a class', () => {
+    for (const pattern of [
+      '^\\s$',
+      '^\\S$',
+      '^[\\S]$',
+      '^[^\\S]$',
+      '^[\\s\\S]$',
+      '^[a\\S]$',
+      '^[^\\S\\n]$',
+    ]) {
+      const re2 = compileRe2Pattern(pattern) as NonNullable<ReturnType<typeof compileRe2Pattern>>;
+      const js = new RegExp(pattern, 'u');
+      const differing: number[] = [];
+      for (let code = 0; code <= 0xff_ff; code += 1) {
+        if (code < 0xd8_00 || code > 0xdf_ff) {
+          const value = String.fromCodePoint(code);
+          if (re2.test(value) !== js.test(value)) {
+            differing.push(code);
+          }
+        }
+      }
+      for (const code of [0x1_00_00, 0x1_f6_00, 0x10_ff_ff]) {
+        const value = String.fromCodePoint(code);
+        if (re2.test(value) !== js.test(value)) {
+          differing.push(code);
+        }
+      }
+      expect([pattern, differing]).toEqual([pattern, []]);
+    }
   });
 
   it('matches a catastrophic pattern in linear time', () => {

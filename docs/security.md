@@ -214,9 +214,8 @@ checks:
   - RE2 cannot run lookahead, lookbehind, backreferences, `\cX`, `[\b]` and Unicode property
     names such as `\p{Script=Greek}` (`\p{L}` works). A pattern that is not valid JavaScript
     with the `u` flag is not enforced either, because the client could not compile it.
-  - The server and the client accept the same values. RE2's `.` and `\s` differ from
-    JavaScript's, so the server writes them out as JavaScript's sets of characters. `\S` inside
-    a class (`[\S]`) has no such form, so such a pattern is not enforced.
+  - The server and the client accept the same values. RE2's `.`, `\s` and `\S` differ from
+    JavaScript's, so the server writes them out as JavaScript's sets of characters.
   - In request schemas (tool inputs) the server shows `pattern` and `format` to the model in
     the input schema but never runs them, so they cost no CPU here.
   - In response schemas the server enforces `format` with the checks of ajv-formats. Its `url`
