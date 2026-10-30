@@ -51,6 +51,11 @@ When the spec URL itself needs a credential, add `--spec-header-env Authorizatio
 `--cache-key <name>` (letters, digits, `.`, `_`, `-`), unique per account. `--header-env` does
 not authenticate the spec fetch.
 
+The spec URL must use `https`, unless its host is loopback. Over plain `http` the start fails
+with `refusing to send a --spec-header-env credential in cleartext`. `--allow-insecure-http`
+permits it on `serve`, `check`, `tools` and `cache refresh`. Add it only if the spec has no
+`https` address and the user agrees.
+
 ## Naming variables
 
 Name each variable after the service and its purpose: `SHOP_API_TOKEN`, `SHOP_CLIENT_SECRET`.

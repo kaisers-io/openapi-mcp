@@ -16,8 +16,10 @@ Details:
 | `status 404` | wrong base URL, or the object does not exist | compare `check`'s `baseUrl` with the API docs; `--base-url` with the API's path prefix |
 | `the upstream request timed out` | the API is slow | `--request-timeout`, below the host's tool timeout |
 | `the request to the upstream server failed` | DNS, TLS or network | test the base URL from the same machine |
-| `not allowed by the egress policy` | the base URL or a redirect leads to a private address | `--allow-private-network` only after the user confirms the address is theirs |
+| `not allowed by the egress policy` | the base URL or a redirect leads to a private address | `--allow-private-network` only after the user confirms the address is theirs; it never admits link-local addresses (`169.254.0.0/16`, `fe80::/10`) |
 | `did not match the tool's declared output schema` | the API answers differently from its spec | `--log json` shows `mismatch`; a spec fix, `--nullable-response-fields`, or `--omit-output-schema` for that tool |
+| `_fields would return more than twice the size of the response` | the selection repeats or overlaps parts of the response | select fewer or narrower fields |
+| a tool returns text, `CLI --json tools` shows `outputSchemaWithheld: No output schema: ...` | the response schema has a `pattern` that is too costly to check, or a control or bidirectional-override character | expected; the agent reads the text |
 | `exceeded the maximum response size` | response over `--max-response-bytes` | smaller responses from the API (pagination, its own field or page-size parameters); `--response-projection` does not help, since the limit applies while the response is read; raise the limit last |
 | `could not obtain an OAuth2 access token` | client ID, secret, token URL or scope | check the variables and `--upstream-oauth-token-url` |
 | `refusing to send a secret header in cleartext` | `http://` to a remote host | use `https://` |

@@ -32,10 +32,12 @@ Read the `check` output first: `environment` lists every variable, `startup` the
 | `external $ref "..." is not supported` | the spec spans several files | bundle it into one file first |
 | `has no absolute server URL ... pass --base-url` | no usable `servers` entry | `--base-url https://...` |
 | `the spec alone would decide where --header-env/--basic-auth-env credentials are sent` | a spec URL with a credential and no `--base-url` | `--base-url https://...`, the API base URL the user confirms |
+| `refusing to send a --spec-header-env credential in cleartext` | an `http://` spec URL to a host that is not loopback | an `https://` spec URL; `--allow-insecure-http` (also on `tools` and `cache refresh`) only if the user agrees |
 | `an authenticated spec source ... requires an explicit cache decision` | `--spec-header-env` without a cache key | `--cache-key <name>` |
 | `N tools would be exposed ... exceeds the 512-tool budget` | too many operations for `per-operation` | narrow `--allow`, or `--tool-mode discover` |
 | `matches no operation` under `--strict-filters` | a pattern names nothing | fix the pattern with the suggestion it prints |
 | `a filter pattern needs a selector; write ...` | a pattern from before 0.5.0 | apply the replacement it names |
 | `the OAuth token URL is refused` | token URL private or not allowed | check the URL with the user |
 | `is not allowed by the egress policy`, private address | the API is on a private network | `--allow-private-network`, only after the user confirms the address is theirs |
+| `is a cloud-metadata address`, `is a cloud-metadata endpoint` | a metadata host, or a link-local address (`169.254.0.0/16`, `fe80::/10`) | no flag admits it, `--allow-private-network` neither; use another address of the API |
 | `the spec cache entry is unusable`, `is locked by another openapi-mcp process` | damaged cache, or another process holds its lock | ask the user; `openapi-mcp cache list`, then `cache unlock` or `cache clear` for that entry |

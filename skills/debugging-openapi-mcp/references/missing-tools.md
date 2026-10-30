@@ -15,6 +15,7 @@ below that explains it, and propose the fix.
 | `decision: not-allowed` | `--allow` is given and no pattern matches it | add a pattern for it |
 | `decision: denied`, `pattern` names the `--deny` | a deny matches it | narrow that deny |
 | `decision: omitted`, with `omittableParameters` | only optional parameters the server cannot send keep it out (Stripe's `expand`, a `deepObject` array) | propose `--omit-unsupported-parameters "operationId:<id>"`; name the parameters the agent then cannot set, and add it only if the user agrees |
+| `decision: omitted`, reason `has a control or bidirectional-override character` | a parameter or property name, `enum`, `const`, `pattern` or `format` holds such a character | the spec needs a change; tell the user, the text may try to mislead the agent |
 | `decision: omitted`, without `omittableParameters` | the operation uses something not supported | explain the reason; the spec needs a change (overlay) |
 | a tool's `leftOutParameters` | `--omit-unsupported-parameters` built it without them | expected; the agent cannot set them |
 | `decision: withheld` | a refreshed spec waits as a candidate and removed it | ask the user to review it: `openapi-mcp cache promote` |
@@ -25,6 +26,7 @@ below that explains it, and propose the fix.
 | Codex `enabled_tools`, Gemini `includeTools` | the host hides tools | adjust the host setting (host file) |
 | the CLI lists the tool, the host does not | the host was not restarted, or the server failed | host status (host file) |
 | old tools after a spec change | `cacheStatus: candidate` | the user reviews and promotes the candidate |
+| `spec refresh failed, serving the last known good accepted baseline` | the refresh failed; with `exceeds the 67108864-byte persisted-document budget`, the new spec is over 64 MiB | fix the cause it names; a spec that large does not update |
 
 Since 0.5.0 every selector ignores letter case and `*` in `operationId:`, `name:` and `tag:`
 matches `/`. A pattern written for an older version can expose or exclude more than before.
