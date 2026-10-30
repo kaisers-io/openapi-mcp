@@ -157,9 +157,10 @@ The server only sends a credential where you pointed it.
   hop and every later hop.
 - If an API request is redirected to another origin, the server sends only `Accept` and
   `Content-Type` there, never a `--header`, `--header-env` or OAuth2 credential.
-- When the spec is fetched from a URL, `--header-env` and `--basic-auth-env` need `--base-url`.
-  Otherwise the spec alone would choose where the credential is sent. The server stops at
-  startup with exit code 2. A spec file needs no `--base-url` for this.
+- When the spec is fetched from a URL, `--header-env`, `--basic-auth-env` and
+  `--upstream-oauth-*` need `--base-url`. Otherwise the spec alone would choose where the
+  credential is sent. The server stops at startup with exit code 2. A spec file needs no
+  `--base-url` for this.
 - When one server serves several APIs (`--api`), each API's credentials go only to that API's
   own base URL. See [several-apis.md](several-apis.md).
 - The server refuses to send a `--header-env` value, a `--spec-header-env` value or an OAuth2
@@ -233,8 +234,10 @@ The server sends the client secret to the token URL, so it is strict about which
 - `--upstream-oauth-token-url <url>` overrides the spec's value.
 - A spec token URL on a different origin than the API base URL is a startup error unless
   `--upstream-oauth-token-url` names it. This way you confirm where the secret goes.
-- When the spec is fetched from a URL, you must pass `--base-url` or `--upstream-oauth-token-url`.
-  Otherwise the spec alone would choose both the API origin and the place the secret is sent.
+- When the spec is fetched from a URL, you must pass `--base-url`. Otherwise the spec alone
+  would choose the API origin, and the access token goes there. `--upstream-oauth-token-url`
+  alone is not enough: it decides where the client secret goes, not where the access token
+  goes.
 - The token URL must use `https`. Plain `http` is accepted only for a literal loopback host:
   `localhost`, `127.0.0.0/8` or `::1`, not `*.localhost`. It must not contain a user name,
   password or fragment.

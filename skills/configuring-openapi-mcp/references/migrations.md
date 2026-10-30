@@ -34,6 +34,7 @@ The new version stops with an error that names the replacement. Apply it.
 
 | Version | Old | New |
 |---|---|---|
+| Unreleased | a spec URL with `--upstream-oauth-*` and no `--base-url` (also with `--upstream-oauth-token-url`) | add `--base-url <API base URL>`; take it from the spec's `servers` and ask the user to confirm it |
 | 0.7.1 | a spec URL with `--header-env` or `--basic-auth-env` and no `--base-url` | add `--base-url <API base URL>`; take it from the spec's `servers` and ask the user to confirm it |
 | 0.7.1 | `--spec-header-env` with an `http://` spec URL to a host that is not loopback | an `https://` spec URL; `--allow-insecure-http` only if the spec has no other address and the user agrees |
 | 0.7.0 | `--api execute=<source>` | another API name: `execute` is reserved, like `call` and `search` |
@@ -48,6 +49,10 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
+| Unreleased | A response `pattern` with quantifiers side by side that can match the same characters (`^\d*\.?\d+$`, `.*:.*`), or without `^` and with something that can fail after an unbounded quantifier (`\s+$`), is no longer in the output schema; the field description ends with `Pattern (not enforced): <pattern>`. Neither the server nor the client checks it. | Nothing in the config. |
+| Unreleased | A response `format: url` is no longer in the output schema; the field description ends with `Format (not enforced): url`. A response value that is not a URL is no longer an error. | Nothing in the config. |
+| Unreleased | More results that echo a registered secret are withheld: an escaped or entity-encoded secret in a structured result, a `_fields` selection or a response header (the header is dropped), JSON inside a JSON string, and a digit-only secret of more than 15 digits as a JSON number. | Nothing in the config. |
+| Unreleased | A `_fields` selection over a response with many escaped control characters, lone surrogates or multi-byte characters can now fail with the "more than twice the size of the response" error where it was accepted before. | Nothing in the config. The agent selects fewer or narrower fields. |
 | 0.8.0 | A response `pattern` that nests quantifiers or that RE2 cannot run no longer withholds the output schema. Only that keyword is left out; the field description ends with `Pattern (not enforced): <pattern>`. The server checks the other patterns with RE2. | Nothing in the config. `tools` no longer shows `outputSchemaWithheld` for such a tool. |
 | 0.7.1 | An operation with a control or bidirectional-override character in a parameter or property name, `enum`, `const`, `pattern` or `format` of its input schema is no longer a tool. | Compare the tool names of both versions; `tools` names the operation under `notExposed`. The spec needs a change. |
 | 0.7.1 | A tool gets no output schema and returns text when its response schema has such a character, or a `pattern` with more than 64 ways to split a match, such as `^([a-z0-9]{1,63}\.?){1,8}$`. | Nothing in the config. |

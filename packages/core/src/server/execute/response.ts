@@ -15,7 +15,7 @@ import {
 } from './forwarded-headers.ts';
 import type { PageHint, PageInput } from './forwarded-headers.ts';
 import {
-  decodedForms,
+  someDecodedForm,
   isJsonEssence,
   isTextEssence,
   mediaEssence,
@@ -302,13 +302,24 @@ const scanSafely = (redactor: Redactor, value: unknown): boolean => {
   }
 };
 
-// A text body is only string-redacted, so a secret it echoes in an encoder's
-// own spelling (Go's `\u0026`, Python's `\uXXXX` for non-ASCII, an XML or
-// HTML `&amp;` or `&#38;`) matches no needle. The WHOLE text is decoded each
-// way and scanned before any cut, so an escaped secret across the cut cannot
-// leave a fragment either.
-const escapedSecretIn = (redactor: Redactor, text: string): boolean =>
-  decodedForms(text).some((form) => scanSafely(redactor, form));
+// A secret an upstream echoes in an encoder's own spelling (Go's `\u0026`,
+// Python's `\uXXXX` for non-ASCII, an XML or HTML `&amp;` or `&#38;`)
+// matches no needle, in a text body or in a JSON string value. Each text, or
+// each string and key of a parsed value, is decoded each way and scanned; a
+// text WHOLE, before any cut, so an escaped secret across the cut cannot
+// leave a fragment either. A throw fails closed.
+const escapedSecretIn = (redactor: Redactor, value: unknown): boolean => {
+  try {
+    return someDecodedForm(value, (form) => redactor.scanForSecret(form));
+  } catch {
+    return true;
+  }
+};
+
+// Every secret check of a parsed value: its literal needles, then their
+// decoded spellings
+const parsedHasSecret = (redactor: Redactor, value: unknown): boolean =>
+  scanSafely(redactor, value) || escapedSecretIn(redactor, value);
 
 const mapHttpError = (
   status: number,
@@ -463,7 +474,7 @@ const EXPONENT_RE = /\d[eE]/u;
 // only fails closed). With any backslash present, an escaped secret (`\/`,
 // `\uXXXX`) differs from its parsed form, and with a digit followed by `e`,
 // a number may (`9.87654321e8` parses to 987654321), so the tree walk runs
-// over the whole envelope instead. Every OTHER envelope field (status,
+// over the whole envelope as well. Every OTHER envelope field (status,
 // contentType, and anything a later layer adds, such as forwarded headers or
 // pagination hints) is always tree-scanned: the raw text only stands in for
 // `data`, so a new field can never silently skip the scan.
@@ -472,11 +483,19 @@ export const envelopeHasSecret = (
   rawJson: string,
   envelope: Record<string, unknown>,
 ): boolean => {
-  if (rawJson.includes('\\') || EXPONENT_RE.test(rawJson)) {
-    return scanSafely(redactor, envelope);
-  }
   const { data: _data, ...rest } = envelope;
-  return scanSafely(redactor, rawJson) || scanSafely(redactor, rest);
+  // The raw text keeps every number as the upstream wrote it, also digits a
+  // double cannot hold; a match there only fails closed. Decoding the raw
+  // text's JSON escapes once yields every parsed string, so its decoded
+  // forms cover those of `data`'s strings in one pass.
+  if (
+    scanSafely(redactor, rawJson) ||
+    escapedSecretIn(redactor, rawJson) ||
+    parsedHasSecret(redactor, rest)
+  ) {
+    return true;
+  }
+  return (rawJson.includes('\\') || EXPONENT_RE.test(rawJson)) && scanSafely(redactor, envelope);
 };
 
 // Validates the envelope; with `diagnose`, a refusal also says why, for the
@@ -542,7 +561,7 @@ const projectEnvelope = (
   }
   const { data: _full, ...rest } = envelope;
   const projected: Record<string, unknown> = { ...rest, projection };
-  if (scanSafely(redactor, projected)) {
+  if (parsedHasSecret(redactor, projected)) {
     return withheldSuccess();
   }
   markSecretScanned(projected, redactor);
@@ -557,7 +576,7 @@ const projectedText = (
   if (projection === undefined) {
     return textOutcome(PROJECTION_TOO_LARGE, true);
   }
-  if (scanSafely(redactor, projection)) {
+  if (parsedHasSecret(redactor, projection)) {
     return withheldSuccess();
   }
   return textOutcome(truncateUtf8(JSON.stringify(projection), maxTextBytes), false);

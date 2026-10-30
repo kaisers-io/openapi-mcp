@@ -205,6 +205,26 @@ describe('JSON Pointer projection', () => {
   });
 
   it.each([
+    ['a control character', '\u0001'],
+    ['a lone surrogate', '\uD800'],
+    ['a three-byte character', '\u4E2D'],
+    ['a two-byte character', '\u00E9'],
+    ['a surrogate pair', '\uD83D\uDE00'],
+    ['a quote', '"'],
+    ['a newline', '\n'],
+  ])('counts %s at the bytes JSON writes for it', (_label, character) => {
+    // As many bytes in the body as in the result (six for an escape): counted
+    // by length, three overlapping pointers fit a budget meant for two copies
+    let nested: unknown = character.repeat(100_000);
+    for (let depth = 0; depth < 32; depth += 1) {
+      nested = { a: nested };
+    }
+    const pointers = ['/a'.repeat(32), '/a'.repeat(31), '/a'.repeat(30)];
+    expect(project(nested, pointers.slice(0, 2), bytesOf(nested))).toBeDefined();
+    expect(project(nested, pointers, bytesOf(nested))).toBeUndefined();
+  });
+
+  it.each([
     ['an empty list', []],
     ['too many pointers', Array.from({ length: 33 }, (_unused, index) => `/f${index}`)],
     ['a pointer without the leading slash', ['items']],

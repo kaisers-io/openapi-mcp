@@ -480,6 +480,30 @@ describe('createCycleDetector and collapseCycles', () => {
     expect(performance.now() - started).toBeLessThan(1000);
   });
 
+  it('resolves a ref string once, however often it repeats', () => {
+    // A YAML alias repeats one string object; resolving costs its length
+    let resolved = 0;
+    const leaf = { type: 'string' };
+    const ref = `#/x/${'0'.repeat(10_000)}`;
+    const node = { $ref: ref };
+    const properties = Object.fromEntries(
+      Array.from({ length: 1000 }, (_, at) => [`p${at}`, node]),
+    );
+    const doc = {
+      x: [leaf].map((value) => value),
+      components: { schemas: { A: { type: 'object', properties } } },
+    };
+    Object.defineProperty(doc.x, '0', {
+      get: () => {
+        resolved += 1;
+        return leaf;
+      },
+    });
+    expect(createCycleDetector(doc)('#/components/schemas/A')).toBe(false);
+    // Once to key the target, once to walk it
+    expect(resolved).toBe(2);
+  });
+
   it('refuses a ref graph whose targets overlap past the node budget', () => {
     // 100 nested levels, each referencing the next, over a 200,000-element
     // leaf: every level is a distinct target, and each walk crosses the leaf

@@ -9,7 +9,7 @@ import type { ServerSnapshot, SnapshotTool } from './types.ts';
 import { runDiscoveryTool } from './discovery-route.ts';
 import { executeWithEffect, withEffect } from './effect.ts';
 import { validateAndExecute } from './validation.ts';
-import { imageHasSecret, withheld } from './withheld.ts';
+import { imageHasSecret, someDecodedForm, withheld } from './withheld.ts';
 
 export type ToolExecutor = (
   tool: SnapshotTool,
@@ -80,6 +80,21 @@ const scanForSecretSafely = (redactor: Redactor, value: unknown): boolean => {
   }
 };
 
+// Structured data is checked for the secret's decoded spellings as well
+// (a JSON-escaped or entity-escaped echo in a string value), like the
+// response mapper does. A text block is not: the mapper already decoded and
+// scanned it whole, and decoding it again would double that cost.
+const structuredHasSecret = (redactor: Redactor, value: unknown): boolean => {
+  try {
+    return (
+      redactor.scanForSecret(value) ||
+      someDecodedForm(value, (form) => redactor.scanForSecret(form))
+    );
+  } catch {
+    return true;
+  }
+};
+
 const scanAndRedact = (
   outcome: ToolCallOutcome,
   redactor: Redactor,
@@ -88,8 +103,8 @@ const scanAndRedact = (
   if (
     (outcome.structuredContent !== undefined &&
       !wasSecretScanned(outcome.structuredContent, redactor) &&
-      scanForSecretSafely(redactor, outcome.structuredContent)) ||
-    (outcome.meta !== undefined && scanForSecretSafely(redactor, outcome.meta))
+      structuredHasSecret(redactor, outcome.structuredContent)) ||
+    (outcome.meta !== undefined && structuredHasSecret(redactor, outcome.meta))
   ) {
     return withheld(outcome, readOnly);
   }

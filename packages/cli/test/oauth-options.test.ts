@@ -218,11 +218,11 @@ describe('resolveTokenUrl', () => {
     ).toContain('must use https');
   });
 
-  it('needs --base-url or --upstream-oauth-token-url when the spec comes from a URL', () => {
+  it('lets the spec choose no token URL when the spec comes from a URL', () => {
     const spec = { securitySchemes: [cc('a', '/oauth/token')] };
     const specChosen = { url: new URL('https://api.example.com/v1'), trusted: false };
     expect(usageMessage(() => resolveTokenUrl(oauth(), spec, specChosen, false))).toContain(
-      'pass --base-url <url> or --upstream-oauth-token-url <url>',
+      'where the client secret is sent — pass --base-url <url>',
     );
     // A local spec file is the operator's own: its servers entry is trusted
     // to name the API, as before.

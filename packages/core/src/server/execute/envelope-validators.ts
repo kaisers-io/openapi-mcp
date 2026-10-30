@@ -37,7 +37,9 @@ const addFormats = unwrapDefault<(ajv: AjvInstance) => unknown>(addFormatsModule
 // has two ways to match a colon and backtracks quadratically: 32,000 colons
 // after `http://` blocked the event loop for 1.6 s. `\S+` already matches
 // colons, so `(?:\S+@)?` accepts exactly the same strings in linear time. A
-// test fails if an ajv-formats update changes the regex.
+// test fails if an ajv-formats update changes the regex. The MCP client's Ajv
+// keeps the original regex, so tool generation does not advertise a response
+// `format: url` (toolgen/schema.ts); this covers any other schema.
 const AJV_URL = fullFormats.url as RegExp;
 const LINEAR_URL = new RegExp(
   AJV_URL.source.replace(String.raw`(?:\S+(?::\S*)?@)?`, String.raw`(?:\S+@)?`),
