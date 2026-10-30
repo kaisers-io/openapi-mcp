@@ -32,18 +32,56 @@ const decodeJsonEscapes = (text: string): string =>
       : String.fromCodePoint(Number.parseInt(hex as string, 16)),
   );
 
+// JSON in a JSON string (an echoed request body) escapes twice; a few
+// levels cover every plausible nesting and keep the cost bounded.
+const MAX_JSON_DECODES = 3;
+
 // A text body decoded each way an upstream may have escaped a secret in it:
-// as a JSON string, as markup entities, and as both. A text with neither
-// escape character yields nothing.
+// as a JSON string (repeatedly, until it stops changing), as markup
+// entities, and as both. A text with neither escape character yields
+// nothing.
 export const decodedForms = (text: string): string[] => {
-  const json = text.includes('\\') ? decodeJsonEscapes(text) : undefined;
-  return [
-    ...(json === undefined ? [] : [json]),
-    ...(text.includes('&') ? [decodeEntities(text)] : []),
-    // Both, in the order an encoder applies them: Go's encoding/json writes
-    // the `&` of an HTML entity as `\u0026`
-    ...(json?.includes('&') === true ? [decodeEntities(json)] : []),
-  ];
+  const json: string[] = [];
+  let current = text;
+  while (json.length < MAX_JSON_DECODES && current.includes('\\')) {
+    const next = decodeJsonEscapes(current);
+    if (next === current) {
+      break;
+    }
+    json.push(next);
+    current = next;
+  }
+  // Entities after JSON escapes, the order an encoder applies them: Go's
+  // encoding/json writes the `&` of an HTML entity as `\u0026`
+  const entities = [text, ...json]
+    .filter((form) => form.includes('&'))
+    .map((form) => decodeEntities(form));
+  return [...json, ...entities];
+};
+
+// Whether any decoded form of a text, or of any string or key in a parsed
+// JSON value, passes `hit`. The parsed strings are decoded as they are: a
+// serialization would escape a parsed `\u0026` once more. Iterative, so a
+// deeply nested value cannot overflow the stack.
+export const someDecodedForm = (value: unknown, hit: (form: string) => boolean): boolean => {
+  const stack: unknown[] = [value];
+  while (stack.length > 0) {
+    const item = stack.pop();
+    if (typeof item === 'string') {
+      if (decodedForms(item).some((form) => hit(form))) {
+        return true;
+      }
+    } else if (Array.isArray(item)) {
+      for (const child of item) {
+        stack.push(child);
+      }
+    } else if (item !== null && typeof item === 'object') {
+      for (const [key, child] of Object.entries(item)) {
+        stack.push(key, child);
+      }
+    }
+  }
+  return false;
 };
 
 export const isTextEssence = (essence: string): boolean => essence.startsWith('text/');

@@ -7,6 +7,7 @@ import type { PageHint } from '../../toolgen/pagination.ts';
 
 import type { ToolCallOutcome } from '../result.ts';
 import { carryOutcomeTag } from '../telemetry.ts';
+import { someDecodedForm } from './response-media.ts';
 
 export type { PageHint } from '../../toolgen/pagination.ts';
 
@@ -93,7 +94,12 @@ export const forwardableHeaders = (opts: ForwardOptions): Record<string, string>
     if (value !== undefined) {
       scanned.push(sanitizeSpecText(value, Number.MAX_SAFE_INTEGER));
     }
-    if (clean !== '' && !scanned.some((text) => hasSecret(opts.redactor, text))) {
+    // An upstream may also write the secret JSON-escaped or as entities
+    if (
+      clean !== '' &&
+      !scanned.some((text) => hasSecret(opts.redactor, text)) &&
+      !someDecodedForm(scanned, (form) => hasSecret(opts.redactor, form))
+    ) {
       out[name] = clean;
     }
   }

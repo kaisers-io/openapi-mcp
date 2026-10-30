@@ -55,6 +55,15 @@ describe('createRedactor', () => {
     expect(redactor.scanForSecret({ pin: 123_456_789 })).toBe(false);
   });
 
+  it('scanForSecret finds a digit secret too long for a double in its rounded JSON number', () => {
+    const redactor = createRedactor(['Bearer 98765432109876543211']);
+    expect(redactor.scanForSecret(JSON.parse('{"pin":98765432109876543211}'))).toBe(true);
+    expect(redactor.scanForSecret(JSON.parse('[-9.8765432109876543211e19]'))).toBe(true);
+    expect(redactor.scanForSecret(JSON.parse('{"pin":98765432109876560000}'))).toBe(false);
+    redactor.registerRuntimeSecret('1234567890123456789012', 10_000, 0);
+    expect(redactor.scanForSecret(JSON.parse('1234567890123456789012'))).toBe(true);
+  });
+
   it('redacts the longest matching needle first, whole, when it contains a shorter secret as a substring', () => {
     const longSecret = 'anotherlongsecretvalue';
     const std = Buffer.from(longSecret, 'utf8').toString('base64');
