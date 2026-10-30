@@ -1326,6 +1326,15 @@ const unenforcedKeyword = (
   return isAllOfWrapper(node) ? unenforcedKeyword(node['allOf'][0], mode, keyword) : undefined;
 };
 
+// The node whose description and example a schema shows: an allOf wrapper
+// that sets neither shows its member's, as it converts as that member.
+const annotationOf = (node: Record<string, unknown>): Record<string, unknown> => {
+  const member: unknown = isAllOfWrapper(node) ? node['allOf'][0] : undefined;
+  return isRecord(member) && node['description'] === undefined && node['example'] === undefined
+    ? annotationOf(member)
+    : node;
+};
+
 // Admits null next to a determiner's own values (see build).
 const withNull = (result: SchemaResult, admitNull: boolean): SchemaResult =>
   admitNull && 'ok' in result ? { ok: result.ok.nullable() } : result;
@@ -1638,5 +1647,5 @@ const convertUncached = (
   const advertised = Object.keys(meta).length > 0 ? built.ok.meta(meta) : built.ok;
   // The description of an annotated single-member allOf replaces the member's;
   // unenforcedKeyword carries the member's notes over (issue #104).
-  return { ok: withDescription(advertised, node, unenforced) };
+  return { ok: withDescription(advertised, annotationOf(node), unenforced) };
 };
