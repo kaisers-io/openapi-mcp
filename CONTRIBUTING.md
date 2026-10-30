@@ -181,6 +181,28 @@ When a run fails:
 4. **Treat shipped code as a release blocker.** If the vulnerable code is in the shipped bundle
    and can be reached, fix it, then cut a patch release.
 
+## Security audit
+
+The source is audited with
+[cloudflare/security-audit-skill](https://github.com/cloudflare/security-audit-skill) (#97). The
+audit runs locally, by a maintainer, not in a workflow: Actions logs of a public repository can
+be read by anyone, so a workflow would publish findings before they are fixed.
+
+- **When.** Once a month, scoped to the diff between the last audited commit and `main`, and
+  skipped when no source changed. A full run of the whole repository before each minor release.
+- **How.** Target code runs only in a sandbox: a container with `--network none`, a read-only
+  source mount and resource limits. Each confirmed finding is checked again by a model from a
+  different vendor before it counts.
+- **Results.** They stay outside the repository, in a private directory. A run records the
+  audited commit there, so the next run knows its diff. Nothing from a run is posted to an
+  issue, a pull request or a commit message before the fix is released.
+- **Findings.** A confirmed finding is fixed in a patch release, as [SECURITY.md](SECURITY.md)
+  describes. Commits, pull requests and the changelog describe the fix, not how to exploit the
+  old behavior. Once other people depend on the package, a confirmed finding also gets a
+  private security advisory before the fix release.
+- **Summary.** After the fixes ship, the audit issue gets a short note: date, audited commit,
+  and the number of records per verdict.
+
 ## Releasing
 
 The version lives in `packages/cli/package.json`. The READMEs, `docs/` and both changelogs repeat
