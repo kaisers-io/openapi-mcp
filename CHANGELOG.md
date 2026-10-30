@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A spec fetched from a URL with `--upstream-oauth-*` now needs `--base-url`.** The OAuth2
+  access token goes to the API base URL, so the spec alone must not choose it.
+  `--upstream-oauth-token-url` decides only where the client secret goes, so on its own it is no
+  longer enough. Startup stops with exit code 2 and says to pass `--base-url`.
+- **A response `pattern` whose quantifiers side by side can match the same characters is no
+  longer advertised.** A backtracking engine tries every split among them (`^a*a*a*b$`,
+  `^\d*\.?\d+$`, `arn:aws:.*:.*:[0-9]+:.*`), so the MCP client could block on a short value.
+  Only the keyword leaves the output schema; the field description ends with
+  `Pattern (not enforced): <pattern>`.
+- **A response `format: url` is no longer advertised.** The client's ajv-formats `url` check
+  slows down quadratically on long values the server accepts. The field description ends with
+  `Format (not enforced): url`, and the server no longer checks the value either. Request
+  schemas keep the keyword.
+
+### Fixed
+
+- **A registered secret echoed with JSON escapes or markup entities is now withheld on every
+  path.** Structured results, `_fields` selections and forwarded headers are decoded and
+  scanned like text bodies already were, and JSON echoed inside a JSON string (escaped twice)
+  is caught on the text paths too. A forwarded header with such a value is dropped.
+- **A digit-only secret longer than 15 digits, echoed as a JSON number, is now withheld.** The
+  number parses to a rounded value whose text no longer reads as the secret, so it is compared
+  by value, and the full result also scans the body's source text.
+- **A `_fields` selection is counted at the bytes JSON writes for it.** A control character,
+  lone surrogate or multi-byte character was counted as one byte, so a selection could return
+  up to 12 times the response instead of at most twice it plus 64 KiB.
+- **Each `$ref` string is resolved once while checking for reference cycles.** A long `$ref`
+  repeated through YAML aliases was resolved at every occurrence, which slowed the start.
+
 ## [0.8.0] - 2026-10-30
 
 ### Changed
