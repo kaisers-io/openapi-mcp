@@ -434,9 +434,11 @@ const runSpecPipelineOnce = async (
       // The persisted-document budget depends on the spec alone, so a document
       // over it is a failed refresh, not a failed cache write. Checked only for
       // a new document that a cache will persist: the accepted one already
-      // fits, and the no-cache path never persists. The writer checks again.
+      // fits, and the no-cache path never persists. Without an accepted spec
+      // there is nothing to fall back to, and the writer refuses it the same.
       if (
         reused === undefined &&
+        cached !== undefined &&
         layout !== undefined &&
         serializedSizeWithin(processedRefresh.document, CACHE_MAX_PERSISTED_BYTES) === undefined
       ) {
