@@ -2,3 +2,6 @@ packages:
   - packages/*
 saveExact: true
 engineStrict: true
+overrides:
+  # @modelcontextprotocol/node accepts both majors; 1.x has GHSA-rmxm-3fg6-px4f
+  "@hono/node-server": 2.1.5
