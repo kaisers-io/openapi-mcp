@@ -497,3 +497,72 @@ describe('output schema with an ordinary response pattern', () => {
     ).toEqual({});
   });
 });
+
+// The client's Ajv checks `format: url` with the ajv-formats regex, which
+// backtracks quadratically on values the server accepts.
+describe('response format url', () => {
+  const urlSchema = {
+    type: 'object',
+    properties: {
+      link: { type: 'string', format: 'url' },
+      at: { type: 'string', format: 'date-time' },
+    },
+  };
+
+  it('is not advertised and is named in the description', () => {
+    const result = explainOutputSchema(op(urlSchema), '3.1');
+    const data = dataOf(result.outputSchema);
+    expect(data.properties['link']).toEqual({
+      type: 'string',
+      description: 'Format (not enforced): url',
+    });
+    // Other formats stay
+    expect(data.properties['at']).toEqual({ type: 'string', format: 'date-time' });
+    expect(JSON.stringify(result.outputSchema)).not.toContain('"url"');
+  });
+
+  it('joins a pattern note and keeps the note under a single-member allOf', () => {
+    const result = explainOutputSchema(
+      op({
+        description: 'A link.',
+        allOf: [{ type: 'string', format: 'url', pattern: '^(?=h)\\S+$' }],
+      }),
+      '3.1',
+    );
+    expect(dataOf(result.outputSchema)).toEqual({
+      type: 'string',
+      description: 'A link. — Pattern (not enforced): ^(?=h)\\S+$ — Format (not enforced): url',
+    });
+  });
+
+  it('leaves the value unchecked on the server, the rest of the schema enforced', () => {
+    const { tools } = buildTools([{ toolName: 'getThings', operation: op(urlSchema) }], {
+      reservedHeaders: SYSTEM_HEADERS,
+      openapiVersion: '3.1',
+    });
+    const validate = compileEnvelopeValidator(tools[0]!.outputSchema) as EnvelopeValidator;
+    const long = `http://x.example.test/${':'.repeat(32_000)}`;
+    expect(validate(envelope({ link: long }))).toBe(true);
+    expect(validate(envelope({ link: 'not a url' }))).toBe(true);
+    expect(validate(envelope({ link: 42 }))).toBe(false);
+    expect(validate(envelope({ at: 'yesterday' }))).toBe(false);
+  });
+
+  it('request mode keeps advertising it', () => {
+    const { tools } = buildTools(
+      [
+        {
+          toolName: 'createThing',
+          operation: {
+            ...op({ type: 'object' }),
+            method: 'post',
+            requestBody: { required: true, content: { 'application/json': { schema: urlSchema } } },
+          },
+        },
+      ],
+      { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' },
+    );
+    const wire = tools[0]!.wireSchema as Wire;
+    expect(wire.properties['link']).toEqual({ type: 'string', format: 'url' });
+  });
+});

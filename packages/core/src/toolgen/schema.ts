@@ -436,16 +436,19 @@ const alternativesMessage = (alternatives: readonly (readonly string[])[]): stri
 // before entering model context via .describe(). `format` and
 // `pattern` are surfaced through the wire schema (via .meta in convertSchema),
 // not here; enum values surface through z.enum. So the human hint is the
-// description plus example, and a response pattern that is not advertised
-// (see convertSchema).
+// description plus example, and a response pattern or format that is not
+// advertised (see convertSchema).
+type Unenforced = { pattern: string | undefined; format: string | undefined };
+
 const describeText = (
   node: Record<string, unknown>,
-  pattern: string | undefined,
+  { pattern, format }: Unenforced,
 ): string | undefined => {
   const parts = [
     typeof node['description'] === 'string' ? stripMarkdownLinks(node['description']) : undefined,
     node['example'] === undefined ? undefined : `example: ${JSON.stringify(node['example'])}`,
     pattern === undefined ? undefined : `Pattern (not enforced): ${pattern}`,
+    format === undefined ? undefined : `Format (not enforced): ${format}`,
   ].filter((part): part is string => part !== undefined);
   if (parts.length === 0) {
     return undefined;
@@ -457,9 +460,9 @@ const describeText = (
 const withDescription = (
   schema: z.ZodType,
   node: Record<string, unknown>,
-  pattern?: string,
+  unenforced: Unenforced,
 ): z.ZodType => {
-  const text = describeText(node, pattern);
+  const text = describeText(node, unenforced);
   return text === undefined ? schema : schema.describe(text);
 };
 
@@ -1295,17 +1298,32 @@ const isAllOfWrapper = (
   node['allOf'].length === 1 &&
   Object.keys(node).every((key) => key.startsWith('x-') || ALLOF_WRAPPER_SIBLINGS.has(key));
 
-// A response pattern left out of the advertised schema (issue #104), or of the
-// member of an annotated single-member allOf, which converts as that member.
-const unenforcedPattern = (node: unknown, mode: SchemaMode): string | undefined => {
+// The client's Ajv checks these formats with ajv-formats, whose `url` regex
+// backtracks quadratically on values the server's linear check accepts (see
+// envelope-validators.ts). Every other ajv-formats check stays linear.
+const CLIENT_UNSAFE_FORMATS: ReadonlySet<string> = new Set(['url']);
+
+const isUnenforced = (keyword: keyof Unenforced, value: string): boolean =>
+  keyword === 'pattern'
+    ? !hasControlOrBidi(value) && !isEnforceablePattern(value)
+    : CLIENT_UNSAFE_FORMATS.has(value);
+
+// A response pattern or format left out of the advertised schema (issue
+// #104), or of the member of an annotated single-member allOf, which converts
+// as that member.
+const unenforcedKeyword = (
+  node: unknown,
+  mode: SchemaMode,
+  keyword: keyof Unenforced,
+): string | undefined => {
   if (!isRecord(node) || mode !== 'response') {
     return undefined;
   }
-  const { pattern } = node;
-  if (typeof pattern === 'string') {
-    return !hasControlOrBidi(pattern) && !isEnforceablePattern(pattern) ? pattern : undefined;
+  const value = node[keyword];
+  if (typeof value === 'string') {
+    return isUnenforced(keyword, value) ? value : undefined;
   }
-  return isAllOfWrapper(node) ? unenforcedPattern(node['allOf'][0], mode) : undefined;
+  return isAllOfWrapper(node) ? unenforcedKeyword(node['allOf'][0], mode, keyword) : undefined;
 };
 
 // Admits null next to a determiner's own values (see build).
@@ -1577,19 +1595,20 @@ const convertUncached = (
   // enforcing them (no live RegExp; no divergent format validator). For a
   // request the model sees them and nothing runs them. For a response the
   // output schema IS compiled by Ajv, on the server with RE2 and on the client
-  // with a backtracking engine (issue #104): a pattern that is not safe for
-  // both moves into the description as text, the rest of the schema stays.
-  // Request mode only advertises `pattern`, so it is unaffected. A pattern
+  // with a backtracking engine (issue #104): a pattern or format that is not
+  // safe for both moves into the description as text, the rest of the schema
+  // stays. Request mode only advertises them, so it is unaffected. A pattern
   // with a control or bidi character stays, so the output schema is withheld
   // (output-data.ts) as for any such value. See pattern-safety.ts.
   const meta: Record<string, unknown> = {};
-  const pattern = typeof node['pattern'] === 'string' ? node['pattern'] : undefined;
-  const unenforced = unenforcedPattern(node, mode);
-  if (pattern !== undefined && unenforced === undefined) {
-    meta['pattern'] = pattern;
-  }
-  if (typeof node['format'] === 'string') {
-    meta['format'] = node['format'];
+  const unenforced: Unenforced = {
+    pattern: unenforcedKeyword(node, mode, 'pattern'),
+    format: unenforcedKeyword(node, mode, 'format'),
+  };
+  for (const keyword of ['pattern', 'format'] as const) {
+    if (typeof node[keyword] === 'string' && unenforced[keyword] === undefined) {
+      meta[keyword] = node[keyword];
+    }
   }
   // String length and numeric multipleOf are ENFORCED exactly by code point /
   // exact division in stringSchema/numberSchema (via .refine, opaque to
@@ -1618,6 +1637,6 @@ const convertUncached = (
   }
   const advertised = Object.keys(meta).length > 0 ? built.ok.meta(meta) : built.ok;
   // The description of an annotated single-member allOf replaces the member's;
-  // unenforcedPattern carries the member's note over (issue #104).
+  // unenforcedKeyword carries the member's notes over (issue #104).
   return { ok: withDescription(advertised, node, unenforced) };
 };

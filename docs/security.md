@@ -230,9 +230,13 @@ checks:
     JavaScript's, so the server writes them out as JavaScript's sets of characters.
   - In request schemas (tool inputs) the server shows `pattern` and `format` to the model in
     the input schema but never runs them, so they cost no CPU here.
-  - In response schemas the server enforces `format` with the checks of ajv-formats. Its `url`
-    check backtracked quadratically on a long string, so the server runs an equivalent check
-    that takes linear time and accepts the same URLs.
+  - In response schemas the server enforces `format` with the checks of ajv-formats. The
+    `url` format is the exception: the ajv-formats check backtracks quadratically on a long
+    string, and the client runs that check on every response. So a response schema leaves
+    `format: url` out, and the field's description ends with `Format (not enforced): url`.
+    Neither the server nor the client checks it. The other ajv-formats checks take linear
+    time. For any other schema that still has `format: url`, the server runs an equivalent
+    check that takes linear time and accepts the same URLs.
 - A response over `--max-response-bytes` (default `10MB`) is a tool error. The server never
   returns a truncated payload that would be silently invalid.
 - A binary or unknown media type is a tool error that names the media type. The one exception
