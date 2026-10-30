@@ -29,6 +29,13 @@ Every pattern names its selector. Letter case never matters.
 `/orders/**` does not match `/orders` itself. An operation without an operationId has a tool
 name built from method and path, such as `get_reports`.
 
+A pattern has at most 256 characters and 10 wildcards, and each flag takes at most 128. The
+start fails on a pattern without a selector (`needs a selector; write ...` names the
+replacement), an unknown selector, `method:` or `route:` without a method the spec uses,
+`path:` or `route:` without a leading `/` or `*`, and a selector without a value. `method:`
+takes `get`, `put`, `post`, `delete`, `patch`, `head`, `query`, or a method the spec declares
+under `additionalOperations`; `OPTIONS` and `TRACE` never become tools.
+
 ## How a decision is made
 
 1. A `--deny` that matches wins.
@@ -90,8 +97,18 @@ Run `tools` with the patterns and `--strict-filters`. It fails on:
 - a pattern that matches values that differ only by case (`caseCollisions`)
 - an exposed path that can match the same URL as an excluded one (`overlaps`)
 
-Fix each one. `notExposed` lists every operation that is not a tool, with its `decision` and
-`summary`: use it for the blocked rows of the table.
+Without `--strict-filters` these are warnings: `matches no operation` (with `closest:` when a
+name is near), `matches values that differ only by case`, and `which is not exposed, is
+refused`. A pattern that names only operations omitted as not supported says so. Fix each
+one. `notExposed` lists every operation that is not a tool, with its `decision` and `summary`:
+use it for the blocked rows of the table.
+
+`--omit-output-schema` and `--omit-unsupported-parameters` take the same selectors. A pattern
+of theirs that has no effect warns `so it changes nothing`.
+
+At most 512 tools under `per-operation` (4,096 under `discover`): more fail with
+`exceeds the 512-tool budget`. A spec with more than 4,096 operations fails whatever the
+filters.
 
 ## Comparing the result
 

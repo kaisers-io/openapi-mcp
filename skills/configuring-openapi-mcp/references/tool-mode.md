@@ -22,7 +22,9 @@ who clicks "always allow" for it allows every exposed write. Recommend:
 - many writes the user approves as a whole: `discover`, after saying the above
 
 `CLI --json check` reports the mode `auto` picks and why (`toolModeReason` is `count` or
-`size`). Show it to the user.
+`size`), and warns `--tool-mode auto: discover, since ...`. Show it to the user. Under
+`discover` with writes, `check` warns `--tool-mode discover exposes N non-read-only
+operation(s) through the single call_operation tool`: that is the trade-off above.
 
 ## Scripts: `execute_code`
 
@@ -46,7 +48,8 @@ Tell the user three things:
   of items one by one.
 
 Propose `--no-execute` only when the API changes data on `GET`, or when the user wants exactly
-one tool per operation.
+one tool per operation. If the spec has an operation named `execute_code`, `per-operation` lists
+that operation instead of the program tool and warns; `discover` lists both.
 
 ## Smaller tool definitions
 
@@ -57,3 +60,21 @@ Output schemas are listed too, outside that measure. Under `per-operation` they 
 `tools/list`; `--output-schema defs` writes repeated parts once, and
 `--no-output-schema-descriptions` drops their field descriptions. Both keep validation
 unchanged.
+
+`--tools-page-size` (1 to 512) splits `tools/list` into pages. Use it only for a host that
+follows `nextCursor`; others see only the first page.
+
+## Files and images
+
+By default a binary request field takes base64, and an image response fails as an unsupported
+media type. Ask the user before either flag:
+
+- `--image-responses inline` returns PNG, JPEG, GIF and WebP images to the agent, up to 5 MiB
+  and 8,000 pixels per side. `file` saves them under `~/.kaisers-io/openapi-mcp/images/` and
+  returns the path; `--image-dir-max-bytes` (default 100 MB, at least 5 MiB) caps that folder.
+- `--uploads` lets the agent name a file in `~/.kaisers-io/openapi-mcp/uploads/<api>/` instead
+  of sending base64. Names use letters, digits, `_`, `-` and dots, up to 128 characters. The user copies files there; files older than 24 hours are removed at
+  startup. A file counts against `--max-response-bytes`.
+
+Both need a home directory, and `--uploads` and `file` mode are refused on a non-loopback
+`--http-host`, since a remote client could then read or fill this machine's folders.

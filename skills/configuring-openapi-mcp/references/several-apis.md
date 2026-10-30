@@ -18,16 +18,25 @@ agent uses the APIs together and the user wants one entry.
   `--header-env shop=Authorization=SHOP_TOKEN`, `--base-url shop=https://shop.example.test`.
 - Switches use `--enable <name>=<switch>`, for example `--enable shop=allow-private-network`.
 - A `--deny` without a name applies to every API.
-- `--spec` and `--api` cannot be combined.
-- Tool names become `<api>_<name>`. Patterns with `name:` still use the API's own names.
+- `--spec` and `--api` cannot be combined, and `--enable` needs `--api`.
+- A per-API value without a declared `<name>=` fails with `does not start with the name of an
+  API`. A per-API scalar such as `--base-url` is given once per API.
+- A switch without a name, such as `--allow-private-network`, fails with
+  `cannot be used with --api`: it must name the API that needs it.
+- Tool names become `<api>_<name>`. Patterns with `name:` still use the API's own names. Names
+  over 50 characters cause a warning, since hosts add their own prefix and accept 64; shorter
+  API names or `--tool-mode discover` avoid it.
 
 `CLI --json help` marks each option with `perApi`: `prefix` needs the name, `prefix-or-all`
 works with or without it, `enable` is a switch.
 
 ## Checks
 
-`CLI --json check` fails when two APIs have overlapping base URLs, or load the same spec with
-the same `--cache-key`. Give each API its own `--cache-key` then.
+`CLI --json check` fails when two APIs have overlapping base URLs (one base path inside the
+other on the same host), or load the same spec with the same `--cache-key`. Give each API its
+own `--cache-key` or `--base-url` then. It also fails when all APIs together have more than 64
+secrets or more than 512 tools under `per-operation` (4,096 under `discover`). One
+`--rate-limit` and one `--max-concurrency` cover all APIs of a server.
 
 Credentials stay with their API: a header of one API is never sent to another one's base URL.
 
