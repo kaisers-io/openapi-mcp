@@ -147,14 +147,23 @@ checks:
     character also has its JSON-escaped form removed, since that form can appear in a text or
     HTML error body. That form contains an escape the raw value lacks, so it may also match the
     escape in a body without the secret. That redacts more, never less.
-  - A text, XML or HTML body is also decoded before it is scanned, once for JSON string
-    escapes (`\u0026`, `\u003C`, `\"`, `\/`) and once for markup entities (`&amp;`, `&#38;`,
-    `&#x26;`). If either decoding rebuilds a registered secret, the server withholds a success
-    and reduces an error to its status. Entity decoding covers numeric references and the
-    named entities for `&`, `<`, `>`, `"` and `'`, plus a few typographic ones. Other named
+  - A text, XML or HTML body is also decoded before it is scanned, for JSON string escapes
+    (`\u0026`, `\u003C`, `\"`, `\/`) and for markup entities (`&amp;`, `&#38;`, `&#x26;`).
+    JSON escapes are decoded repeatedly, up to three levels, so JSON echoed inside a JSON
+    string is covered too. If a decoding rebuilds a registered secret, the server withholds a
+    success and reduces an error to its status. Entity decoding covers numeric references and
+    the named entities for `&`, `<`, `>`, `"` and `'`, plus a few typographic ones. Other named
     entities stay as written.
+  - The same decoding applies to every string and key of a structured result, of a `_fields`
+    selection and of a forwarded response header. A header whose decoded value or name holds a
+    secret is dropped; the other results are withheld.
   - In structured results it also finds a secret made only of digits that the upstream sends
-    as a JSON number, in any spelling (`987654321` or `9.87654321e8`).
+    as a JSON number, in any spelling (`987654321` or `9.87654321e8`). A secret of more than 15
+    digits is longer than a double holds, so its JSON number parses to a rounded value; the
+    server compares such a number by value and also scans the body's source text, where the
+    digits are as sent. A `_fields` selection compares by value only: a field the caller did
+    not select never withholds it, and a secret inside a longer number token is caught only on
+    the full result.
   - For a value shaped like an `Authorization` credential (`<scheme> <credential>`, for example
     `Bearer <token>`), it also removes the bare credential. For `Basic` it also removes the
     decoded `user:password` and the password alone, each only when it has 8 or more characters.

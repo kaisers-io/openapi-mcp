@@ -84,7 +84,7 @@ Nothing was sent after any of these.
 | `the token endpoint could not be reached`, `the token request timed out`, `the token endpoint address is not allowed by the egress policy`, `redirected, which is never followed` | network, a private token URL, or a token URL that redirects | the final token URL; `--allow-private-network` only if the user confirms |
 | `is not a JSON object`, `carries no valid access_token`, `is not a Bearer token`, `exceeded its size budget` | the token endpoint answers in an unexpected form | the user checks the token URL |
 | `timed out waiting for an OAuth2 access token`, `fresh OAuth2 access token` | the token request took the call's time | a faster token endpoint, or a higher `--request-timeout` |
-| `its result was withheld because it contained a registered secret`, `its error details were withheld` | the API echoed a credential | do not retry; tell the user |
+| `its result was withheld because it contained a registered secret`, `its error details were withheld` | the API echoed a credential, also JSON-escaped, as markup entities (`&amp;`) or as a JSON number | do not retry; tell the user |
 
 ## Images and uploads
 
