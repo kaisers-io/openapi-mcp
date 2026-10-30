@@ -55,7 +55,7 @@ exit $LASTEXITCODE
   so the user's execution policy stays as it is.
 - Before you write the host entry, test the script as a host would start it, with the
   [MCP Inspector CLI](https://github.com/modelcontextprotocol/inspector):
-  `npx -y @modelcontextprotocol/inspector@2.11.0 --cli powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <script> --method tools/list`.
+  `npx -y @modelcontextprotocol/inspector@2.12.0 --cli powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File <script> --method tools/list`.
   If it does not list the tools, do not use this option: offer 1Password.
 
 ## Alternative: 1Password CLI
