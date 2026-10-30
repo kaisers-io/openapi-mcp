@@ -936,11 +936,13 @@ describe('createDispatcher — boundary scan of structuredContent (scan once)', 
     });
   });
 
-  it('withholds structuredContent that holds the secret as markup entities', async () => {
+  it.each([
+    ['in a value', structuredOutcome('ok', { note: 'dummy&amp;pass&lt;word&gt;123' })],
+    ['in a key', structuredOutcome('ok', { 'k dummy&amp;pass&lt;word&gt;123': 1 })],
+    ['in meta', { ...textOutcome('ok'), meta: { note: 'dummy&amp;pass&lt;word&gt;123' } }],
+  ])('withholds a result that holds the secret as markup entities %s', async (_label, outcome) => {
     const redactor = createRedactor(['dummy&pass<word>123']);
-    const result = await dispatchWith(redactor, () =>
-      Promise.resolve(structuredOutcome('ok', { note: 'dummy&amp;pass&lt;word&gt;123' })),
-    );
+    const result = await dispatchWith(redactor, () => Promise.resolve(outcome));
     expect(result).toMatchObject({
       kind: 'outcome',
       outcome: { isError: true, content: [{ text: BOUNDARY_WITHHELD_SUCCESS_TEXT }] },

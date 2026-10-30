@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BOUNDARY_WITHHELD_SUCCESS_TEXT } from '../src/server/withheld.ts';
+import { envelopeHasSecret } from '../src/server/execute/response.ts';
 import { compileEnvelopeValidator, createRedactor, mapResponse } from '../src/index.ts';
 import type { MapResponseOptions, ToolCallOutcome } from '../src/index.ts';
 
@@ -74,6 +75,7 @@ describe('mapResponse — a secret echoed escaped in a JSON string', () => {
     // JSON in a JSON string: the escapes are themselves escaped once more
     ['as JSON escapes inside a JSON string', JSON.stringify({ note: `{"key":"${U_ESCAPES}"}` })],
     ['as entities written with JSON escapes', `{"note":"${ENTITIES.replaceAll('&', '\\u0026')}"}`],
+    ['in a key', JSON.stringify({ note: { [`key ${ENTITIES}`]: 1 } })],
   ];
 
   it.each(ALL_PATHS.flatMap((path) => bodies.map(([label, body]) => [label, path, body])))(
@@ -86,6 +88,13 @@ describe('mapResponse — a secret echoed escaped in a JSON string', () => {
   it.each(ALL_PATHS)('returns ordinary escaped data on the %s path', (path) => {
     const body = JSON.stringify({ note: String.raw`a &amp; b &lt;i&gt; {"k":"\u0026"}` });
     expect(map(path, body, [SECRET]).isError).toBe(false);
+  });
+});
+
+describe('envelopeHasSecret — a field next to data', () => {
+  it.each([ENTITIES, U_ESCAPES])('finds the secret as %s', (note) => {
+    const envelope = { status: 200, contentType: 'application/json', data: {}, note };
+    expect(envelopeHasSecret(createRedactor([SECRET]), '{}', envelope)).toBe(true);
   });
 });
 
