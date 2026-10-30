@@ -380,6 +380,76 @@ describe('call — secret headers with a URL spec', () => {
     expect(accepted.code).toBe(EXIT.OK);
   });
 
+  // The access token goes to the API base whatever --upstream-oauth-token-url
+  // says, so the token URL alone does not make the API origin the operator's.
+  const OAUTH = [
+    '--upstream-oauth-client-id-env',
+    'CID',
+    '--upstream-oauth-client-secret-env',
+    'CSEC',
+  ] as const;
+  const TOKEN_URL = ['--upstream-oauth-token-url', 'https://auth.example.test/token'] as const;
+  const oauthEnv = { ...env, CID: 'example-client', CSEC: 'example-secret-not-a-secret' };
+  const oauthCall = (extra: readonly string[]) =>
+    callCli(['getThing', '--dry-run', '--spec', SPEC_URL, '--args-json', '{"id":"a"}', ...extra], {
+      env: oauthEnv,
+      fetcher,
+    });
+
+  it.each([
+    ['without', []],
+    ['with', TOKEN_URL],
+  ])(
+    'refuses --upstream-oauth-* %s --upstream-oauth-token-url and no --base-url',
+    async (_, extra) => {
+      const result = await oauthCall([...OAUTH, ...extra]);
+      expect(result.code).toBe(EXIT.USAGE);
+      expect(result.sent).toBe(0);
+      expect(reportOf(result.lines).error?.message).toContain(
+        '--upstream-oauth-* credentials are sent — pass --base-url <url>',
+      );
+    },
+  );
+
+  it('accepts --upstream-oauth-* once --base-url names the API origin', async () => {
+    const result = await oauthCall([
+      ...OAUTH,
+      ...TOKEN_URL,
+      '--base-url',
+      'https://api.example.test/v1',
+    ]);
+    expect(result.code).toBe(EXIT.OK);
+  });
+
+  it('names the API for --upstream-oauth-* when several APIs are served', async () => {
+    const apiCall = (extra: readonly string[]) =>
+      callCli(
+        [
+          'shop_getThing',
+          '--dry-run',
+          '--api',
+          `shop=${SPEC_URL}`,
+          '--upstream-oauth-client-id-env',
+          'shop=CID',
+          '--upstream-oauth-client-secret-env',
+          'shop=CSEC',
+          '--upstream-oauth-token-url',
+          'shop=https://auth.example.test/token',
+          '--args-json',
+          '{"id":"a"}',
+          ...extra,
+        ],
+        { env: oauthEnv, fetcher },
+      );
+    const refused = await apiCall([]);
+    expect(refused.code).toBe(EXIT.USAGE);
+    expect(reportOf(refused.lines).error?.message).toMatch(
+      /^shop: the spec is fetched from a URL.*--upstream-oauth-\*/u,
+    );
+    const accepted = await apiCall(['--base-url', 'shop=https://api.example.test/v1']);
+    expect(accepted.code).toBe(EXIT.OK);
+  });
+
   it('accepts a URL spec without secret headers and no --base-url', async () => {
     const result = await urlCall([]);
     expect(result.code).toBe(EXIT.OK);
