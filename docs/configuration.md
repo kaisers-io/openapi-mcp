@@ -83,7 +83,7 @@ The spec and cache flags are explained in [spec-updates.md](spec-updates.md), th
 | `--ttl <duration>` | no | how long the server uses a cached spec before it checks it again at startup; up to `365d` | `1h` |
 | `--cache-key <name>` | no | a name for the cache entry; required for a spec fetched with `--spec-header-env` unless you also pass `--trust-spec-updates`; see [spec-updates.md](spec-updates.md) | none |
 | `--trust-spec-updates` | no | accept a changed spec automatically instead of holding it back as a candidate | off |
-| `--allow-private-network` | no | allow private and loopback addresses for spec fetch redirects, for API requests to a spec-derived origin or redirect, for the `--upstream-oauth-*` token URL, and with `--http-auth oauth` for the authorization-server metadata and JWKS fetches; cloud metadata addresses stay refused | off |
+| `--allow-private-network` | no | allow private and loopback addresses for spec fetch redirects, for API requests to a spec-derived origin or redirect, for the `--upstream-oauth-*` token URL, and with `--http-auth oauth` for the authorization-server metadata and JWKS fetches; cloud metadata and link-local addresses stay refused | off |
 
 ### API request and credential flags
 
@@ -366,7 +366,7 @@ An inventory that only `serve --tool-mode discover` can expose fails here; narro
 | `--ttl <duration>` | no | how long a cached spec is used before it is checked again; up to `365d` | `1h` |
 | `--cache-key <name>` | no | a name for the cache entry; required for an authenticated spec | none |
 | `--trust-spec-updates` | no | accept a changed spec automatically instead of holding it back | off |
-| `--allow-private-network` | no | allow private and loopback redirect targets during the spec fetch; cloud metadata addresses stay refused | off |
+| `--allow-private-network` | no | allow private and loopback redirect targets during the spec fetch; cloud metadata and link-local addresses stay refused | off |
 | `--allow-insecure-http` | no | allow a `--spec-header-env` credential over cleartext `http` to an origin that is not loopback | off |
 | `--default-response-is-error` | no | derive an output schema for an operation that declares a `default` response, assuming that response covers only errors; see [requests-and-responses.md](requests-and-responses.md) | off |
 | `--nullable-response-fields [all\|optional]` | no | let object properties in derived output schemas be `null`: every property (`all`, also the value of the bare flag) or only those not listed in `required` (`optional`) | off |

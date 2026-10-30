@@ -41,7 +41,7 @@ not a vulnerability. A way around a guarantee it states is one.
   schema, a tool result, an error message, `doctor` or `--json` output.
 - **Egress (SSRF).** In scope: an origin taken from the spec (`servers`) or from a redirect reaching
   a loopback, link-local, private or cloud-metadata address without `--allow-private-network`; a
-  cloud-metadata address reached even with it; a way around the per-connection DNS pinning; an
+  cloud-metadata or link-local address reached even with it; a way around the per-connection DNS pinning; an
   authentication header forwarded across an origin change on redirect; or an operator credential
   sent over plain `http://` to a remote host without `--allow-insecure-http`.
 - **The spec cache as a trust store.** In scope: a refreshed spec changing what a model can do (new

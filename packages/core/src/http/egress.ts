@@ -40,10 +40,8 @@ const METADATA_IPV4 = new Set([
   '168.63.129.16',
 ]);
 // GCP metadata hostnames, plus the Tencent Cloud CAM/STS credential endpoint
-// hostname (metadata.tencentyun.com) — no reliable Tencent IP is added here
-// (sources conflict and both candidates already classify 'private'). So the
-// Tencent deny holds by name only: an IP literal or another name for that
-// address is 'private', which --allow-private-network admits.
+// hostname (metadata.tencentyun.com). No Tencent IP is listed: every candidate
+// sits in link-local 169.254.0.0/16, which classifyIpv4 denies as a whole.
 export const METADATA_HOSTNAMES = new Set([
   'metadata.google.internal',
   'metadata.goog',
@@ -63,12 +61,18 @@ const classifyIpv4 = (address: string): AddressClass => {
     return 'metadata';
   }
   const [octetA = -1, octetB = -1, octetC = -1] = address.split('.').map(Number);
+  // Link-local 169.254.0.0/16 holds the metadata endpoints of most clouds and
+  // no API a client should call, so the whole range is denied like metadata:
+  // no provider's address has to be known, and --allow-private-network cannot
+  // reach one under another name
+  if (octetA === 169 && octetB === 254) {
+    return 'metadata';
+  }
   if (
     octetA === 0 || // "This network"
     octetA === 10 || // RFC1918
     octetA === 127 || // Loopback
     (octetA === 100 && octetB >= 64 && octetB <= 127) || // CGNAT 100.64/10
-    (octetA === 169 && octetB === 254) || // Link-local
     (octetA === 172 && octetB >= 16 && octetB <= 31) || // RFC1918
     (octetA === 192 && octetB === 168) || // RFC1918
     (octetA === 192 && octetB === 0 && octetC === 0) || // IETF protocol assignments 192.0.0.0/24
@@ -240,8 +244,12 @@ export const classifyAddress = (address: string): AddressClass => {
     ) {
       return 'metadata';
     }
-    if ((g0 >= 0xfc_00 && g0 <= 0xfd_ff) || (g0 >= 0xfe_80 && g0 <= 0xfe_bf) || g0 >= 0xff_00) {
-      // Unique-local fc00::/7, link-local fe80::/10, multicast ff00::/8
+    if (g0 >= 0xfe_80 && g0 <= 0xfe_bf) {
+      // Link-local fe80::/10: denied as a whole, like IPv4 169.254.0.0/16
+      return 'metadata';
+    }
+    if ((g0 >= 0xfc_00 && g0 <= 0xfd_ff) || g0 >= 0xff_00) {
+      // Unique-local fc00::/7, multicast ff00::/8
       return 'private';
     }
     // Fail-closed allow-list posture: classify public

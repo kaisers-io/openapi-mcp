@@ -94,10 +94,11 @@ checks:
 - An origin taken from the spec must pass a deny-by-default policy. The server rejects
   loopback, link-local, the RFC 1918 and CGNAT private ranges, and cloud-metadata endpoints.
   `--allow-private-network` admits private and loopback addresses, which you usually need when
-  you develop against a local API. It never admits a cloud-metadata endpoint. Metadata
-  hostnames match in any case and with a trailing dot. Tencent Cloud's endpoint is denied by
-  name only (`metadata.tencentyun.com`), because its address is not confirmed. With
-  `--allow-private-network`, an IP literal or another name for that address gets through.
+  you develop against a local API. It never admits a cloud-metadata endpoint, and it never
+  admits link-local addresses (`169.254.0.0/16`, `fe80::/10`), where most clouds serve their
+  metadata. The server denies the whole range, so it needs no list of providers and no other
+  name for such an address gets through. Metadata hostnames match in any case and with a
+  trailing dot.
 - The server follows at most 5 redirects and checks every hop against the same policy. It does
   not forward authentication headers when a redirect changes the origin. It also authorizes a
   redirect like the request itself (see [Request authorization](#request-authorization)).
