@@ -33,12 +33,18 @@ const decodeJsonEscapes = (text: string): string =>
   );
 
 // A text body decoded each way an upstream may have escaped a secret in it:
-// as a JSON string and as markup entities. A text with neither escape
-// character yields nothing.
-export const decodedForms = (text: string): string[] => [
-  ...(text.includes('\\') ? [decodeJsonEscapes(text)] : []),
-  ...(text.includes('&') ? [decodeEntities(text)] : []),
-];
+// as a JSON string, as markup entities, and as both. A text with neither
+// escape character yields nothing.
+export const decodedForms = (text: string): string[] => {
+  const json = text.includes('\\') ? decodeJsonEscapes(text) : undefined;
+  return [
+    ...(json === undefined ? [] : [json]),
+    ...(text.includes('&') ? [decodeEntities(text)] : []),
+    // Both, in the order an encoder applies them: Go's encoding/json writes
+    // the `&` of an HTML entity as `\u0026`
+    ...(json?.includes('&') === true ? [decodeEntities(json)] : []),
+  ];
+};
 
 export const isTextEssence = (essence: string): boolean => essence.startsWith('text/');
 

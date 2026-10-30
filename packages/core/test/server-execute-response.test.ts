@@ -514,6 +514,11 @@ describe('mapResponse — HTTP error status (>=400)', () => {
         `key ${[...secret].map((c) => `&#${c.codePointAt(0)};`).join('')}`,
       ],
       ['zero-padded references', 'text/plain', `key ${entities.replace('&amp;', '&#00000038;')}`],
+      [
+        'Go JSON escapes of entities',
+        'text/plain',
+        `{"key":"${entities.replaceAll('&', String.raw`\u0026`)}"}`,
+      ],
     ])('withholds a 2xx success in %s', (_label, type, body) => {
       expect(isError(map(200, type, body))).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
     });
