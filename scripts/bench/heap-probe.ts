@@ -12,7 +12,6 @@
 // A signal listener does not keep the event loop alive, so the server still
 // exits on its own when stdin closes.
 
-import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { LIVE_HEAP_MARKER } from './heap-marker.ts';
 import type { IntervalReport, ProbeRequest } from './heap-marker.ts';
 
@@ -29,18 +28,23 @@ process.on('SIGUSR2', () => {
 });
 
 // What the server does during a measured interval (issue #22), over the IPC
-// channel the harness opens: on `start` it resets an event-loop delay
-// histogram and samples memory every few milliseconds, on `stop` it answers
-// with the maxima. Each message is answered, so the harness knows the
-// interval began before it sends the first call. The channel is unref'd, so
-// it does not keep the server alive either.
-const SAMPLE_MS = 5;
-const RESOLUTION_MS = 10;
-const delay = monitorEventLoopDelay({ resolution: RESOLUTION_MS });
-let sampler: ReturnType<typeof setInterval> | undefined;
+// channel the harness opens: on `start` it begins a timer that ticks every
+// few milliseconds, on `stop` it answers with the maxima. A tick that comes
+// late measures how long the event loop was blocked, and each tick samples
+// memory. Each message is answered, so the harness knows the interval began
+// before it sends the first call. The channel and the timer are unref'd, so
+// neither keeps the server alive.
+const TICK_MS = 5;
+let ticker: ReturnType<typeof setInterval> | undefined;
+let lastTick = 0;
+let delays: number[] = [];
 let peak = { external: 0, arrayBuffers: 0, rss: 0 };
 
-const sample = (): void => {
+// One tick: how much later than due it ran, and the memory now
+const tick = (): void => {
+  const now = performance.now();
+  delays.push(Math.max(0, now - lastTick - TICK_MS));
+  lastTick = now;
   const { external, arrayBuffers, rss } = process.memoryUsage();
   peak = {
     external: Math.max(peak.external, external),
@@ -61,26 +65,22 @@ const answer = (message: unknown): void => {
 
 process.on('message', (message: ProbeRequest) => {
   if (message === 'start') {
+    clearInterval(ticker);
     peak = { external: 0, arrayBuffers: 0, rss: 0 };
-    sample();
-    delay.reset();
-    delay.enable();
-    sampler = setInterval(sample, SAMPLE_MS);
-    sampler.unref();
-    // The histogram records from its second tick on: let it tick, then
-    // clear what the wait recorded and answer
-    setTimeout(() => {
-      delay.reset();
-      answer('started');
-    }, 3 * RESOLUTION_MS);
+    delays = [];
+    lastTick = performance.now();
+    ticker = setInterval(tick, TICK_MS);
+    ticker.unref();
+    answer('started');
     return;
   }
-  clearInterval(sampler);
-  sample();
-  delay.disable();
+  // The last tick also covers a task that blocked the loop until now
+  tick();
+  clearInterval(ticker);
+  const sorted = delays.toSorted((left, right) => left - right);
   const report: IntervalReport = {
-    eventLoopDelayMaxMs: delay.max / 1e6,
-    eventLoopDelayP99Ms: delay.percentile(99) / 1e6,
+    eventLoopDelayMaxMs: sorted.at(-1) ?? 0,
+    eventLoopDelayP99Ms: sorted[Math.max(0, Math.ceil(0.99 * sorted.length) - 1)] ?? 0,
     externalMaxMB: peak.external / MB,
     arrayBuffersMaxMB: peak.arrayBuffers / MB,
     rssMaxMB: peak.rss / MB,

@@ -141,8 +141,8 @@ Two kinds of fixture measure more than the call itself:
   upstream that sends the body slowly in chunks.
 
 While the warm session calls, the harness's probe in the server (`scripts/bench/heap-probe.ts`)
-records the event-loop delay and samples `external` memory (Buffers and ArrayBuffers) every 5 ms,
-over an IPC channel the harness opens. Sampling can miss a short peak, so these values are lower
+runs a timer that ticks every 5 ms, over an IPC channel the harness opens. How late a tick comes
+is the event-loop delay, and each tick samples `external` memory (Buffers and ArrayBuffers). Sampling can miss a short peak, so these values are lower
 bounds. The workflow reports them, the 95th percentile of the sequential calls and the stages of
 a round trip, but does not fail on them until CI runs show how much they vary.
 
