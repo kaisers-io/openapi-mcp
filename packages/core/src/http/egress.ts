@@ -52,8 +52,14 @@ export const METADATA_HOSTNAMES = new Set([
 // every trailing dot. URL.hostname keeps the dots of an absolute name
 // ("metadata.tencentyun.com." or "metadata.tencentyun.com.."), which a
 // resolver may treat as the same host.
-export const canonicalHostname = (hostname: string): string =>
-  hostname.toLowerCase().replace(/\.+$/u, '');
+// A loop, not /\.+$/, which retries at every dot of a name full of them.
+export const canonicalHostname = (hostname: string): string => {
+  let end = hostname.length;
+  while (end > 0 && hostname[end - 1] === '.') {
+    end -= 1;
+  }
+  return hostname.slice(0, end).toLowerCase();
+};
 
 const classifyIpv4 = (address: string): AddressClass => {
   if (METADATA_IPV4.has(address)) {

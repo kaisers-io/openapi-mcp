@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assertAllowedRedirectTarget, classifyAddress } from '../src/index.ts';
-import { isLoopbackAddress, needsLoopbackAnswer } from '../src/http/egress.ts';
+import { canonicalHostname, isLoopbackAddress, needsLoopbackAnswer } from '../src/http/egress.ts';
 
 const allow = { allowPrivateNetwork: true };
 const deny = { allowPrivateNetwork: false };
@@ -330,5 +330,15 @@ describe('needsLoopbackAnswer', () => {
     ['http://api.example.test/', true, false, false],
   ])('%s (credential %s, insecure %s): %s', (url, credential, insecure, expected) => {
     expect(needsLoopbackAnswer(new URL(url), credential, insecure)).toBe(expected);
+  });
+});
+
+describe('canonicalHostname', () => {
+  it('strips every trailing dot in linear time', () => {
+    expect(canonicalHostname('Metadata.Goog...')).toBe('metadata.goog');
+    const started = performance.now();
+    canonicalHostname(`${'a.'.repeat(200_000)}x`);
+    canonicalHostname('.'.repeat(200_000));
+    expect(performance.now() - started).toBeLessThan(200);
   });
 });
