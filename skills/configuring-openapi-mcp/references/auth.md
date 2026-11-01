@@ -67,7 +67,9 @@ since all three set the one `Authorization` header. Its user name must not conta
 A credential is never sent over `http://` to a host that is not loopback. A call then fails
 with `refusing to send a secret header in cleartext`. `--allow-insecure-http` permits it; add it
 only if the API has no `https` address and the user accepts that the credential travels in
-clear text.
+clear text. A loopback name (`localhost`, `*.localhost`) counts only when it resolves to
+`127.0.0.1` or `::1`; otherwise calls fail with `not allowed by the egress policy`. For a
+local API prefer `http://127.0.0.1:<port>`, which needs no lookup.
 
 ## Upstream OAuth (client credentials)
 
