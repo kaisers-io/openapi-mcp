@@ -603,14 +603,14 @@ describe('response patterns with an inline ignore-case group', () => {
     const js = (pattern: string, value: string): boolean => new RegExp(pattern, 'u').test(value);
     const re2 = (pattern: string, value: string): boolean | undefined =>
       compileRe2Pattern(pattern)?.matches(value);
-    for (const [pattern, value] of [
+    // Which of them differ depends on the V8 version; at least one always does
+    const cases = [
       [String.raw`^(?i:ſ\b)$`, 'ſ'],
       [String.raw`^(?i:\P{Lu})$`, 'a'],
       [String.raw`^(?i:\u212a)$`, 'k'],
       ['^(?i:ẞ)$', 'ß'],
-    ] as const) {
-      expect([pattern, js(pattern, value)]).not.toEqual([pattern, re2(pattern, value)]);
-    }
+    ] as const;
+    expect(cases.some(([pattern, value]) => js(pattern, value) !== re2(pattern, value))).toBe(true);
   });
 
   it.each([
