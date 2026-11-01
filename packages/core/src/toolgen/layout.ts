@@ -360,13 +360,13 @@ const keyPath = (key: string): string[] => {
 // the left-out parameter `name` (reviews of #67): a key whose path (keyPath)
 // starts with the path of `name`, so the server finds the key's value at
 // `name`, or within it. Compared without letter case, as some servers bind
-// query names. `[]` stands for any index, and so does a number, as qs
-// compacts a sparse array (`a[1]` alone is read as `a[0]`). A kept `form` object with
+// query names. `[]` stands for any index, and a number for any number, as
+// qs compacts a sparse array (`a[1]` alone is read as `a[0]`). A kept `form` object with
 // explode=true sends each property as its own key, so any key; a deepObject
 // `k` sends `k[property]` for any property without brackets (request.ts
 // rejects one with brackets), and under --deep-object-indices any path below
 // `k`; every other kept field sends only its own name.
-const isAnyIndex = (segment: string): boolean => segment === '' || /^\d+$/u.test(segment);
+const isIndex = (segment: string): boolean => /^\d+$/u.test(segment);
 
 const couldSend = (field: Field, schema: unknown, name: string): boolean => {
   if (field.mapping.destination !== 'query') {
@@ -394,7 +394,7 @@ const couldSend = (field: Field, schema: unknown, name: string): boolean => {
       return (
         segment === undefined ||
         segment === index ||
-        (at > 0 && (isAnyIndex(index) || isAnyIndex(segment)))
+        (at > 0 && (index === '' || segment === '' || (isIndex(index) && isIndex(segment))))
       );
     })
   );

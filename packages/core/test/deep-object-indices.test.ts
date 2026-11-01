@@ -317,6 +317,12 @@ describe('a deepObject query parameter under --deep-object-indices', () => {
       unrepresentable:
         'parameter "a[0]" cannot be left out: the query parameter "a[1]" could send it',
     });
+    // A number is no key: `a[1]=x` does not set `a[status]`
+    const status = { ...left, name: 'a[status]' };
+    const kept = paramFields(op({ parameters: [scalar, status] }), new Set(), '3.1', true);
+    expect('ok' in kept && kept.leftOut.map((parameter) => parameter.name)).toStrictEqual([
+      'a[status]',
+    ]);
   });
 });
 
