@@ -61,7 +61,7 @@ The `reason` of `decision: omitted` names what the server cannot handle. The spe
 | `cookie parameters are not supported` | a parameter `in: cookie` keeps the operation out |
 | `uses allowReserved`, `uses content instead of schema`, `uses the unsupported style` | a parameter form the server cannot send; often fixable with `--omit-unsupported-parameters` when optional |
 | `deepObject requires an object of scalar values` | an array, a nested object or a scalar as a `deepObject` value, in the query or a form body; `--deep-object-indices` sends it when the API reads `name[key][0]=value`, or `--omit-unsupported-parameters` leaves out an optional query parameter |
-| `the request body has no JSON, form-urlencoded, multipart/form-data or application/octet-stream content`, `with no deterministic choice`, `encoding object is not supported`, `the request body encoding of`, `cannot be told apart from` | a body media type or form the server cannot build |
+| `the request body has no JSON, form-urlencoded, multipart/form-data or application/octet-stream content`, `with no deterministic choice`, `encoding object is not supported`, `the request body encoding of`, `cannot be told apart from`, `a body property name is empty or cannot be encoded` | a body media type or form the server cannot build |
 | `the unsupported keyword`, `a malformed`, `combined with`, `an enum with`, `an allOf`, `schema nesting exceeds the depth budget` | a schema the input validator cannot represent |
 | `the path template has`, `placeholders do not match its path parameters`, `Path Item $ref chain` | a broken path or path item |
 | `a name or value in the input schema has a control or bidirectional-override character` | text that could mislead the agent; tell the user |

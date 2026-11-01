@@ -428,6 +428,15 @@ describe('a form body with a deepObject encoding', () => {
     ).toBe(
       'body property "a_b" cannot be told apart from "a.b" in a form body with a deepObject encoding',
     );
+    // An empty or ill-formed name: `[x]=hi`, or U+FFFD in place of the name
+    for (const name of ['', String.fromCodePoint(0xd8_00)]) {
+      expect(unrepresentable(formOperation({ [name]: tags }, { [name]: DEEP }), true)).toBe(
+        'a body property name is empty or cannot be encoded in a form body with a deepObject encoding',
+      );
+      expect(unrepresentable(formOperation({ [name]: tags }, { [name]: DEEP }), false)).toBe(
+        'a body property name is empty or cannot be encoded in a form body with a deepObject encoding',
+      );
+    }
     expect(unrepresentable(formOperation({ 'tags[x]': {}, tags }, { tags: DEEP }), true)).toBe(
       'body property "tags[x]" cannot be told apart from nesting in a form body with a deepObject encoding',
     );

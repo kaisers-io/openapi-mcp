@@ -163,7 +163,9 @@ Examples:
 
 The brackets are percent-encoded, like the rest of the key. Use the flag only for an API that
 reads this convention. A server that does not read it may ignore the keys or reject the
-request, and Rack reads `expand[0]` as a hash, not as an array.
+request, and Rack reads `expand[0]` as a hash, not as an array. A server that parses with
+the defaults of `qs` reads an array of more than 20 items as an object, and keys nested deeper
+than 5 levels as literal text.
 
 With the flag, the server refuses at call time, before any request, what it cannot send
 unambiguously inside such a value: `null`, an empty array or object (it would look like an
@@ -176,7 +178,8 @@ Every other Encoding Object still omits the operation: another `style`, `explode
 `contentType`, `headers`, `allowReserved`, an entry for a property the body does not declare,
 an encoding of a `multipart/form-data` body, and OAS 3.2 `prefixEncoding` and `itemEncoding`.
 So does a form body with such an encoding whose property names a bracket-parsing server reads
-as one key, such as `a.b` and `a_b`, or a name that contains `[` or `]`.
+as one key, such as `a.b` and `a_b`, a name that contains `[` or `]`, an empty name, or one
+that is not well-formed UTF-16.
 
 With the flag on every operation, every Stripe operation becomes a tool except the two with a
 per-operation `servers` override: 610 tools. That is more than the 512-tool budget of

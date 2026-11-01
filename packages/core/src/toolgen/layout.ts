@@ -966,6 +966,13 @@ const deepObjectEncodings = (
   // A readOnly property counts too: it is no tool input, but a name that
   // reads as it would still set it
   for (const prop of Object.keys(properties)) {
+    // An empty name would send `[x]=…`, and URLSearchParams replaces a lone
+    // surrogate with U+FFFD: either sends another field than the declared one
+    if (prop === '' || !prop.isWellFormed()) {
+      return {
+        unrepresentable: `a body property name is empty or cannot be encoded in a form body with a deepObject encoding`,
+      };
+    }
     const [key] = keyPath(prop);
     const other = key === undefined ? undefined : seen.get(key);
     if (prop.includes('[') || prop.includes(']') || other !== undefined) {

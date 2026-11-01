@@ -292,7 +292,9 @@ const meetsSibling = (value: unknown, node: Record<string, unknown>, keyword: st
       return value < bound;
     }
     case 'multipleOf': {
-      // As numberSchema enforces it: exact for an integer bound
+      // As numberSchema enforces it: exact for an integer bound. A float bound
+      // can leave a remainder (0.3 % 0.1), which keeps the conflict: that errs
+      // on the safe side, so no epsilon here
       return value % bound === 0;
     }
     default: {

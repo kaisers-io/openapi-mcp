@@ -389,6 +389,14 @@ describe('convertSchema — sibling-assertion conflicts (fail-closed)', () => {
     expect('ok' in convertSchema({ enum: [1], minimum: 0, exclusiveMinimum: true }, '3.0')).toBe(
       true,
     );
+    for (const schema of [
+      { enum: [1], minimum: 1, exclusiveMinimum: true },
+      { enum: [1], maximum: 1, exclusiveMaximum: true },
+    ]) {
+      expect(convertSchema(schema, '3.0')).toStrictEqual({
+        unrepresentable: expect.stringContaining('the sibling constraint'),
+      });
+    }
   });
 
   it.each([
@@ -397,6 +405,8 @@ describe('convertSchema — sibling-assertion conflicts (fail-closed)', () => {
     [{ enum: [0], exclusiveMinimum: 0 }, 'exclusiveMinimum'],
     [{ enum: [5], maximum: 4 }, 'maximum'],
     [{ enum: [['a']], minItems: 1 }, 'minItems'],
+    // Code points, not UTF-16 units: one emoji is one character
+    [{ enum: ['😀'], minLength: 2 }, 'minLength'],
     // A pattern is not enforced, and 3.0 nullable adds a value: not relaxed
     [{ enum: ['a'], maxLength: 1, pattern: '^b$' }, 'maxLength'],
     [{ type: 'string', nullable: true, enum: ['a'], maxLength: 1 }, 'maxLength'],
