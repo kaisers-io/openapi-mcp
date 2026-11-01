@@ -178,10 +178,9 @@ an encoding of a `multipart/form-data` body, and OAS 3.2 `prefixEncoding` and `i
 So does a form body with such an encoding whose property names a bracket-parsing server reads
 as one key, such as `a.b` and `a_b`, or a name that contains `[` or `]`.
 
-With the flag on every operation, 268 of Stripe's reads and 235 of its 308 `POST` operations
-become tools. Most of the rest have an `enum` next to `maxLength`, which the server does not
-support. Together that is more than the 512-tool budget of `--tool-mode per-operation`, so use
-`discover` or a narrower `--allow`.
+With the flag on every operation, every Stripe operation becomes a tool except the two with a
+per-operation `servers` override: 610 tools. That is more than the 512-tool budget of
+`--tool-mode per-operation`, so use `discover` or a narrower `--allow`.
 
 ### `multipart/form-data` bodies
 

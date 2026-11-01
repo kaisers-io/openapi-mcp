@@ -167,8 +167,7 @@ const SPECS: SpecCase[] = [
         args: ['--deep-object-indices', 'method:get'],
         mode: 'discover',
         expected: READ,
-        // A parameter with an `enum` next to `maxLength`, a limit of its own
-        missing: { count: 4, hash: '9486f19870135792' },
+        missing: NONE,
       },
       {
         // Issue #96: every operation, form bodies with nested values
@@ -177,8 +176,7 @@ const SPECS: SpecCase[] = [
         args: ['--allow', 'path:/**', '--deep-object-indices', 'path:/**'],
         mode: 'discover',
         expected: () => true,
-        // The 4 reads above, and writes with an `enum` next to `maxLength`
-        missing: { count: 75, hash: 'b974c0f7b9dad097' },
+        missing: NONE,
       },
       {
         title: 'deletes, except under customers',

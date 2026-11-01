@@ -253,6 +253,65 @@ const valueMatchesType = (value: unknown, type: string): boolean => {
   }
 };
 
+// Whether a listed enum or const value meets a sibling assertion keyword
+// (its value is well-formed: malformedKeyword ran before). The value set is
+// fixed, so a sibling every value meets drops nothing (Stripe puts
+// `maxLength` next to its enums). A keyword holds for a value of a type it
+// does not constrain (JSON Schema Validation 2020-12 §6); an array or object
+// value is not evaluated and keeps the conflict.
+const meetsSibling = (value: unknown, node: Record<string, unknown>, keyword: string): boolean => {
+  if (value !== null && typeof value === 'object') {
+    return false;
+  }
+  const { [keyword]: bound } = node;
+  if (typeof value === 'string' && typeof bound === 'number') {
+    const { length } = [...value];
+    if (keyword === 'minLength') {
+      return length >= bound;
+    }
+    if (keyword === 'maxLength') {
+      return length <= bound;
+    }
+  }
+  if (typeof value !== 'number' || typeof bound !== 'number') {
+    // A string or number keyword on another type, a 3.0 boolean exclusive
+    // bound (checked with its pair), or an array or object keyword
+    return true;
+  }
+  switch (keyword) {
+    case 'minimum': {
+      return node['exclusiveMinimum'] === true ? value > bound : value >= bound;
+    }
+    case 'maximum': {
+      return node['exclusiveMaximum'] === true ? value < bound : value <= bound;
+    }
+    case 'exclusiveMinimum': {
+      return value > bound;
+    }
+    case 'exclusiveMaximum': {
+      return value < bound;
+    }
+    case 'multipleOf': {
+      // As numberSchema enforces it: exact for an integer bound
+      return value % bound === 0;
+    }
+    default: {
+      return true;
+    }
+  }
+};
+
+// The values an enum or const fixes
+const listedValues = (
+  node: Record<string, unknown>,
+  determiner: (typeof SHAPE_DETERMINERS)[number],
+): readonly unknown[] | undefined => {
+  if (determiner === 'const') {
+    return [node['const']];
+  }
+  return determiner === 'enum' && Array.isArray(node['enum']) ? node['enum'] : undefined;
+};
+
 const conflictingCombination = (
   node: Record<string, unknown>,
   version: OpenapiVersion,
@@ -265,7 +324,12 @@ const conflictingCombination = (
     return undefined;
   }
   const determiner = determiners[0] as (typeof SHAPE_DETERMINERS)[number];
-  const extra = Object.keys(node).find((keyword) => ASSERTION_KEYWORDS.has(keyword));
+  const listed = listedValues(node, determiner);
+  const extra = Object.keys(node).find(
+    (keyword) =>
+      ASSERTION_KEYWORDS.has(keyword) &&
+      !(listed?.every((value) => meetsSibling(value, node, keyword)) ?? false),
+  );
   if (extra !== undefined) {
     return `"${determiner}" combined with the sibling constraint "${extra}"`;
   }

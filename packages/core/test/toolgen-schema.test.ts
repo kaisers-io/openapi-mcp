@@ -367,6 +367,42 @@ describe('convertSchema — sibling-assertion conflicts (fail-closed)', () => {
     expect('unrepresentable' in convertSchema({ const: 'a', minLength: 2 })).toBe(true);
   });
 
+  it('keeps an enum or const whose every value meets the sibling constraints', () => {
+    // Stripe puts maxLength next to its enums: the value set is fixed, so a
+    // sibling every value meets drops nothing
+    const converted = convertSchema({ type: 'string', enum: ['card', 'süß'], maxLength: 4 });
+    if (!('ok' in converted)) {
+      throw new Error(converted.unrepresentable);
+    }
+    expect(converted.ok.safeParse('süß').success).toBe(true);
+    expect(converted.ok.safeParse('other').success).toBe(false);
+    for (const schema of [
+      { const: 'ab', minLength: 2 },
+      { enum: [2, 4, null], type: ['integer', 'null'], minimum: 2, maximum: 4, multipleOf: 2 },
+      { enum: [1, 2], exclusiveMinimum: 0, exclusiveMaximum: 3 },
+      // A string keyword on a number, an array keyword on a string
+      { enum: [5, 'a'], maxLength: 1, minItems: 3 },
+    ]) {
+      expect({ schema, ok: 'ok' in convertSchema(schema) }).toStrictEqual({ schema, ok: true });
+    }
+    // 3.0's boolean exclusive bound, with its pair
+    expect('ok' in convertSchema({ enum: [1], minimum: 0, exclusiveMinimum: true }, '3.0')).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    [{ type: 'string', enum: ['card', 'toolong'], maxLength: 4 }, 'maxLength'],
+    [{ enum: [2, 3], multipleOf: 2 }, 'multipleOf'],
+    [{ enum: [0], exclusiveMinimum: 0 }, 'exclusiveMinimum'],
+    [{ enum: [5], maximum: 4 }, 'maximum'],
+    [{ enum: [['a']], minItems: 1 }, 'minItems'],
+  ])('still omits %j, which a value does not meet', (schema, keyword) => {
+    expect(convertSchema(schema)).toStrictEqual({
+      unrepresentable: expect.stringContaining(`the sibling constraint "${keyword}"`),
+    });
+  });
+
   it('omits enum whose values are incompatible with the sibling type', () => {
     // enum values are numbers but type says string — the branches ignore type,
     // so this would widen. Omit.
