@@ -6,8 +6,12 @@
 
 import { readFile } from 'node:fs/promises';
 import { LARGE_FIXTURES } from './large-fixtures.ts';
+import { flatSpec, jsonSpec, layeredSpec } from './specs.ts';
 import { publicSpec } from './public-specs.ts';
+import { BENCH_CLIENT_ID, BENCH_CLIENT_SECRET, TOKEN_PATH } from './upstream.ts';
 import { describedSpec, toYaml } from './yaml-fixture.ts';
+
+export { flatSpec, layeredSpec } from './specs.ts';
 
 export type ToolCall = {
   tool: string;
@@ -42,6 +46,10 @@ export type Fixture = {
   // The mock upstream sends the body in this many chunks, this far apart: a
   // slow producer
   slowBody?: { chunks: number; delayMs: number };
+  // Run in the warm session first (scenarios.ts, issue #22)
+  scenario?: 'queue' | 'oauth';
+  // Added to the environment of `serve`
+  env?: Readonly<Record<string, string>>;
   // `ci`: small enough for the per-PR gate (a few seconds per start today).
   // `heavy`: the full-size reproductions from the performance issues, too
   // slow to run 2 x 2 x 6 times per pull request today. `public`: needs a
@@ -49,112 +57,22 @@ export type Fixture = {
   suite: 'ci' | 'heavy' | 'public';
 };
 
-type LayeredOptions = {
-  schemas: number;
-  refsPerSchema: number;
-  pathCount: number;
-  layers: number;
-};
-
-// The layered schema graph from issues kaisers-io/openapi-mcp-archive#89 and
-// kaisers-io/openapi-mcp-archive#90: `schemas` component schemas split into
-// `layers` layers, every schema referencing `refsPerSchema` schemas of the next
-// layer, and `pathCount` paths with a GET and a PUT each that reference one
-// schema. Acyclic, but each $ref target is reachable through many paths — the
-// shape of a real domain model (customer -> address -> ...), and the shape that
-// makes per-occurrence dereferencing and per-occurrence schema conversion
-// expensive.
-export const layeredSpec = (opts: LayeredOptions): Record<string, unknown> => {
-  const perLayer = Math.ceil(opts.schemas / opts.layers);
-  const schemas: Record<string, unknown> = {};
-  for (let index = 0; index < opts.schemas; index += 1) {
-    const layer = Math.floor(index / perLayer);
-    const properties: Record<string, unknown> = {
-      id: { type: 'string' },
-      name: { type: 'string', maxLength: 64 },
-      count: { type: 'integer', minimum: 0 },
-    };
-    if (layer < opts.layers - 1) {
-      for (let ref = 0; ref < opts.refsPerSchema; ref += 1) {
-        const target = Math.min(
-          opts.schemas - 1,
-          (layer + 1) * perLayer + ((index + ref) % perLayer),
-        );
-        properties[`rel${String(ref)}`] = { $ref: `#/components/schemas/S${String(target)}` };
-      }
-    }
-    schemas[`S${String(index)}`] = { type: 'object', required: ['id'], properties };
-  }
-  const paths: Record<string, unknown> = {};
-  for (let index = 0; index < opts.pathCount; index += 1) {
-    const schema = { $ref: `#/components/schemas/S${String(index % opts.schemas)}` };
-    const idParam = { name: 'id', in: 'path', required: true, schema: { type: 'string' } };
-    const ok = { 200: { description: 'ok', content: { 'application/json': { schema } } } };
-    paths[`/r${String(index)}/{id}`] = {
-      get: { operationId: `get${String(index)}`, parameters: [idParam], responses: ok },
-      put: {
-        operationId: `put${String(index)}`,
-        parameters: [idParam],
-        requestBody: { required: true, content: { 'application/json': { schema } } },
-        responses: ok,
-      },
-    };
-  }
-  return {
-    openapi: '3.1.0',
-    info: { title: 'synthetic', version: '1' },
-    servers: [{ url: 'https://api.example.com' }],
-    paths,
-    components: { schemas },
-  };
-};
-
-const jsonSpec =
-  (build: () => Record<string, unknown>): Fixture['spec'] =>
-  () =>
-    Promise.resolve({ text: JSON.stringify(build()), extension: 'json' });
-
 const readRepoFile = (relative: string): Promise<string> =>
   readFile(new URL(`../../${relative}`, import.meta.url), 'utf8');
 
-// Many operations with trivial schemas: isolates the fixed per-tool cost
-// (schema conversion, output-validator compilation) from schema size
-export const flatSpec = (operationCount: number): Record<string, unknown> => {
-  const paths: Record<string, unknown> = {};
-  for (let index = 0; index < operationCount; index += 1) {
-    paths[`/items${String(index)}/{id}`] = {
-      get: {
-        operationId: `getItem${String(index)}`,
-        // Realistic text, so the tools/list size tracks description changes too
-        summary: `Get item ${String(index)}`,
-        description: `Returns item ${String(index)} by its identifier. Only items visible to the caller are returned.`,
-        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
-        responses: {
-          200: {
-            description: 'ok',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  required: ['id'],
-                  properties: { id: { type: 'string' }, name: { type: 'string' } },
-                },
-              },
-            },
-          },
-        },
-      },
-    };
-  }
-  return {
-    openapi: '3.1.0',
-    info: { title: 'flat', version: '1' },
-    servers: [{ url: 'https://api.example.com' }],
-    paths,
-  };
-};
-
 const SYNTHETIC_RESPONSE = { id: '1' };
+
+// One operation behind an OAuth2 client-credentials scheme, whose token URL
+// resolves against --base-url: the mock upstream's own token endpoint
+const oauthSpec = (): Record<string, unknown> => ({
+  ...flatSpec(1),
+  components: {
+    securitySchemes: {
+      cc: { type: 'oauth2', flows: { clientCredentials: { tokenUrl: TOKEN_PATH, scopes: {} } } },
+    },
+  },
+  security: [{ cc: [] }],
+});
 
 // Ten targets spread over the catalog, each searched by its name
 const discoverySteps = (operationCount: number): DiscoveryStep[] =>
@@ -259,6 +177,41 @@ export const FIXTURES: readonly Fixture[] = [
     suite: 'ci',
   },
   ...LARGE_FIXTURES,
+  {
+    // Issue #22: 80 calls fill the 16 slots and the 64-place queue while the
+    // upstream holds them, one more is refused, then the queue drains
+    name: 'queue-80',
+    description: 'a full admission queue (16 in flight, 64 waiting), drained on release',
+    spec: jsonSpec(() => flatSpec(1)),
+    filterArgs: [],
+    serveArgs: ['--rate-limit', '100000/1m', '--request-timeout', '120s'],
+    call: { tool: 'getItem0', args: { id: '1' }, response: SYNTHETIC_RESPONSE },
+    scenario: 'queue',
+    suite: 'ci',
+  },
+  {
+    // Issue #22: OAuth2 client credentials against the mock's token endpoint
+    name: 'oauth',
+    description: 'OAuth2: 16 calls wait for one late token, then 16 meet a revoked one',
+    spec: jsonSpec(oauthSpec),
+    filterArgs: [],
+    serveArgs: [
+      '--upstream-oauth-client-id-env',
+      'OPENAPI_MCP_BENCH_CLIENT_ID',
+      '--upstream-oauth-client-secret-env',
+      'OPENAPI_MCP_BENCH_CLIENT_SECRET',
+      '--allow-private-network',
+      '--rate-limit',
+      '100000/1m',
+    ],
+    env: {
+      OPENAPI_MCP_BENCH_CLIENT_ID: BENCH_CLIENT_ID,
+      OPENAPI_MCP_BENCH_CLIENT_SECRET: BENCH_CLIENT_SECRET,
+    },
+    call: { tool: 'getItem0', args: { id: '1' }, response: SYNTHETIC_RESPONSE },
+    scenario: 'oauth',
+    suite: 'ci',
+  },
   {
     name: 'digitalocean',
     description: 'DigitalOcean v2 (APIs-guru, 1.6 MB YAML), every operation',

@@ -9,6 +9,7 @@ import { StringDecoder } from 'node:string_decoder';
 import type { Fixture } from './fixtures.ts';
 import { createIntervalProbe, createLiveHeapReader, peakRssMB, PROBE_FLAGS } from './memory.ts';
 import type { IntervalProbe } from './memory.ts';
+import { runOAuthBursts, runQueueBurst } from './scenarios.ts';
 import { runCalls, runDiscovery } from './workloads.ts';
 import type { JsonRpcResponse } from './workloads.ts';
 import type { Upstream } from './upstream.ts';
@@ -30,16 +31,25 @@ type RpcChild = {
   close: () => Promise<void>;
 };
 
-const childEnv = (home: string): NodeJS.ProcessEnv => ({
+const childEnv = (
+  home: string,
+  extra: Readonly<Record<string, string>> = {},
+): NodeJS.ProcessEnv => ({
   ...process.env,
+  ...extra,
   HOME: home,
   USERPROFILE: home,
 });
 
-const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild => {
+const spawnRpc = (
+  cli: string,
+  args: readonly string[],
+  home: string,
+  env: Readonly<Record<string, string>> = {},
+): RpcChild => {
   // The fourth descriptor is the IPC channel of the interval probe
   const child = spawn(process.execPath, [...PROBE_FLAGS, cli, ...args], {
-    env: childEnv(home),
+    env: childEnv(home, env),
     stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
   }) as ChildProcessByStdio<Writable, Readable, Readable>;
   const pending = new Map<number, PromiseWithResolvers<string>>();
@@ -136,6 +146,11 @@ export type SessionSample = {
   eventLoopDelayMaxMs?: number;
   eventLoopDelayP99Ms?: number;
   callExternalMaxMB?: number;
+  // The scenarios (scenarios.ts): release to the last queued answer, and
+  // the two OAuth2 bursts
+  queueDrainMs?: number;
+  oauthColdBurstMs?: number;
+  oauthRefreshBurstMs?: number;
 };
 
 // The discovery steps, then the calls, inside one measured interval
@@ -148,6 +163,14 @@ const runWarmWork = async (
     return {};
   }
   await rpc.interval.start();
+  const scenario =
+    fixture.call === undefined || fixture.scenario === undefined
+      ? {}
+      : await (fixture.scenario === 'queue' ? runQueueBurst : runOAuthBursts)(
+          rpc.request,
+          upstream,
+          fixture.call,
+        );
   if (fixture.discovery !== undefined) {
     upstream.setResponse(fixture.call?.response ?? {});
   }
@@ -156,6 +179,7 @@ const runWarmWork = async (
   const calls = await runCalls(rpc.request, fixture, upstream);
   const interval = await rpc.interval.stop();
   return {
+    ...scenario,
     ...discovery,
     ...calls,
     eventLoopDelayMaxMs: interval.eventLoopDelayMaxMs,
@@ -227,6 +251,7 @@ export const runSession = async (input: SessionInput): Promise<SessionSample> =>
       ...(input.fixture.serveArgs ?? []),
     ],
     input.home,
+    input.fixture.env,
   );
   try {
     return await measureSession(rpc, input, started);

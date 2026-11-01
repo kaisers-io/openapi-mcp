@@ -140,6 +140,18 @@ Two kinds of fixture measure more than the call itself:
   and 10 MiB, one huge string, strings that JSON escapes, multi-byte characters, `_fields`, and an
   upstream that sends the body slowly in chunks.
 
+Two scenarios, both in CI, time work at the server's limits. Each sample fails when the server
+does not do what it must, so a burst that went wrong never reads as a fast one:
+
+- `queue-80`: the upstream holds the calls in flight while 80 fill the 16 slots and the 64-place
+  queue. One more call must be refused while it holds; after the release every queued call must
+  succeed. Reported: the time from the release to the last answer.
+- `oauth`: 16 calls of a fresh process wait for one late token, then 16 calls meet a revoked
+  token. Each burst must cost exactly one token request. Reported: the time of each burst.
+
+The exact contracts behind them, including cancellation and the deadline while a call waits for a
+token, are tests: `packages/cli/test/serve-queue.test.ts` and `serve-oauth.test.ts`.
+
 While the warm session calls, the harness's probe in the server (`scripts/bench/heap-probe.ts`)
 runs a timer that ticks every 5 ms, over an IPC channel the harness opens. How late a tick comes
 is the event-loop delay, and each tick samples `external` memory (Buffers and ArrayBuffers). Sampling can miss a short peak, so these values are lower

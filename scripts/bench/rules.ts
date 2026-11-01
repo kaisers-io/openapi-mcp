@@ -49,6 +49,10 @@ export const FIXTURE_RULES: Record<keyof Omit<FixtureMetrics, 'error'>, Rule> = 
   eventLoopDelayMaxMs: { kind: 'info', maxRatio: 1.25 },
   eventLoopDelayP99Ms: { kind: 'info', maxRatio: 1.25 },
   callExternalMaxMB: { kind: 'info', maxRatio: 1.15 },
+  // Each sample already fails when a burst goes wrong (scenarios.ts)
+  queueDrainMs: { kind: 'info', maxRatio: 1.25 },
+  oauthColdBurstMs: { kind: 'info', maxRatio: 1.25 },
+  oauthRefreshBurstMs: { kind: 'info', maxRatio: 1.25 },
   // Peak RSS of one build alternated by ~70 MB between runs (GC timing), so
   // it is informational; retention is gated on the post-GC live heap below
   rssMB: { kind: 'info', maxRatio: 1.15 },
