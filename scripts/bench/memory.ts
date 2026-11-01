@@ -90,32 +90,50 @@ export type IntervalProbe = {
 // The measured interval of heap-probe.ts over the child's IPC channel: one
 // request at a time, each answered by the probe
 export const createIntervalProbe = (child: ChildProcess): IntervalProbe => {
-  const ask = async <Answer>(request: ProbeRequest): Promise<Answer> => {
+  // `start` is answered with "started", `stop` with the report
+  const ask = async <Answer>(
+    request: ProbeRequest,
+    expected: (message: unknown) => boolean,
+  ): Promise<Answer> => {
     const answer = Promise.withResolvers<Answer>();
     const onMessage = (message: unknown): void => {
-      answer.resolve(message as Answer);
+      if (expected(message)) {
+        answer.resolve(message as Answer);
+      }
     };
-    const onExit = (): void => {
+    const onGone = (): void => {
       answer.reject(new Error(`the server exited before answering "${request}"`));
     };
     const timeout = setTimeout(() => {
       answer.reject(new Error(`the server did not answer "${request}"`));
     }, INTERVAL_TIMEOUT_MS);
-    child.once('message', onMessage);
-    child.once('exit', onExit);
-    child.send(request);
+    child.on('message', onMessage);
+    child.once('exit', onGone);
+    child.once('disconnect', onGone);
     try {
+      if (!child.connected) {
+        throw new Error(`the server has no probe channel for "${request}"`);
+      }
+      // A failed send rejects through its callback, never as an 'error' event
+      // oxlint-disable-next-line promise/prefer-await-to-callbacks -- child.send reports a failed send only through this callback; without one it emits 'error' on the child
+      child.send(request, (error) => {
+        if (error !== null) {
+          answer.reject(error);
+        }
+      });
       return await answer.promise;
     } finally {
       clearTimeout(timeout);
       child.off('message', onMessage);
-      child.off('exit', onExit);
+      child.off('exit', onGone);
+      child.off('disconnect', onGone);
     }
   };
   return {
     start: async () => {
-      await ask<string>('start');
+      await ask<string>('start', (message) => message === 'started');
     },
-    stop: () => ask<IntervalReport>('stop'),
+    stop: () =>
+      ask<IntervalReport>('stop', (message) => typeof message === 'object' && message !== null),
   };
 };

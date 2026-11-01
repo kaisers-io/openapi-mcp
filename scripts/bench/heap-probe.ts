@@ -51,6 +51,14 @@ const sample = (): void => {
 
 const MB = 1024 * 1024;
 
+// The harness may be gone by the time an answer is ready: a failed send is
+// dropped instead of becoming an uncaught error in the server
+const answer = (message: unknown): void => {
+  if (process.connected) {
+    process.send?.(message, undefined, undefined, () => {});
+  }
+};
+
 process.on('message', (message: ProbeRequest) => {
   if (message === 'start') {
     peak = { external: 0, arrayBuffers: 0, rss: 0 };
@@ -59,9 +67,11 @@ process.on('message', (message: ProbeRequest) => {
     delay.enable();
     sampler = setInterval(sample, SAMPLE_MS);
     sampler.unref();
-    // The histogram records from its second tick on: answer once it does
+    // The histogram records from its second tick on: let it tick, then
+    // clear what the wait recorded and answer
     setTimeout(() => {
-      process.send?.('started');
+      delay.reset();
+      answer('started');
     }, 3 * RESOLUTION_MS);
     return;
   }
@@ -75,6 +85,6 @@ process.on('message', (message: ProbeRequest) => {
     arrayBuffersMaxMB: peak.arrayBuffers / MB,
     rssMaxMB: peak.rss / MB,
   };
-  process.send?.(report);
+  answer(report);
 });
 process.channel?.unref();
