@@ -118,14 +118,33 @@ get worse by more than the ratio in `scripts/bench/rules.ts` (25% for time, 15% 
 after garbage collection) and by more than a small absolute floor. Peak RSS depends on when
 garbage collection runs, so the workflow reports it but does not fail on it.
 
-The size of `tools/list` in bytes is the same on every machine, so the workflow compares it
-exactly with the committed `scripts/bench/baseline.json` instead. Any difference, up or down,
+The size of `tools/list` in bytes is the same on every machine, and so are the bytes of one call's
+result, of its text and of the discovery round trips. The workflow compares them exactly with the
+committed `scripts/bench/baseline.json` instead. Any difference, up or down,
 fails until the baseline is updated. A percentage threshold would let a series of pull requests
 each add a little without anyone accepting the total. When you intend such a change, update the
 baseline in the same pull request with `pnpm bench:baseline` and say why in the description.
 
 The parallel batch sends as many calls as `serve` admits at once (16), so it measures concurrent
 throughput. Any refused call fails the gate (`parallelErrors`).
+
+Two kinds of fixture measure more than the call itself:
+
+- Discovery (`discover-500` in CI, `discover-2000` in `heavy`): ten round trips of
+  `search_operations`, `describe_operation` and `call_operation` under `--tool-mode discover`,
+  each for another operation. A round trip fails the sample when the search does not return the
+  operation or a step fails. The time of the whole round trip gates; the time of each step is
+  reported.
+- Large responses (`large-1mb` in CI, the others in `heavy`): bodies of 120 KiB, 136 KiB (either
+  side of the size from which the 8 KiB text preview stops serializing the whole result), 1, 5
+  and 10 MiB, one huge string, strings that JSON escapes, multi-byte characters, `_fields`, and an
+  upstream that sends the body slowly in chunks.
+
+While the warm session calls, the harness's probe in the server (`scripts/bench/heap-probe.ts`)
+records the event-loop delay and samples `external` memory (Buffers and ArrayBuffers) every 5 ms,
+over an IPC channel the harness opens. Sampling can miss a short peak, so these values are lower
+bounds. The workflow reports them, the 95th percentile of the sequential calls and the stages of
+a round trip, but does not fail on them until CI runs show how much they vary.
 
 ## Documentation
 

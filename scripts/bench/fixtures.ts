@@ -5,6 +5,7 @@
 // against a pinned sha256 before use.
 
 import { readFile } from 'node:fs/promises';
+import { LARGE_FIXTURES } from './large-fixtures.ts';
 import { publicSpec } from './public-specs.ts';
 import { describedSpec, toYaml } from './yaml-fixture.ts';
 
@@ -13,7 +14,16 @@ export type ToolCall = {
   args: Record<string, unknown>;
   // What the mock upstream answers to every request for this fixture. It must
   // conform to the tool's output schema, or the call is reported as an error.
+  // A function builds a large body only when the fixture runs.
   response: unknown;
+};
+
+// One discovery round trip (issue #22): search for `name`, describe it, call
+// it. The search must return `name`, or the sample fails.
+export type DiscoveryStep = {
+  query: string;
+  name: string;
+  arguments: Record<string, unknown>;
 };
 
 export type Fixture = {
@@ -27,6 +37,11 @@ export type Fixture = {
   serveArgs?: readonly string[];
   // Omitted for fixtures that only measure startup and tools/list
   call?: ToolCall;
+  // Run in the warm session before the calls, under --tool-mode discover
+  discovery?: readonly DiscoveryStep[];
+  // The mock upstream sends the body in this many chunks, this far apart: a
+  // slow producer
+  slowBody?: { chunks: number; delayMs: number };
   // `ci`: small enough for the per-PR gate (a few seconds per start today).
   // `heavy`: the full-size reproductions from the performance issues, too
   // slow to run 2 x 2 x 6 times per pull request today. `public`: needs a
@@ -141,6 +156,13 @@ export const flatSpec = (operationCount: number): Record<string, unknown> => {
 
 const SYNTHETIC_RESPONSE = { id: '1' };
 
+// Ten targets spread over the catalog, each searched by its name
+const discoverySteps = (operationCount: number): DiscoveryStep[] =>
+  Array.from({ length: 10 }, (_unused, index) => {
+    const name = `getItem${String(Math.floor((index * operationCount) / 10) + 7)}`;
+    return { query: name, name, arguments: { id: String(index) } };
+  });
+
 export const FIXTURES: readonly Fixture[] = [
   {
     name: 'petstore',
@@ -217,8 +239,26 @@ export const FIXTURES: readonly Fixture[] = [
       args: { name: 'getItem0', arguments: { id: '1' } },
       response: SYNTHETIC_RESPONSE,
     },
+    discovery: discoverySteps(2000),
     suite: 'heavy',
   },
+  {
+    // The workflow an agent runs under discover (issue #22): search,
+    // describe, call, each step and the whole round trip
+    name: 'discover-500',
+    description: '500 GET operations in --tool-mode discover: search, describe, call',
+    spec: jsonSpec(() => flatSpec(500)),
+    filterArgs: [],
+    serveArgs: ['--tool-mode', 'discover'],
+    call: {
+      tool: 'call_operation',
+      args: { name: 'getItem0', arguments: { id: '1' } },
+      response: SYNTHETIC_RESPONSE,
+    },
+    discovery: discoverySteps(500),
+    suite: 'ci',
+  },
+  ...LARGE_FIXTURES,
   {
     name: 'digitalocean',
     description: 'DigitalOcean v2 (APIs-guru, 1.6 MB YAML), every operation',

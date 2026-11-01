@@ -162,7 +162,12 @@ describe('compareResults', () => {
       [500, 500, 500],
     );
     const findings = compareResults(slowerMachine, result(healthy), 'baseline');
-    expect(findings.map((finding) => finding.metric)).toEqual(['toolsListBytes']);
+    expect(findings.map((finding) => finding.metric)).toEqual([
+      'toolsListBytes',
+      'callResultBytes',
+      'callTextBytes',
+      'discoveryBytes',
+    ]);
     expect(hasRegression(findings)).toBe(false);
   });
 

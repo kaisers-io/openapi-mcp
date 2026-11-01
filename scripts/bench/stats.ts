@@ -46,6 +46,16 @@ export const summarize = (samples: readonly number[]): Summary => {
   };
 };
 
+// Nearest-rank percentile: the smallest sample with at least `rank`% of the
+// samples at or below it
+export const percentile = (samples: readonly number[], rank: number): number => {
+  if (samples.length === 0) {
+    throw new Error('cannot take a percentile of an empty sample set');
+  }
+  const sorted = samples.toSorted((left, right) => left - right);
+  return sorted[Math.max(0, Math.ceil((rank / 100) * sorted.length) - 1)] as number;
+};
+
 export type FixtureMetrics = {
   // Spawn until the `initialize` response, empty cache
   startupMs?: Summary;
@@ -63,9 +73,27 @@ export type FixtureMetrics = {
   warmLiveHeapMB?: Summary;
   // Median of the sequential tools/call round trips of one sample
   sequentialCallMs?: Summary;
+  // 95th percentile of the sequential round trips of one sample (issue #22)
+  sequentialCallP95Ms?: Summary;
   // Wall time of one batch of parallel tools/calls
   parallelCallMs?: Summary;
+  // Under --tool-mode discover: the median of each step over the discovery
+  // round trips of one sample, and of the whole round trip
+  discoverySearchMs?: Summary;
+  discoveryDescribeMs?: Summary;
+  discoveryCallMs?: Summary;
+  discoveryWorkflowMs?: Summary;
+  // While the warm session's calls ran, in the server: the event-loop delay
+  // and the largest `external` memory (Buffers, ArrayBuffers) sampled
+  eventLoopDelayMaxMs?: Summary;
+  eventLoopDelayP99Ms?: Summary;
+  callExternalMaxMB?: Summary;
   toolsListBytes?: number;
+  // One call's `result` JSON and its text content, and every result of the
+  // discovery round trips together
+  callResultBytes?: number;
+  callTextBytes?: number;
+  discoveryBytes?: number;
   toolCount?: number;
   omittedCount?: number;
   parallelErrors?: number;

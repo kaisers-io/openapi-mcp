@@ -4,6 +4,7 @@
 import type { ChildProcess } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { LIVE_HEAP_MARKER } from './heap-marker.ts';
+import type { IntervalReport, ProbeRequest } from './heap-marker.ts';
 
 const LIVE_HEAP_TIMEOUT_MS = 30_000;
 const LIVE_HEAP_RE = new RegExp(`^${LIVE_HEAP_MARKER} (?<bytes>\\d+)$`, 'mu');
@@ -75,5 +76,46 @@ export const createLiveHeapReader = (child: ChildProcess): LiveHeapReader => {
         clearTimeout(timeout);
       }
     },
+  };
+};
+
+const INTERVAL_TIMEOUT_MS = 30_000;
+
+export type IntervalProbe = {
+  // Resolves once the probe has reset its counters
+  start: () => Promise<void>;
+  stop: () => Promise<IntervalReport>;
+};
+
+// The measured interval of heap-probe.ts over the child's IPC channel: one
+// request at a time, each answered by the probe
+export const createIntervalProbe = (child: ChildProcess): IntervalProbe => {
+  const ask = async <Answer>(request: ProbeRequest): Promise<Answer> => {
+    const answer = Promise.withResolvers<Answer>();
+    const onMessage = (message: unknown): void => {
+      answer.resolve(message as Answer);
+    };
+    const onExit = (): void => {
+      answer.reject(new Error(`the server exited before answering "${request}"`));
+    };
+    const timeout = setTimeout(() => {
+      answer.reject(new Error(`the server did not answer "${request}"`));
+    }, INTERVAL_TIMEOUT_MS);
+    child.once('message', onMessage);
+    child.once('exit', onExit);
+    child.send(request);
+    try {
+      return await answer.promise;
+    } finally {
+      clearTimeout(timeout);
+      child.off('message', onMessage);
+      child.off('exit', onExit);
+    }
+  };
+  return {
+    start: async () => {
+      await ask<string>('start');
+    },
+    stop: () => ask<IntervalReport>('stop'),
   };
 };

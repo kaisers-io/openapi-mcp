@@ -38,6 +38,17 @@ export const FIXTURE_RULES: Record<keyof Omit<FixtureMetrics, 'error'>, Rule> = 
   toolsListMs: { kind: 'timed', maxRatio: 1.25, minDelta: 10 },
   sequentialCallMs: { kind: 'timed', maxRatio: 1.25, minDelta: 5 },
   parallelCallMs: { kind: 'timed', maxRatio: 1.25, minDelta: 25 },
+  // Issue #22. The round trip gates; its steps, the p95 of 20 samples, the
+  // event-loop delay and sampled memory are informational until CI runs show
+  // how much they vary
+  discoveryWorkflowMs: { kind: 'timed', maxRatio: 1.25, minDelta: 5 },
+  discoverySearchMs: { kind: 'info', maxRatio: 1.25 },
+  discoveryDescribeMs: { kind: 'info', maxRatio: 1.25 },
+  discoveryCallMs: { kind: 'info', maxRatio: 1.25 },
+  sequentialCallP95Ms: { kind: 'info', maxRatio: 1.25 },
+  eventLoopDelayMaxMs: { kind: 'info', maxRatio: 1.25 },
+  eventLoopDelayP99Ms: { kind: 'info', maxRatio: 1.25 },
+  callExternalMaxMB: { kind: 'info', maxRatio: 1.15 },
   // Peak RSS of one build alternated by ~70 MB between runs (GC timing), so
   // it is informational; retention is gated on the post-GC live heap below
   rssMB: { kind: 'info', maxRatio: 1.15 },
@@ -46,6 +57,10 @@ export const FIXTURE_RULES: Record<keyof Omit<FixtureMetrics, 'error'>, Rule> = 
   warmLiveHeapMB: { kind: 'timed', maxRatio: 1.15, minDelta: 2 },
   // 5%: a duplicated description on the flat-500 fixture already adds 12%
   toolsListBytes: { kind: 'exact', maxRatio: 1.05 },
+  // What a call or the discovery round trips send to the client
+  callResultBytes: { kind: 'exact', maxRatio: 1.05 },
+  callTextBytes: { kind: 'exact', maxRatio: 1.05 },
+  discoveryBytes: { kind: 'exact', maxRatio: 1.05 },
   toolCount: { kind: 'count', failOnIncrease: false },
   omittedCount: { kind: 'count', failOnIncrease: false },
   parallelErrors: { kind: 'count', failOnIncrease: true },
