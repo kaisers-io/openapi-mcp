@@ -414,10 +414,12 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
     const started = Date.now();
     const results = await Promise.all([session.call('listPets'), session.call('listPets')]);
     const elapsed = Date.now() - started;
+    // The token request shares the call's --request-timeout, so either the
+    // call's deadline or the token request's own timeout ends the wait first
     for (const result of results) {
       expect(result.result?.['isError']).toBe(true);
-      expect(JSON.stringify(result)).toContain(
-        'timed out waiting for an OAuth2 access token; no API request was sent',
+      expect(JSON.stringify(result)).toMatch(
+        /timed out waiting for an OAuth2 access token; no API request was sent|the token request timed out/u,
       );
     }
     expect(elapsed).toBeLessThan(5000);
