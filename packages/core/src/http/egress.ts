@@ -48,13 +48,12 @@ export const METADATA_HOSTNAMES = new Set([
   'metadata.tencentyun.com',
 ]);
 
-// One spelling for a hostname before any deny-set lookup: lowercase, minus a
-// single trailing dot. URL.hostname keeps the dot of an absolute name
-// ("metadata.tencentyun.com."), which DNS resolves to the same host.
-export const canonicalHostname = (hostname: string): string => {
-  const lower = hostname.toLowerCase();
-  return lower.endsWith('.') ? lower.slice(0, -1) : lower;
-};
+// One spelling for a hostname before any deny-set lookup: lowercase, minus
+// every trailing dot. URL.hostname keeps the dots of an absolute name
+// ("metadata.tencentyun.com." or "metadata.tencentyun.com.."), which a
+// resolver may treat as the same host.
+export const canonicalHostname = (hostname: string): string =>
+  hostname.toLowerCase().replace(/\.+$/u, '');
 
 const classifyIpv4 = (address: string): AddressClass => {
   if (METADATA_IPV4.has(address)) {
@@ -130,6 +129,26 @@ const ipv6Groups = (raw: string): readonly number[] | undefined => {
     : groups;
 };
 
+// Tunnel and translation forms that carry an IPv4 address in fixed bits:
+// IPv4-compatible ::/96, SIIT ::ffff:0:0/96, 6to4 2002::/16 (bits 16-47) and
+// Teredo 2001::/32 (server in bits 32-63, client inverted in bits 96-127).
+// They are classified private below; this decode only makes a metadata or
+// link-local IPv4 inside one of them metadata, so --allow-private-network
+// never admits that host under another spelling.
+const embedsMetadataIpv4 = (groups: readonly number[]): boolean => {
+  const [g0 = 0, g1 = 0, g2 = 0, g3 = 0, g4 = 0, g5 = 0, g6 = 0, g7 = 0] = groups;
+  const head96Zero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0;
+  const embedded = [
+    ...(head96Zero && g4 === 0 && g5 === 0 ? [ipv4FromGroups(g6, g7)] : []),
+    ...(head96Zero && g4 === 0xff_ff && g5 === 0 ? [ipv4FromGroups(g6, g7)] : []),
+    ...(g0 === 0x20_02 ? [ipv4FromGroups(g1, g2)] : []),
+    ...(g0 === 0x20_01 && g1 === 0
+      ? [ipv4FromGroups(g2, g3), ipv4FromGroups(g6 ^ 0xff_ff, g7 ^ 0xff_ff)]
+      : []),
+  ];
+  return embedded.some((ipv4) => classifyIpv4(ipv4) === 'metadata');
+};
+
 export const classifyAddress = (address: string): AddressClass => {
   const family = isIP(address);
   if (family === 4) {
@@ -146,6 +165,9 @@ export const classifyAddress = (address: string): AddressClass => {
       // IPv4-mapped ::ffff:0:0/96 — classify the embedded IPv4 regardless of
       // spelling (WHATWG URLs canonicalize dotted forms to hex groups)
       return classifyIpv4(ipv4FromGroups(g6, g7));
+    }
+    if (embedsMetadataIpv4(groups)) {
+      return 'metadata';
     }
     if (groups.every((value) => value === 0)) {
       // Unspecified ::
@@ -303,6 +325,40 @@ export const isLoopbackHost = (hostname: string): boolean => {
   }
   return isIP(bare) === 6 && bare === '::1';
 };
+
+// A DNS answer that is loopback: 127.0.0.0/8, ::1, or 127.0.0.0/8 mapped into
+// IPv6 (::ffff:127.0.0.1, in any spelling).
+export const isLoopbackAddress = (address: string): boolean => {
+  if (isIP(address) === 4) {
+    return address.startsWith('127.');
+  }
+  const groups = isIP(address) === 6 ? ipv6Groups(address) : undefined;
+  if (groups === undefined) {
+    return false;
+  }
+  const [g0, g1, g2, g3, g4, g5, g6 = 0, g7] = groups;
+  const head80Zero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0;
+  return (
+    (head80Zero && g5 === 0 && g6 === 0 && g7 === 1) ||
+    (head80Zero && g5 === 0xff_ff && Math.floor(g6 / 256) === 127)
+  );
+};
+
+// The cleartext gate lets a credential go over http to a loopback NAME
+// (localhost, *.localhost; isLoopbackHost). Whether that name resolves to
+// loopback depends on the resolver, so such a request also requires every DNS
+// answer to be loopback (PinnedPolicy.loopbackOnly). An IP literal needs no
+// answer check: isLoopbackHost already read its address.
+export const needsLoopbackAnswer = (
+  url: URL,
+  hasCredential: boolean,
+  allowInsecureHttp: boolean,
+): boolean =>
+  hasCredential &&
+  url.protocol === 'http:' &&
+  !allowInsecureHttp &&
+  isIP(stripBrackets(url.hostname)) === 0 &&
+  isLoopbackHost(url.hostname);
 
 const hostnameOf = (url: URL): string => stripBrackets(url.hostname);
 

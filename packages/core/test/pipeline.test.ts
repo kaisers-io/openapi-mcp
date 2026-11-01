@@ -1310,6 +1310,49 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
     expect(refreshed.warnings.join('\n')).not.toContain('tool budget');
   });
 
+  // A trusted update over the tool budget is a failed refresh: the accepted
+  // baseline keeps serving, with the budget in the warning
+  it('serves the baseline when a trusted update is over the tool budget', async () => {
+    const cacheFs = memoryCacheFs();
+    const trusted = { ...baseOpts, cacheRoot: '/cache', trustSpecUpdates: true };
+    await runSpecPipeline('https://api.example.com/big.json', trusted, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    const refreshed = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...trusted, nowMs: 3_600_001 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(refreshed.cacheStatus).toBe('stale');
+    expect(refreshed.namedOperations).toHaveLength(10);
+    expect(refreshed.warnings.join('\n')).toMatch(
+      /spec refresh failed, serving the last known good accepted baseline: 600 tools would be exposed .*512-tool budget/u,
+    );
+    // Nothing of the refused update was written: the 10-tool spec is still
+    // the accepted one
+    const again = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...trusted, nowMs: 7_200_002 },
+      { ...bigDeps(10), cacheFs },
+    );
+    expect(again.cacheStatus).toBe('revalidated');
+  });
+
+  it('still refuses to start when a first trusted load is over the tool budget', async () => {
+    const cacheFs = memoryCacheFs();
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...baseOpts, cacheRoot: '/cache', trustSpecUpdates: true },
+        { ...bigDeps(600), cacheFs },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('tool budget') as string,
+    });
+  });
+
   it('does not warn about a candidate that fits the tool budget', async () => {
     const cacheFs = memoryCacheFs();
     const cachedOpts = { ...baseOpts, cacheRoot: '/cache' };

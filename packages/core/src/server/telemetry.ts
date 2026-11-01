@@ -161,7 +161,12 @@ const mismatchFields = (
 // One JSON line (for stderr) per call. Every string field is sanitized and
 // redacted; numbers and the closed `outcome` vocabulary pass as-is.
 export const formatCallLog = (record: CallRecord, redactor: Redactor, ts: Date): string => {
-  const text = (value: string): string => redactor.redactString(sanitizeSpecText(value, 256));
+  // Redacted before and after sanitizing (stripping a control character can
+  // join a secret's halves), and cut last, so no prefix of a secret survives
+  const text = (value: string): string => {
+    const clean = sanitizeSpecText(redactor.redactString(value), Number.MAX_SAFE_INTEGER);
+    return sanitizeSpecText(redactor.redactString(clean), 256);
+  };
   return JSON.stringify({
     ts: ts.toISOString(),
     event: 'tool_call',

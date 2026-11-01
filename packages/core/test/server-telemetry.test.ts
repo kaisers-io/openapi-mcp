@@ -329,6 +329,33 @@ describe('formatCallLog', () => {
     expect(line).not.toContain(SECRET);
     expect(line).not.toContain('‮');
   });
+
+  it('redacts a secret that the 256-character cut would split', () => {
+    // The cut at 256 characters falls 8 characters into the secret
+    const pathTemplate = `/${'x'.repeat(235)}${SECRET}`;
+    const line = formatCallLog(
+      { tool: 't', outcome: 'ok', latencyMs: 1, pathTemplate },
+      createRedactor([SECRET]),
+      new Date(0),
+    );
+    expect(pathTemplate.length).toBeGreaterThan(256);
+    expect(line).not.toContain(SECRET.slice(0, 8));
+  });
+
+  it('redacts a secret that sanitizing joins together', () => {
+    const line = formatCallLog(
+      {
+        tool: 't',
+        outcome: 'ok',
+        latencyMs: 1,
+        pathTemplate: `/x/${SECRET.slice(0, 8)}\u0007${SECRET.slice(8)}`,
+      },
+      createRedactor([SECRET]),
+      new Date(0),
+    );
+    expect(line).not.toContain(SECRET);
+    expect(line).not.toContain(SECRET.slice(8));
+  });
 });
 
 describe('createCallStats and openapi_mcp_status', () => {

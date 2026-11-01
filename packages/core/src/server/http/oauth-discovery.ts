@@ -126,6 +126,9 @@ const fetchJson = async (
       maxResponseBytes: MAX_DOCUMENT_BYTES,
       signal: new AbortController().signal,
       checkHop: requireSecureHop,
+      // Cleartext is accepted for a loopback host only, so the metadata and
+      // keys of an http://localhost issuer must come from this machine
+      loopbackAnswers: 'every-hop',
     },
     deps.transport,
   );

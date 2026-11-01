@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **A credential over `http` to a loopback name now needs a loopback DNS answer.** `localhost`
+  and `*.localhost` pass the cleartext check by their name, but whether such a name resolves to
+  loopback depends on the resolver. A `--header-env`, `--basic-auth-env`, `--spec-header-env` or
+  OAuth2 credential sent over `http` to one of them now goes out only when every DNS answer is
+  loopback. Otherwise the call fails with `not allowed by the egress policy` and the spec fetch
+  with `resolves to the non-loopback address`, before anything is sent. `--allow-insecure-http`
+  still permits it. The client secret for an `http://localhost` token URL and the metadata and
+  keys of an `http://localhost` `--oauth-issuer` need a loopback answer too, with no override.
+- **With `--trust-spec-updates`, a refreshed spec over the tool, node or `$ref` depth budget
+  keeps the last accepted spec serving.** The server prints the `spec refresh failed` warning
+  with the budget instead of stopping, as it already did for an invalid or oversized refresh.
+- **IPv6 forms of a link-local or metadata IPv4 address are refused like that address.**
+  IPv4-compatible `::/96`, SIIT `::ffff:0:0/96`, 6to4 `2002::/16` and Teredo `2001::/32`
+  addresses that carry such an IPv4 address are metadata, so `--allow-private-network` no
+  longer admits them.
+- **Spec prose loses invisible format characters.** Descriptions and other spec text drop
+  zero-width spaces, word joiners, byte order marks and Unicode tag characters, which can spell
+  out text a reader does not see. The zero-width joiner and non-joiner stay. Names and values
+  keep every one of them, and `--json` output escapes them as `\uXXXX`.
+- **A response `pattern` with `\b` or `\B` and an inline `(?i:...)` group is no longer
+  advertised.** JavaScript and RE2 disagree there on `ſ` (U+017F) and `K` (U+212A). The field
+  description ends with `Pattern (not enforced): <pattern>`.
+
+### Fixed
+
+- A spec fetch refused by a DNS answer said `fetch failed`. It now names the refusal, such as
+  `resolves to a private/loopback address`.
+- Metadata hostnames with more than one trailing dot (`metadata.google.internal..`) are
+  refused like the name without them.
+- The `--header` help says that a token or key goes in `--header-env`.
+- The call log (`--log json`) could keep the first characters of a secret that its
+  256-character cut split. It now redacts before it cuts.
+- An egress refusal of a DNS answer during OAuth discovery said `egress (fetch failed)`. It now
+  names the refusal.
+
 ## [0.8.1] - 2026-10-30
 
 ### Changed

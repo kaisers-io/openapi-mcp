@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { assertAllowedRedirectTarget, classifyAddress } from '../src/index.ts';
+import { isLoopbackAddress, needsLoopbackAnswer } from '../src/http/egress.ts';
 
 const allow = { allowPrivateNetwork: true };
 const deny = { allowPrivateNetwork: false };
@@ -84,6 +85,21 @@ describe('classifyAddress', () => {
     ['2606:4700::1', 'public'], // Genuine global unicast (Cloudflare), outside every carve-out
     ['2a00:1450::1', 'public'], // Genuine global unicast, outside every carve-out
     ['2001:4860:4860::8888', 'public'], // Google DNS — 2001::/16 but outside the 2001::/23 carve-out
+    // IPv6 forms that carry a link-local or metadata IPv4 address are metadata
+    ['::a9fe:a9fe', 'metadata'], // IPv4-compatible ::/96
+    ['::169.254.169.254', 'metadata'],
+    ['::ffff:0:a9fe:a9fe', 'metadata'], // SIIT ::ffff:0:0/96
+    ['2002:a9fe:a9fe::', 'metadata'], // 6to4, IPv4 in bits 16-47
+    ['2002:a83f:8110::1', 'metadata'], // 6to4 around 168.63.129.16
+    ['2001:0:a9fe:a9fe::1', 'metadata'], // Teredo server address
+    ['2001:0:4136:e378:8000:63bf:5601:5601', 'metadata'], // Teredo client, inverted
+    // The same forms around any other IPv4 address stay private
+    ['::a00:1', 'private'],
+    ['::ffff:0:a00:1', 'private'],
+    ['2002:a00:1::', 'private'],
+    ['2001:0:4136:e378:8000:63bf:3fff:fdd2', 'private'],
+    ['::', 'private'],
+    ['::1', 'private'],
   ])('classifies %s as %s', (address, expected) => {
     // Hex-group entries are the WHATWG-canonical spellings of mapped literals:
     // ::ffff:7f00:1 = 127.0.0.1, ::ffff:a00:1 = 10.0.0.1,
@@ -202,16 +218,19 @@ describe('assertAllowedRedirectTarget', () => {
     },
   );
 
-  it.each(['metadata.tencentyun.com.', 'Metadata.TencentYun.com.', 'METADATA.GOOGLE.INTERNAL.'])(
-    'rejects the metadata hostname %s in any case and with a trailing dot',
-    async (host) => {
-      await expect(
-        assertAllowedRedirectTarget(new URL(`http://${host}/x`), allow, noLookup, signal),
-      ).rejects.toMatchObject({
-        message: expect.stringContaining('is a cloud-metadata endpoint') as string,
-      });
-    },
-  );
+  it.each([
+    'metadata.tencentyun.com.',
+    'Metadata.TencentYun.com.',
+    'METADATA.GOOGLE.INTERNAL.',
+    'metadata.tencentyun.com..',
+    'metadata.goog...',
+  ])('rejects the metadata hostname %s in any case and with trailing dots', async (host) => {
+    await expect(
+      assertAllowedRedirectTarget(new URL(`http://${host}/x`), allow, noLookup, signal),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining('is a cloud-metadata endpoint') as string,
+    });
+  });
 
   it.each(['localhost', 'dev.localhost'])('treats %s as loopback by name', async (host) => {
     await expect(
@@ -275,5 +294,41 @@ describe('assertAllowedRedirectTarget', () => {
     await expect(
       assertAllowedRedirectTarget(new URL('https://empty.example.net/x'), deny, lookup, signal),
     ).rejects.toMatchObject({ code: 'validation' });
+  });
+});
+
+describe('isLoopbackAddress', () => {
+  it.each([
+    ['127.0.0.1', true],
+    ['127.255.0.9', true],
+    ['::1', true],
+    ['::ffff:127.0.0.1', true],
+    ['::ffff:7f00:1', true],
+    ['10.0.0.1', false],
+    ['93.184.216.34', false],
+    ['::', false],
+    ['::ffff:a00:1', false],
+    ['fe80::1', false],
+    ['not-an-ip', false],
+  ])('%s is loopback: %s', (address, expected) => {
+    expect(isLoopbackAddress(address)).toBe(expected);
+  });
+});
+
+describe('needsLoopbackAnswer', () => {
+  it.each([
+    ['http://localhost:8080/', true, false, true],
+    ['http://api.localhost/', true, false, true],
+    // An IP literal was already checked by its address
+    ['http://127.0.0.1/', true, false, false],
+    ['http://[::1]/', true, false, false],
+    // No credential, https, or an explicit opt-in: nothing to protect
+    ['http://api.localhost/', false, false, false],
+    ['https://api.localhost/', true, false, false],
+    ['http://api.localhost/', true, true, false],
+    // Not loopback by name: the cleartext gate refuses it before
+    ['http://api.example.test/', true, false, false],
+  ])('%s (credential %s, insecure %s): %s', (url, credential, insecure, expected) => {
+    expect(needsLoopbackAnswer(new URL(url), credential, insecure)).toBe(expected);
   });
 });

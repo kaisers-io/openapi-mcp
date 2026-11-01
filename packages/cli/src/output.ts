@@ -67,18 +67,24 @@ export const emitWarnings = (ctx: CliContext, warnings: readonly string[]): void
 };
 
 // JSON.stringify escapes only C0 controls. A terminal can still act on C1
-// controls (U+009B CSI, U+009D OSC), and bidi controls and U+2028/U+2029
-// reorder or break the line, so every --json writer escapes those as \uXXXX.
+// controls (U+009B CSI, U+009D OSC), bidi controls and U+2028/U+2029 reorder
+// or break the line, and zero-width and tag characters hide text from the
+// reader, so every --json writer escapes those as \uXXXX.
 // The escape stays inside a JSON string, so JSON.parse returns the same value.
 const JSON_TERMINAL_UNSAFE_RE =
   // oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it escapes them)
-  /[\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u2028\u2029]/gu;
+  /[\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\u206A-\u206F\u2028\u2029\uFEFF\u{E0000}-\u{E007F}]/gu;
+
+// An astral character (the tag block) is written as its two UTF-16 halves
+const escapeUnits = (char: string): string =>
+  char
+    // oxlint-disable-next-line unicorn/prefer-spread -- split('') yields UTF-16 units, the spread yields code points
+    .split('')
+    .map((unit) => `\\u${(unit.codePointAt(0) ?? 0).toString(16).padStart(4, '0')}`)
+    .join('');
 
 export const jsonLine = (value: unknown): string =>
-  JSON.stringify(value).replaceAll(
-    JSON_TERMINAL_UNSAFE_RE,
-    (char) => `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, '0')}`,
-  );
+  JSON.stringify(value).replaceAll(JSON_TERMINAL_UNSAFE_RE, escapeUnits);
 
 // Frozen call shape: warnings travel inside the result, never as a side channel,
 // so a command cannot produce a warning that silently fails to be rendered.

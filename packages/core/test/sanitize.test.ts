@@ -6,6 +6,7 @@ import {
   sanitizeSpecText,
   stripMarkdownLinks,
 } from '../src/index.ts';
+import { hasControlOrBidi } from '../src/spec/sanitize.ts';
 
 describe('sanitizeSpecText', () => {
   it('returns short clean text unchanged', () => {
@@ -20,6 +21,24 @@ describe('sanitizeSpecText', () => {
     expect(sanitizeSpecText('safe\u202Eevil\u202C text\u2066x\u2069', 100)).toBe('safeevil textx');
     // The Arabic letter mark is a bidi control too
     expect(sanitizeSpecText('a\u061Cb', 100)).toBe('ab');
+  });
+
+  it('strips zero-width, word joiner, BOM and tag characters, and keeps ZWJ and ZWNJ', () => {
+    // "\u{E0069}\u{E0067}..." spells hidden ASCII in the tag block
+    const hidden = 'ok\u200B\u2060\u2063\u206A\uFEFF\u{E0001}\u{E0069}\u{E0067}\u{E007F}.';
+    expect(sanitizeSpecText(hidden, 100)).toBe('ok.');
+    // A ZWJ emoji sequence and a ZWNJ in Persian text stay whole
+    expect(
+      sanitizeSpecText(
+        '\u{1F469}\u200D\u{1F4BB} \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645',
+        100,
+      ),
+    ).toBe('\u{1F469}\u200D\u{1F4BB} \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645');
+  });
+
+  it('does not refuse a name or value for an invisible format character', () => {
+    expect(hasControlOrBidi(['a\u200Bb', 'c\u{E0041}', { 'k\uFEFF': 'v' }])).toBe(false);
+    expect(hasControlOrBidi(['a\u202Eb'])).toBe(true);
   });
 
   it('collapses tabs and newlines into single spaces and trims', () => {

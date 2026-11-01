@@ -34,6 +34,8 @@ The new version stops with an error that names the replacement. Apply it.
 
 | Version | Old | New |
 |---|---|---|
+| Unreleased | a credential (`--header-env`, `--basic-auth-env`, `--spec-header-env`, the OAuth2 access token) over `http://` to `localhost` or `*.localhost` that resolves to an address that is not loopback; calls fail with `not allowed by the egress policy`, a spec fetch with `resolves to the non-loopback address` | make the name resolve to `127.0.0.1` or `::1`, or use `https://`; `--allow-insecure-http` only if the user agrees |
+| Unreleased | an `http://localhost` `--upstream-oauth-token-url`, or an `http://localhost` `--oauth-issuer`, where `localhost` resolves to an address that is not loopback | make `localhost` resolve to `127.0.0.1` or `::1`, or use `https://`; no flag overrides this |
 | 0.8.1 | a spec URL with `--upstream-oauth-*` and no `--base-url` (also with `--upstream-oauth-token-url`) | add `--base-url <API base URL>`; take it from the spec's `servers` and ask the user to confirm it |
 | 0.7.1 | a spec URL with `--header-env` or `--basic-auth-env` and no `--base-url` | add `--base-url <API base URL>`; take it from the spec's `servers` and ask the user to confirm it |
 | 0.7.1 | `--spec-header-env` with an `http://` spec URL to a host that is not loopback | an `https://` spec URL; `--allow-insecure-http` only if the spec has no other address and the user agrees |
@@ -49,6 +51,10 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
+| Unreleased | With `--trust-spec-updates`, a refreshed spec over the tool, node or `$ref` depth budget keeps the last accepted spec serving, with the `spec refresh failed` warning, instead of stopping the server. | Nothing in the config. Tell the user the spec no longer updates until the filters or the spec change. |
+| Unreleased | Descriptions and other spec prose lose zero-width spaces, word joiners, byte order marks and Unicode tag characters. Names and values keep them; `--json` output escapes them as `\uXXXX`. | Nothing in the config. |
+| Unreleased | IPv6 addresses that carry a link-local or metadata IPv4 address (IPv4-compatible, SIIT, 6to4, Teredo) are refused like that IPv4 address, `--allow-private-network` included. | Nothing in the config. Use another address of the API. |
+| Unreleased | A response `pattern` that turns on `i` in an inline group (`(?i:...)`) and uses `\b` or `\B` is no longer in the output schema; the field description ends with `Pattern (not enforced): <pattern>`. | Nothing in the config. |
 | 0.8.1 | A response `pattern` with quantifiers side by side that can match the same characters (`^\d*\.?\d+$`, `.*:.*`), or without `^` and with something that can fail after an unbounded quantifier (`\s+$`), is no longer in the output schema; the field description ends with `Pattern (not enforced): <pattern>`. Neither the server nor the client checks it. | Nothing in the config. |
 | 0.8.1 | A response `format: url` is no longer in the output schema; the field description ends with `Format (not enforced): url`. A response value that is not a URL is no longer an error. | Nothing in the config. |
 | 0.8.1 | More results that echo a registered secret are withheld: an escaped or entity-encoded secret in a structured result, a `_fields` selection or a response header (the header is dropped), JSON inside a JSON string, and a digit-only secret of more than 15 digits as a JSON number. | Nothing in the config. |

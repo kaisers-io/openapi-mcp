@@ -3,7 +3,13 @@ import type { LookupFunction } from 'node:net';
 import { Agent } from 'undici';
 import type { fetch as undiciFetchType } from 'undici';
 import type { PinnedAgentPool } from './agent-pool.ts';
-import { canonicalHostname, classifyAddress, METADATA_HOSTNAMES } from './egress.ts';
+import {
+  canonicalHostname,
+  classifyAddress,
+  isLoopbackAddress,
+  METADATA_HOSTNAMES,
+  needsLoopbackAnswer,
+} from './egress.ts';
 import { captureResponseHeaders } from './response-headers.ts';
 
 // The SSRF connection-pinning core. undici's custom connect.lookup resolves
@@ -26,6 +32,9 @@ export type PinnedPolicy = {
   // Hop 0 from --base-url: skip the private-address deny (metadata is still
   // always denied). A redirect hop is never trusted.
   trusted: boolean;
+  // A credential goes over http to a loopback name (needsLoopbackAnswer):
+  // every DNS answer must be loopback.
+  loopbackOnly?: boolean;
 };
 
 // Bound to an abort signal by the caller: pinnedRequest binds the call's
@@ -120,6 +129,14 @@ export const pinnedLookup =
           if (classification === 'private' && !(policy.trusted || policy.allowPrivateNetwork)) {
             return settle(
               new EgressError(`egress: "${hostname}" resolves to a private/loopback address`),
+              [],
+            );
+          }
+          if (policy.loopbackOnly === true && !isLoopbackAddress(address)) {
+            return settle(
+              new EgressError(
+                `egress: "${hostname}" resolves to the non-loopback address ${address}, and plain http goes only to loopback`,
+              ),
               [],
             );
           }
@@ -244,6 +261,11 @@ export type PinnedRequestOptions = {
   // without them, as a hop to another origin is. Absent, the origin alone
   // decides.
   credentialScope?: (url: URL) => boolean;
+  // A hop over http to a loopback name (localhost, *.localhost) needs
+  // loopback DNS answers (needsLoopbackAnswer in egress.ts): 'credentialed'
+  // for each hop that still carries the request's credentials, 'every-hop'
+  // for a request whose answer must come from this machine. Absent, none.
+  loopbackAnswers?: 'credentialed' | 'every-hop';
 };
 
 // Typed via undici's own fetch, never Node's global fetch (dual-package
@@ -401,26 +423,26 @@ const withoutContentType = (headers: Readonly<Record<string, string>>): Record<s
 // some Node error aggregation paths use that shape without literally being
 // an AggregateError instance.
 const MAX_CAUSE_DEPTH = 8;
-const containsEgressError = (err: unknown, depth = 0): boolean => {
+export const findEgressError = (err: unknown, depth = 0): EgressError | undefined => {
   if (depth > MAX_CAUSE_DEPTH || err === null || typeof err !== 'object') {
-    return false;
+    return undefined;
   }
   if (isEgressError(err)) {
-    return true;
+    return err;
   }
   const { errors } = err as { errors?: unknown };
-  if (Array.isArray(errors) && errors.some((sub) => containsEgressError(sub, depth + 1))) {
-    return true;
-  }
+  const nested = Array.isArray(errors)
+    ? errors.map((sub) => findEgressError(sub, depth + 1)).find((found) => found !== undefined)
+    : undefined;
   const { cause } = err as { cause?: unknown };
-  return cause === undefined ? false : containsEgressError(cause, depth + 1);
+  return nested ?? (cause === undefined ? undefined : findEgressError(cause, depth + 1));
 };
 
 // Never read err.message (undici's generic "fetch failed" TypeError tells us
 // nothing); walk the cause chain for the branded EgressError instead.
 // Anything else is a genuine network failure.
 const classifyFetchError = (err: unknown): PinnedErrorReason =>
-  containsEgressError(err) ? 'egress' : 'network';
+  findEgressError(err) === undefined ? 'network' : 'egress';
 
 // Content-length fast-reject applies when content-encoding is ABSENT or
 // normalizes to 'identity' — not only absent: an encoded response's declared
@@ -536,7 +558,22 @@ export const pinnedRequest = async (
     // untrusted. The DNS answer for the hop is still validated per socket.
     const onTrustedOrigin = hop === 0 || (url.origin === originalOrigin && !crossed);
     const trusted = opts.baseTrusted && onTrustedOrigin;
-    const policy: PinnedPolicy = { allowPrivateNetwork: opts.allowPrivateNetwork, trusted };
+    // MONOTONIC: once the chain has left the original origin (or the
+    // credential scope), it never regains credentials, even bouncing back
+    // later.
+    if (opts.credentialScope !== undefined && !opts.credentialScope(url)) {
+      leftScope = true;
+    }
+    const onOriginalOrigin = url.origin === originalOrigin && !crossed && !leftScope;
+    const loopbackOnly =
+      (opts.loopbackAnswers === 'every-hop' ||
+        (opts.loopbackAnswers === 'credentialed' && onOriginalOrigin)) &&
+      needsLoopbackAnswer(url, true, false);
+    const policy: PinnedPolicy = {
+      allowPrivateNetwork: opts.allowPrivateNetwork,
+      trusted,
+      ...(loopbackOnly ? { loopbackOnly } : {}),
+    };
     // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
     const sync = validateHopUrlSync(url, policy) ?? opts.checkHop?.(url);
     // Refused before this hop is sent; only the first hop means nothing was
@@ -555,13 +592,6 @@ export const pinnedRequest = async (
     const agent =
       deps.agents?.acquire(url.origin, policy) ??
       createPinnedAgent(policy, (hostname) => deps.resolve(hostname, signal));
-    // MONOTONIC: once the chain has left the original origin (or the
-    // credential scope), it never regains credentials, even bouncing back
-    // later.
-    if (opts.credentialScope !== undefined && !opts.credentialScope(url)) {
-      leftScope = true;
-    }
-    const onOriginalOrigin = url.origin === originalOrigin && !crossed && !leftScope;
     const hopHeaders = onOriginalOrigin
       ? opts.headers.sameOriginHeaders
       : opts.headers.crossOriginHeaders;
@@ -623,7 +653,8 @@ export const pinnedRequest = async (
       return {
         kind: 'error',
         reason: classifyFetchError(error),
-        detail: describeCause(error),
+        // An egress refusal names its cause; undici's own message is "fetch failed"
+        detail: findEgressError(error)?.message ?? describeCause(error),
         beforeResponse: true,
         ...unwritten,
       };

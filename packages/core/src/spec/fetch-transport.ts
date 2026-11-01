@@ -4,6 +4,7 @@
 import type { fetch as undiciFetchType } from 'undici';
 import { validationError } from '../errors.ts';
 import { isLoopbackHost } from '../http/egress.ts';
+import { findEgressError } from '../http/pinned-dispatcher.ts';
 import { VALIDATOR_RE } from '../schemas/cache.ts';
 import { findSensitiveQueryParam } from './load.ts';
 import { sanitizeSpecText } from './sanitize.ts';
@@ -71,8 +72,10 @@ export const validateHopUrl = (url: URL): void => {
 export const errorName = (err: unknown): string =>
   err !== null && typeof err === 'object' && 'name' in err ? String(err.name) : '';
 
+// Undici reports a refused DNS answer as "fetch failed"; the egress refusal
+// in its cause chain says why
 export const describeCause = (err: unknown): string =>
-  err instanceof Error ? err.message : String(err);
+  findEgressError(err)?.message ?? (err instanceof Error ? err.message : String(err));
 
 export const readBodyCapped = async (
   response: UndiciResponse,

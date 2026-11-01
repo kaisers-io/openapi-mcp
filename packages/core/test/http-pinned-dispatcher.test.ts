@@ -12,6 +12,7 @@ import {
   pinnedRequest,
   validateHopUrlSync,
 } from '../src/http/pinned-dispatcher.ts';
+import type { PinnedAgentPool } from '../src/http/agent-pool.ts';
 import type {
   HopHeaders,
   PinnedDeps,
@@ -1137,11 +1138,12 @@ describe('pinnedRequest', () => {
       buildOpts(),
       buildDeps({ fetch: () => Promise.reject(aggregated) }),
     );
-    // A pinned DNS refusal of the first hop: no connection, nothing sent (#25)
+    // A pinned DNS refusal of the first hop: no connection, nothing sent (#25).
+    // The detail is the refusal, not undici's "fetch failed"
     expect(outcome).toEqual({
       kind: 'error',
       reason: 'egress',
-      detail: 'fetch failed',
+      detail: (capturedCause as Error).message,
       beforeResponse: true,
       notSent: true,
     });
@@ -1787,6 +1789,188 @@ describe('pinnedRequest — authorizeHop', () => {
       );
       expect(first).toEqual({ kind: 'error', reason: 'route-refused', notSent: true });
       expect(server.requests.map((req) => req.url)).toEqual(['/safe']);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+// A credential over http to a loopback name (needsLoopbackAnswer): every DNS
+// answer for a hop on the original origin must be loopback
+describe('pinnedRequest — loopbackAnswers', () => {
+  const credentialed = buildOpts({
+    baseTrusted: true,
+    allowPrivateNetwork: false,
+    loopbackAnswers: 'credentialed',
+  });
+
+  it('connects when every answer is loopback', async () => {
+    const server = await startFlexServer((_req, res) => {
+      res.end('ok');
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://api.localhost:${server.port}/`),
+        credentialed,
+        buildDeps({ resolve: () => Promise.resolve(['127.0.0.1', '::1']) }),
+      );
+      expect(outcome.kind).toBe('response');
+    } finally {
+      await server.close();
+    }
+  });
+
+  it.each([[['10.0.0.5']], [['93.184.216.34']], [['127.0.0.1', '93.184.216.34']]])(
+    'refuses answers %j before anything is sent, even on a trusted base',
+    async (answers) => {
+      const server = await startFlexServer((_req, res) => {
+        res.end('ok');
+      });
+      try {
+        const outcome = await pinnedRequest(
+          new URL(`http://api.localhost:${server.port}/`),
+          credentialed,
+          buildDeps({ resolve: () => Promise.resolve(answers) }),
+        );
+        expect(outcome).toMatchObject({ kind: 'error', reason: 'egress', notSent: true });
+        expect(server.requests).toHaveLength(0);
+      } finally {
+        await server.close();
+      }
+    },
+  );
+
+  it('names the address in the lookup error', async () => {
+    const lookup = pinnedLookup(
+      { trusted: true, allowPrivateNetwork: false, loopbackOnly: true },
+      () => Promise.resolve(['93.184.216.34']),
+    );
+    const err = await new Promise<unknown>((resolve) => {
+      lookup('api.localhost', { all: true }, (error) => {
+        resolve(error);
+      });
+    });
+    expect((err as Error).message).toBe(
+      'egress: "api.localhost" resolves to the non-loopback address 93.184.216.34, and plain http goes only to loopback',
+    );
+  });
+
+  it('does not bind a redirect to another origin, which gets no credentials', async () => {
+    const target = await startFlexServer((_req, res) => {
+      res.end('elsewhere');
+    });
+    const origin = await startFlexServer((_req, res) => {
+      res.writeHead(302, { location: `http://other.example.test:${target.port}/` });
+      res.end();
+    });
+    try {
+      const outcome = await pinnedRequest(
+        new URL(`http://api.localhost:${origin.port}/`),
+        buildOpts({
+          baseTrusted: true,
+          allowPrivateNetwork: true,
+          loopbackAnswers: 'credentialed',
+        }),
+        buildDeps({
+          resolve: (hostname) =>
+            Promise.resolve([hostname === 'api.localhost' ? '127.0.0.1' : '10.0.0.5']),
+          fetch: (input, init) =>
+            undiciFetch(String(input).replace('other.example.test', '127.0.0.1'), init),
+        }),
+      );
+      expect(outcome.kind).toBe('response');
+    } finally {
+      await origin.close();
+      await target.close();
+    }
+  });
+});
+
+describe('pinnedRequest — loopbackAnswers per hop', () => {
+  // Records the policy each hop's Agent is acquired with; every hostname
+  // connects to the local test server
+  const recordingPool = (): { pool: PinnedAgentPool; policies: PinnedPolicy[] } => {
+    const policies: PinnedPolicy[] = [];
+    const pool: PinnedAgentPool = {
+      acquire: (_origin: string, policy: PinnedPolicy) => {
+        policies.push(policy);
+        return createPinnedAgent({ trusted: true, allowPrivateNetwork: true }, () =>
+          Promise.resolve(['127.0.0.1']),
+        );
+      },
+      size: () => 0,
+      close: () => Promise.resolve(),
+    };
+    return { pool, policies };
+  };
+
+  it('stops checking once a same-origin redirect leaves the credential scope', async () => {
+    const server = await startFlexServer((req, res) => {
+      if (req.url === '/api/x') {
+        res.writeHead(302, { location: '/files/x' });
+        res.end();
+        return;
+      }
+      res.end('file');
+    });
+    try {
+      const { pool, policies } = recordingPool();
+      const outcome = await pinnedRequest(
+        new URL(`http://api.localhost:${server.port}/api/x`),
+        buildOpts({
+          baseTrusted: true,
+          loopbackAnswers: 'credentialed',
+          credentialScope: (url) => url.pathname.startsWith('/api/'),
+        }),
+        buildDeps({ agents: pool }),
+      );
+      expect(outcome.kind).toBe('response');
+      expect(policies.map((policy) => policy.loopbackOnly === true)).toEqual([true, false]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("'every-hop' checks a redirect to another loopback name too", async () => {
+    const server = await startFlexServer((req, res) => {
+      if (req.url === '/start') {
+        res.writeHead(302, { location: `http://other.localhost:${server.port}/next` });
+        res.end();
+        return;
+      }
+      res.end('next');
+    });
+    try {
+      const { pool, policies } = recordingPool();
+      const outcome = await pinnedRequest(
+        new URL(`http://api.localhost:${server.port}/start`),
+        buildOpts({ baseTrusted: true, loopbackAnswers: 'every-hop' }),
+        buildDeps({ agents: pool }),
+      );
+      expect(outcome.kind).toBe('response');
+      expect(policies.map((policy) => policy.loopbackOnly === true)).toEqual([true, true]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("'credentialed' does not check a redirect to another origin", async () => {
+    const server = await startFlexServer((req, res) => {
+      if (req.url === '/start') {
+        res.writeHead(302, { location: `http://other.localhost:${server.port}/next` });
+        res.end();
+        return;
+      }
+      res.end('next');
+    });
+    try {
+      const { pool, policies } = recordingPool();
+      await pinnedRequest(
+        new URL(`http://api.localhost:${server.port}/start`),
+        buildOpts({ baseTrusted: true, loopbackAnswers: 'credentialed' }),
+        buildDeps({ agents: pool }),
+      );
+      expect(policies.map((policy) => policy.loopbackOnly === true)).toEqual([true, false]);
     } finally {
       await server.close();
     }

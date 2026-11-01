@@ -591,3 +591,33 @@ describe('response format url', () => {
     expect(wire.properties['link']).toEqual({ type: 'string', format: 'url' });
   });
 });
+
+// JavaScript (`u` flag) and RE2 disagree on `\b` and `\B` inside an inline
+// `(?i:...)` group: JavaScript counts U+017F and U+212A as word characters
+describe('response patterns with an inline ignore-case group', () => {
+  const modifiersParse = isEnforceablePattern('^(?i:a)$');
+
+  it.skipIf(!modifiersParse)('is a real difference between the two engines', () => {
+    // oxlint-disable-next-line prefer-regex-literals -- a literal with a modifier group is a syntax error on Node 22, before skipIf runs
+    expect(new RegExp(String.raw`^(?i:ſ\b)$`, 'u').test('ſ')).toBe(true);
+    expect(compileRe2Pattern(String.raw`^(?i:ſ\b)$`)?.matches('ſ')).toBe(false);
+  });
+
+  it.each([String.raw`^(?i:ſ\b)$`, String.raw`(?mi:x)\B`, String.raw`\bid(?i:-[a-z]+)$`])(
+    'does not enforce %s',
+    (pattern) => {
+      expect(isEnforceablePattern(pattern)).toBe(false);
+    },
+  );
+
+  // A modifier group needs a Node whose JavaScript engine parses it (24+)
+  it.each([
+    [String.raw`\bword\b`, true],
+    [String.raw`^(?s-i:x)\b`, modifiersParse],
+    // `(?i:` inside a class and an escaped backslash before `b` are literals
+    [String.raw`[(?i:]\b`, true],
+    [String.raw`^(?i:a)\\b$`, modifiersParse],
+  ])('keeps %s: %s', (pattern, kept) => {
+    expect(isEnforceablePattern(pattern)).toBe(kept);
+  });
+});

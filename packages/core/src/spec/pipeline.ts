@@ -14,7 +14,13 @@ import type { ExpectedRevision } from '../cache/revision.ts';
 import type { CacheEntry } from '../cache/store.ts';
 import { evaluateFreshness } from '../cache/ttl.ts';
 import { CACHE_META_SCHEMA_VERSION } from '../schemas/cache.ts';
-import { reasonOf, usageError, validationError } from '../errors.ts';
+import {
+  isSpecBudgetError,
+  reasonOf,
+  specBudgetError,
+  usageError,
+  validationError,
+} from '../errors.ts';
 import type { ErrorReason } from '../errors.ts';
 import { applyFilters } from '../filter/apply.ts';
 import type { NotExposedOperation } from '../filter/apply.ts';
@@ -142,7 +148,7 @@ const describeCause = (err: unknown): string => (err instanceof Error ? err.mess
 // budget.
 const enforceToolBudget = (exposedCount: number, maxToolCount: number): void => {
   if (exposedCount > maxToolCount) {
-    throw validationError(
+    throw specBudgetError(
       `${exposedCount} tools would be exposed after filtering — exceeds the ${maxToolCount}-tool budget; narrow the set with --allow or --deny`,
     );
   }
@@ -451,19 +457,7 @@ const runSpecPipelineOnce = async (
     if (cached === undefined) {
       throw error;
     }
-    warnings.push(
-      `spec refresh failed, serving the last known good accepted baseline: ${describeCause(error)}`,
-    );
-    const processed = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
-    return finish(processed, opts, warnings, {
-      contentHash: cached.meta.sourceContentHash,
-      displaySource: cached.meta.displaySource,
-      cacheStatus: 'stale',
-      warningReason: reasonOf(error),
-      candidateOperationKeys: await pendingCandidateKeys(layout, deps.cacheFs, cached),
-      // A failed refresh does not make a waiting candidate disappear either
-      cached,
-    });
+    return await serveStale(cached, error, layout, opts, deps, warnings);
   }
 
   // The commit runs OUTSIDE the stale-fallback catch, so a cache write
@@ -611,6 +605,31 @@ const materialize = (
       : { requestBody: dereferencer.resolve(requestBody) as Record<string, unknown> }),
     responses: dereferencer.resolve(operation.responses) as Record<string, unknown>,
   };
+};
+
+// The last-known-good rule: a refresh that failed (fetch, validation, or a
+// budget) serves the accepted baseline of `cached` with a warning
+const serveStale = async (
+  cached: CacheEntry,
+  error: unknown,
+  layout: CacheLayout | undefined,
+  opts: SpecPipelineOptions,
+  deps: SpecPipelineDeps,
+  warnings: string[],
+): Promise<SpecPipelineResult> => {
+  warnings.push(
+    `spec refresh failed, serving the last known good accepted baseline: ${describeCause(error)}`,
+  );
+  const processed = processCachedDocument(cached.acceptedDocument, cached.meta.openapiVersion);
+  return finish(processed, opts, warnings, {
+    contentHash: cached.meta.sourceContentHash,
+    displaySource: cached.meta.displaySource,
+    cacheStatus: 'stale',
+    warningReason: reasonOf(error),
+    candidateOperationKeys: await pendingCandidateKeys(layout, deps.cacheFs, cached),
+    // A failed refresh does not make a waiting candidate disappear either
+    cached,
+  });
 };
 
 const finish = (
@@ -790,11 +809,23 @@ const commitRefresh = async (
   // write and before the bookkeeping touch below: a run that refuses to serve
   // must not leave a trust-on-first-use baseline or bookkeeping behind as a
   // side effect (kaisers-io/openapi-mcp-archive#32)
-  const result = finish(processed, opts, warnings, {
-    contentHash: refreshed.loaded.contentHash,
-    displaySource: refreshed.loaded.displaySource,
-    cacheStatus: acceptedCacheStatus(layout, cached, unchanged),
-  });
+  let result: SpecPipelineResult;
+  try {
+    result = finish(processed, opts, warnings, {
+      contentHash: refreshed.loaded.contentHash,
+      displaySource: refreshed.loaded.displaySource,
+      cacheStatus: acceptedCacheStatus(layout, cached, unchanged),
+    });
+  } catch (error) {
+    // A trusted update over a budget the served tools are measured against
+    // is a failed refresh: the accepted baseline keeps serving
+    // (docs/spec-updates.md). Any other error, or one with no baseline,
+    // stops the start as before.
+    if (!isSpecBudgetError(error) || cached === undefined || unchanged) {
+      throw error;
+    }
+    return await serveStale(cached, error, layout, opts, deps, warnings);
+  }
   // Nothing to persist when the source is byte-identical to the accepted one
   // and no candidate is waiting (kaisers-io/openapi-mcp-archive#75). `cached`
   // was read and hash-verified earlier in this run, so rewriting it would only

@@ -1,3 +1,6 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { fetch as undiciFetch } from 'undici';
 import { describe, expect, it } from 'vitest';
 import { MAX_REDIRECTS, fetchSpec, fetchSpecConditional, hashContent } from '../src/index.ts';
 import type { FetchSpecDeps } from '../src/index.ts';
@@ -742,5 +745,64 @@ describe('fetchChain internal transport helpers', () => {
     const resolve = chainResolve(lookup, controller.signal);
     await expect(resolve('api.example.com')).resolves.toEqual(['203.0.113.7']);
     expect(seen).toEqual([{ hostname: 'api.example.com', signal: controller.signal }]);
+  });
+});
+
+// A spec credential over http to a loopback name passes the cleartext gate by
+// name, so every DNS answer must be loopback too
+describe('fetchSpec — loopback name with a credential', () => {
+  const withServer = async (run: (port: number) => Promise<void>): Promise<void> => {
+    const server = createServer((_req, res) => {
+      res.end('{}');
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      await run((server.address() as AddressInfo).port);
+    } finally {
+      server.close();
+    }
+  };
+  const fetcher: SpecFetcher = undiciFetch;
+
+  it('fetches when the name resolves to loopback', async () => {
+    await withServer(async (port) => {
+      const loaded = await fetchSpec(
+        new URL(`http://specs.localhost:${port}/openapi.json`),
+        { headers: AUTH },
+        { fetcher, lookup: () => Promise.resolve(['127.0.0.1']) },
+      );
+      expect(loaded.text).toBe('{}');
+    });
+  });
+
+  it('refuses a non-loopback answer before connecting', async () => {
+    await withServer(async (port) => {
+      await expect(
+        fetchSpec(
+          new URL(`http://specs.localhost:${port}/openapi.json`),
+          { headers: AUTH },
+          { fetcher, lookup: () => Promise.resolve(['10.0.0.5']) },
+        ),
+      ).rejects.toMatchObject({
+        message: expect.stringContaining(
+          'resolves to the non-loopback address 10.0.0.5, and plain http goes only to loopback',
+        ) as string,
+      });
+    });
+  });
+
+  it("keeps today's behaviour without a credential or with --allow-insecure-http", async () => {
+    await withServer(async (port) => {
+      const url = new URL(`http://specs.localhost:${port}/openapi.json`);
+      const lookup = (): Promise<readonly string[]> => Promise.resolve(['127.0.0.1']);
+      await expect(fetchSpec(url, { headers: [] }, { fetcher, lookup })).resolves.toMatchObject({
+        text: '{}',
+      });
+      await expect(
+        fetchSpec(url, { headers: AUTH, allowInsecureHttp: true }, { fetcher, lookup }),
+      ).resolves.toMatchObject({ text: '{}' });
+    });
   });
 });

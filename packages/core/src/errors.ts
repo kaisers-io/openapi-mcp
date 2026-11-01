@@ -36,6 +36,21 @@ export class OpenapiMcpError extends Error {
 export const reasonOf = (err: unknown): ErrorReason | undefined =>
   err instanceof OpenapiMcpError ? err.reason : undefined;
 
+// A spec over a budget the served tools are measured against: the tool
+// count, the dereferenced nodes, or the $ref depth. A validation error like
+// any other; the mark lets the spec pipeline serve the cached spec when a
+// trusted update is over one (docs/spec-updates.md).
+const specBudgetErrors = new WeakSet<Error>();
+
+export const specBudgetError = (message: string): OpenapiMcpError => {
+  const error = validationError(message);
+  specBudgetErrors.add(error);
+  return error;
+};
+
+export const isSpecBudgetError = (err: unknown): boolean =>
+  err instanceof Error && specBudgetErrors.has(err);
+
 export const usageError = (message: string, reason?: ErrorReason): OpenapiMcpError =>
   new OpenapiMcpError('usage', message, EXIT.USAGE, reason);
 

@@ -1,4 +1,4 @@
-import { isLoopbackHost } from '../../http/egress.ts';
+import { isLoopbackHost, needsLoopbackAnswer } from '../../http/egress.ts';
 import type { HopHeaders } from '../../http/pinned-dispatcher.ts';
 import type { ExecutorConfig } from './executor.ts';
 import type { OutboundBudgets } from './request.ts';
@@ -19,6 +19,15 @@ export const cleartextBlocked = (config: ExecutorConfig, base: URL): boolean =>
   base.protocol === 'http:' &&
   !config.allowInsecureHttp &&
   !isLoopbackHost(base.hostname);
+
+// The cleartext gate passes a loopback name such as api.localhost by name, so
+// the request then requires loopback DNS answers (needsLoopbackAnswer)
+export const loopbackAnswerRequired = (config: ExecutorConfig, base: URL): boolean =>
+  needsLoopbackAnswer(
+    base,
+    config.secretHeaders.length > 0 || config.oauth !== undefined,
+    config.allowInsecureHttp,
+  );
 
 // Explicit path-join (never `new URL(relativePath, base)`, which resolves
 // `..`/`.`-style segments against the base's own directory and can escape

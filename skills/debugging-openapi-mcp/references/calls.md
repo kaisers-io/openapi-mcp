@@ -42,7 +42,7 @@ Nothing was sent after any of these.
 | `this tool's output schema could not be compiled` | the tool cannot validate a response, so it sends nothing | `--omit-output-schema` for it, after the user agrees |
 | `a tool argument collided with a reserved header name` | an argument sets a header a flag already sets | expected; the flag's value is sent |
 | `refusing to send a secret header in cleartext` | `http://` to a remote host | use `https://`; `--allow-insecure-http` only if the user agrees |
-| `not allowed by the egress policy` | the base URL or a redirect leads to a private address | `--allow-private-network` only after the user confirms the address is theirs; it never admits link-local addresses (`169.254.0.0/16`, `fe80::/10`) |
+| `not allowed by the egress policy` | the base URL or a redirect leads to a private address; or a credential goes over `http://` to `localhost` or `*.localhost` and the name does not resolve to loopback | `--allow-private-network` only after the user confirms the address is theirs; it never admits link-local addresses (`169.254.0.0/16`, `fe80::/10`). For the loopback name: make it resolve to `127.0.0.1`, or use `https://` |
 | `projection requires a JSON response` | `_fields` on a tool without JSON | call it without `_fields` |
 | `_fields would return more than twice the size of the response` | the selection repeats or overlaps parts of the response | select fewer or narrower fields |
 | `not a valid JSON Pointer` | a `_fields` entry is not `/a/b` form | up to 32 pointers such as `/items/*/id` |

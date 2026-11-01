@@ -1,15 +1,23 @@
 // Spec text is untrusted input that reaches model context: strip
 // C0/C1 controls (except tab/newline, collapsed below) and Unicode bidi controls,
 // including the Arabic letter mark U+061C.
-const CONTROL_AND_BIDI_RE =
-  // oxlint-disable-next-line no-control-regex -- matching control and bidi characters is this regex's purpose (it strips them)
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/gu;
+const CONTROL_AND_BIDI = String.raw`\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069`;
+
+// Invisible format characters, stripped from prose only: zero-width space,
+// word joiner and invisible operators, deprecated format controls, the byte
+// order mark, and the tag block, which can spell out ASCII text a model reads
+// and a reviewer does not see. A name or value keeps them (hasControlOrBidi
+// does not refuse them): ZWJ and ZWNJ (U+200D, U+200C) are not in the set, as
+// emoji and several scripts need them, and a value is sent as written.
+const INVISIBLE_FORMAT = String.raw`\u200B\u2060-\u2064\u206A-\u206F\uFEFF\u{E0000}-\u{E007F}`;
+
+const CONTROL_AND_BIDI_RE = new RegExp(`[${CONTROL_AND_BIDI}${INVISIBLE_FORMAT}]`, 'gu');
 
 // Non-global, so .test() keeps no lastIndex between calls
-const HAS_CONTROL_OR_BIDI_RE = new RegExp(CONTROL_AND_BIDI_RE.source, 'u');
+const HAS_CONTROL_OR_BIDI_RE = new RegExp(`[${CONTROL_AND_BIDI}]`, 'u');
 
-// True when a key or string anywhere in a JSON value holds a character the
-// sanitizers strip. For names and values the server sends (enum, const,
+// True when a key or string anywhere in a JSON value holds a control or bidi
+// character, which the sanitizers strip. For names and values the server sends (enum, const,
 // pattern, parameter and property names), where stripping would change the
 // request, the caller refuses the schema instead.
 export const hasControlOrBidi = (value: unknown): boolean => {

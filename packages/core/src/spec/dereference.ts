@@ -1,4 +1,4 @@
-import { validationError } from '../errors.ts';
+import { specBudgetError } from '../errors.ts';
 import { MAX_EXPANDED_NODES, SPEC_BUDGETS } from './budgets.ts';
 import {
   assertInternal,
@@ -23,7 +23,7 @@ export { checkRefs, createCycleDetector, resolveShallow } from './refs.ts';
 export { MAX_EXPANDED_NODES } from './budgets.ts';
 
 const budgetError = (budget: number, what: string): Error =>
-  validationError(`dereferenced spec exceeds the ${budget}-node budget${what}`);
+  specBudgetError(`dereferenced spec exceeds the ${budget}-node budget${what}`);
 
 const checkExpanded = (size: number): void => {
   if (size > MAX_EXPANDED_NODES) {
@@ -151,14 +151,14 @@ export const createDereferencer = (
       // this one, and a check fails at stack length >= maxRefDepth
       if (refStack.length + cached.height > SPEC_BUDGETS.maxRefDepth) {
         // The expansion this replaces would have crossed the depth budget here
-        throw validationError(
+        throw specBudgetError(
           `$ref expansion exceeds the maximum depth of ${SPEC_BUDGETS.maxRefDepth}`,
         );
       }
       return { value: cached.value, size: cached.size, open: undefined, height: cached.height };
     }
     if (refStack.length >= SPEC_BUDGETS.maxRefDepth) {
-      throw validationError(
+      throw specBudgetError(
         `$ref expansion exceeds the maximum depth of ${SPEC_BUDGETS.maxRefDepth}`,
       );
     }
@@ -268,7 +268,7 @@ export const createDereferencer = (
       } catch (error) {
         if (error instanceof RangeError) {
           // Backstop: structural depth is budget-capped upstream, but fail closed anyway
-          throw validationError('spec dereference aborted: nesting too deep');
+          throw specBudgetError('spec dereference aborted: nesting too deep');
         }
         throw error;
       }

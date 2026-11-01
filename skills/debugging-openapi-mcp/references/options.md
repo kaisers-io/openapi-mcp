@@ -31,7 +31,7 @@ value, `prefix-or-all` applies to every API without one, `enable` is set with
 | `--base-url <url>` |  |  |  | prefix | override the spec-derived base URL for API requests |
 | `--header-env <Header=ENV>` |  |  | yes | prefix | API auth header, value read from env (repeatable, secret) |
 | `--basic-auth-env <USER_ENV:PASSWORD_ENV>` |  |  |  | prefix | HTTP Basic auth for API requests: the user name and the password read from these env vars (secret; without :PASSWORD_ENV the password is empty) |
-| `--header <Header:value>` |  |  | yes | prefix | static, non-secret API header (repeatable) |
+| `--header <Header:value>` |  |  | yes | prefix | static, non-secret API header (repeatable); a token or key goes in --header-env |
 | `--max-response-bytes <size>` | `"10MB"` |  |  |  | cap the decompressed upstream response body and the outgoing request body (<int><B\|KB\|MB> or a plain byte count) |
 | `--allow-insecure-http` |  |  |  | enable | permit an operator credential (--header-env, --spec-header-env) over cleartext http to a non-loopback origin |
 | `--max-concurrency <n>` | `"16"` |  |  |  | upstream calls in flight at once; further calls wait in a bounded queue |
