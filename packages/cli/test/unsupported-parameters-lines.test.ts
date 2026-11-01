@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { unsupportedParameterLines } from '../src/unsupported-parameters.ts';
+import {
+  deepObjectIndicesLines,
+  unsupportedParameterLines,
+} from '../src/unsupported-parameters.ts';
 
 // Issue #67: the startup lines about left-out parameters stay bounded and
 // sanitized however many tools and parameters a spec has
@@ -57,6 +60,56 @@ describe('unsupportedParameterLines', () => {
     ).toStrictEqual([
       '--omit-unsupported-parameters "tag:u" matches no operation with an optional parameter this server cannot send, so it changes nothing',
       '--omit-unsupported-parameters: 1 tool leaves out optional parameters the agent cannot set: t (a); each with its reason: openapi-mcp --json tools',
+    ]);
+  });
+});
+
+// Issues #95 and #96: the same for --deep-object-indices
+const mapper = (indices: boolean) => ({
+  bodyMode: 'none' as const,
+  fields: {
+    q: {
+      destination: 'query' as const,
+      wireName: 'q',
+      style: 'deepObject' as const,
+      explode: true,
+      required: false,
+      ...(indices ? { indices: true as const } : {}),
+    },
+  },
+});
+
+describe('deepObjectIndicesLines', () => {
+  it('names an omitted operation without a tool name by its sanitized route', () => {
+    expect(
+      deepObjectIndicesLines(
+        [],
+        [{ method: 'GET', path: '/a\u0007', reason: 'r', buildsWithDeepObjectIndices: true }],
+        { matches: [] },
+      ),
+    ).toStrictEqual([
+      '1 operation is omitted only for deepObject values OpenAPI does not define (nested objects, arrays or scalars); --deep-object-indices <pattern> builds them and sends those values as name[key][0]=value, if the API reads that: GET /a',
+    ]);
+  });
+
+  it('reports a pattern that matches only tools it does not change, never a dead one', () => {
+    expect(
+      deepObjectIndicesLines(
+        [
+          { toolName: 't', mapper: mapper(true) },
+          { toolName: 'u', mapper: mapper(false) },
+        ],
+        [],
+        {
+          matches: [
+            { raw: 'tag:u', toolNames: ['u'] },
+            { raw: 'tag:t', toolNames: ['t', 'u'] },
+            { raw: 'tag:none', toolNames: [] },
+          ],
+        },
+      ),
+    ).toStrictEqual([
+      '--deep-object-indices "tag:u" matches no operation with a deepObject value, so it changes nothing',
     ]);
   });
 });

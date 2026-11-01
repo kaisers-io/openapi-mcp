@@ -11,10 +11,10 @@ const PATTERN_DISPLAY_MAX = 256;
 // worded identically regardless of which command produced it.
 export const deadPatternMessage = (dead: DeadPattern): string => {
   const raw = sanitizeSpecText(dead.raw, PATTERN_DISPLAY_MAX);
-  // --omit-output-schema and --omit-unsupported-parameters act on the
-  // exposed operations only (issues #13 and #67)
-  const exposedOnly =
-    dead.flag === 'omit-output-schema' || dead.flag === 'omit-unsupported-parameters';
+  // --omit-output-schema, --omit-unsupported-parameters and
+  // --deep-object-indices act on the exposed operations only (issues #13,
+  // #67 and #95)
+  const exposedOnly = dead.flag !== 'allow' && dead.flag !== 'deny';
   const scope = exposedOnly ? 'exposed operation' : 'operation';
   const base = `--${dead.flag} "${raw}" matches no ${scope}`;
   if (dead.notExposed === true) {

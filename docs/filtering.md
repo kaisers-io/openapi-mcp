@@ -2,8 +2,9 @@
 
 `--allow` and `--deny` decide which operations of a spec become tools. This page explains the
 pattern syntax, the order in which the server decides, what it reports, and recipes for common
-goals. Read it before you expose write operations. `--omit-output-schema` and
-`--omit-unsupported-parameters` use the same patterns to pick from the exposed operations.
+goals. Read it before you expose write operations. `--omit-output-schema`,
+`--omit-unsupported-parameters` and `--deep-object-indices` use the same patterns to pick from
+the exposed operations.
 
 Every pattern names what it selects, so a configuration reads as what it does:
 
@@ -69,7 +70,10 @@ The server goes through these steps for each operation of the spec, in this orde
 4. Tool generation can still omit an operation whose schema it cannot represent. With
    `--omit-unsupported-parameters`, an operation omitted only for optional parameters becomes a
    tool without them (see
-   [below](#operations-omitted-for-an-optional-parameter)).
+   [below](#operations-omitted-for-an-optional-parameter)). With `--deep-object-indices`, one
+   omitted only for `deepObject` values OpenAPI does not define becomes a tool that sends them
+   as `name[key][0]=value` (see
+   [requests-and-responses.md](requests-and-responses.md#deepobject-values)).
 5. While a changed spec waits for `openapi-mcp cache promote`, the server withholds every
    operation the new version removed.
 6. At call time the server checks every request a tool sends, and every redirect, against
@@ -114,6 +118,8 @@ values.
 | Unsupported operations | one line each | `omitted` | `omittedCount`, `omittedReasons` |
 | Operations omitted only for optional parameters | one line naming them and the flag | `notExposed[].omittableParameters` | not reported |
 | Parameters `--omit-unsupported-parameters` left out | one line naming the tools | `tools[].leftOutParameters` | not reported |
+| Operations omitted only for `deepObject` values | one line naming them and the flag | `notExposed[].buildsWithDeepObjectIndices` | not reported |
+| Tools that send `deepObject` values by `--deep-object-indices` | not reported | `tools[].deepObjectIndices` | not reported |
 | Patterns that match nothing | one line each, with a suggestion | `deadPatterns` | `deadPatternCount` |
 | Patterns that match values differing only by case | one line each | `caseCollisions` | not reported |
 | Tools whose path overlaps one that is not exposed | one line each | `overlaps` | not reported |
@@ -126,7 +132,8 @@ that is omitted as unsupported, the warning says so instead of suggesting anothe
 A dead pattern, a case collision and an overlap are warnings. Pass `--strict-filters` to make
 each of them stop the start instead, with exit code 3. This also applies to an overlap check
 that ran out of its work budget (`overlapCheckComplete` is `false` in `--json tools`), and to
-dead `--omit-output-schema` and `--omit-unsupported-parameters` patterns. Turn it on once a filter set is stable, so that a spec
+dead `--omit-output-schema`, `--omit-unsupported-parameters` and `--deep-object-indices`
+patterns. Turn it on once a filter set is stable, so that a spec
 change that makes a pattern stale fails at startup instead of passing with a warning.
 
 ## Operations omitted for an optional parameter
@@ -159,7 +166,8 @@ Another query parameter could send the name when it is an object sent as separat
 `filter[dryRun]`, or a name that a server reads as part of it, such as `expand[]` next to a
 left-out `expand`. Names are compared as PHP reads them, the widest of the common parsers: without
 letter case, a space or a dot in the name as `_` (`dry.run` sends a left-out `dry_run`), and
-without text after the last `]` (`filter[dryRun]x` sends a left-out `filter[dryRun]`).
+without text after the last `]` (`filter[dryRun]x` sends a left-out `filter[dryRun]`). A number
+in brackets counts as any number, because `qs` reads a lone `a[1]` as `a[0]`.
 
 The flag never exposes an operation. `--deny` and the read-only default decide first. A pattern
 that matches no exposed operation is a dead pattern. One that matches only operations that send
@@ -169,6 +177,12 @@ every parameter changes nothing, and the startup says so.
 openapi-mcp serve --spec https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json \
   --omit-unsupported-parameters "method:get"
 ```
+
+For Stripe, `--deep-object-indices "method:get"` keeps `expand` instead: the server sends it as
+`expand[0]=customer`, the form Stripe's own SDK sends (see
+[requests-and-responses.md](requests-and-responses.md#deepobject-values)). When both flags
+match an operation, `--deep-object-indices` sends what it can, and
+`--omit-unsupported-parameters` leaves out only the rest.
 
 ## Examples
 

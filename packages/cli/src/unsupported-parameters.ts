@@ -1,6 +1,7 @@
 import {
   sanitizeSpecText,
   selectUnsupportedParameterOptIn,
+  usesDeepObjectIndices,
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
 import type {
@@ -25,16 +26,25 @@ const PARAMETERS_MAX = 3;
 const PARAMETER_DISPLAY_MAX = 64;
 
 const FLAG = '--omit-unsupported-parameters';
+const DEEP_FLAG = '--deep-object-indices';
 
-// --omit-unsupported-parameters (issue #67), matched on the operations the
-// filters expose, before the tools are built. Its dead patterns are reported
-// like the filters': a warning, or under --strict-filters an error (exit 3).
+// --omit-unsupported-parameters (issue #67) or --deep-object-indices (issues
+// #95 and #96), matched on the operations the filters expose, before the
+// tools are built. Its dead patterns are reported like the filters': a
+// warning, or under --strict-filters an error (exit 3).
 export const unsupportedParameterOptIn = (
   result: Pick<SpecPipelineResult, 'namedOperations' | 'spec'>,
   patterns: readonly FilterPattern[],
   strictFilters: boolean,
+  flag: 'omit-unsupported-parameters' | 'deep-object-indices' = 'omit-unsupported-parameters',
 ): { optIn: UnsupportedParameterOptIn; warnings: readonly string[] } => {
-  const optIn = selectUnsupportedParameterOptIn(result.namedOperations, patterns, result.spec);
+  const optIn = selectUnsupportedParameterOptIn(
+    result.namedOperations,
+    patterns,
+    result.spec,
+    undefined,
+    flag,
+  );
   const warnings = filterMessages(optIn);
   if (strictFilters && warnings.length > 0) {
     throw validationError(warnings.join('\n'));
@@ -109,28 +119,93 @@ export const unsupportedParameterLines = (
   ];
 };
 
+// What --deep-object-indices does: a pattern that matches only tools
+// without a deepObject value, and the
+// operations omitted only for deepObject values OpenAPI does not define,
+// with the flag that would build them
+export const deepObjectIndicesLines = (
+  tools: readonly Pick<GeneratedTool, 'toolName' | 'mapper'>[],
+  omitted: readonly OmittedOperation[],
+  optIn: Pick<UnsupportedParameterOptIn, 'matches'>,
+): readonly string[] => {
+  const using = new Set(
+    tools.filter((tool) => usesDeepObjectIndices(tool.mapper)).map((tool) => tool.toolName),
+  );
+  const buildable = omitted.filter((omission) => omission.buildsWithDeepObjectIndices === true);
+  return [
+    ...optIn.matches
+      .filter(
+        (match) => match.toolNames.length > 0 && !match.toolNames.some((name) => using.has(name)),
+      )
+      .map(
+        (match) =>
+          `${DEEP_FLAG} "${sanitizeSpecText(match.raw, PATTERN_DISPLAY_MAX)}" matches no operation with a deepObject value, so it changes nothing`,
+      ),
+    ...(buildable.length === 0
+      ? []
+      : [
+          `${counted(buildable.length, 'operation is', 'operations are')} omitted only for deepObject values OpenAPI does not define (nested objects, arrays or scalars); ${DEEP_FLAG} <pattern> builds them and sends those values as name[key][0]=value, if the API reads that: ${listed(
+            buildable.map(
+              (omission) =>
+                omission.toolName ??
+                `${omission.method} ${sanitizeSpecText(omission.path, PATTERN_DISPLAY_MAX)}`,
+            ),
+          )}`,
+        ]),
+  ];
+};
+
 // The tools of one API, built inside the pipeline's `countTools` hook (issue
 // #67): the tool budget then counts the tools that are actually served, and
 // is enforced before the pipeline writes anything to the cache. `take`
 // returns what the hook built, so nothing is built twice.
 export const toolsBuiltInPipeline = <Built extends BuildToolsResult | DeferredToolsResult>(
-  patterns: readonly FilterPattern[],
-  build: (exposed: ExposedOperations, optIn: ReadonlySet<string>) => Built,
+  patterns: {
+    omitUnsupportedParameters: readonly FilterPattern[];
+    deepObjectIndices: readonly FilterPattern[];
+  },
+  build: (
+    exposed: ExposedOperations,
+    optIn: {
+      omitUnsupportedParameters: ReadonlySet<string>;
+      deepObjectIndices: ReadonlySet<string>;
+    },
+  ) => Built,
 ) => {
   let kept:
     | {
         built: Built;
         optIn: UnsupportedParameterOptIn;
+        deepOptIn: UnsupportedParameterOptIn;
         optInWarnings: readonly string[];
         unreachable: ReadonlyMap<string, string>;
       }
     | undefined;
   return {
     countTools: (exposed: ExposedOperations): number => {
-      const { optIn, warnings } = unsupportedParameterOptIn(exposed, patterns, false);
-      const built = build(exposed, optIn.toolNames);
+      const omitting = unsupportedParameterOptIn(
+        exposed,
+        patterns.omitUnsupportedParameters,
+        false,
+      );
+      const deep = unsupportedParameterOptIn(
+        exposed,
+        patterns.deepObjectIndices,
+        false,
+        'deep-object-indices',
+      );
+      const built = build(exposed, {
+        omitUnsupportedParameters: omitting.optIn.toolNames,
+        deepObjectIndices: deep.optIn.toolNames,
+      });
       const unreachable = unreachableHeads(exposed, built.tools);
-      kept = { built, optIn, optInWarnings: warnings, unreachable };
+      kept = {
+        built,
+        optIn: omitting.optIn,
+        deepOptIn: deep.optIn,
+        optInWarnings: [...omitting.warnings, ...deep.warnings],
+        unreachable,
+      };
       // Each unreachable HEAD is one of these tools (exposure-report.ts)
       return built.tools.length - unreachable.size;
     },

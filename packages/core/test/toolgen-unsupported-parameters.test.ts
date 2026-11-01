@@ -114,7 +114,7 @@ describe('paramFields with optional parameters left out', () => {
   it('leaves out an optional parameter whose schema cannot be converted', () => {
     const result = fieldsOf(
       paramFields(
-        op([{ name: 'q', in: 'query', schema: { type: 'string', enum: ['a'], maxLength: 2 } }]),
+        op([{ name: 'q', in: 'query', schema: { type: 'string', enum: ['abc'], maxLength: 2 } }]),
         new Set(),
         '3.1',
         true,
@@ -442,6 +442,8 @@ describe('buildTools with --omit-unsupported-parameters', () => {
         reason: EXPAND_REASON,
         toolName: 'listItems',
         omittableParameters: ['expand'],
+        // A deepObject array, which --deep-object-indices sends too
+        buildsWithDeepObjectIndices: true,
       },
     ]);
   });

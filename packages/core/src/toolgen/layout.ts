@@ -30,6 +30,9 @@ export type FieldMapping =
       style: QueryStyle;
       explode: boolean;
       required: boolean;
+      // A deepObject value sent by --deep-object-indices (issue #95):
+      // nested objects and arrays as `name[a][0]=value`
+      indices?: true;
     }
   | {
       destination: 'header';
@@ -54,6 +57,10 @@ export type FieldMapping =
       // With --uploads (#29): the value may also be `{ file: <name> }`,
       // a file the server reads from its upload folder
       upload?: true;
+      // A form body field with a deepObject encoding (issue #96): one level
+      // of scalars as OpenAPI defines it, or nested under
+      // --deep-object-indices
+      deepObject?: 'defined' | 'indices';
     };
 
 export type QueryStyle = 'form' | 'deepObject' | 'spaceDelimited' | 'pipeDelimited';
@@ -78,6 +85,14 @@ export type RequestMapper = {
   bodyRequired?: true;
   fields: Record<string, FieldMapping>;
 };
+
+// Whether --deep-object-indices changes how this tool sends a value
+export const usesDeepObjectIndices = (mapper: RequestMapper): boolean =>
+  Object.values(mapper.fields).some(
+    (mapping) =>
+      (mapping.destination === 'query' && mapping.indices === true) ||
+      (mapping.destination === 'body' && mapping.deepObject === 'indices'),
+  );
 
 export type Field = {
   preferred: string;
@@ -133,6 +148,10 @@ const isScalarObjectSchema = (node: Record<string, unknown>): boolean => {
   return apScalar && properties.every((child) => isScalarSchema(child));
 };
 
+// Why a deepObject value OpenAPI does not define omits the operation, unless
+// --deep-object-indices sends it (issues #95 and #96)
+export const DEEP_OBJECT_PROBLEM = 'deepObject requires an object of scalar values';
+
 // Query styles beyond `form`, restricted to the cells OAS 3.1.1 §4.8.12.4
 // (Style Examples) defines — every `n/a` cell omits (fail-closed):
 //   - deepObject: object of scalars, explode MUST be true (explode=false is
@@ -153,9 +172,7 @@ const queryStyleProblem = (
     if (!explode) {
       return 'deepObject requires explode: true';
     }
-    return isScalarObjectSchema(node)
-      ? undefined
-      : 'deepObject requires an object of scalar values';
+    return isScalarObjectSchema(node) ? undefined : DEEP_OBJECT_PROBLEM;
   }
   if (explode) {
     return `${style} is only defined with explode: false`;
@@ -278,7 +295,10 @@ const parameterProblem = (
   name: string,
   location: 'path' | 'query' | 'header',
   version: OpenapiVersion,
-): { problem: string } | { ok: { style: string; explode: boolean; schema: z.ZodType } } => {
+  deepIndices: boolean,
+):
+  | { problem: string }
+  | { ok: { style: string; explode: boolean; schema: z.ZodType; indices: boolean } } => {
   if (param['allowReserved'] === true) {
     return { problem: `parameter "${name}" uses allowReserved, which is not supported` };
   }
@@ -292,17 +312,22 @@ const parameterProblem = (
     return { problem: `parameter "${name}" uses the unsupported style "${style}"` };
   }
   const explode = typeof param['explode'] === 'boolean' ? param['explode'] : style === 'form';
-  if (location === 'query') {
-    const problem = queryStyleProblem(style as QueryStyle, explode, param['schema']);
-    if (problem !== undefined) {
-      return { problem: `parameter "${name}": ${problem}` };
-    }
+  const problem =
+    location === 'query'
+      ? queryStyleProblem(style as QueryStyle, explode, param['schema'])
+      : undefined;
+  // --deep-object-indices (issue #95): every deepObject value is sent by
+  // that convention, the ones OpenAPI does not define (an array, nested
+  // objects, a scalar) and a free-form object's nested value too
+  const indices = deepIndices && location === 'query' && style === 'deepObject' && explode;
+  if (problem !== undefined && !indices) {
+    return { problem: `parameter "${name}": ${problem}` };
   }
   const converted = convertSchema(param['schema'] ?? {}, version);
   if (!('ok' in converted)) {
     return { problem: `parameter "${name}": ${converted.unrepresentable}` };
   }
-  return { ok: { style, explode, schema: converted.ok } };
+  return { ok: { style, explode, schema: converted.ok, indices } };
 };
 
 // A query key as a bracket-parsing server reads it: the name and the index
@@ -335,10 +360,14 @@ const keyPath = (key: string): string[] => {
 // the left-out parameter `name` (reviews of #67): a key whose path (keyPath)
 // starts with the path of `name`, so the server finds the key's value at
 // `name`, or within it. Compared without letter case, as some servers bind
-// query names. `[]` stands for any index. A kept `form` object with
+// query names. `[]` stands for any index, and a number for any number, as
+// qs compacts a sparse array (`a[1]` alone is read as `a[0]`). A kept `form` object with
 // explode=true sends each property as its own key, so any key; a deepObject
 // `k` sends `k[property]` for any property without brackets (request.ts
-// rejects one with brackets); every other kept field sends only its own name.
+// rejects one with brackets), and under --deep-object-indices any path below
+// `k`; every other kept field sends only its own name.
+const isIndex = (segment: string): boolean => /^\d+$/u.test(segment);
+
 const couldSend = (field: Field, schema: unknown, name: string): boolean => {
   if (field.mapping.destination !== 'query') {
     return false;
@@ -350,19 +379,24 @@ const couldSend = (field: Field, schema: unknown, name: string): boolean => {
     }
   }
   const sent: (string | undefined)[] = keyPath(field.mapping.wireName);
-  if (field.mapping.style === 'deepObject') {
-    // Any property
-    sent.push(undefined);
-  }
   const target = keyPath(name);
+  if (field.mapping.style === 'deepObject') {
+    // Any property, or any path below it
+    sent.push(undefined);
+    while (field.mapping.indices === true && sent.length < target.length) {
+      sent.push(undefined);
+    }
+  }
   return (
     sent.length >= target.length &&
-    target.every(
-      (index, at) =>
-        sent[at] === undefined ||
-        sent[at] === index ||
-        (at > 0 && (index === '' || sent[at] === '')),
-    )
+    target.every((index, at) => {
+      const segment = sent[at];
+      return (
+        segment === undefined ||
+        segment === index ||
+        (at > 0 && (index === '' || segment === '' || (isIndex(index) && isIndex(segment))))
+      );
+    })
   );
 };
 
@@ -377,6 +411,8 @@ export const paramFields = (
   // Leave out an optional query or header parameter that cannot be sent,
   // instead of omitting the operation (issue #67)
   omitUnsupported = false,
+  // --deep-object-indices (issue #95)
+  deepIndices = false,
 ): { ok: Field[]; leftOut: LeftOutParameter[] } | { unrepresentable: string } => {
   const fields: Field[] = [];
   const leftOut: LeftOutParameter[] = [];
@@ -411,7 +447,7 @@ export const paramFields = (
     // malformed/unsupported reserved-header param omits the operation rather than
     // being silently discarded. allowReserved/content/style and the schema
     // conversion run first; the reserved-header drop comes after.
-    const checked = parameterProblem(param, name, location, version);
+    const checked = parameterProblem(param, name, location, version, deepIndices);
     const reserved = location === 'header' && reservedHeaders.has(name.toLowerCase());
     // Only an optional query or header parameter that no one else sends is
     // left out; any other problem still omits the operation
@@ -445,7 +481,7 @@ export const paramFields = (
       leftOut.push({ name, in: location as 'query' | 'header', reason: checked.problem });
       continue;
     }
-    const { style, explode } = checked.ok;
+    const { style, explode, indices } = checked.ok;
     const schema =
       typeof param['description'] === 'string'
         ? checked.ok.schema.describe(
@@ -465,6 +501,7 @@ export const paramFields = (
             style: style as QueryStyle,
             explode,
             required,
+            ...(indices ? { indices: true as const } : {}),
           };
         }
         default: {
@@ -877,10 +914,83 @@ const selectRawImage = (
     : { ambiguous: `several image media types (${images.join(', ')})` };
 };
 
+const ENCODING_UNSUPPORTED = 'a request body encoding object is not supported';
+
+// The properties a form body's Encoding Objects send as deepObject (issue
+// #96): only `style: deepObject` with `explode: true` on a declared property
+// of a flattened application/x-www-form-urlencoded body. Any other encoding
+// (another style, `contentType`, `headers`, `allowReserved`, a multipart
+// body, OAS 3.2 `prefixEncoding`/`itemEncoding`) changes the bytes in a way
+// this server does not implement, so the operation is omitted.
+const deepObjectEncodings = (
+  entry: Record<string, unknown>,
+  contentType: string,
+  root: unknown,
+): { ok: ReadonlySet<string> } | { unrepresentable: string } => {
+  const declares = (key: string): boolean =>
+    (isRecord(entry[key]) && Object.keys(entry[key]).length > 0) ||
+    (Array.isArray(entry[key]) && entry[key].length > 0);
+  if (declares('prefixEncoding') || declares('itemEncoding')) {
+    return { unrepresentable: ENCODING_UNSUPPORTED };
+  }
+  if (!declares('encoding')) {
+    return { ok: new Set() };
+  }
+  const { encoding } = entry;
+  if (
+    !isRecord(encoding) ||
+    parseMediaType(contentType)?.essence !== FORM_URLENCODED ||
+    !isFlattenableRoot(root)
+  ) {
+    return { unrepresentable: ENCODING_UNSUPPORTED };
+  }
+  const properties = root['properties'] as Record<string, unknown>;
+  for (const [prop, value] of Object.entries(encoding)) {
+    const deepObject =
+      isRecord(value) &&
+      value['style'] === 'deepObject' &&
+      value['explode'] === true &&
+      Object.keys(value).every(
+        (key) => key === 'style' || key === 'explode' || key.startsWith('x-'),
+      );
+    if (!deepObject || !Object.hasOwn(properties, prop)) {
+      return {
+        unrepresentable: `the request body encoding of "${sanitizeSpecText(prop, SPEC_BUDGETS.maxTextLength)}" is not supported: only style: deepObject with explode: true on a declared property`,
+      };
+    }
+  }
+  // The form keys must stay apart as a bracket-parsing server reads them
+  // (keyPath): `a.b` and `a_b` are one key to PHP, and a name with a bracket
+  // is nesting
+  const seen = new Map<string, string>();
+  // A readOnly property counts too: it is no tool input, but a name that
+  // reads as it would still set it
+  for (const prop of Object.keys(properties)) {
+    // An empty name would send `[x]=…`, and URLSearchParams replaces a lone
+    // surrogate with U+FFFD: either sends another field than the declared one
+    if (prop === '' || !prop.isWellFormed()) {
+      return {
+        unrepresentable: `a body property name is empty or cannot be encoded in a form body with a deepObject encoding`,
+      };
+    }
+    const [key] = keyPath(prop);
+    const other = key === undefined ? undefined : seen.get(key);
+    if (prop.includes('[') || prop.includes(']') || other !== undefined) {
+      return {
+        unrepresentable: `body property "${sanitizeSpecText(prop, SPEC_BUDGETS.maxTextLength)}" cannot be told apart from ${other === undefined ? 'nesting' : `"${sanitizeSpecText(other, SPEC_BUDGETS.maxTextLength)}"`} in a form body with a deepObject encoding`,
+      };
+    }
+    seen.set(key ?? prop, prop);
+  }
+  return { ok: new Set(Object.keys(encoding)) };
+};
+
 const bodyFields = (
   requestBody: Record<string, unknown> | undefined,
   version: OpenapiVersion = '3.1',
   uploadDir?: string,
+  // --deep-object-indices (issue #96)
+  deepIndices = false,
 ): { ok: BodyResult } | { unrepresentable: string } => {
   if (requestBody === undefined) {
     return { ok: { fields: [], mode: 'none' } };
@@ -911,11 +1021,12 @@ const bodyFields = (
   if (Object.hasOwn(media.entry, '$ref')) {
     return { unrepresentable: 'the request body media type is a cyclic $ref' };
   }
-  if (isRecord(media.entry['encoding']) && Object.keys(media.entry['encoding']).length > 0) {
-    return { unrepresentable: 'a request body encoding object is not supported' };
-  }
   const bodyRequired = requestBody['required'] === true;
   const root = media.entry['schema'];
+  const encodings = deepObjectEncodings(media.entry, media.contentType, root);
+  if (!('ok' in encodings)) {
+    return encodings;
+  }
   if (isRawBinaryEssence(parseMediaType(media.contentType)?.essence)) {
     if (!isBinarySchema(root)) {
       return {
@@ -1029,6 +1140,20 @@ const bodyFields = (
           unrepresentable: `multipart part "${prop}" is not a single non-null scalar or file (arrays, objects and null parts are not supported)`,
         };
       }
+      // One level of scalars is what OpenAPI defines for deepObject; the
+      // rest needs --deep-object-indices, which then sends every value
+      let deepObject: 'defined' | 'indices' | undefined;
+      if (encodings.ok.has(prop)) {
+        if (deepIndices) {
+          deepObject = 'indices';
+        } else if (isRecord(child) && isScalarObjectSchema(child)) {
+          deepObject = 'defined';
+        } else {
+          return {
+            unrepresentable: `body property "${prop}": ${DEEP_OBJECT_PROBLEM}`,
+          };
+        }
+      }
       const converted = convertSchema(child, version, 1, 'request');
       if (!('ok' in converted)) {
         return { unrepresentable: `body property "${prop}": ${converted.unrepresentable}` };
@@ -1039,7 +1164,12 @@ const bodyFields = (
         location: 'body',
         schema: converted.ok,
         required: propRequired && bodyRequired,
-        mapping: { destination: 'body', bodyPath: [prop], required: propRequired && bodyRequired },
+        mapping: {
+          destination: 'body',
+          bodyPath: [prop],
+          required: propRequired && bodyRequired,
+          ...(deepObject === undefined ? {} : { deepObject }),
+        },
         ...(bodyRequired ? {} : { bodyGroup: { requiredWhenPresent: propRequired } }),
       });
     }
@@ -1197,12 +1327,14 @@ export const buildLayout = (
   uploadDir?: string,
   // --omit-unsupported-parameters (issue #67)
   omitUnsupported = false,
+  // --deep-object-indices (issues #95 and #96)
+  deepIndices = false,
 ): { ok: LayoutResult } | { unrepresentable: string } => {
-  const params = paramFields(operation, reservedHeaders, version, omitUnsupported);
+  const params = paramFields(operation, reservedHeaders, version, omitUnsupported, deepIndices);
   if (!('ok' in params)) {
     return params;
   }
-  const body = bodyFields(operation.requestBody, version, uploadDir);
+  const body = bodyFields(operation.requestBody, version, uploadDir, deepIndices);
   if (!('ok' in body)) {
     return body;
   }

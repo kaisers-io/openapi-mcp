@@ -24,6 +24,7 @@ import { collect, declareChoices } from './option-meta.ts';
 export { exposureReport, reachableTools, unreachableHeads } from './exposure-report.ts';
 export { withOutputSchemaOptOut } from './output-schema-opt-out.ts';
 export {
+  deepObjectIndicesLines,
   toolsBuiltInPipeline,
   unsupportedParameterLines,
   unsupportedParameterOptIn,
@@ -52,6 +53,7 @@ export type ParsedFilters = {
   deny: readonly FilterPattern[];
   omitOutputSchema: readonly FilterPattern[];
   omitUnsupportedParameters: readonly FilterPattern[];
+  deepObjectIndices: readonly FilterPattern[];
 };
 
 // Patterns parse in the command layer so a syntax error, an over-long
@@ -62,11 +64,13 @@ export const parseFilters = (
   denyRaw: readonly string[],
   omitOutputSchemaRaw: readonly string[],
   omitUnsupportedParametersRaw: readonly string[],
+  deepObjectIndicesRaw: readonly string[] = [],
 ): ParsedFilters => ({
   allow: parseFilterPatterns(allowRaw),
   deny: parseFilterPatterns(denyRaw),
   omitOutputSchema: parseFilterPatterns(omitOutputSchemaRaw),
   omitUnsupportedParameters: parseFilterPatterns(omitUnsupportedParametersRaw),
+  deepObjectIndices: parseFilterPatterns(deepObjectIndicesRaw),
 });
 
 const cacheRootOf = (ctx: CliContext): string | undefined => {
@@ -100,6 +104,7 @@ export type SpecCmdOpts = {
   nullableResponseFields?: boolean | string;
   omitOutputSchema: readonly string[];
   omitUnsupportedParameters: readonly string[];
+  deepObjectIndices: readonly string[];
 };
 
 // The --spec/--allow/--deny/... flags shared by every command that runs the
@@ -188,6 +193,12 @@ export const registerSpecOptions = (
       'build matching operations without the optional parameters this server cannot send (e.g. a deepObject array), instead of omitting them; the agent then cannot set those parameters (repeatable, --allow selectors)',
       collect,
       [] as readonly string[],
+    )
+    .option(
+      '--deep-object-indices <pattern>',
+      'for matching operations, send deepObject values as name[key][0]=value, the convention of Stripe and qs, so that those OpenAPI does not define (nested objects, arrays, scalars) no longer omit the operation; use it only for an API that reads that (repeatable, --allow selectors)',
+      collect,
+      [] as readonly string[],
     );
   declareChoices(registered, '--nullable-response-fields', NULLABLE_FIELD_SCOPES);
   // A bare flag means `all`, its meaning before the scope existed (issue #17)
@@ -251,6 +262,7 @@ export const parseSpecPipelineArgs = (cmdOpts: SpecCmdOpts, ctx: CliContext): Sp
     cmdOpts.deny,
     cmdOpts.omitOutputSchema,
     cmdOpts.omitUnsupportedParameters,
+    cmdOpts.deepObjectIndices,
   );
   return {
     source: cmdOpts.spec,

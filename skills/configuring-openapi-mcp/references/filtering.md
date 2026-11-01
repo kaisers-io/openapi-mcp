@@ -103,8 +103,8 @@ refused`. A pattern that names only operations omitted as not supported says so.
 one. `notExposed` lists every operation that is not a tool, with its `decision` and `summary`:
 use it for the blocked rows of the table.
 
-`--omit-output-schema` and `--omit-unsupported-parameters` take the same selectors. A pattern
-of theirs that has no effect warns `so it changes nothing`.
+`--omit-output-schema`, `--omit-unsupported-parameters` and `--deep-object-indices` take the
+same selectors. A pattern of theirs that has no effect warns `so it changes nothing`.
 
 At most 512 tools under `per-operation` (4,096 under `discover`): more fail with
 `exceeds the 512-tool budget`. A spec with more than 4,096 operations fails whatever the
@@ -127,13 +127,16 @@ Report the two numbers and each gap in one line, with its cause and the fix you 
 | `decision: not-allowed` | no `--allow` matches it | add a `route:` or `operationId:` pattern for it |
 | `decision: read-only-default` | it is a write and there is no `--allow` | add `--allow` for it, and for the reads |
 | `decision: omitted` with `omittableParameters` | only optional parameters the server cannot send keep it out, such as Stripe's `expand` | `--omit-unsupported-parameters "operationId:<id>"` for each such operation the user wants; tell the user which parameters the agent then cannot set (rule 9) |
+| `decision: omitted` with `buildsWithDeepObjectIndices: true` | a `deepObject` value OpenAPI does not define keeps it out, such as Stripe's `expand` or a nested form field | if the API reads `name[key][0]=value` (Stripe does), `--deep-object-indices "operationId:<id>"`; this keeps the parameters usable (rule 10) |
 | `decision: omitted` without them | the operation uses something the server does not support (`reason`) | explain the reason; it needs a changed spec |
 | `decision: head-without-get` | its `GET` is not exposed, so every call would be refused | add the `GET`, or drop the `HEAD` |
 | `decision: withheld` | a changed spec waits and removed it | the user reviews it: `openapi-mcp cache promote` |
 | a tool the user did not want | a pattern is too broad | narrow it, or add a `--deny` |
 
 A startup line `N operations are omitted only for optional parameters ...` lists the operations
-the flag would build. `data.counts` gives the counts per decision. Run `tools` again after each
+the flag would build, and `N operations are omitted only for deepObject values ...` those
+`--deep-object-indices` would build. When both apply, prefer `--deep-object-indices`: the agent
+keeps the parameters. `data.counts` gives the counts per decision. Run `tools` again after each
 change, until the numbers match or the user accepts each remaining gap.
 
 ## The table

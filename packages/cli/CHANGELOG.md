@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--deep-object-indices <pattern>` sends the `deepObject` values OpenAPI does not define.**
+  An array, a nested object or a scalar as a `deepObject` query parameter or form body field
+  omitted the operation. For the exposed operations the pattern matches, the server now sends
+  every `deepObject` value as `name[key][0]=value`, the `qs` convention that Stripe's SDK uses:
+  `expand[0]=customer`, `items[0][price]=p_1`, `created=5`. It refuses `null`, an empty array
+  or object, and a key that is empty or contains a bracket inside a value, before anything is
+  sent. Every Stripe operation but two becomes a tool, 610 in all, more than 512, so use
+  `--tool-mode discover` or a narrower `--allow`. `tools` marks such a tool with
+  `[deepObject indices]`, and names the operations the flag would build.
+- **An `enum` or `const` next to a constraint that every listed value meets no longer omits
+  the operation.** Stripe puts `maxLength` next to its enums. The listed values fix what the
+  field accepts, so such a constraint changes nothing. A constraint that a listed value breaks
+  still omits it.
+- **A form body with a `deepObject` Encoding Object is supported.** One level of scalars, as
+  OpenAPI defines it, is sent as `name[key]=value` without the flag. Every other Encoding
+  Object still omits the operation.
+
+### Changed
+
+- **A request body with OAS 3.2 `prefixEncoding` or `itemEncoding` omits the operation.** The
+  server ignored them before, so it did not send such a body as the spec describes it.
+- **`--omit-unsupported-parameters` counts a number in brackets as any number.** `qs` reads a
+  lone `a[1]` as `a[0]`, so a query parameter `a[1]` could set a left-out `a[0]`. Such an
+  operation is now omitted, as for other names a kept parameter could send.
+
 ## [0.8.2] - 2026-11-01
 
 ### Changed

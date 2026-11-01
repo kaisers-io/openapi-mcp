@@ -83,6 +83,7 @@ import {
   toolsBuiltInPipeline,
   unsupportedParameterLines,
   withOutputSchemaOptOut,
+  deepObjectIndicesLines,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
 import type { RunState } from '../main.ts';
@@ -479,8 +480,10 @@ type LoadedApi = {
   // The HEADs no call can pass (issue #68): left out of the tools, so the
   // tool mode is decided without them
   unreachable: ReadonlyMap<string, string>;
-  // --omit-unsupported-parameters, matched on this API's operations
+  // --omit-unsupported-parameters and --deep-object-indices, matched on
+  // this API's operations
   optIn: UnsupportedParameterOptIn;
+  deepOptIn: UnsupportedParameterOptIn;
   // Built in full when `--tool-mode auto` sizes the tool definitions; reused
   // in either mode, never built twice (issue #61)
   completed?: ReturnType<typeof completeTools>;
@@ -529,10 +532,11 @@ const loadApi = async (
   // SYSTEM_HEADERS alone would let it reappear as a caller-settable input,
   // silently colliding with the credential the executor injects.
   const building = toolsBuiltInPipeline(
-    args.filters.omitUnsupportedParameters,
-    (exposed, omitUnsupportedParameters) =>
+    args.filters,
+    (exposed, { omitUnsupportedParameters, deepObjectIndices }) =>
       buildToolsDeferred(exposed.namedOperations, {
         omitUnsupportedParameters,
+        deepObjectIndices,
         reservedHeaders: new Set([...SYSTEM_HEADERS, ...apiConfig.reservedHeaderNames]),
         openapiVersion: exposed.spec.openapiVersion,
         projection: cmdOpts.responseProjection === true,
@@ -557,7 +561,7 @@ const loadApi = async (
     },
     args.deps,
   );
-  const { built: deferred, optIn, optInWarnings, unreachable } = building.take();
+  const { built: deferred, optIn, deepOptIn, optInWarnings, unreachable } = building.take();
   // Sanitized + suggestion-bearing, matching `tools`' strict-filters
   // throw exactly (deadPatternMessage is the shared renderer): building
   // the message inline instead would put unsanitized spec-derived text
@@ -579,6 +583,7 @@ const loadApi = async (
     generated: deferred,
     unreachable,
     optIn,
+    deepOptIn,
   };
 };
 
@@ -700,6 +705,7 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
     ...api.filterWarnings,
     ...omissionWarningLines([...result.spec.omitted, ...built.omitted]),
     ...unsupportedParameterLines(exposure.built.tools, exposure.built.omitted, api.optIn),
+    ...deepObjectIndicesLines(exposure.built.tools, exposure.built.omitted, api.deepOptIn),
     ...optOut.warnings,
     ...exposure.warnings,
     // Exposed operations whose `security` requirement no configured

@@ -7,7 +7,7 @@ import {
 import { caseCollisionsFor } from '../filter/case-collisions.ts';
 import type { CaseCollision } from '../filter/case-collisions.ts';
 import { matchesOperation } from '../filter/engine.ts';
-import type { DeadPattern } from '../filter/engine.ts';
+import type { DeadPattern, DeadPatternFlag } from '../filter/engine.ts';
 import { createMatchBudget } from '../filter/pattern.ts';
 import type { FilterPattern, MatchBudget } from '../filter/pattern.ts';
 import type { NormalizedSpec } from '../spec/normalize.ts';
@@ -15,8 +15,9 @@ import type { NamedOperation } from './naming.ts';
 import { assignToolNames } from './naming.ts';
 
 export type UnsupportedParameterOptIn = {
-  // The tool names whose optional parameters this server cannot send are
-  // left out instead of omitting the operation
+  // The tool names the flag applies to: their optional parameters this
+  // server cannot send are left out instead of omitting the operation, or
+  // their deepObject values are sent by the indices convention
   toolNames: ReadonlySet<string>;
   // The tool names each pattern matches, so a pattern that leaves nothing
   // out can be reported as changing nothing
@@ -25,16 +26,22 @@ export type UnsupportedParameterOptIn = {
   caseCollisions: readonly CaseCollision[];
 };
 
-// --omit-unsupported-parameters (issue #67): the exposed operations the
-// operator opted in, by the --allow/--deny grammar. Leaving out a parameter
-// can take a filter or a dry run away from the agent, so it is never the
-// default. Matched before the tools are built, on the operations the filters
-// expose: a pattern that names none of them is dead.
+// --omit-unsupported-parameters (issue #67) and --deep-object-indices
+// (issues #95 and #96): the exposed operations the operator opted in, by the
+// --allow/--deny grammar. Leaving out a parameter can take a filter or a dry
+// run away from the agent, and the deepObject convention is not part of
+// OpenAPI, so neither is the default. Matched before the tools are built, on
+// the operations the filters expose: a pattern that names none of them is
+// dead.
 export const selectUnsupportedParameterOptIn = (
   named: readonly NamedOperation[],
   patterns: readonly FilterPattern[],
   spec: Pick<NormalizedSpec, 'operations' | 'omitted'>,
   budget: MatchBudget = createMatchBudget(),
+  flag: Extract<
+    DeadPatternFlag,
+    'omit-unsupported-parameters' | 'deep-object-indices'
+  > = 'omit-unsupported-parameters',
 ): UnsupportedParameterOptIn => {
   if (patterns.length === 0) {
     return { toolNames: new Set(), matches: [], deadPatterns: [], caseCollisions: [] };
@@ -57,11 +64,11 @@ export const selectUnsupportedParameterOptIn = (
     matches,
     deadPatterns: deadPatternsWithOmitted(
       patterns,
-      'omit-unsupported-parameters',
+      flag,
       targets,
       [...inventory, ...omitted],
       budget,
     ),
-    caseCollisions: caseCollisionsFor(patterns, 'omit-unsupported-parameters', targets, budget),
+    caseCollisions: caseCollisionsFor(patterns, flag, targets, budget),
   };
 };

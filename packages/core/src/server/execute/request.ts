@@ -13,6 +13,7 @@ import {
 } from '../../toolgen/media-type.ts';
 import type { SequenceKind } from '../../toolgen/media-type.ts';
 import { isDangerousKey } from '../../toolgen/schema.ts';
+import { deepObjectPairs } from './deep-object.ts';
 import { sequenceBody } from './sequence-body.ts';
 import type { FieldMapping, RequestMapper } from '../../toolgen/layout.ts';
 
@@ -320,25 +321,64 @@ const serializeDelimited = (
   return { ok: [{ key: wireKey, value: parts.join(delimiter.wire) }] };
 };
 
-const serializeQueryValue = (
+// --deep-object-indices (issue #95): nested objects and arrays as
+// `name[a][0]=value`, each segment encoded like any other query leaf inside
+// percent-encoded brackets, as for one level
+const serializeDeepObjectIndices = (
   mapping: QueryMapping,
+  wireKey: string,
   value: unknown,
+  enc: Encoder,
 ): { ok: readonly QueryPair[] } | { error: string } => {
-  const shape = classifyShape(value);
-  if (shape === undefined) {
-    return {
-      error: `query parameter "${mapping.wireName}" has a value shape that cannot be serialized`,
-    };
+  const flat = deepObjectPairs(mapping.wireName, value, true);
+  if ('error' in flat) {
+    return { error: `query parameter ${flat.error}` };
   }
-  const enc = (raw: string): { ok: string } | { error: string } => {
+  const pairs: QueryPair[] = [];
+  for (const pair of flat.ok) {
+    let key = wireKey;
+    for (const segment of pair.path) {
+      const encoded = enc(segment);
+      if ('error' in encoded) {
+        return encoded;
+      }
+      key += `%5B${encoded.ok}%5D`;
+    }
+    const encodedValue = enc(pair.value);
+    if ('error' in encodedValue) {
+      return encodedValue;
+    }
+    pairs.push({ key, value: encodedValue.ok });
+  }
+  return { ok: pairs };
+};
+
+const queryEncoder =
+  (mapping: QueryMapping): Encoder =>
+  (raw) => {
     const encoded = encodeLeaf(raw);
     return encoded === undefined
       ? { error: `query parameter "${mapping.wireName}" could not be encoded` }
       : { ok: encoded };
   };
+
+const serializeQueryValue = (
+  mapping: QueryMapping,
+  value: unknown,
+): { ok: readonly QueryPair[] } | { error: string } => {
+  const enc = queryEncoder(mapping);
   const wireKey = enc(mapping.wireName);
   if ('error' in wireKey) {
     return wireKey;
+  }
+  if (mapping.style === 'deepObject' && mapping.indices === true) {
+    return serializeDeepObjectIndices(mapping, wireKey.ok, value, enc);
+  }
+  const shape = classifyShape(value);
+  if (shape === undefined) {
+    return {
+      error: `query parameter "${mapping.wireName}" has a value shape that cannot be serialized`,
+    };
   }
   if (mapping.style === 'deepObject') {
     return serializeDeepObject(mapping, wireKey.ok, shape, enc);
@@ -562,10 +602,29 @@ const jsonBody = (value: unknown): { ok: Uint8Array } | { error: string } => {
   }
 };
 
-const formBody = (value: Record<string, unknown>): { ok: Uint8Array } | { error: string } => {
+// A form body field with a deepObject encoding (issue #96) is sent as
+// `name[key]=value` pairs, nested with --deep-object-indices; URLSearchParams
+// encodes the brackets as it encodes the rest
+const formBody = (
+  value: Record<string, unknown>,
+  // Field name -> whether --deep-object-indices applies, for the fields
+  // with a deepObject encoding
+  deepObjects: ReadonlyMap<string, boolean>,
+): { ok: Uint8Array } | { error: string } => {
   const params = new URLSearchParams();
   for (const [key, val] of Object.entries(value)) {
     if (val === undefined) {
+      continue;
+    }
+    const indices = deepObjects.get(key);
+    if (indices !== undefined) {
+      const flat = deepObjectPairs(key, val, indices);
+      if ('error' in flat) {
+        return { error: `body field ${flat.error}` };
+      }
+      for (const pair of flat.ok) {
+        params.append(`${key}${pair.path.map((segment) => `[${segment}]`).join('')}`, pair.value);
+      }
       continue;
     }
     if (!isPrimitive(val)) {
@@ -777,7 +836,14 @@ const serializeBody = (
   if (!isPlainObject(payload)) {
     return { error: 'a form-urlencoded body must be an object' };
   }
-  const encoded = formBody(payload);
+  const deepObjects = new Map(
+    bodyFieldEntries.flatMap(([, mapping]) =>
+      mapping.deepObject !== undefined && mapping.bodyPath.length === 1
+        ? [[mapping.bodyPath[0] as string, mapping.deepObject === 'indices'] as const]
+        : [],
+    ),
+  );
+  const encoded = formBody(payload, deepObjects);
   if ('error' in encoded) {
     return encoded;
   }
