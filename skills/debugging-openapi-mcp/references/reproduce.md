@@ -23,13 +23,13 @@ a host and makes one call. Use the entry's command and arguments, and a read ope
 picks:
 
 ```sh
-npx -y @modelcontextprotocol/inspector@2.11.0 --cli --format json \
+npx -y @modelcontextprotocol/inspector@2.12.0 --cli --format json \
   npx -y @kaisers-io/openapi-mcp@X.Y.Z serve <the entry's arguments> \
   --method tools/list
 ```
 
 ```sh
-npx -y @modelcontextprotocol/inspector@2.11.0 --cli --format json \
+npx -y @modelcontextprotocol/inspector@2.12.0 --cli --format json \
   npx -y @kaisers-io/openapi-mcp@X.Y.Z serve <the entry's arguments> \
   --method tools/call --tool-name <tool> --tool-args-json '{"id":"example"}'
 ```
