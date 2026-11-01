@@ -218,34 +218,32 @@ const isJavaScriptPattern = (pattern: string): boolean => {
   }
 };
 
-// JavaScript with the `u` and `i` flags counts U+017F and U+212A as word
-// characters for \b and \B, and RE2 does not: `^(?i:ſ\b)$` matches "ſ" in the
-// client and not on the server. So a pattern that turns `i` on in an inline
-// modifier group and has \b or \B anywhere is not enforced.
+// JavaScript and RE2 case-fold an inline `(?i:...)` group differently: `\b`
+// and `\B` around U+017F, `\P{Lu}`, U+212A and U+1E9E all give different
+// answers (`^(?i:ſ\b)$` matches "ſ" in the client and not on the server). So a
+// pattern that turns `i` on in an inline modifier group is not enforced.
 const INLINE_IGNORE_CASE_RE = /^\(\?[a-z]*i[a-z]*(?:-[a-z]*)?:/u;
 
-const hasIgnoreCaseBoundary = (pattern: string): boolean => {
-  let ignoreCase = false;
-  let boundary = false;
+const hasInlineIgnoreCase = (pattern: string): boolean => {
   let index = 0;
   while (index < pattern.length) {
     const char = pattern[index];
     if (char === '\\') {
-      boundary ||= pattern[index + 1] === 'b' || pattern[index + 1] === 'B';
       index = skipEscape(pattern, index);
     } else if (char === '[') {
       index = skipClass(pattern, index);
+    } else if (char === '(' && INLINE_IGNORE_CASE_RE.test(pattern.slice(index, index + 12))) {
+      return true;
     } else {
-      ignoreCase ||= char === '(' && INLINE_IGNORE_CASE_RE.test(pattern.slice(index, index + 12));
       index += 1;
     }
   }
-  return ignoreCase && boundary;
+  return false;
 };
 
 export const isEnforceablePattern = (pattern: string): boolean =>
   isJavaScriptPattern(pattern) &&
-  !hasIgnoreCaseBoundary(pattern) &&
+  !hasInlineIgnoreCase(pattern) &&
   !hasNestedQuantifier(pattern) &&
   !hasAmbiguousSequence(pattern) &&
   compileRe2Pattern(pattern) !== undefined;

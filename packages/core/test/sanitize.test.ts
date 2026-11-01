@@ -27,6 +27,11 @@ describe('sanitizeSpecText', () => {
     // "\u{E0069}\u{E0067}..." spells hidden ASCII in the tag block
     const hidden = 'ok\u200B\u2060\u2063\u206A\uFEFF\u{E0001}\u{E0069}\u{E0067}\u{E007F}.';
     expect(sanitizeSpecText(hidden, 100)).toBe('ok.');
+    // A run from the variation selector supplement carries hidden bytes too;
+    // VS16 (U+FE0F), which emoji need, stays
+    expect(sanitizeSpecText('a\u{E0100}\u{E0101}\u{E01EF}b \u2764\uFE0F', 100)).toBe(
+      'ab \u2764\uFE0F',
+    );
     // A ZWJ emoji sequence and a ZWNJ in Persian text stay whole
     expect(
       sanitizeSpecText(

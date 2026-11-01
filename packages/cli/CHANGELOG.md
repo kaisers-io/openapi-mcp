@@ -17,19 +17,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `resolves to the non-loopback address`, before anything is sent. `--allow-insecure-http`
   still permits it. The client secret for an `http://localhost` token URL and the metadata and
   keys of an `http://localhost` `--oauth-issuer` need a loopback answer too, with no override.
-- **With `--trust-spec-updates`, a refreshed spec over the tool, node or `$ref` depth budget
-  keeps the last accepted spec serving.** The server prints the `spec refresh failed` warning
-  with the budget instead of stopping, as it already did for an invalid or oversized refresh.
+- **With `--trust-spec-updates`, a refreshed spec over the tool, node, `$ref` depth or filter
+  work budget keeps the last accepted spec serving.** The server prints the `spec refresh
+  failed` warning with the budget instead of stopping, as it already did for an invalid or
+  oversized refresh.
 - **IPv6 forms of a link-local or metadata IPv4 address are refused like that address.**
   IPv4-compatible `::/96`, SIIT `::ffff:0:0/96`, 6to4 `2002::/16` and Teredo `2001::/32`
   addresses that carry such an IPv4 address are metadata, so `--allow-private-network` no
   longer admits them.
 - **Spec prose loses invisible format characters.** Descriptions and other spec text drop
-  zero-width spaces, word joiners, byte order marks and Unicode tag characters, which can spell
-  out text a reader does not see. The zero-width joiner and non-joiner stay. Names and values
-  keep every one of them, and `--json` output escapes them as `\uXXXX`.
-- **A response `pattern` with `\b` or `\B` and an inline `(?i:...)` group is no longer
-  advertised.** JavaScript and RE2 disagree there on `ſ` (U+017F) and `K` (U+212A). The field
+  zero-width spaces, word joiners, byte order marks, Unicode tag characters and the variation
+  selector supplement, which can carry text a reader does not see. The zero-width joiner and
+  non-joiner stay. Names and values keep every one of them, and `--json` output escapes them as
+  `\uXXXX`.
+- **A response `pattern` that turns on `i` in an inline `(?i:...)` group is no longer
+  advertised.** JavaScript and RE2 case-fold such a group differently (`\b` around `ſ`,
+  `\P{Lu}`, `K` U+212A, `ẞ`), so the server and the client could disagree on a value. The field
   description ends with `Pattern (not enforced): <pattern>`.
 
 ### Fixed

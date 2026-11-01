@@ -1,4 +1,4 @@
-import { usageError, validationError } from '../errors.ts';
+import { specBudgetError, usageError } from '../errors.ts';
 import type { ErrorReason } from '../errors.ts';
 import { HTTP_METHODS } from '../spec/normalize.ts';
 import { sanitizeSpecText } from '../spec/sanitize.ts';
@@ -212,7 +212,7 @@ export const globMatches = (
   const spend = (steps: number): void => {
     budget.remaining -= steps;
     if (budget.remaining < 0) {
-      throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
+      throw specBudgetError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
     }
   };
   // The counter charges EVERY input-dependent cost, in the order the work

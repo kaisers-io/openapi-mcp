@@ -5,11 +5,12 @@ const CONTROL_AND_BIDI = String.raw`\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F
 
 // Invisible format characters, stripped from prose only: zero-width space,
 // word joiner and invisible operators, deprecated format controls, the byte
-// order mark, and the tag block, which can spell out ASCII text a model reads
-// and a reviewer does not see. A name or value keeps them (hasControlOrBidi
+// order mark, the tag block, which can spell out ASCII text a model reads and
+// a reviewer does not see, and the variation selector supplement, whose runs
+// can carry hidden bytes the same way (VS1-VS16, which emoji need, stay). A name or value keeps them (hasControlOrBidi
 // does not refuse them): ZWJ and ZWNJ (U+200D, U+200C) are not in the set, as
 // emoji and several scripts need them, and a value is sent as written.
-const INVISIBLE_FORMAT = String.raw`\u200B\u2060-\u2064\u206A-\u206F\uFEFF\u{E0000}-\u{E007F}`;
+const INVISIBLE_FORMAT = String.raw`\u200B\u2060-\u2064\u206A-\u206F\uFEFF\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}`;
 
 const CONTROL_AND_BIDI_RE = new RegExp(`[${CONTROL_AND_BIDI}${INVISIBLE_FORMAT}]`, 'gu');
 

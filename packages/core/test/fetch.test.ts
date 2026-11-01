@@ -793,6 +793,54 @@ describe('fetchSpec — loopback name with a credential', () => {
     });
   });
 
+  // The answer below is not loopback; the request may then fail any other
+  // way (a short timeout here), only not with the loopback refusal
+  const failureOf = async (run: () => Promise<unknown>): Promise<string> => {
+    const outcome = await run().catch((error: unknown) => error);
+    return String((outcome as Error | undefined)?.message);
+  };
+
+  it('lets --allow-insecure-http lift the check', async () => {
+    const failure = await failureOf(() =>
+      fetchSpec(
+        new URL('http://specs.localhost:8080/openapi.json'),
+        { headers: AUTH, allowInsecureHttp: true, allowPrivateNetwork: true, timeoutMs: 300 },
+        { fetcher, lookup: () => Promise.resolve(['10.0.0.5']) },
+      ),
+    );
+    expect(failure).not.toContain('non-loopback');
+  });
+
+  it('does not check a redirect to another origin, which gets no credential', async () => {
+    await withServer(async (port) => {
+      const redirect = createServer((_req, res) => {
+        res.writeHead(302, { location: 'http://other.localhost:8080/openapi.json' });
+        res.end();
+      });
+      await new Promise<void>((resolve) => {
+        redirect.listen(0, '127.0.0.1', resolve);
+      });
+      try {
+        const { port: redirectPort } = redirect.address() as AddressInfo;
+        expect(port).not.toBe(redirectPort);
+        const failure = await failureOf(() =>
+          fetchSpec(
+            new URL(`http://specs.localhost:${redirectPort}/openapi.json`),
+            { headers: AUTH, allowPrivateNetwork: true, timeoutMs: 300 },
+            {
+              fetcher,
+              lookup: (hostname) =>
+                Promise.resolve([hostname === 'specs.localhost' ? '127.0.0.1' : '10.0.0.5']),
+            },
+          ),
+        );
+        expect(failure).not.toContain('non-loopback');
+      } finally {
+        redirect.close();
+      }
+    });
+  });
+
   it("keeps today's behaviour without a credential or with --allow-insecure-http", async () => {
     await withServer(async (port) => {
       const url = new URL(`http://specs.localhost:${port}/openapi.json`);

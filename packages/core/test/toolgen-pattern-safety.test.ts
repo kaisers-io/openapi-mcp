@@ -592,31 +592,45 @@ describe('response format url', () => {
   });
 });
 
-// JavaScript (`u` flag) and RE2 disagree on `\b` and `\B` inside an inline
-// `(?i:...)` group: JavaScript counts U+017F and U+212A as word characters
+// JavaScript (`u` flag) and RE2 case-fold an inline `(?i:...)` group
+// differently, so no pattern that turns `i` on inline is enforced
 describe('response patterns with an inline ignore-case group', () => {
-  const modifiersParse = isEnforceablePattern('^(?i:a)$');
+  // `(?s:` is enforceable where JavaScript parses modifier groups at all
+  const modifiersParse = isEnforceablePattern('^(?s:a)$');
 
-  it.skipIf(!modifiersParse)('is a real difference between the two engines', () => {
+  it.skipIf(!modifiersParse)('differ between the two engines', () => {
     // oxlint-disable-next-line prefer-regex-literals -- a literal with a modifier group is a syntax error on Node 22, before skipIf runs
-    expect(new RegExp(String.raw`^(?i:ſ\b)$`, 'u').test('ſ')).toBe(true);
-    expect(compileRe2Pattern(String.raw`^(?i:ſ\b)$`)?.matches('ſ')).toBe(false);
+    const js = (pattern: string, value: string): boolean => new RegExp(pattern, 'u').test(value);
+    const re2 = (pattern: string, value: string): boolean | undefined =>
+      compileRe2Pattern(pattern)?.matches(value);
+    for (const [pattern, value] of [
+      [String.raw`^(?i:ſ\b)$`, 'ſ'],
+      [String.raw`^(?i:\P{Lu})$`, 'a'],
+      [String.raw`^(?i:\u212a)$`, 'k'],
+      ['^(?i:ẞ)$', 'ß'],
+    ] as const) {
+      expect([pattern, js(pattern, value)]).not.toEqual([pattern, re2(pattern, value)]);
+    }
   });
 
-  it.each([String.raw`^(?i:ſ\b)$`, String.raw`(?mi:x)\B`, String.raw`\bid(?i:-[a-z]+)$`])(
-    'does not enforce %s',
-    (pattern) => {
-      expect(isEnforceablePattern(pattern)).toBe(false);
-    },
-  );
+  it.each([
+    String.raw`^(?i:ſ\b)$`,
+    String.raw`(?mi:x)\B`,
+    String.raw`^(?i:\P{Lu})$`,
+    String.raw`^(?i:\u212a)$`,
+    '^(?i:abc)$',
+    String.raw`^(?i:a)\\b$`,
+  ])('does not enforce %s', (pattern) => {
+    expect(isEnforceablePattern(pattern)).toBe(false);
+  });
 
   // A modifier group needs a Node whose JavaScript engine parses it (24+)
   it.each([
     [String.raw`\bword\b`, true],
     [String.raw`^(?s-i:x)\b`, modifiersParse],
-    // `(?i:` inside a class and an escaped backslash before `b` are literals
+    // `(?i:` inside a class and after an escaped backslash is a literal
     [String.raw`[(?i:]\b`, true],
-    [String.raw`^(?i:a)\\b$`, modifiersParse],
+    [String.raw`\\(?i`, false],
   ])('keeps %s: %s', (pattern, kept) => {
     expect(isEnforceablePattern(pattern)).toBe(kept);
   });

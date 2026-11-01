@@ -72,8 +72,8 @@ export const emitWarnings = (ctx: CliContext, warnings: readonly string[]): void
 // reader, so every --json writer escapes those as \uXXXX.
 // The escape stays inside a JSON string, so JSON.parse returns the same value.
 const JSON_TERMINAL_UNSAFE_RE =
-  // oxlint-disable-next-line no-control-regex -- matching control characters is this regex's purpose (it escapes them)
-  /[\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\u206A-\u206F\u2028\u2029\uFEFF\u{E0000}-\u{E007F}]/gu;
+  // oxlint-disable-next-line no-control-regex, no-misleading-character-class -- matching control and variation-selector characters one by one is this regex's purpose (it escapes them)
+  /[\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u2069\u206A-\u206F\u2028\u2029\uFEFF\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 
 // An astral character (the tag block) is written as its two UTF-16 halves
 const escapeUnits = (char: string): string =>

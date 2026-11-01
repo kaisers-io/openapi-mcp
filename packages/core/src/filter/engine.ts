@@ -1,4 +1,4 @@
-import { validationError } from '../errors.ts';
+import { specBudgetError } from '../errors.ts';
 import type { OperationRecord } from '../spec/normalize.ts';
 import {
   FILTER_PATTERN_MAX_LENGTH,
@@ -47,7 +47,7 @@ export type FilterTarget = Pick<OperationRecord, 'path' | 'operationId' | 'tags'
 const spendSteps = (budget: MatchBudget, steps: number): void => {
   budget.remaining -= steps;
   if (budget.remaining < 0) {
-    throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
+    throw specBudgetError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
   }
 };
 
@@ -158,7 +158,7 @@ const boundedDistance = (
   const spend = (steps: number): void => {
     budget.remaining -= steps;
     if (budget.remaining < 0) {
-      throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
+      throw specBudgetError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
     }
   };
   // The first row is 0..right.length by definition (deleting the whole

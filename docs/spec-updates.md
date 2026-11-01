@@ -36,8 +36,8 @@ prints a warning that starts with
 `spec refresh failed, serving the last known good accepted baseline`. With
 `--trust-spec-updates`, a new document over a budget the served tools are measured against is a
 failed refresh too: more tools than the tool budget under the current filters, more nodes than
-the node budget, or `$ref` nesting deeper than the depth budget. The warning then names the
-budget.
+the node budget, `$ref` nesting deeper than the depth budget, or more filter work than the
+filter work budget. The warning then names the budget.
 
 ## How a changed spec is handled
 

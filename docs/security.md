@@ -27,17 +27,19 @@ Every defense below comes on top of this requirement. None of them replaces it.
   text. The server uses `info.title` only as a display name, sanitized and capped in length.
 - The server sanitizes every piece of spec text that reaches a tool definition or description
   before it attaches it: operation `summary` and `description`, parameter and property
-  `description` and `example`. It strips control characters, bidirectional-override
-  characters and invisible format characters (zero-width space, word joiner, byte order mark
-  and the Unicode tag block, which can spell out text a reader does not see), and caps the
-  length. It keeps the zero-width joiner and non-joiner, which emoji and several scripts need.
+  `description` and `example`. It strips control characters, bidirectional-override characters
+  and invisible format characters (zero-width space, word joiner, byte order mark, the Unicode
+  tag block and the variation selector supplement, which can carry text a reader does not see),
+  and caps the length. It keeps the zero-width joiner and non-joiner, which emoji and several
+  scripts need.
 - Names and values the server sends as they are, such as parameter and property names, `enum`,
   `const`, `pattern` and `format`, are never rewritten. If one of them in an input schema holds a
   control or bidirectional-override character, the server omits the operation. If one in a
   response schema does, the tool gets no output schema and returns its result as text.
 - The CLI strips the same characters from spec text it prints for people. With `--json` it keeps
   the raw text and escapes C1 controls, bidi characters, U+2028, U+2029, zero-width
-  characters and the tag block as `\uXXXX`, so a terminal never receives them raw. A JSON parser still reads back the original strings.
+  characters, the tag block and the variation selector supplement as `\uXXXX`, so a terminal
+  never receives them raw. A JSON parser still reads back the original strings.
 - Parsing enforces resource budgets before the server trusts or caches anything:
 
   | Budget | Limit |
@@ -245,20 +247,19 @@ checks:
     names such as `\p{Script=Greek}` (`\p{L}` works). A pattern that is not valid JavaScript
     with the `u` flag is not enforced either, because the client could not compile it.
   - The server and the client accept the same values. RE2's `.`, `\s` and `\S` differ from
-    JavaScript's, so the server writes them out as JavaScript's sets of characters. With an
-    inline `(?i:...)` group, JavaScript counts `ſ` (U+017F) and `K` (U+212A) as word
-    characters for `\b` and `\B` and RE2 does not, so a pattern that turns `i` on inline and
-    uses `\b` or `\B` is not enforced.
+    JavaScript's, so the server writes them out as JavaScript's sets of characters. The two
+    engines case-fold an inline `(?i:...)` group differently (`\b` around `ſ`, `\P{Lu}`, `K`
+    U+212A, `ẞ`), so a pattern that turns `i` on inline is not enforced.
   - In request schemas (tool inputs) the server shows `pattern` and `format` to the model in
     the input schema but never runs them, so they cost no CPU here.
   - In response schemas the server enforces `format` with the checks of ajv-formats. A client
     that validates the output schema, as one built on Ajv does, runs its own format checks on
     every response too, so a format costs CPU in the client as well. The `url` format is the
-    exception: the ajv-formats check backtracks quadratically on a long string. So a response schema leaves
-    `format: url` out, and the field's description ends with `Format (not enforced): url`.
-    Neither the server nor the client checks it. The other ajv-formats checks take linear
-    time. For any other schema that still has `format: url`, the server runs an equivalent
-    check that takes linear time and accepts the same URLs.
+    exception: the ajv-formats check backtracks quadratically on a long string. So a response
+    schema leaves `format: url` out, and the field's description ends with
+    `Format (not enforced): url`. Neither the server nor the client checks it. The other
+    ajv-formats checks take linear time. For any other schema that still has `format: url`, the server runs an
+    equivalent check that takes linear time and accepts the same URLs.
 - A response over `--max-response-bytes` (default `10MB`) is a tool error. The server never
   returns a truncated payload that would be silently invalid.
 - A binary or unknown media type is a tool error that names the media type. The one exception

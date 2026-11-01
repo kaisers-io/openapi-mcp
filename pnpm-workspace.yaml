@@ -6,5 +6,6 @@ overrides:
   # @modelcontextprotocol/node accepts both majors; 1.x has GHSA-rmxm-3fg6-px4f.
   # The empty range after "@" makes it a convergence override: it rewrites only
   # a dependency range that 2.1.5 satisfies, and pnpm warns once every range
-  # admits a newer version, so the override can go.
+  # admits a newer version, so the override can go. An edge that admits only
+  # 1.x keeps 1.x; audit.yml is what flags that.
   "@hono/node-server@": 2.1.5
