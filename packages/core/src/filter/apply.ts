@@ -36,6 +36,8 @@ export type NotExposedOperation = {
   // `omitted` only for these optional parameters, which
   // --omit-unsupported-parameters would leave out (issue #67)
   omittableParameters?: readonly string[];
+  // `omitted`, but built with --deep-object-indices (issues #95 and #96)
+  buildsWithDeepObjectIndices?: true;
 };
 
 export type FilterDecision = {

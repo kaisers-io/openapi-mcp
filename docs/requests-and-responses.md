@@ -111,8 +111,9 @@ order:
 6. Otherwise one of `image/png`, `image/jpeg`, `image/gif` or `image/webp`.
 7. Otherwise, in a 3.2 spec, a sequential media type.
 
-A request body with an Encoding Object omits the operation. So does a body that has none of
-these types.
+A body that has none of these types omits the operation. So does an Encoding Object, except
+`style: deepObject` with `explode: true` on a form-urlencoded body (see
+[`deepObject` values](#deepobject-values)).
 
 ### Query parameter styles
 
@@ -123,15 +124,60 @@ reason:
 - `form` (the default), with or without `explode`.
 - `deepObject` needs `explode: true`, set explicitly. `explode` defaults to `true` only for
   `form`, so a spec that leaves it out on a `deepObject` parameter has that operation omitted
-  (Stripe-style specs often do). The value must be an object of scalars. At call time the
-  server rejects a key that contains `[` or `]`, because the upstream would read it as
-  nesting (`filter[a][b]`).
+  (Stripe-style specs often do). The value must be an object of scalars, unless
+  `--deep-object-indices` covers the operation (see [`deepObject` values](#deepobject-values)).
+  At call time the server rejects a key that contains `[` or `]`, because the upstream would
+  read it as nesting (`filter[a][b]`).
 - `spaceDelimited` and `pipeDelimited` need `explode: false`, their only defined form. The
   value is an array or an object of scalars. The server rejects an item that contains its own
   delimiter as ambiguous. An empty array or object sends nothing, as with `form`.
 
 Path and header parameters use the `simple` style. A parameter with `allowReserved: true`, or
 with `content` instead of `schema`, omits the operation, and so does a cookie parameter.
+
+### `deepObject` values
+
+OpenAPI defines `deepObject` for one level of an object with scalar values:
+`color[R]=100&color[G]=200`. The server sends that for a query parameter, and for a property of
+an `application/x-www-form-urlencoded` body whose Encoding Object is `style: deepObject` with
+`explode: true`.
+
+OpenAPI does not define an array, a nested object or a scalar as a `deepObject` value. An
+operation that has one is omitted, and the reason says `deepObject requires an object of scalar
+values`. Stripe's `expand` (an array) and its form bodies (nested objects, arrays of objects)
+are of that kind.
+
+`--deep-object-indices <pattern>` builds the exposed operations the pattern matches and sends
+such values by the convention of the `qs` library in its `indices` format, which Stripe's own
+SDK sends:
+
+| Value | Sent as |
+|---|---|
+| `{"expand": ["customer", "invoice"]}` | `expand[0]=customer&expand[1]=invoice` |
+| `{"address": {"city": "Berlin"}}` | `address[city]=Berlin` |
+| `{"items": [{"price": "p_1", "quantity": 2}]}` | `items[0][price]=p_1&items[0][quantity]=2` |
+| `{"created": 5}` | `created=5` |
+| `{"metadata": ""}` | `metadata=` |
+
+The brackets are percent-encoded, like the rest of the key. Use the flag only for an API that
+reads this convention. A server that does not read it may ignore the keys or reject the
+request, and Rack reads `expand[0]` as a hash, not as an array.
+
+At call time the server refuses a value it cannot send unambiguously, before any request:
+`null`, an empty array or object (it would look like an absent value), a key that is empty or
+contains `[` or `]`, and nesting deeper than 32 levels. To clear a value, send what the API
+documents for it, such as `""` for Stripe.
+
+Every other Encoding Object still omits the operation: another `style`, `explode: false`,
+`contentType`, `headers`, `allowReserved`, an entry for a property the body does not declare,
+an encoding of a `multipart/form-data` body, and OAS 3.2 `prefixEncoding` and `itemEncoding`.
+So does a form body with such an encoding whose property names a bracket-parsing server reads
+as one key, such as `a.b` and `a_b`, or a name that contains `[` or `]`.
+
+With the flag on every operation, 268 of Stripe's reads and 235 of its 308 `POST` operations
+become tools. Most of the rest have an `enum` next to `maxLength`, which the server does not
+support. Together that is more than the 512-tool budget of `--tool-mode per-operation`, so use
+`discover` or a narrower `--allow`.
 
 ### `multipart/form-data` bodies
 

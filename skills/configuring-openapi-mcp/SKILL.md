@@ -32,6 +32,9 @@ changes one server entry in an MCP host. The user may not know the flags or the 
 9. `--omit-unsupported-parameters` takes parameters away from the agent. Propose it only for
    operations the user wants, name each parameter it leaves out and what it does, and add it
    only after the user agrees.
+10. `--deep-object-indices` sends values in a form OpenAPI does not define. Propose it only for
+    an API whose docs or SDK use `name[key][0]=value`, such as Stripe, and only after the user
+    agrees.
 
 ## Asking the user
 

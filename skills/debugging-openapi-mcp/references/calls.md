@@ -31,6 +31,7 @@ Nothing was sent after any of these.
 | `contains a path separator or dot-segment` | a path argument holds `/`, `\`, `..` or an encoded form | the agent passes the plain value |
 | `must not be empty`, `cannot be serialized`, `could not be encoded`, `must be an object`, `must be an array or object` | a value of the wrong shape | the agent follows the schema |
 | `contains its own ... delimiter, which is ambiguous`, `has a key containing "[" or "]"` | a query value holds the character the style uses as separator | another value, or the API's other parameter |
+| `which cannot be sent: leave it out`, `has a key that is empty, contains "[" or "]", or cannot be encoded`, `nests deeper than 32 levels` | a `deepObject` value under `--deep-object-indices` holds `null`, an empty array or object, or such a key, which the API could read as something else | leave the value out, or send what the API documents to clear it (`""` for Stripe) |
 | `contains a control character`, `contains a character above U+00FF` | a header argument with a line break or non-Latin-1 text | ASCII text in headers |
 | `must be a valid base64 string`, `must be valid base64 (RFC 4648)` | a binary field that is not base64 | base64, or `{"file": "<name>"}` with `--uploads` |
 | `body needs at least one part`, `the event-stream body`, `a sequential request body must be an array` | a body of the wrong form for its media type | the agent follows the schema |

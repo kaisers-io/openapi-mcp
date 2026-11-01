@@ -212,6 +212,7 @@ export type { CaseCollision } from './filter/case-collisions.ts';
 export type { DeadPattern, DeadPatternFlag, FilterTarget } from './filter/engine.ts';
 export { applyOutputSchemaOptOut } from './toolgen/output-schema-opt-out.ts';
 export { selectUnsupportedParameterOptIn } from './toolgen/unsupported-parameters.ts';
+export { usesDeepObjectIndices } from './toolgen/layout.ts';
 export {
   API_NAME_PATTERN,
   apiOfToolName,

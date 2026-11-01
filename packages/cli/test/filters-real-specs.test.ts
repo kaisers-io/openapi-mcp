@@ -132,9 +132,10 @@ const SPECS: SpecCase[] = [
         args: [],
         mode: 'discover',
         expected: READ,
-        // Every Stripe read takes a deepObject `expand` this server does not
-        // support yet, so the default exposes nothing; the security check
-        // still holds, the control cannot run
+        // Every Stripe read takes a deepObject `expand`, an array, which this
+        // server sends only with --deep-object-indices, so the default
+        // exposes nothing; the security check still holds, the control
+        // cannot run
         missing: { count: 272, hash: '624749f72025e483' },
         exposesNothing: true,
       },
@@ -155,9 +156,29 @@ const SPECS: SpecCase[] = [
         args: ['--allow', 'path:/**', '--omit-unsupported-parameters', 'path:/**'],
         mode: 'per-operation',
         expected: () => true,
-        // 312 form bodies with an encoding object (not supported yet), and
-        // the required `filter` above
+        // 312 form bodies with nested deepObject values, which only
+        // --deep-object-indices sends, and the required `filter` above
         missing: { count: 313, hash: '64fd0752c0360845' },
+      },
+      {
+        // Issue #95: the reads, with `expand` and `created` sent as
+        // expand[0]=... and created[gte]=..., the convention Stripe's SDK uses
+        title: 'the reads, with deepObject values by the indices convention',
+        args: ['--deep-object-indices', 'method:get'],
+        mode: 'discover',
+        expected: READ,
+        // A parameter with an `enum` next to `maxLength`, a limit of its own
+        missing: { count: 4, hash: '9486f19870135792' },
+      },
+      {
+        // Issue #96: every operation, form bodies with nested values
+        // included; more tools than the per-operation budget allows
+        title: 'everything, with deepObject values by the indices convention',
+        args: ['--allow', 'path:/**', '--deep-object-indices', 'path:/**'],
+        mode: 'discover',
+        expected: () => true,
+        // The 4 reads above, and writes with an `enum` next to `maxLength`
+        missing: { count: 75, hash: 'b974c0f7b9dad097' },
       },
       {
         title: 'deletes, except under customers',

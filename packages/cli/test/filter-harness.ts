@@ -18,6 +18,8 @@ export type UpstreamRequest = {
   url: string;
   // The request's Authorization header, for credential isolation checks
   authorization?: string;
+  // The request body as text, when there is one
+  body?: string;
 };
 
 // A redirect for a request path, or undefined for the default 200 `{}`
@@ -33,20 +35,27 @@ export const startUpstream = async (redirects: Redirects = {}): Promise<Upstream
   const requests: UpstreamRequest[] = [];
   const server = createServer((req, res) => {
     const { authorization } = req.headers;
-    requests.push({
-      method: req.method ?? '',
-      url: req.url ?? '',
-      ...(authorization === undefined ? {} : { authorization }),
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
     });
-    req.resume();
-    const location = redirects[req.url ?? ''];
-    if (location !== undefined) {
-      res.writeHead(302, { location });
-      res.end();
-      return;
-    }
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end('{}');
+    req.on('end', () => {
+      const body = Buffer.concat(chunks).toString();
+      requests.push({
+        method: req.method ?? '',
+        url: req.url ?? '',
+        ...(authorization === undefined ? {} : { authorization }),
+        ...(body === '' ? {} : { body }),
+      });
+      const location = redirects[req.url ?? ''];
+      if (location !== undefined) {
+        res.writeHead(302, { location });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');

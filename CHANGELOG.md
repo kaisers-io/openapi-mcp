@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--deep-object-indices <pattern>` sends the `deepObject` values OpenAPI does not define.**
+  An array, a nested object or a scalar as a `deepObject` query parameter or form body field
+  omitted the operation. For the exposed operations the pattern matches, the server now sends
+  them as `name[key][0]=value`, the `qs` convention that Stripe's SDK uses:
+  `expand[0]=customer`, `items[0][price]=p_1`, `created=5`. It refuses `null`, an empty array
+  or object, and a key that is empty or contains a bracket, before anything is sent. Stripe's
+  reads and most of its writes become tools, more than 512, so use `--tool-mode discover` or a
+  narrower `--allow`. `tools` marks such a tool with `[deepObject indices]`, and names the
+  operations the flag would build.
+- **A form body with a `deepObject` Encoding Object is supported.** One level of scalars, as
+  OpenAPI defines it, is sent as `name[key]=value` without the flag. Every other Encoding
+  Object still omits the operation.
+
+### Changed
+
+- **A request body with OAS 3.2 `prefixEncoding` or `itemEncoding` omits the operation.** The
+  server ignored them before, so it did not send such a body as the spec describes it.
+
 ## [0.8.2] - 2026-11-01
 
 ### Changed

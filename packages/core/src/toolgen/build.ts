@@ -143,6 +143,7 @@ const buildToolEntry = (
   projection: boolean,
   uploadDir: string | undefined,
   omitUnsupported: boolean,
+  deepIndices: boolean,
 ): DeferredTool | OmittedOperation => {
   const method = named.operation.method.toUpperCase();
   // Provenance for filter diagnostics (issue #41)
@@ -156,27 +157,32 @@ const buildToolEntry = (
     ...(named.operation.tags.length === 0 ? {} : { tags: named.operation.tags }),
     toolName: named.toolName,
   });
-  const layout = buildLayout(
-    named.operation,
-    reservedHeaders,
-    openapiVersion,
-    projection,
-    uploadDir,
-    omitUnsupported,
-  );
+  const layoutWith = (withProjection: boolean, omitting: boolean, indices: boolean) =>
+    buildLayout(
+      named.operation,
+      reservedHeaders,
+      openapiVersion,
+      withProjection,
+      uploadDir,
+      omitting,
+      indices,
+    );
+  const layout = layoutWith(projection, omitUnsupported, deepIndices);
   if (!('ok' in layout)) {
-    // Built again with optional parameters left out, to name the ones
-    // --omit-unsupported-parameters would leave out; only for an omitted
-    // operation, so a supported spec pays nothing
-    const leaving = omitUnsupported
-      ? undefined
-      : buildLayout(named.operation, reservedHeaders, openapiVersion, false, uploadDir, true);
-    return leaving !== undefined && 'ok' in leaving
-      ? {
-          ...omitted(layout.unrepresentable),
-          omittableParameters: leaving.ok.leftOut.map((parameter) => parameter.name),
-        }
-      : omitted(layout.unrepresentable);
+    // Built again with optional parameters left out, and with
+    // --deep-object-indices, to name the flag that would build it; only for
+    // an omitted operation, so a supported spec pays nothing
+    const leaving = omitUnsupported ? undefined : layoutWith(false, true, deepIndices);
+    const indexed = deepIndices ? undefined : layoutWith(false, omitUnsupported, true);
+    return {
+      ...omitted(layout.unrepresentable),
+      ...(leaving !== undefined && 'ok' in leaving
+        ? { omittableParameters: leaving.ok.leftOut.map((parameter) => parameter.name) }
+        : {}),
+      ...(indexed !== undefined && 'ok' in indexed
+        ? { buildsWithDeepObjectIndices: true as const }
+        : {}),
+    };
   }
   const wireResult = toWireSchema(layout.ok.inputSchema);
   if ('error' in wireResult) {
@@ -239,6 +245,9 @@ export const buildToolsDeferred = (
     // --omit-unsupported-parameters (issue #67): the tools, by name, that
     // leave out an optional parameter they cannot send instead of being omitted
     omitUnsupportedParameters?: ReadonlySet<string>;
+    // --deep-object-indices (issues #95 and #96): the tools, by name, that
+    // send nested deepObject values as `name[a][0]=value`
+    deepObjectIndices?: ReadonlySet<string>;
   },
 ): DeferredToolsResult => {
   // HTTP header names are case-insensitive, and the header drop in paramFields
@@ -264,6 +273,7 @@ export const buildToolsDeferred = (
         opts.projection === true,
         opts.uploadDir,
         opts.omitUnsupportedParameters?.has(named.toolName) === true,
+        opts.deepObjectIndices?.has(named.toolName) === true,
       ),
     ),
   );

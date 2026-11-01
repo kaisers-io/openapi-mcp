@@ -72,6 +72,7 @@ const SPEC_OPTIONS = [
   '--nullable-response-fields',
   '--omit-output-schema',
   '--omit-unsupported-parameters',
+  '--deep-object-indices',
 ];
 const SERVE_OPTIONS = [
   ...SPEC_OPTIONS,

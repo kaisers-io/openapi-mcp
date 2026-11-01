@@ -442,6 +442,8 @@ describe('buildTools with --omit-unsupported-parameters', () => {
         reason: EXPAND_REASON,
         toolName: 'listItems',
         omittableParameters: ['expand'],
+        // A deepObject array, which --deep-object-indices sends too
+        buildsWithDeepObjectIndices: true,
       },
     ]);
   });

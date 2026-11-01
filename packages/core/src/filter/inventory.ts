@@ -27,6 +27,9 @@ const fromOmission = (
   ...(omission.omittableParameters === undefined
     ? {}
     : { omittableParameters: omission.omittableParameters }),
+  ...(omission.buildsWithDeepObjectIndices === true
+    ? { buildsWithDeepObjectIndices: true as const }
+    : {}),
 });
 
 export const notExposedOperations = (

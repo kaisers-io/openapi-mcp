@@ -19,7 +19,8 @@ export type DeadPatternFlag =
   | 'allow'
   | 'deny'
   | 'omit-output-schema'
-  | 'omit-unsupported-parameters';
+  | 'omit-unsupported-parameters'
+  | 'deep-object-indices';
 
 export type DeadPattern = {
   raw: string;
@@ -87,10 +88,9 @@ const folded = (op: FilterTarget, attribute: Attribute, budget: MatchBudget): re
   return lowered;
 };
 
-// The budget is threaded through rather than created per call, because the
-// bound that matters is the aggregate over patterns x operations x candidate
-// lengths. It defaults so that a direct caller gets a full budget without
-// having to construct one.
+// The budget is threaded through rather than created per call: the bound
+// that matters is the aggregate over patterns x operations x candidate
+// lengths. It defaults, so a direct caller need not construct one.
 export const matchesOperation = (
   pattern: FilterPattern,
   op: FilterTarget,

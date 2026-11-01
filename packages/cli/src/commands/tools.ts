@@ -6,6 +6,7 @@ import {
   sanitizeSpecText,
   summarizeSecurity,
   SYSTEM_HEADERS,
+  usesDeepObjectIndices,
   validationError,
 } from '@kaisers-io/openapi-mcp-core';
 import type { GeneratedTool, LeftOutParameter } from '@kaisers-io/openapi-mcp-core';
@@ -23,6 +24,7 @@ import {
   toolsBuiltInPipeline,
   unsupportedParameterLines,
   withOutputSchemaOptOut,
+  deepObjectIndicesLines,
 } from '../spec-options.ts';
 import type { SpecCmdOpts } from '../spec-options.ts';
 import type { CommandRegistrar } from './registry.ts';
@@ -47,6 +49,9 @@ type ToolRow = OperationFacts & {
   outputSchemaOptedOut?: true;
   // --omit-unsupported-parameters left these out (issue #67)
   leftOutParameters?: readonly LeftOutParameter[];
+  // --deep-object-indices changes how this tool sends a value (issues #95
+  // and #96)
+  deepObjectIndices?: true;
 };
 
 const toToolRow = (generated: GeneratedTool): ToolRow => ({
@@ -69,6 +74,7 @@ const toToolRow = (generated: GeneratedTool): ToolRow => ({
   ...(generated.leftOutParameters === undefined
     ? {}
     : { leftOutParameters: generated.leftOutParameters }),
+  ...(usesDeepObjectIndices(generated.mapper) ? { deepObjectIndices: true as const } : {}),
 });
 
 export const registerTools: CommandRegistrar = (program, ctx, state) => {
@@ -87,10 +93,11 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
       state.exitCode = await wrapAction(ctx, opts, async () => {
         const args = parseSpecPipelineArgs(cmdOpts, ctx);
         const building = toolsBuiltInPipeline(
-          args.filters.omitUnsupportedParameters,
-          (exposed, omitUnsupportedParameters) =>
+          args.filters,
+          (exposed, { omitUnsupportedParameters, deepObjectIndices }) =>
             buildTools(exposed.namedOperations, {
               omitUnsupportedParameters,
+              deepObjectIndices,
               reservedHeaders: SYSTEM_HEADERS,
               openapiVersion: exposed.spec.openapiVersion,
               defaultResponseIsError: cmdOpts.defaultResponseIsError === true,
@@ -102,7 +109,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
           { ...args.options, countTools: building.countTools },
           args.deps,
         );
-        const { built: generated, optIn, optInWarnings } = building.take();
+        const { built: generated, optIn, deepOptIn, optInWarnings } = building.take();
         const deadMessages = [...filterMessages(result), ...optInWarnings];
         if (cmdOpts.strictFilters === true && deadMessages.length > 0) {
           // Dead patterns under --strict-filters must exit 3
@@ -181,7 +188,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
                 tool.leftOutParameters === undefined
                   ? ''
                   : ` [${String(tool.leftOutParameters.length)} optional ${tool.leftOutParameters.length === 1 ? 'parameter' : 'parameters'} left out]`
-              }`,
+              }${tool.deepObjectIndices === true ? ' [deepObject indices]' : ''}`,
           ),
         ];
         // Omissions, dead patterns, and cache degradation are all non-fatal
@@ -194,6 +201,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
             ...deadMessages,
             ...omissionWarningLines(allOmitted),
             ...unsupportedParameterLines(built.tools, built.omitted, optIn),
+            ...deepObjectIndicesLines(built.tools, built.omitted, deepOptIn),
             ...optOut.warnings,
             ...exposure.warnings,
           ],
