@@ -15,6 +15,11 @@ import { CLI_ENTRY, stopChild } from './cli-subprocess.ts';
 // next is refused at once. A call cancelled while it waits leaves the queue
 // and never reaches the upstream. Each call names itself in the path, so the
 // upstream sees which calls arrived, not only how many.
+//
+// A call validates its arguments asynchronously before it queues, so the
+// order calls are written in alone does not prove the earlier ones queued:
+// a probe goes out only after 16 calls are in flight and a ping, answered
+// after everything sent before it was read, has come back.
 
 const MODERN_ENVELOPE = {
   'io.modelcontextprotocol/protocolVersion': '2026-07-28',
@@ -49,6 +54,8 @@ type HeldUpstream = {
   waiting: () => number;
   // Answers every held request and every later one at once
   release: () => void;
+  // Holds again from now on
+  hold: () => void;
   close: () => Promise<void>;
 };
 
@@ -82,6 +89,9 @@ const startHeldUpstream = async (): Promise<HeldUpstream> => {
       for (const res of held.splice(0)) {
         answer(res);
       }
+    },
+    hold: () => {
+      open = false;
     },
     close: () =>
       new Promise<void>((resolve) => {
@@ -174,26 +184,41 @@ describe('serve — the admission queue under a held upstream (issue #22)', () =
     const cancel = (id: number): void => {
       write({ method: 'notifications/cancelled', params: { requestId: id, reason: 'test' } });
     };
+    let pings = 0;
+    const ping = async (): Promise<void> => {
+      pings += 1;
+      const id = 900_000 + pings;
+      write({ id, method: 'server/discover', params: { _meta: MODERN_ENVELOPE } });
+      await waitFor(() => answers.has(id), 'a ping');
+    };
     // The first answer proves the server reads stdin
-    write({ id: 1, method: 'server/discover', params: { _meta: MODERN_ENVELOPE } });
-    await waitFor(() => answers.has(1), 'the server to start');
-    return { call, cancel, answers };
+    await ping();
+    // 80 calls fill the slots and the queue
+    const fill = async (first: number): Promise<number[]> => {
+      const ids = Array.from({ length: 80 }, (_unused, index) => first + index);
+      for (const id of ids) {
+        call(id);
+      }
+      await waitFor(() => upstream!.waiting() === 16, '16 calls in flight');
+      await ping();
+      return ids;
+    };
+    const refusedAtOnce = async (id: number): Promise<void> => {
+      call(id);
+      await waitFor(() => answers.has(id), `call ${String(id)} to be refused`);
+      expect(isError(answers.get(id))).toBe(true);
+      expect(JSON.stringify(answers.get(id))).toContain('overloaded');
+    };
+    return { call, cancel, ping, fill, refusedAtOnce, answers };
   };
 
   it('holds 16 in flight and 64 in the queue, refuses the 81st at once, then completes all 80', async () => {
-    const { call, answers } = await start();
-    const ids = Array.from({ length: 80 }, (_unused, index) => 100 + index);
-    for (const id of ids) {
-      call(id);
-    }
-    // Sent last, so the 80 before it are queued by the time it is read
-    call(999);
-    await waitFor(() => answers.has(999), 'the overflow call to be refused');
-    expect(isError(answers.get(999))).toBe(true);
-    expect(JSON.stringify(answers.get(999))).toContain('overloaded');
-    await waitFor(() => upstream!.waiting() === 16, '16 calls in flight');
+    const { fill, refusedAtOnce, answers } = await start();
+    const ids = await fill(100);
+    await refusedAtOnce(999);
+    expect(upstream!.waiting()).toBe(16);
     // Nothing else was answered while the upstream held
-    expect([...answers.keys()].toSorted((left, right) => left - right)).toStrictEqual([1, 999]);
+    expect(ids.filter((id) => answers.has(id))).toStrictEqual([]);
     upstream!.release();
     await waitFor(() => ids.every((id) => answers.has(id)), 'all 80 calls');
     expect(ids.filter((id) => isError(answers.get(id)))).toStrictEqual([]);
@@ -201,12 +226,8 @@ describe('serve — the admission queue under a held upstream (issue #22)', () =
   }, 60_000);
 
   it('a call cancelled while it waits leaves the queue at once and never reaches the upstream', async () => {
-    const { call, cancel, answers } = await start();
-    const ids = Array.from({ length: 80 }, (_unused, index) => 100 + index);
-    for (const id of ids) {
-      call(id);
-    }
-    await waitFor(() => upstream!.waiting() === 16, '16 calls in flight');
+    const { call, cancel, ping, fill, refusedAtOnce, answers } = await start();
+    const ids = await fill(100);
     // Eight of the queued calls give up; their places free before release
     const cancelled = ids.slice(40, 48);
     for (const id of cancelled) {
@@ -217,20 +238,20 @@ describe('serve — the admission queue under a held upstream (issue #22)', () =
     for (const id of replacements) {
       call(id);
     }
-    call(999);
-    await waitFor(() => answers.has(999), 'the overflow call to be refused');
-    expect(isError(answers.get(999))).toBe(true);
+    await ping();
+    await refusedAtOnce(999);
     expect(replacements.filter((id) => answers.has(id))).toStrictEqual([]);
     upstream!.release();
     const kept = [...ids.filter((id) => !cancelled.includes(id)), ...replacements];
     await waitFor(() => kept.every((id) => answers.has(id)), 'every call not cancelled');
     expect(kept.filter((id) => isError(answers.get(id)))).toStrictEqual([]);
     expect(upstream!.seen.toSorted()).toStrictEqual(kept.map((id) => `c${String(id)}`).toSorted());
-    // No slot is left behind: a full burst runs again
-    const again = Array.from({ length: 80 }, (_unused, index) => 2000 + index);
-    for (const id of again) {
-      call(id);
-    }
+    // No slot or place is left behind: held again, the full capacity takes
+    // 80 calls once more and refuses the next
+    upstream!.hold();
+    const again = await fill(2000);
+    await refusedAtOnce(2999);
+    upstream!.release();
     await waitFor(() => again.every((id) => answers.has(id)), 'the second burst');
     expect(again.filter((id) => isError(answers.get(id)))).toStrictEqual([]);
   }, 60_000);

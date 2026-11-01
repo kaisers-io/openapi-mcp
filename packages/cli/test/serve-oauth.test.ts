@@ -441,6 +441,9 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
     expect(mock?.apiAuthHeaders).toHaveLength(1);
   }, 30_000);
 
+  // That the cancelled waiter itself stops waiting at once is tested in
+  // packages/core/test/server-execute-oauth.test.ts: here a later check
+  // would also keep it from sending
   it('cancelling one waiter does not cancel the token request the others share', async () => {
     const session = await start('/oauth/token', allowPrivate);
     mock?.hold('token');

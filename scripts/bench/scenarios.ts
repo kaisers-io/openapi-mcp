@@ -34,8 +34,10 @@ const burst = (request: Request, call: ToolCall, first: number, count: number) =
 
 // The queue filled to the last place: the upstream holds the calls in
 // flight, one call past the capacity is refused while it holds, then the
-// release drains every queued call. Sent last, the extra call is read after
-// the others are queued, as the server reads stdin in order.
+// release drains every queued call. A call validates its arguments
+// asynchronously before it queues, so the extra call goes out only after 16
+// calls are in flight and a ping, answered after everything sent before it
+// was read, has come back.
 export const runQueueBurst = async (
   request: Request,
   upstream: Upstream,
@@ -45,11 +47,12 @@ export const runQueueBurst = async (
   upstream.hold();
   try {
     const answers = burst(request, call, 20_000, QUEUE_CAPACITY);
+    await waitUntil(() => upstream.waiting() === IN_FLIGHT, `${String(IN_FLIGHT)} calls in flight`);
+    await request(29_998, 'ping', {});
     const overflow = await request(29_999, 'tools/call', { name: call.tool, arguments: call.args });
     if (!isCallError(overflow) || !overflow.includes('overloaded')) {
       throw new Error(`the call past the queue was not refused: ${overflow.slice(0, 300)}`);
     }
-    await waitUntil(() => upstream.waiting() === IN_FLIGHT, `${String(IN_FLIGHT)} calls in flight`);
     const released = performance.now();
     upstream.release();
     const lines = await Promise.all(answers);
