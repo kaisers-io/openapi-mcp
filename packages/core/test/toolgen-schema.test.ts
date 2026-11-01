@@ -397,6 +397,9 @@ describe('convertSchema — sibling-assertion conflicts (fail-closed)', () => {
     [{ enum: [0], exclusiveMinimum: 0 }, 'exclusiveMinimum'],
     [{ enum: [5], maximum: 4 }, 'maximum'],
     [{ enum: [['a']], minItems: 1 }, 'minItems'],
+    // A pattern is not enforced, and 3.0 nullable adds a value: not relaxed
+    [{ enum: ['a'], maxLength: 1, pattern: '^b$' }, 'maxLength'],
+    [{ type: 'string', nullable: true, enum: ['a'], maxLength: 1 }, 'maxLength'],
   ])('still omits %j, which a value does not meet', (schema, keyword) => {
     expect(convertSchema(schema)).toStrictEqual({
       unrepresentable: expect.stringContaining(`the sibling constraint "${keyword}"`),

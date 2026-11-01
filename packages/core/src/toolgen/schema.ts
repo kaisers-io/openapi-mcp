@@ -324,7 +324,11 @@ const conflictingCombination = (
     return undefined;
   }
   const determiner = determiners[0] as (typeof SHAPE_DETERMINERS)[number];
-  const listed = listedValues(node, determiner);
+  // Not with a `pattern`, which is advertised but not enforced, nor with a
+  // 3.0 `nullable` the conversion adds as a value the list may not have:
+  // either could admit what the original rejects, so they keep the conflict
+  const listed =
+    'pattern' in node || node['nullable'] === true ? undefined : listedValues(node, determiner);
   const extra = Object.keys(node).find(
     (keyword) =>
       ASSERTION_KEYWORDS.has(keyword) &&
