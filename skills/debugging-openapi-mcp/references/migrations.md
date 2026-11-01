@@ -52,6 +52,7 @@ These change behavior silently. Check each one that applies and tell the user.
 | Version | Change | What to do |
 |---|---|---|
 | Unreleased | An operation whose form-urlencoded body has an Encoding Object with `style: deepObject` and `explode: true` on an object of scalars is a tool now; it was omitted. | Compare the tool names of both versions; `--deny` such an operation if the user does not want it. |
+| Unreleased | With `--omit-unsupported-parameters`, an operation is omitted when a kept query parameter has a number in brackets where a left-out one has another key, such as `a[1]` and `a[0]`. | Compare the tool names of both versions; `tools` names the operation under `notExposed`. |
 | Unreleased | An operation whose request body declares OAS 3.2 `prefixEncoding` or `itemEncoding` is omitted now; the server ignored them before. | Compare the tool names of both versions; `tools` names the operation under `notExposed`. The spec needs a change. |
 | 0.8.2 | With `--trust-spec-updates`, a refreshed spec over the tool, node, `$ref` depth or filter work budget keeps the last accepted spec serving, with the `spec refresh failed` warning, instead of stopping the server. | Nothing in the config. Tell the user the spec no longer updates until the filters or the spec change. |
 | 0.8.2 | Descriptions and other spec prose lose zero-width spaces, word joiners, byte order marks, Unicode tag characters and the variation selector supplement. Names and values keep them; `--json` output escapes them as `\uXXXX`. | Nothing in the config. |

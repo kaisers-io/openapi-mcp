@@ -213,7 +213,7 @@ describe('a deepObject query parameter under --deep-object-indices', () => {
     );
   });
 
-  it('marks only the values OpenAPI does not define', () => {
+  it('sends every deepObject value by the convention, one level of scalars too', () => {
     const { mapper } = layout(op({ parameters: [EXPAND, CREATED, COLOR] }), true);
     expect(mapper.fields).toStrictEqual({
       expand: {
@@ -238,8 +238,24 @@ describe('a deepObject query parameter under --deep-object-indices', () => {
         style: 'deepObject',
         explode: true,
         required: false,
+        indices: true,
       },
     });
+    // Without the opt-in, one level of scalars as before
+    expect(layout(op({ parameters: [COLOR] }), false).mapper.fields['color']).toStrictEqual({
+      destination: 'query',
+      wireName: 'color',
+      style: 'deepObject',
+      explode: true,
+      required: false,
+    });
+  });
+
+  it("sends a free-form object's nested values", () => {
+    const filter = { name: 'filter', in: 'query', ...DEEP, schema: { type: 'object' } };
+    expect(sent(op({ parameters: [filter] }), { filter: { a: { b: 1 } } }).query).toBe(
+      'filter%5Ba%5D%5Bb%5D=1',
+    );
   });
 
   it('still needs explode: true', () => {
@@ -277,12 +293,30 @@ describe('a deepObject query parameter under --deep-object-indices', () => {
       unrepresentable:
         'parameter "expand[a][b]" cannot be left out: the query parameter "expand" could send it',
     });
-    // One level of scalars sends only `color[R]`
+    // Without the opt-in, one level of scalars sends only `color[R]`
     const deeper = { ...nested, name: 'color[a][b]' };
-    const kept = paramFields(op({ parameters: [COLOR, deeper] }), new Set(), '3.1', true, true);
+    const kept = paramFields(op({ parameters: [COLOR, deeper] }), new Set(), '3.1', true, false);
     expect('ok' in kept && kept.leftOut.map((parameter) => parameter.name)).toStrictEqual([
       'color[a][b]',
     ]);
+  });
+
+  it('counts a number as any index, as qs compacts a sparse array', () => {
+    const left = { name: 'a[0][secret]', in: 'query', style: 'matrix', schema: {} };
+    const sender = { ...EXPAND, name: 'a[1]' };
+    expect(
+      paramFields(op({ parameters: [sender, left] }), new Set(), '3.1', true, true),
+    ).toStrictEqual({
+      unrepresentable:
+        'parameter "a[0][secret]" cannot be left out: the query parameter "a[1]" could send it',
+    });
+    // Without the opt-in too: `a[1]=x` alone is read as `a[0]`
+    const scalar = { name: 'a[1]', in: 'query', schema: { type: 'string' } };
+    const zero = { ...left, name: 'a[0]' };
+    expect(paramFields(op({ parameters: [scalar, zero] }), new Set(), '3.1', true)).toStrictEqual({
+      unrepresentable:
+        'parameter "a[0]" cannot be left out: the query parameter "a[1]" could send it',
+    });
   });
 });
 
@@ -377,6 +411,15 @@ describe('a form body with a deepObject encoding', () => {
   it('omits property names a bracket-parsing server reads as one key', () => {
     const tags = { type: 'object', properties: { team: {} } };
     expect(unrepresentable(formOperation({ 'a.b': {}, a_b: {}, tags }, { tags: DEEP }), true)).toBe(
+      'body property "a_b" cannot be told apart from "a.b" in a form body with a deepObject encoding',
+    );
+    // A readOnly property is no tool input, but `a.b` would still set it
+    expect(
+      unrepresentable(
+        formOperation({ 'a.b': {}, a_b: { readOnly: true }, tags }, { tags: DEEP }),
+        true,
+      ),
+    ).toBe(
       'body property "a_b" cannot be told apart from "a.b" in a form body with a deepObject encoding',
     );
     expect(unrepresentable(formOperation({ 'tags[x]': {}, tags }, { tags: DEEP }), true)).toBe(

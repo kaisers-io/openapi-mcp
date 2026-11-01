@@ -148,8 +148,10 @@ values`. Stripe's `expand` (an array) and its form bodies (nested objects, array
 are of that kind.
 
 `--deep-object-indices <pattern>` builds the exposed operations the pattern matches and sends
-such values by the convention of the `qs` library in its `indices` format, which Stripe's own
-SDK sends:
+every `deepObject` value of theirs by the convention of the `qs` library in its `indices`
+format, which Stripe's own SDK sends. One level of scalars comes out as before.
+
+Examples:
 
 | Value | Sent as |
 |---|---|
@@ -163,10 +165,12 @@ The brackets are percent-encoded, like the rest of the key. Use the flag only fo
 reads this convention. A server that does not read it may ignore the keys or reject the
 request, and Rack reads `expand[0]` as a hash, not as an array.
 
-At call time the server refuses a value it cannot send unambiguously, before any request:
-`null`, an empty array or object (it would look like an absent value), a key that is empty or
-contains `[` or `]`, and nesting deeper than 32 levels. To clear a value, send what the API
-documents for it, such as `""` for Stripe.
+With the flag, the server refuses at call time, before any request, what it cannot send
+unambiguously inside such a value: `null`, an empty array or object (it would look like an
+absent value), a key that is empty or contains `[` or `]`, and nesting deeper than 32 levels.
+`null` for a whole optional parameter leaves it out, as for every parameter. To clear a value,
+send what the API documents for it, such as `""` for Stripe. Without the flag, an empty object
+sends nothing, as OpenAPI defines.
 
 Every other Encoding Object still omits the operation: another `style`, `explode: false`,
 `contentType`, `headers`, `allowReserved`, an entry for a property the body does not declare,

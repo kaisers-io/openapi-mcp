@@ -148,6 +148,10 @@ const isScalarObjectSchema = (node: Record<string, unknown>): boolean => {
   return apScalar && properties.every((child) => isScalarSchema(child));
 };
 
+// Why a deepObject value OpenAPI does not define omits the operation, unless
+// --deep-object-indices sends it (issues #95 and #96)
+export const DEEP_OBJECT_PROBLEM = 'deepObject requires an object of scalar values';
+
 // Query styles beyond `form`, restricted to the cells OAS 3.1.1 §4.8.12.4
 // (Style Examples) defines — every `n/a` cell omits (fail-closed):
 //   - deepObject: object of scalars, explode MUST be true (explode=false is
@@ -168,9 +172,7 @@ const queryStyleProblem = (
     if (!explode) {
       return 'deepObject requires explode: true';
     }
-    return isScalarObjectSchema(node)
-      ? undefined
-      : 'deepObject requires an object of scalar values';
+    return isScalarObjectSchema(node) ? undefined : DEEP_OBJECT_PROBLEM;
   }
   if (explode) {
     return `${style} is only defined with explode: false`;
@@ -314,9 +316,10 @@ const parameterProblem = (
     location === 'query'
       ? queryStyleProblem(style as QueryStyle, explode, param['schema'])
       : undefined;
-  // --deep-object-indices (issue #95): a deepObject value OpenAPI does not
-  // define (an array, nested objects, a scalar) is sent by that convention
-  const indices = problem !== undefined && deepIndices && style === 'deepObject' && explode;
+  // --deep-object-indices (issue #95): every deepObject value is sent by
+  // that convention, the ones OpenAPI does not define (an array, nested
+  // objects, a scalar) and a free-form object's nested value too
+  const indices = deepIndices && location === 'query' && style === 'deepObject' && explode;
   if (problem !== undefined && !indices) {
     return { problem: `parameter "${name}": ${problem}` };
   }
@@ -357,11 +360,14 @@ const keyPath = (key: string): string[] => {
 // the left-out parameter `name` (reviews of #67): a key whose path (keyPath)
 // starts with the path of `name`, so the server finds the key's value at
 // `name`, or within it. Compared without letter case, as some servers bind
-// query names. `[]` stands for any index. A kept `form` object with
+// query names. `[]` stands for any index, and so does a number, as qs
+// compacts a sparse array (`a[1]` alone is read as `a[0]`). A kept `form` object with
 // explode=true sends each property as its own key, so any key; a deepObject
 // `k` sends `k[property]` for any property without brackets (request.ts
 // rejects one with brackets), and under --deep-object-indices any path below
 // `k`; every other kept field sends only its own name.
+const isAnyIndex = (segment: string): boolean => segment === '' || /^\d+$/u.test(segment);
+
 const couldSend = (field: Field, schema: unknown, name: string): boolean => {
   if (field.mapping.destination !== 'query') {
     return false;
@@ -383,12 +389,14 @@ const couldSend = (field: Field, schema: unknown, name: string): boolean => {
   }
   return (
     sent.length >= target.length &&
-    target.every(
-      (index, at) =>
-        sent[at] === undefined ||
-        sent[at] === index ||
-        (at > 0 && (index === '' || sent[at] === '')),
-    )
+    target.every((index, at) => {
+      const segment = sent[at];
+      return (
+        segment === undefined ||
+        segment === index ||
+        (at > 0 && (isAnyIndex(index) || isAnyIndex(segment)))
+      );
+    })
   );
 };
 
@@ -955,10 +963,9 @@ const deepObjectEncodings = (
   // (keyPath): `a.b` and `a_b` are one key to PHP, and a name with a bracket
   // is nesting
   const seen = new Map<string, string>();
-  for (const [prop, child] of Object.entries(properties)) {
-    if (isRecord(child) && child['readOnly'] === true) {
-      continue;
-    }
+  // A readOnly property counts too: it is no tool input, but a name that
+  // reads as it would still set it
+  for (const prop of Object.keys(properties)) {
     const [key] = keyPath(prop);
     const other = key === undefined ? undefined : seen.get(key);
     if (prop.includes('[') || prop.includes(']') || other !== undefined) {
@@ -1127,16 +1134,16 @@ const bodyFields = (
         };
       }
       // One level of scalars is what OpenAPI defines for deepObject; the
-      // rest needs --deep-object-indices
+      // rest needs --deep-object-indices, which then sends every value
       let deepObject: 'defined' | 'indices' | undefined;
       if (encodings.ok.has(prop)) {
-        if (isRecord(child) && isScalarObjectSchema(child)) {
-          deepObject = 'defined';
-        } else if (deepIndices) {
+        if (deepIndices) {
           deepObject = 'indices';
+        } else if (isRecord(child) && isScalarObjectSchema(child)) {
+          deepObject = 'defined';
         } else {
           return {
-            unrepresentable: `body property "${prop}": deepObject requires an object of scalar values`,
+            unrepresentable: `body property "${prop}": ${DEEP_OBJECT_PROBLEM}`,
           };
         }
       }

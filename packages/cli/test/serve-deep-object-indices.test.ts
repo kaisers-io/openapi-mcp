@@ -73,6 +73,8 @@ const SPEC = {
         responses: ok,
       },
     },
+    // No deepObject value: the flag changes nothing
+    '/health': { get: { operationId: 'getHealth', responses: ok } },
     // One level of scalars, as OpenAPI defines it: a tool with or without the flag
     '/colors': {
       get: { operationId: 'listColors', parameters: [color], responses: ok },
@@ -89,11 +91,15 @@ const SPEC = {
 };
 
 const CALLS: Readonly<
-  Record<string, { args: Record<string, unknown>; request: { url: string; body?: string } }>
+  Record<
+    string,
+    { args: Record<string, unknown>; request: { method: string; url: string; body?: string } }
+  >
 > = {
   listCustomers: {
     args: { expand: ['data.address', 'a b'], created: { gte: 5 } },
     request: {
+      method: 'GET',
       url: '/customers?expand%5B0%5D=data.address&expand%5B1%5D=a%20b&created%5Bgte%5D=5',
     },
   },
@@ -104,12 +110,20 @@ const CALLS: Readonly<
       items: [{ price: 'p_1', quantity: 2 }, { price: 'p_2' }],
     },
     request: {
+      method: 'POST',
       url: '/customers',
       body: 'email=a%40example.test&metadata%5Border%5D=7&items%5B0%5D%5Bprice%5D=p_1&items%5B0%5D%5Bquantity%5D=2&items%5B1%5D%5Bprice%5D=p_2',
     },
   },
-  listColors: { args: { color: { R: 1 } }, request: { url: '/colors?color%5BR%5D=1' } },
-  createColor: { args: { rgb: { R: 2 } }, request: { url: '/colors', body: 'rgb%5BR%5D=2' } },
+  getHealth: { args: {}, request: { method: 'GET', url: '/health' } },
+  listColors: {
+    args: { color: { R: 1 } },
+    request: { method: 'GET', url: '/colors?color%5BR%5D=1' },
+  },
+  createColor: {
+    args: { rgb: { R: 2 } },
+    request: { method: 'POST', url: '/colors', body: 'rgb%5BR%5D=2' },
+  },
 };
 const ALL = Object.keys(CALLS);
 
@@ -117,7 +131,7 @@ const CASES: readonly { title: string; args: string[]; expected: readonly string
   {
     title: 'without the flag, only what OpenAPI defines',
     args: [],
-    expected: ['listColors', 'createColor'],
+    expected: ['getHealth', 'listColors', 'createColor'],
   },
   {
     title: 'every operation',
@@ -127,12 +141,12 @@ const CASES: readonly { title: string; args: string[]; expected: readonly string
   {
     title: 'one operation by name',
     args: ['--deep-object-indices', 'operationId:listCustomers'],
-    expected: ['listCustomers', 'listColors', 'createColor'],
+    expected: ['listCustomers', 'getHealth', 'listColors', 'createColor'],
   },
   {
     title: '--deny still wins',
     args: ['--deep-object-indices', 'path:/**', '--deny', 'method:post'],
-    expected: ['listCustomers', 'listColors'],
+    expected: ['listCustomers', 'getHealth', 'listColors'],
   },
 ];
 
@@ -168,13 +182,7 @@ describe('serve --deep-object-indices (issues #95 and #96)', () => {
   ];
   const requestsOf = (names: readonly string[]) =>
     names
-      .map((name) => {
-        const call = CALLS[name];
-        return {
-          method: name.startsWith('list') ? 'GET' : 'POST',
-          ...call?.request,
-        };
-      })
+      .map((name) => CALLS[name]?.request)
       .toSorted((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
   const sent = () =>
     upstream.requests.toSorted((left, right) =>
@@ -246,9 +254,9 @@ describe('serve --deep-object-indices (issues #95 and #96)', () => {
       );
       return Promise.resolve();
     });
-    await withServe(options(['--deep-object-indices', 'path:/colors']), home, (session) => {
+    await withServe(options(['--deep-object-indices', 'path:/health']), home, (session) => {
       expect(session.stderr()).toContain(
-        '--deep-object-indices "path:/colors" matches no operation with a deepObject value OpenAPI does not define, so it changes nothing',
+        '--deep-object-indices "path:/health" matches no operation with a deepObject value, so it changes nothing',
       );
       return Promise.resolve();
     });
@@ -279,7 +287,8 @@ describe('serve --deep-object-indices (issues #95 and #96)', () => {
       report.data.tools.map((tool) => [tool.name, tool.deepObjectIndices ?? false]),
     ).toStrictEqual([
       ['listCustomers', true],
-      ['listColors', false],
+      ['getHealth', false],
+      ['listColors', true],
       ['createColor', false],
     ]);
     expect(
@@ -293,7 +302,7 @@ describe('serve --deep-object-indices (issues #95 and #96)', () => {
       home,
     );
     expect(text).toMatch(/listCustomers +GET +\/customers \[deepObject indices\]\n/u);
-    expect(text).toMatch(/listColors +GET +\/colors\n/u);
+    expect(text).toMatch(/createColor +POST +\/colors\n/u);
   });
 
   it('call --dry-run shows the keys it would send, and sends nothing', async () => {

@@ -136,7 +136,7 @@ flags are explained in [requests-and-responses.md](requests-and-responses.md).
 | `--nullable-response-fields [all\|optional]` | no | let object properties in derived output schemas be `null`, for specs that leave out `nullable`: every property (`all`, also the value of the bare flag) or only those not listed in `required` (`optional`) | off |
 | `--omit-output-schema <pattern>` | yes | declare no output schema for the exposed tools this selector matches, for an API whose responses do not match its spec; their results come back as text without response-schema validation | `[]` |
 | `--omit-unsupported-parameters <pattern>` | yes | build the exposed operations this selector matches without the optional parameters the server cannot send, instead of omitting them; the agent cannot set those parameters; see [filtering.md](filtering.md#operations-omitted-for-an-optional-parameter) | `[]` |
-| `--deep-object-indices <pattern>` | yes | build the exposed operations this selector matches and send their `deepObject` values that OpenAPI does not define (arrays, nested objects, scalars) as `name[key][0]=value`, the convention of Stripe and `qs`, instead of omitting them; only for an API that reads it; see [requests-and-responses.md](requests-and-responses.md#deepobject-values) | `[]` |
+| `--deep-object-indices <pattern>` | yes | send the `deepObject` values of the exposed operations this selector matches as `name[key][0]=value`, the convention of Stripe and `qs`, so that those OpenAPI does not define (arrays, nested objects, scalars) no longer omit the operation; only for an API that reads it; see [requests-and-responses.md](requests-and-responses.md#deepobject-values) | `[]` |
 
 ### Image and upload flags
 
@@ -373,7 +373,7 @@ An inventory that only `serve --tool-mode discover` can expose fails here; narro
 | `--nullable-response-fields [all\|optional]` | no | let object properties in derived output schemas be `null`: every property (`all`, also the value of the bare flag) or only those not listed in `required` (`optional`) | off |
 | `--omit-output-schema <pattern>` | yes | declare no output schema for the exposed tools this selector matches | `[]` |
 | `--omit-unsupported-parameters <pattern>` | yes | build the exposed operations this selector matches without the optional parameters the server cannot send | `[]` |
-| `--deep-object-indices <pattern>` | yes | send the `deepObject` values OpenAPI does not define as `name[key][0]=value` for the exposed operations this selector matches | `[]` |
+| `--deep-object-indices <pattern>` | yes | send the `deepObject` values of the exposed operations this selector matches as `name[key][0]=value` | `[]` |
 
 This example uses an operationId glob, which ignores case, so it matches every operationId that
 starts with `read`:
@@ -391,7 +391,7 @@ openapi-mcp tools --spec https://api.example.com/openapi.json --allow "operation
 | `[output schema assumes default = error]` | the output schema exists only because of `--default-response-is-error` | `outputSchemaAssumesDefaultIsError: true` |
 | `[output schema omitted]` | `--omit-output-schema` removed the output schema | `outputSchemaOptedOut: true` |
 | `[N optional parameters left out]` | `--omit-unsupported-parameters` built the tool without parameters the server cannot send | `leftOutParameters`: each with `name`, `in` and `reason` |
-| `[deepObject indices]` | `--deep-object-indices` sends some of its `deepObject` values as `name[key][0]=value` | `deepObjectIndices: true` |
+| `[deepObject indices]` | `--deep-object-indices` sends its `deepObject` values as `name[key][0]=value` | `deepObjectIndices: true` |
 
 With the global `--json` flag each tool is an object. Besides `name`, `method`, `path`,
 `summary` and `deprecated`, it carries `outputSchema` (`true` or `false`). With

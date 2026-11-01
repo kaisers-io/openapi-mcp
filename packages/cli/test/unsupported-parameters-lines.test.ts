@@ -109,7 +109,7 @@ describe('deepObjectIndicesLines', () => {
         },
       ),
     ).toStrictEqual([
-      '--deep-object-indices "tag:u" matches no operation with a deepObject value OpenAPI does not define, so it changes nothing',
+      '--deep-object-indices "tag:u" matches no operation with a deepObject value, so it changes nothing',
     ]);
   });
 });

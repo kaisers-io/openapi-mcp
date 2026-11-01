@@ -196,7 +196,7 @@ export const registerSpecOptions = (
     )
     .option(
       '--deep-object-indices <pattern>',
-      'for matching operations, send the deepObject values OpenAPI does not define (nested objects, arrays, scalars) as name[key][0]=value, the convention of Stripe and qs, instead of omitting the operation; use it only for an API that reads that (repeatable, --allow selectors)',
+      'for matching operations, send deepObject values as name[key][0]=value, the convention of Stripe and qs, so that those OpenAPI does not define (nested objects, arrays, scalars) no longer omit the operation; use it only for an API that reads that (repeatable, --allow selectors)',
       collect,
       [] as readonly string[],
     );

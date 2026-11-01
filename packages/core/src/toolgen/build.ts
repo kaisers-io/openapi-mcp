@@ -4,7 +4,7 @@ import type { OpenapiVersion } from '../spec/validate.ts';
 import { deriveAnnotations } from './annotations.ts';
 import type { ToolAnnotations } from './annotations.ts';
 import { completeTool } from './complete.ts';
-import { buildLayout } from './layout.ts';
+import { buildLayout, DEEP_OBJECT_PROBLEM } from './layout.ts';
 import type { LeftOutParameter, RequestMapper } from './layout.ts';
 import type { NamedOperation } from './naming.ts';
 import type { JsonSchemaRecord, NullableFieldScope } from './output-schema.ts';
@@ -130,10 +130,9 @@ const toWireSchema = (inputSchema: z.ZodType): { ok: WireSchema } | { error: str
   }
 };
 
-// One operation in, one outcome out: either the generated tool or its omission
-// reason. `buildTools` below maps every named operation through this and then
-// splits the results — the per-operation gate order (layout, then wire-schema
-// representability) is unchanged, just no longer entangled with array mutation.
+// One operation in, one outcome out: the generated tool or its omission
+// reason. `buildTools` below maps every named operation through this and
+// splits the results; the gate order is layout, then wire schema.
 const buildToolEntry = (
   named: NamedOperation,
   reservedHeaders: ReadonlySet<string>,
@@ -169,11 +168,13 @@ const buildToolEntry = (
     );
   const layout = layoutWith(projection, omitUnsupported, deepIndices);
   if (!('ok' in layout)) {
-    // Built again with optional parameters left out, and with
-    // --deep-object-indices, to name the flag that would build it; only for
-    // an omitted operation, so a supported spec pays nothing
+    // Built again to name the flag that builds it: optional parameters left
+    // out, or --deep-object-indices when a deepObject value is the problem
     const leaving = omitUnsupported ? undefined : layoutWith(false, true, deepIndices);
-    const indexed = deepIndices ? undefined : layoutWith(false, omitUnsupported, true);
+    const indexed =
+      deepIndices || !layout.unrepresentable.includes(DEEP_OBJECT_PROBLEM)
+        ? undefined
+        : layoutWith(false, omitUnsupported, true);
     return {
       ...omitted(layout.unrepresentable),
       ...(leaving !== undefined && 'ok' in leaving

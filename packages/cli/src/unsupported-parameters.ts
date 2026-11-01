@@ -119,7 +119,8 @@ export const unsupportedParameterLines = (
   ];
 };
 
-// What --deep-object-indices does: a pattern that changes no tool, and the
+// What --deep-object-indices does: a pattern that matches only tools
+// without a deepObject value, and the
 // operations omitted only for deepObject values OpenAPI does not define,
 // with the flag that would build them
 export const deepObjectIndicesLines = (
@@ -138,7 +139,7 @@ export const deepObjectIndicesLines = (
       )
       .map(
         (match) =>
-          `${DEEP_FLAG} "${sanitizeSpecText(match.raw, PATTERN_DISPLAY_MAX)}" matches no operation with a deepObject value OpenAPI does not define, so it changes nothing`,
+          `${DEEP_FLAG} "${sanitizeSpecText(match.raw, PATTERN_DISPLAY_MAX)}" matches no operation with a deepObject value, so it changes nothing`,
       ),
     ...(buildable.length === 0
       ? []
