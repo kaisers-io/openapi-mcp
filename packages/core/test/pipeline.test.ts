@@ -18,6 +18,7 @@ import {
   SYSTEM_HEADERS,
   validateOpenApiDocument,
 } from '../src/index.ts';
+import { validationError } from '../src/errors.ts';
 import type { CacheFs, CacheMeta, ExposedOperations, SpecPipelineDeps } from '../src/index.ts';
 
 // SpecPipelineDeps.fetcher is now typed via undici's own fetch (see
@@ -1308,6 +1309,73 @@ describe('runSpecPipeline — tool budget after filtering (issue kaisers-io/open
     );
     expect(refreshed.cacheStatus).toBe('candidate');
     expect(refreshed.warnings.join('\n')).not.toContain('tool budget');
+  });
+
+  // A trusted update over the tool budget is a failed refresh: the accepted
+  // baseline keeps serving, with the budget in the warning
+  it('serves the baseline when a trusted update is over the tool budget', async () => {
+    const cacheFs = memoryCacheFs();
+    const trusted = { ...baseOpts, cacheRoot: '/cache', trustSpecUpdates: true };
+    await runSpecPipeline('https://api.example.com/big.json', trusted, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    const refreshed = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...trusted, nowMs: 3_600_001 },
+      { ...bigDeps(600), cacheFs },
+    );
+    expect(refreshed.cacheStatus).toBe('stale');
+    expect(refreshed.namedOperations).toHaveLength(10);
+    expect(refreshed.warnings.join('\n')).toMatch(
+      /spec refresh failed, serving the last known good accepted baseline: 600 tools would be exposed .*512-tool budget/u,
+    );
+    // Nothing of the refused update was written: the 10-tool spec is still
+    // the accepted one
+    const again = await runSpecPipeline(
+      'https://api.example.com/big.json',
+      { ...trusted, nowMs: 7_200_002 },
+      { ...bigDeps(10), cacheFs },
+    );
+    expect(again.cacheStatus).toBe('revalidated');
+  });
+
+  it('lets any other error of a trusted update stop the start', async () => {
+    const cacheFs = memoryCacheFs();
+    const trusted = { ...baseOpts, cacheRoot: '/cache', trustSpecUpdates: true };
+    await runSpecPipeline('https://api.example.com/big.json', trusted, {
+      ...bigDeps(10),
+      cacheFs,
+    });
+    // Fails for the refreshed 20-operation spec only, for another reason
+    // than a budget; the cached 10 operations would count fine
+    const countTools = ({ namedOperations }: { namedOperations: readonly unknown[] }): number => {
+      if (namedOperations.length === 20) {
+        throw validationError('a tool of the refreshed spec cannot be built');
+      }
+      return namedOperations.length;
+    };
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...trusted, nowMs: 3_600_001, countTools },
+        { ...bigDeps(20), cacheFs },
+      ),
+    ).rejects.toMatchObject({ message: 'a tool of the refreshed spec cannot be built' });
+  });
+
+  it('still refuses to start when a first trusted load is over the tool budget', async () => {
+    const cacheFs = memoryCacheFs();
+    await expect(
+      runSpecPipeline(
+        'https://api.example.com/big.json',
+        { ...baseOpts, cacheRoot: '/cache', trustSpecUpdates: true },
+        { ...bigDeps(600), cacheFs },
+      ),
+    ).rejects.toMatchObject({
+      code: 'validation',
+      message: expect.stringContaining('tool budget') as string,
+    });
   });
 
   it('does not warn about a candidate that fits the tool budget', async () => {

@@ -2570,3 +2570,48 @@ describe('createExecutor — one configuration per API', () => {
     ]);
   });
 });
+
+// A secret header over http to a loopback name passes the cleartext gate by
+// name; the executor then requires loopback DNS answers (needsLoopbackAnswer)
+describe('createExecutor — http loopback name with a secret header', () => {
+  it.each([
+    ['127.0.0.1', false],
+    ['10.0.0.5', true],
+  ])('answer %s gives isError %s', async (answer, isError) => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('');
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const snapshot = buildToolSnapshot([pingOp]);
+      const tool = snapshot.toolsByName['pingThing'] as SnapshotTool;
+      const executor = createExecutor(
+        baseConfig({
+          baseUrl: `http://api.localhost:${port}`,
+          secretHeaders: [
+            { name: 'Authorization', value: 'Bearer example-token-not-a-secret', envVar: 'T' },
+          ],
+          validators: validatorsFor(snapshot),
+        }),
+        {
+          transport: {
+            fetch: undiciFetch,
+            resolve: () => Promise.resolve([answer]),
+            timeoutSignal: (ms) => AbortSignal.timeout(ms),
+          },
+        },
+      );
+      const outcome = await executor(tool, {}, freshSignal());
+      expect(outcome.isError).toBe(isError);
+      if (isError) {
+        expect(JSON.stringify(outcome.content)).toContain('not allowed by the egress policy');
+      }
+    } finally {
+      server.close();
+    }
+  });
+});

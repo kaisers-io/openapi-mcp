@@ -69,7 +69,7 @@ export const DEFAULT_MAX_AGENTS = 32;
 type Entry = { agent: Agent; origins: Set<Pool>; createdAt: number };
 
 const poolKey = (origin: string, policy: PinnedPolicy): string =>
-  `${origin} trusted=${String(policy.trusted)} private=${String(policy.allowPrivateNetwork)}`;
+  `${origin} trusted=${String(policy.trusted)} private=${String(policy.allowPrivateNetwork)} loopback=${String(policy.loopbackOnly === true)}`;
 
 export const createPinnedAgentPool = (options: PinnedAgentPoolOptions): PinnedAgentPool => {
   const keepAliveTimeout = options.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS;

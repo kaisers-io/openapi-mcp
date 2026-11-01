@@ -361,7 +361,12 @@ describe('createPinnedAgentPool — bounds', () => {
       trusted: true,
       allowPrivateNetwork: false,
     });
-    expect(new Set([trusted, untrusted, privateOk, otherOrigin]).size).toBe(4);
+    const loopbackOnly = pool.acquire('http://a.test', {
+      trusted: true,
+      allowPrivateNetwork: false,
+      loopbackOnly: true,
+    });
+    expect(new Set([trusted, untrusted, privateOk, otherOrigin, loopbackOnly]).size).toBe(5);
     expect(pool.acquire('http://a.test', { trusted: true, allowPrivateNetwork: false })).toBe(
       trusted,
     );

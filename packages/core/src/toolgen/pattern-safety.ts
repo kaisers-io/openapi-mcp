@@ -218,8 +218,32 @@ const isJavaScriptPattern = (pattern: string): boolean => {
   }
 };
 
+// JavaScript and RE2 case-fold an inline `(?i:...)` group differently: `\b`
+// and `\B` around U+017F, `\P{Lu}`, U+212A and U+1E9E all give different
+// answers (`^(?i:ſ\b)$` matches "ſ" in the client and not on the server). So a
+// pattern that turns `i` on in an inline modifier group is not enforced.
+const INLINE_IGNORE_CASE_RE = /^\(\?[a-z]*i[a-z]*(?:-[a-z]*)?:/u;
+
+const hasInlineIgnoreCase = (pattern: string): boolean => {
+  let index = 0;
+  while (index < pattern.length) {
+    const char = pattern[index];
+    if (char === '\\') {
+      index = skipEscape(pattern, index);
+    } else if (char === '[') {
+      index = skipClass(pattern, index);
+    } else if (char === '(' && INLINE_IGNORE_CASE_RE.test(pattern.slice(index, index + 12))) {
+      return true;
+    } else {
+      index += 1;
+    }
+  }
+  return false;
+};
+
 export const isEnforceablePattern = (pattern: string): boolean =>
   isJavaScriptPattern(pattern) &&
+  !hasInlineIgnoreCase(pattern) &&
   !hasNestedQuantifier(pattern) &&
   !hasAmbiguousSequence(pattern) &&
   compileRe2Pattern(pattern) !== undefined;

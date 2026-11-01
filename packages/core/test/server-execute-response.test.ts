@@ -258,6 +258,77 @@ describe('createEnvelopeCompiler — the url format', () => {
   });
 });
 
+// Ajv runs every format check synchronously on upstream data. A grid of
+// long near-matches for each string format of ajv-formats: a check that
+// backtracks quadratically, as the original `url` regex does, takes far over
+// the bound at this length. A later ajv-formats update that adds such a check
+// fails here.
+describe('createEnvelopeCompiler — every string format takes linear time', () => {
+  const FORMATS = [
+    'date',
+    'time',
+    'date-time',
+    'iso-time',
+    'iso-date-time',
+    'duration',
+    'uri',
+    'uri-reference',
+    'uri-template',
+    'url',
+    'email',
+    'hostname',
+    'ipv4',
+    'ipv6',
+    'regex',
+    'uuid',
+    'json-pointer',
+    'json-pointer-uri-fragment',
+    'relative-json-pointer',
+    'byte',
+  ];
+  const UNITS = [
+    'a',
+    '1',
+    ':',
+    '.',
+    '-',
+    '/',
+    '@',
+    '%',
+    '~',
+    '{',
+    'a.',
+    '1.',
+    'a:',
+    '::',
+    'a-',
+    '/a',
+    '%2',
+    'T1',
+    'P1',
+  ];
+  const PREFIXES = ['', 'http://', 'a@', '1.', 'P', '2026-01-01T', '[', '#/'];
+  const LENGTH = 20_000;
+
+  it.each(FORMATS)('%s', (format) => {
+    const validate = createEnvelopeCompiler()({
+      type: 'object',
+      properties: { value: { type: 'string', format } },
+    }) as EnvelopeValidator;
+    let slowest = 0;
+    for (const prefix of PREFIXES) {
+      for (const unit of UNITS) {
+        const value = `${prefix}${unit.repeat(LENGTH / unit.length)}!`;
+        const started = performance.now();
+        validate({ value });
+        slowest = Math.max(slowest, performance.now() - started);
+      }
+    }
+    // Linear checks take well under 5 ms here; quadratic ones take seconds
+    expect(slowest).toBeLessThan(250);
+  });
+});
+
 describe('lazyEnvelopeValidators (issue #8)', () => {
   const ok = { status: 200, contentType: 'application/json', data: { id: 1 } };
   const broken = { type: 'object', oneOf: 'not-an-array' };

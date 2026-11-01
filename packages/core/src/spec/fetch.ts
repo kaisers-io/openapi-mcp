@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 import { validationError } from '../errors.ts';
-import { assertAllowedRedirectTarget } from '../http/egress.ts';
+import { assertAllowedRedirectTarget, needsLoopbackAnswer } from '../http/egress.ts';
 import type { DnsLookup } from '../http/egress.ts';
 import type { ResolvedHeader } from '../http/headers.ts';
 import { createPinnedAgent, MAX_REDIRECTS, validateHopUrlSync } from '../http/pinned-dispatcher.ts';
@@ -96,33 +96,33 @@ const fetchChain = async (
   // private/loopback literal is still allowed, but cloud-metadata is denied
   // even for an operator-supplied --spec URL — a deliberate hardening, not a
   // regression).
-  // Security module, imperative on purpose: `url` is the manual redirect
-  // loop's per-hop cursor, reassigned only at the bottom of the loop body
-  // once a redirect target has cleared every hop check — restructuring this
-  // into a fold would move that reassignment past checks whose ORDER is the
-  // security property (validate-then-advance, never the reverse).
+  // Imperative on purpose: `url` is the redirect loop's cursor, reassigned
+  // only after a target cleared every hop check (validate, then advance).
   let url = initialUrl;
   validateHopUrl(url);
   // Spec credentials go only on the original origin, so checking it once,
   // before anything is sent, covers every hop that carries them
-  assertNoCleartextCredential(url, opts.headers.length > 0, opts.allowInsecureHttp === true);
+  const insecure = opts.allowInsecureHttp === true;
+  assertNoCleartextCredential(url, opts.headers.length > 0, insecure);
+  const loopbackOnly = needsLoopbackAnswer(url, opts.headers.length > 0, insecure);
   // MONOTONIC (matches the API path's monotonic stripping): once the chain
   // has left the original origin, it never regains credentials — even
   // bouncing back to the original origin later. Set once true, never reset.
   let crossed = false;
-  // Loop induction bound to MAX_REDIRECTS, checked per hop so the abort-on-
-  // throw budget below is enforced at every iteration, not computed upfront.
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
     // Hop 0 (--spec) carries the operator's trust; every redirect hop is
     // untrusted — the same hop-0/hop-n split as pinnedRequest, with hop 0
     // unconditionally trusted here (pinnedRequest gates it on baseTrusted).
-    const policy: PinnedPolicy = { allowPrivateNetwork, trusted: hop === 0 };
-    // Hardening: undici SKIPS connect.lookup entirely for an IP-literal
-    // hostname, so createPinnedAgent's lookup below never runs for a hop
-    // whose URL is already a literal — this synchronous, pre-fetch check
-    // closes that gap for EVERY hop (including hop 0, which previously got
-    // no address validation at all). Reuses pinnedRequest's own guard rather
-    // than reimplementing it.
+    // Credentials, and so the loopback answer rule, stay on the original origin
+    const onOrigin = !crossed && url.origin === originalOrigin;
+    const policy: PinnedPolicy = {
+      allowPrivateNetwork,
+      trusted: hop === 0,
+      loopbackOnly: loopbackOnly && onOrigin,
+    };
+    // Undici skips connect.lookup for an IP-literal hostname, so the agent's
+    // lookup never sees such a hop: pinnedRequest's synchronous guard checks
+    // every hop (hop 0 included) before anything is sent.
     // oxlint-disable-next-line node/no-sync -- validateHopUrlSync does pure in-memory URL/IP classification, no I/O; the name only signals it returns synchronously, not that it wraps a blocking syscall
     const syncViolation = validateHopUrlSync(url, policy);
     if (syncViolation !== undefined) {

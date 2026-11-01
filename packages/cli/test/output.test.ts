@@ -6,7 +6,8 @@ import type { ActionResult } from '../src/output.ts';
 
 // What --json output must never carry raw (JSON.stringify already escapes C0)
 const TERMINAL_UNSAFE_RE =
-  /[\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\u2028\u2029]/u;
+  // oxlint-disable-next-line no-misleading-character-class -- the variation selectors are matched one by one on purpose
+  /[\u007F-\u009F\u061C\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2028\u2029\uFEFF\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/u;
 
 describe('emit', () => {
   it('prints human lines to stdout in human mode', () => {
@@ -174,6 +175,14 @@ describe('jsonLine', () => {
     expect(JSON.parse(line)).toEqual(value);
     // Ordinary non-ASCII text stays readable
     expect(line).toContain('caf\u00E9 \u4E16');
+  });
+
+  it('escapes zero-width, BOM and tag characters, a tag as its two UTF-16 halves', () => {
+    const value = { name: 'a\u200Bb\u200Cc\u200Dd\u2060e\uFEFFf\u{E0041}\u{E007F}g\u{E0100}h' };
+    const line = jsonLine(value);
+    expect(line).not.toMatch(TERMINAL_UNSAFE_RE);
+    expect(line).toContain(String.raw`f\udb40\udc41\udb40\udc7fg`);
+    expect(JSON.parse(line)).toEqual(value);
   });
 });
 

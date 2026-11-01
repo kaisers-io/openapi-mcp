@@ -137,6 +137,7 @@ An unknown flag, command or missing value fails with the parser's text, such as 
 | `check` or stderr says | Cause | Fix |
 |---|---|---|
 | `points at the private/loopback address`, `is loopback`, `resolves to a private/loopback address`, `rejected:` after the spec URL | the spec, its redirect or the API address from the spec is on a private network | `--allow-private-network`, only after the user confirms the address is theirs |
+| `resolves to the non-loopback address`, `plain http goes only to loopback` | `--spec-header-env` over `http://` to `localhost` or `*.localhost`, and the name resolves to another address | make the name resolve to `127.0.0.1` or `::1`, or use `https://`; `--allow-insecure-http` only if the user agrees |
 | `is a cloud-metadata address`, `is a cloud-metadata endpoint`, `points at the cloud-metadata address` | a metadata host, or a link-local address (`169.254.0.0/16`, `fe80::/10`) | no flag admits it, `--allow-private-network` neither; use another address of the API |
 | `cannot resolve redirect target` | this machine cannot resolve the API host from the spec | the right base URL or network |
 | `tools would be exposed after filtering`, `exceeds the 512-tool budget` | too many operations for `per-operation` (4,096 under `discover`) | narrow `--allow`, or `--tool-mode discover` |
@@ -159,7 +160,7 @@ the waiting candidate` (exit 5), and `is not known to be stale` (`cache unlock` 
 
 | Warning | Meaning | What to do |
 |---|---|---|
-| `spec refresh failed, serving the last known good accepted baseline` | the refresh failed; the text after the colon says why | fix that cause; with `persisted-document budget`, the spec is over 64 MiB and does not update |
+| `spec refresh failed, serving the last known good accepted baseline` | the refresh failed; the text after the colon says why | fix that cause; with `persisted-document budget`, the spec is over 64 MiB and does not update; with `tool budget` under `--trust-spec-updates`, narrow `--allow` or use `--tool-mode discover` |
 | `the refreshed spec is stored as a candidate`, `a refreshed spec is waiting as a candidate` | a changed spec waits for review | the user reviews it, then `openapi-mcp cache promote --spec <source>` |
 | `removed in the pending candidate spec are withheld` | those tools are gone until the review | as above |
 | `operations of the candidate spec pass the current filters` | after `cache promote` the server may not start | narrow the filters before promoting |

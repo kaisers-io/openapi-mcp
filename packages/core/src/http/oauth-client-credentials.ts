@@ -197,6 +197,9 @@ export const createClientCredentialsSource = (
         body,
         baseTrusted: false,
         allowPrivateNetwork: config.allowPrivateNetwork,
+        // The client secret goes over http only to loopback (the token URL
+        // check admits http for `localhost`), so the name must resolve there
+        loopbackAnswers: 'credentialed',
         timeoutMs: config.timeoutMs,
         maxResponseBytes: MAX_TOKEN_RESPONSE_BYTES,
         // Shared by every waiting caller, so no one caller's cancellation

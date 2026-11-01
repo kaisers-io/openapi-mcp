@@ -12,7 +12,7 @@ import {
   readCallUploads,
   unsent,
 } from './prepare.ts';
-import { overFinalBudget } from './wire.ts';
+import { loopbackAnswerRequired, overFinalBudget } from './wire.ts';
 
 // `call --dry-run` (issue #78): the request a tool call would send, built by
 // the same steps as the executor (prepare.ts), described instead of sent. No
@@ -174,7 +174,11 @@ export const dryRunCall = async (
         route: routeCheck(refusal, authorizeHop !== undefined),
         egress: await egressCheck(
           finalUrl,
-          { trusted: config.baseTrusted, allowPrivateNetwork: config.allowPrivateNetwork },
+          {
+            trusted: config.baseTrusted,
+            allowPrivateNetwork: config.allowPrivateNetwork,
+            loopbackOnly: loopbackAnswerRequired(config, checked.base),
+          },
           resolve,
         ),
         budgets: overFinalBudget(finalUrl, sameOriginHeaders, config.outboundBudgets)

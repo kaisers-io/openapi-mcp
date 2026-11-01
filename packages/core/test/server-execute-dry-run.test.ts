@@ -150,6 +150,26 @@ describe('dryRunCall (issue #78)', () => {
     expect('report' in result && result.report.checks.egress.status).toBe(status);
   });
 
+  it.each([
+    ['a loopback answer with a credential', ['127.0.0.1'], true, 'allowed'],
+    ['a non-loopback answer with a credential', ['10.0.0.5'], true, 'refused'],
+    ['a non-loopback answer without a credential', ['10.0.0.5'], false, 'allowed'],
+  ] as const)('checks an http loopback name for %s', async (_name, answers, credential, status) => {
+    const result = await dryRunCall(
+      config({
+        baseUrl: 'http://api.localhost:8080',
+        baseTrusted: true,
+        secretHeaders: credential
+          ? [{ name: 'X-Api-Key', value: 'example-token-not-a-secret', envVar: 'KEY' }]
+          : [],
+      }),
+      toolNamed('createThing'),
+      { body: {} },
+      () => Promise.resolve(answers),
+    );
+    expect('report' in result && result.report.checks.egress.status).toBe(status);
+  });
+
   it('checks an IP literal without a lookup', async () => {
     const lookups: string[] = [];
     const resolve = (hostname: string) => {

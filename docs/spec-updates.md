@@ -33,7 +33,11 @@ A running server does not refresh its tool list. Restart it to pick up a newer s
 If a refresh fails, because the network is down, the new document is invalid or its JSON form is
 larger than the 64 MiB the cache stores, the server keeps serving the last accepted version and
 prints a warning that starts with
-`spec refresh failed, serving the last known good accepted baseline`.
+`spec refresh failed, serving the last known good accepted baseline`. With
+`--trust-spec-updates`, a new document over a budget the served tools are measured against is a
+failed refresh too: more tools than the tool budget under the current filters, more nodes than
+the node budget, `$ref` nesting deeper than the depth budget, or more filter work than the
+filter work budget. The warning then names the budget.
 
 ## How a changed spec is handled
 

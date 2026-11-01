@@ -186,7 +186,7 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     )
     .option(
       '--header <Header:value>',
-      'static, non-secret API header (repeatable)',
+      'static, non-secret API header (repeatable); a token or key goes in --header-env',
       collect,
       [] as readonly string[],
     )

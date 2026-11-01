@@ -1,5 +1,7 @@
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
-import { Response } from 'undici';
+import { Response, fetch as undiciFetch } from 'undici';
 import { clientSecretBasic, createClientCredentialsSource, createRedactor } from '../src/index.ts';
 import type {
   ClientCredentialsConfig,
@@ -348,5 +350,53 @@ describe('client-credentials token source — egress policy', () => {
       allowPrivateNetwork: true,
     });
     expect(await allowed.source.getToken()).toEqual({ ok: 'access-token-number-1' });
+  });
+});
+
+// The token URL may use http for `localhost`; the client secret then goes out
+// only when the name resolves to loopback
+describe('client-credentials token source — http localhost token URL', () => {
+  it.each([
+    ['127.0.0.1', true],
+    ['10.0.0.5', false],
+  ])('answer %s gets a token: %s', async (answer, served) => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ access_token: 'access-token-local', token_type: 'Bearer' }));
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    try {
+      const { port } = server.address() as AddressInfo;
+      const source = createClientCredentialsSource(
+        {
+          tokenUrl: new URL(`http://localhost:${port}/token`),
+          clientId: 'demo-client',
+          clientSecret: 'example-token-not-a-secret',
+          scopes: [],
+          clientAuth: 'client_secret_basic',
+          allowPrivateNetwork: true,
+          timeoutMs: 5000,
+          redactor: createRedactor([]),
+          now: () => 1_000_000,
+        },
+        {
+          fetch: undiciFetch,
+          resolve: () => Promise.resolve([answer]),
+          timeoutSignal: (ms) => AbortSignal.timeout(ms),
+        },
+      );
+      const result = await source.getToken();
+      expect(result).toEqual(
+        served
+          ? { ok: 'access-token-local' }
+          : expect.objectContaining({
+              error: expect.stringContaining('not allowed by the egress policy') as string,
+            }),
+      );
+    } finally {
+      server.close();
+    }
   });
 });

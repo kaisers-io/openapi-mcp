@@ -35,7 +35,7 @@ import {
   readCallUploads,
   unsent,
 } from './prepare.ts';
-import { overFinalBudget } from './wire.ts';
+import { loopbackAnswerRequired, overFinalBudget } from './wire.ts';
 import type { RouteTable } from './route-table.ts';
 import { mapResponse, mismatchOf } from './response.ts';
 import { imageOutcome, isImageResponse } from './image-result.ts';
@@ -385,6 +385,7 @@ const runUpstreamCall = async (
       ...(authorizeHop === undefined ? {} : { authorizeHop }),
       ...(config.credentialScope === 'api' ? { credentialScope: withinApi(base) } : {}),
       allowPrivateNetwork: config.allowPrivateNetwork,
+      ...(loopbackAnswerRequired(config, base) ? { loopbackAnswers: 'credentialed' } : {}),
       timeoutMs: callTimeoutMs,
       maxResponseBytes: config.maxResponseBytes,
       signal,

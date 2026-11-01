@@ -26,7 +26,7 @@ below that explains it, and propose the fix.
 | Codex `enabled_tools`, Gemini `includeTools` | the host hides tools | adjust the host setting (host file) |
 | the CLI lists the tool, the host does not | the host was not restarted, or the server failed | host status (host file) |
 | old tools after a spec change | `cacheStatus: candidate` | the user reviews and promotes the candidate |
-| `spec refresh failed, serving the last known good accepted baseline` | the refresh failed; with `exceeds the 67108864-byte persisted-document budget`, the new spec is over 64 MiB | fix the cause it names; a spec that large does not update |
+| `spec refresh failed, serving the last known good accepted baseline` | the refresh failed; with `exceeds the 67108864-byte persisted-document budget`, the new spec is over 64 MiB; with `tool budget`, a trusted update exposes too many tools | fix the cause it names; a spec that large does not update; for the tool budget, narrow `--allow` |
 
 ## Warnings that name operations
 

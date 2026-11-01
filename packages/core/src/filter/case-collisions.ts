@@ -1,6 +1,6 @@
 import { selectedValues } from './engine.ts';
 import type { DeadPatternFlag, FilterTarget } from './engine.ts';
-import { validationError } from '../errors.ts';
+import { specBudgetError } from '../errors.ts';
 import { FILTER_WORK_BUDGET_EXCEEDED_MESSAGE, compileGlob, globMatches } from './pattern.ts';
 import type { CompiledGlob, FilterPattern, MatchBudget } from './pattern.ts';
 
@@ -35,7 +35,7 @@ const variantsOf = (
       // Lowering reads the value once: charged like any matching step
       budget.remaining -= value.length;
       if (budget.remaining < 0) {
-        throw validationError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
+        throw specBudgetError(FILTER_WORK_BUDGET_EXCEEDED_MESSAGE);
       }
       const spellings = byLower.get(value.toLowerCase()) ?? new Map<string, FilterTarget[]>();
       const carriers = spellings.get(value) ?? [];

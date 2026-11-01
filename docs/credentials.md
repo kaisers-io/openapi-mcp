@@ -167,6 +167,11 @@ The server only sends a credential where you pointed it.
   access token over plain `http` to a host that is not loopback (`localhost`, `*.localhost`,
   `127.0.0.0/8`, `::1`). The call or the spec fetch fails without sending anything.
   `--allow-insecure-http` permits it, for an API or a spec you can only reach that way.
+- A loopback name (`localhost` or `*.localhost`) passes that check by its name. Whether it
+  resolves to loopback depends on the resolver, so the server then also requires every DNS
+  answer to be loopback. If one is not, nothing is sent: the call fails with `not allowed by
+  the egress policy`, and the spec fetch with `resolves to the non-loopback address <address>,
+  and plain http goes only to loopback`. `--allow-insecure-http` lifts this check too.
 
 Outbound requests also follow an egress policy. An address that comes from the spec (its
 `servers` URL) or from a redirect is refused when it is private, loopback or a cloud-metadata
@@ -239,8 +244,8 @@ The server sends the client secret to the token URL, so it is strict about which
   alone is not enough: it decides where the client secret goes, not where the access token
   goes.
 - The token URL must use `https`. Plain `http` is accepted only for a literal loopback host:
-  `localhost`, `127.0.0.0/8` or `::1`, not `*.localhost`. It must not contain a user name,
-  password or fragment.
+  `localhost`, `127.0.0.0/8` or `::1`, not `*.localhost`. With `http://localhost` every DNS
+  answer must be loopback too. It must not contain a user name, password or fragment.
 - The token request goes through the same egress policy as API requests. Cloud-metadata
   addresses are always refused, private and loopback addresses need `--allow-private-network`,
   and DNS answers are pinned. The server never follows a redirect from the token endpoint.
