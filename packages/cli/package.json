@@ -1,6 +1,6 @@
 {
   "name": "@kaisers-io/openapi-mcp",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Turn any OpenAPI spec into a strict, locally running MCP server",
   "keywords": [
     "api",
