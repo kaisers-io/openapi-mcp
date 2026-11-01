@@ -29,12 +29,13 @@ jobs:
     timeout-minutes: 20
     strategy:
       # An empty `node` falls back to .node-version (the dev pin); 24.11.0 and 22.19.0 are the floors of
-      # the two supported lines in the published engines range (^22.19.0 || >=24.11.0).
+      # the two supported lines in the published engines range (^22.19.0 || >=24.11.0). '26' is the
+      # newest LTS line, which >=24.11.0 also admits; it takes the latest 26.x release.
       # macOS runs on every pull request and on main: the repository is public, so hosted runners
       # cost nothing, and the platform-specific code paths (fsync, compile cache) are gated per change.
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: ['', '24.11.0', '22.19.0']
+        node: ['', '26', '24.11.0', '22.19.0']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

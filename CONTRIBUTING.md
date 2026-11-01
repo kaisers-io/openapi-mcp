@@ -15,9 +15,10 @@ repository start again from one.
 ## Requirements
 
 - **Node.js `^22.19.0 || >=24.11.0`** is the supported range for the published CLI (`engines` in
-  every `package.json`). CI runs the full check on both floors, 22.19.0 and 24.11.0.
+  every `package.json`). CI runs the full check on both floors, 22.19.0 and 24.11.0,
+  and on the latest Node 26 release.
 - **Node 24.22** for development (see `.node-version`). CI uses this pin for everything except the
-  two floor runs.
+  floor runs and the Node 26 run.
 - **pnpm 11 or newer.** `packageManager` in the root `package.json` pins the exact version. The
   published CLI has no pnpm requirement of its own.
 - **Linux or macOS.** The published package supports Windows, but Windows is not a development
@@ -55,7 +56,7 @@ they run these jobs:
 
 | Job | What it does |
 |---|---|
-| `ci` / check | `pnpm check` on Ubuntu and macOS, each on the dev pin and on both Node floors (24.11.0 and 22.19.0) |
+| `ci` / check | `pnpm check` on Ubuntu and macOS, each on the dev pin, the latest Node 26 and both Node floors (24.11.0 and 22.19.0) |
 | `ci` / windows | `pnpm test` on Windows, on every pull request and on `main` |
 | `ci` / filters-real-specs | `pnpm test:real-specs` on Linux, macOS and Windows: the filters against the real GitHub, Stripe and DigitalOcean specs, downloaded from commit-pinned URLs and checked by sha256 |
 | `ci` / bundle-determinism | builds twice and requires byte-identical output |
