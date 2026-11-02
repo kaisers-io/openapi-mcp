@@ -48,31 +48,37 @@ describe('slow upstream', () => {
 
 describe('measured interval', () => {
   it('counts a block that ends right before stop, and starts the next interval afresh', async () => {
-    // A short block, then a long one whose input arrives together with
-    // `stop`: only the last tick on stop can see the long one
+    // Blocks on `stop` before the probe reads it, in the same event: only the
+    // last tick on stop can see the block
     const script = `
-      process.stdin.on('data', (chunk) => {
-        const until = Date.now() + (String(chunk).includes('long') ? 150 : 30);
-        while (Date.now() < until) {}
+      process.prependListener('message', (message) => {
+        if (message === 'stop' && !globalThis.blocked) {
+          globalThis.blocked = true;
+          const until = Date.now() + 150;
+          while (Date.now() < until) {}
+        }
       });
-      process.stdin.on('end', () => {});
+      // Alive until stdin closes, like serve
+      process.stdin.resume();
     `;
     const child = spawn(process.execPath, [...PROBE_FLAGS, '-e', script], {
       stdio: ['pipe', 'ignore', 'inherit', 'ipc'],
     });
-    const probe = createIntervalProbe(child);
-    await probe.start();
-    child.stdin?.write('short\n');
-    await sleep(10);
-    child.stdin?.write('long\n');
-    const blocked = await probe.stop();
-    expect(blocked.eventLoopDelayMaxMs).toBeGreaterThanOrEqual(140);
-    await probe.start();
-    await sleep(50);
-    const idle = await probe.stop();
-    expect(idle.eventLoopDelayMaxMs).toBeLessThan(100);
-    child.stdin?.end();
-    await once(child, 'exit');
+    try {
+      const probe = createIntervalProbe(child);
+      await probe.start();
+      const blocked = await probe.stop();
+      expect(blocked.eventLoopDelayMaxMs).toBeGreaterThanOrEqual(140);
+      // The next interval reports its own delays only
+      await probe.start();
+      await sleep(20);
+      const idle = await probe.stop();
+      expect(idle.eventLoopDelayMaxMs).toBeLessThan(140);
+      child.stdin?.end();
+      await once(child, 'exit');
+    } finally {
+      child.kill();
+    }
   });
 
   it('reports the event-loop delay and memory of the interval, and lets the process exit', async () => {
