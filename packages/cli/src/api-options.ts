@@ -9,6 +9,7 @@ import {
   parseHeaderEnvMapping,
   resolveHeaderEnvMappings,
   SYSTEM_HEADERS,
+  trimSpaces,
   usageError,
 } from '@kaisers-io/openapi-mcp-core';
 import type { HeaderEnvMapping } from '@kaisers-io/openapi-mcp-core';
@@ -314,12 +315,6 @@ const parseFileHeaders = (raw: readonly string[]): ApiFileHeader[] =>
     return { name, path };
   });
 
-// Strips a leading/trailing run of SP (U+0020) only — deliberately NARROWER
-// than RFC 9110 OWS, which would also cover HTAB: a tab in a header value is
-// a C0 control character here and is rejected below rather than normalized
-// away, keeping the smuggling guard strict.
-const trimOptionalSpace = (value: string): string => value.replace(/^ +/u, '').replace(/ +$/u, '');
-
 // Imperative on purpose: `seen` accumulates across iterations (duplicate
 // detection depends on every prior entry, not just the current one) and each
 // of the checks below throws in encounter order — a map/filter
@@ -335,7 +330,9 @@ const parseStaticHeaders = (raw: readonly string[]): { name: string; value: stri
       throw usageError('invalid --header (expected "Header: value")');
     }
     const name = entry.slice(0, separatorIndex);
-    const value = trimOptionalSpace(entry.slice(separatorIndex + 1));
+    // Spaces around the value only (trimSpaces), not HTAB: a tab is a control
+    // character and is refused below rather than normalized away
+    const value = trimSpaces(entry.slice(separatorIndex + 1));
     if (!HEADER_NAME_RE.test(name)) {
       throw usageError(`invalid header name "${name}" — must match the RFC 9110 token grammar`);
     }

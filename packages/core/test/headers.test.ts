@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { OpenapiMcpError, parseHeaderEnvMapping, resolveHeaderEnvMappings } from '../src/index.ts';
+import {
+  OpenapiMcpError,
+  parseHeaderEnvMapping,
+  resolveHeaderEnvMappings,
+  trimSpaces,
+} from '../src/index.ts';
 
 const expectUsageError = (fn: () => unknown, messagePart: string): void => {
   try {
@@ -117,5 +122,19 @@ describe('resolveHeaderEnvMappings — spaces around the value', () => {
       resolveHeaderEnvMappings(mapping, { T: '  Bearer example-not-a-real-secret ' }),
     ).toStrictEqual([{ name: 'Authorization', value: 'Bearer example-not-a-real-secret' }]);
     expect(() => resolveHeaderEnvMappings(mapping, { T: '   ' })).toThrow('is not set or empty');
+  });
+});
+
+describe('trimSpaces', () => {
+  it('drops only the spaces around a value, in linear time', () => {
+    expect(trimSpaces('  a b  ')).toBe('a b');
+    expect(trimSpaces('\ta\t')).toBe('\ta\t');
+    expect(trimSpaces('   ')).toBe('');
+    // A long run of spaces before a last character: quadratic for `/ +$/`
+    const hostile = `${' '.repeat(200_000)}x`;
+    const started = performance.now();
+    expect(trimSpaces(hostile)).toBe('x');
+    expect(trimSpaces(`x${' '.repeat(200_000)}x`)).toBe(`x${' '.repeat(200_000)}x`);
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });

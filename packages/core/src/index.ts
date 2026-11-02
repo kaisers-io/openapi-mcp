@@ -46,6 +46,7 @@ export {
   isEnvVarName,
   parseHeaderEnvMapping,
   resolveHeaderEnvMappings,
+  trimSpaces,
 } from './http/headers.ts';
 export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';
 export {

@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import type { BigIntStats } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
 import type { RuntimeRedactor } from '../redact.ts';
-import { NON_LATIN1_RE } from './headers.ts';
+import { NON_LATIN1_RE, trimSpaces } from './headers.ts';
 
 // --header-file (#125): a credential header whose value is read from a file,
 // so a token the user renews by hand works on the next call, without a
@@ -84,7 +84,7 @@ const valueOf = (bytes: Uint8Array, maxLength: number): string => {
   }
   // Spaces around the value are dropped, as the HTTP client drops them when it
   // sends the header: the value registered for redaction is the one sent
-  const value = text.replace(/\r?\n$/u, '').replaceAll(/^ +| +$/gu, '');
+  const value = trimSpaces(text.replace(/\r?\n$/u, ''));
   if (value === '') {
     refuse('is empty');
   }

@@ -16,6 +16,22 @@ const CONTROL_CHAR_RE = /[\u0000-\u001F\u007F]/u;
 // oxlint-disable-next-line no-control-regex -- the range starts at U+0000 only to state "every Latin-1 code point"; the negated class matches nothing below U+0100
 export const NON_LATIN1_RE = /[^\u0000-\u00FF]/u;
 
+// The value without the spaces (U+0020) around it, which the HTTP client
+// drops when it sends a header. A loop, not a regex: `/ +$/` backtracks
+// quadratically over a long run of spaces. A tab stays and is refused as a
+// control character.
+export const trimSpaces = (value: string): string => {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === ' ') {
+    start += 1;
+  }
+  while (end > start && value[end - 1] === ' ') {
+    end -= 1;
+  }
+  return value.slice(start, end);
+};
+
 export type HeaderEnvMapping = {
   headerName: string;
   envVar: string;
@@ -65,7 +81,8 @@ export const resolveHeaderEnvMappings = (
     seen.add(lower);
     // Spaces around the value are dropped, as the HTTP client drops them when
     // it sends the header: the value registered for redaction is the one sent
-    const value = env[mapping.envVar]?.replaceAll(/^ +| +$/gu, '');
+    const raw = env[mapping.envVar];
+    const value = raw === undefined ? undefined : trimSpaces(raw);
     if (value === undefined || value === '') {
       throw usageError(
         `environment variable "${mapping.envVar}" (for header "${mapping.headerName}") is not set or empty`,
