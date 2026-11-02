@@ -172,6 +172,44 @@ describe('check (issue #77)', () => {
     expect([...result.lines, ...result.errLines].join('\n')).not.toContain(SENTINEL);
   });
 
+  // --header-file (#125): read and checked as a call would, never printed
+  it('reports each header file without its value, and fails on a bad one', async () => {
+    const good = join(dir, 'good.token');
+    await writeFile(good, `Bearer ${SENTINEL}\n`, { mode: 0o600 });
+    const missing = join(dir, 'missing.token');
+    const result = await check([
+      '--spec',
+      'small.json',
+      ...BASE,
+      '--header-file',
+      `Authorization=${good}`,
+      '--header-file',
+      `X-Key=${missing}`,
+    ]);
+    expect(result.code).toBe(EXIT.USAGE);
+    const report = reportOf(result.lines) as Report & { data: { headerFiles: unknown } };
+    expect(report.data.headerFiles).toStrictEqual([
+      { header: 'Authorization', path: good, ok: true },
+      {
+        header: 'X-Key',
+        path: missing,
+        ok: false,
+        problem: `the header file ${JSON.stringify(missing)} is missing`,
+      },
+    ]);
+    // `serve` starts without the file: the startup is still checked
+    expect(report.data.startup).toEqual({ status: 'ok' });
+    const human = await check(
+      ['--spec', 'small.json', ...BASE, '--header-file', `Authorization=${good}`],
+      {},
+      [],
+    );
+    expect(human.lines).toContain(`  ${JSON.stringify(good)} (--header-file Authorization): ok`);
+    expect([...result.lines, ...result.errLines, ...human.lines].join('\n')).not.toContain(
+      SENTINEL,
+    );
+  });
+
   it('lists both variables of --basic-auth-env', async () => {
     const result = await check(
       ['--spec', 'small.json', ...BASE, '--basic-auth-env', 'API_USER:API_PASSWORD'],

@@ -51,6 +51,8 @@ export type MapResponseOptions = {
   redactor: Redactor;
   // Named on a 401/403 (an actionable hint, never the credential itself).
   envVarHint?: string;
+  // Or the --header-file path (#125), named instead
+  credentialFile?: string;
   // Text display cap for the no-outputSchema success path, in bytes.
   maxTextBytes: number;
   // The configured API base URL. When given, allowlisted upstream response
@@ -334,15 +336,28 @@ const escapedSecretInBody = (redactor: Redactor, text: string): boolean => {
 const parsedHasSecret = (redactor: Redactor, value: unknown): boolean =>
   scanSafely(redactor, value) || escapedSecretIn(redactor, value);
 
+// Where to look after a 401/403: the --header-file (#125), as a JSON string
+// like http/header-file.ts's displayPath, else the env var
+const credentialHint = (
+  envVarHint: string | undefined,
+  credentialFile: string | undefined,
+): string => {
+  if (credentialFile !== undefined) {
+    return ` (check the header file ${JSON.stringify(credentialFile)})`;
+  }
+  return envVarHint === undefined ? '' : ` (check the ${envVarHint} environment variable)`;
+};
+
 const mapHttpError = (
   status: number,
   contentType: string | undefined,
   bodyBytes: Uint8Array,
   redactor: Redactor,
   envVarHint: string | undefined,
+  credentialFile: string | undefined,
 ): ToolCallOutcome => {
   if (status === 401 || status === 403) {
-    const hint = envVarHint === undefined ? '' : ` (check the ${envVarHint} environment variable)`;
+    const hint = credentialHint(envVarHint, credentialFile);
     return textOutcome(`upstream request failed with status ${status}${hint}`, true);
   }
   if (bodyBytes.byteLength === 0) {
@@ -788,7 +803,14 @@ const mapBody = (
   }
   const { status, contentType, bodyBytes } = outcome;
   if (status >= 400) {
-    return mapHttpError(status, contentType, bodyBytes, opts.redactor, opts.envVarHint);
+    return mapHttpError(
+      status,
+      contentType,
+      bodyBytes,
+      opts.redactor,
+      opts.envVarHint,
+      opts.credentialFile,
+    );
   }
   // A 3xx reaching here is one the transport does not follow (300 Multiple
   // Choices, 304 Not Modified, 305/306, or an unknown 3xx): none of them is

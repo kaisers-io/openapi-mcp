@@ -618,3 +618,63 @@ describe('resolveApiConfig — --basic-auth-env', () => {
     }
   });
 });
+
+// --header-file (#125)
+describe('--header-file', () => {
+  const file = '/home/example/.config/openapi-mcp/api.token';
+
+  it('keeps the header and the path, reserves the name, and reads nothing at startup', () => {
+    const config = resolve([
+      '--header-file',
+      `Authorization=${file}`,
+      '--header-file',
+      `X-Key=${file}`,
+    ]);
+    expect(config.fileHeaders).toStrictEqual([
+      { name: 'Authorization', path: file },
+      { name: 'X-Key', path: file },
+    ]);
+    expect(config.reservedHeaderNames.has('authorization')).toBe(true);
+    expect(config.reservedHeaderNames.has('x-key')).toBe(true);
+    expect(config.secretValues).toStrictEqual([]);
+  });
+
+  it.each([
+    ['no separator', 'Authorization', 'expected <Header>=<PATH>'],
+    ['an invalid header name', `Bad Name=${file}`, 'expected <Header>=<PATH>'],
+    ['a relative path', 'Authorization=api.token', 'needs an absolute path'],
+    ['a path starting with ~', 'Authorization=~/api.token', 'needs an absolute path'],
+  ])('refuses %s', (_label, value, message) => {
+    expectUsageError(() => resolve(['--header-file', value]), message);
+  });
+
+  it('refuses a second source for the same header, without case', () => {
+    const env = { T: 'Bearer example-token-not-a-secret', U: 'u' };
+    for (const args of [
+      ['--header-file', `Authorization=${file}`, '--header-file', `authorization=${file}`],
+      ['--header-file', `Authorization=${file}`, '--header-env', 'AUTHORIZATION=T'],
+      ['--header-file', `Authorization=${file}`, '--basic-auth-env', 'U'],
+    ]) {
+      expectUsageError(() => resolve(args, env), 'is configured more than once');
+    }
+    expectUsageError(
+      () => resolve(['--header-file', `X-Tenant=${file}`, '--header', 'X-Tenant:1']),
+      'configured via both --header and --header-env or --header-file',
+    );
+    expectUsageError(
+      () =>
+        resolve(
+          [
+            '--header-file',
+            `Authorization=${file}`,
+            '--upstream-oauth-client-id-env',
+            'C',
+            '--upstream-oauth-client-secret-env',
+            'K',
+          ],
+          { C: 'id', K: 'example-secret-not-a-secret' },
+        ),
+      'or --header-file Authorization=...',
+    );
+  });
+});

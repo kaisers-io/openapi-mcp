@@ -51,7 +51,10 @@ export type PreparedCall = {
   generatedKey: string | undefined;
   // The header sets of one send with the given bearer token, before the
   // final budget check
-  assemble: (bearer?: string) => HopHeaders;
+  assemble: (
+    bearer?: string,
+    fileHeaders?: readonly { name: string; value: string }[],
+  ) => HopHeaders;
 };
 
 // The tool's response validator. Validators FAIL-CLOSED, mandatory: a
@@ -207,8 +210,18 @@ export const prepareCall = (
   // included) — the caller's own value when it passed one, else this fresh
   // UUID — so the upstream can deduplicate a retried write.
   const generatedKey = keyed ? randomUUID() : undefined;
-  const assemble = (bearer?: string): HopHeaders => {
-    const headers = assembleHeaders(config, accept, built.contentType, built.headers, bearer);
+  const assemble = (
+    bearer?: string,
+    fileHeaders?: readonly { name: string; value: string }[],
+  ): HopHeaders => {
+    const headers = assembleHeaders(
+      config,
+      accept,
+      built.contentType,
+      built.headers,
+      bearer,
+      fileHeaders,
+    );
     if (config.propagateTraceContext === true && trace !== undefined) {
       // Same-origin set only: a trace id is client correlation data, and a
       // redirect to a foreign origin must not receive it. `traceparent` and

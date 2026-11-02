@@ -4,12 +4,15 @@ import {
   DISPLAY_TEXT_MAX,
   EXIT,
   isEnvVarName,
+  describeHeaderFileError,
+  displayPath,
   parseHeaderEnvMapping,
+  readHeaderFile,
   renderError,
   sanitizeSpecText,
   usageError,
 } from '@kaisers-io/openapi-mcp-core';
-import { apiViews } from '../api-options.ts';
+import { apiViews, MAX_FILE_HEADER_VALUE_LENGTH } from '../api-options.ts';
 import type { Occurrence } from '../api-options.ts';
 import type { CliContext } from '../context.ts';
 import { getGlobalOpts, jsonLine } from '../output.ts';
@@ -25,6 +28,9 @@ import type { ServeCmdOpts, ServeCommand } from './serve-action.ts';
 // called.
 
 type Variable = { name: string; flag: string; api?: string; set: boolean };
+// A --header-file (#125): read and checked as a call would, never printed.
+// `serve` starts without it; a call then fails until it is fixed.
+type HeaderFile = { header: string; path: string; api?: string; ok: boolean; problem?: string };
 type Stage = {
   status: 'ok' | 'failed' | 'skipped';
   error?: { code: string; reason?: ErrorReason; message: string };
@@ -80,11 +86,46 @@ const variablesOf = (
   return variables;
 };
 
+// The format is checked when the API's options are resolved; a malformed
+// entry is left to that
+const headerFilesOf = async (
+  command: ServeCommand,
+  cmdOpts: ServeCmdOpts,
+  occurrences: readonly Occurrence[],
+): Promise<HeaderFile[]> => {
+  const views = apiViews(cmdOpts, occurrences, optionDefaults(command)) ?? [
+    { name: undefined, options: cmdOpts },
+  ];
+  const files: HeaderFile[] = [];
+  for (const { name: api, options } of views) {
+    for (const raw of options.headerFile) {
+      const separator = raw.indexOf('=');
+      if (separator === -1) {
+        continue;
+      }
+      const header = raw.slice(0, separator);
+      const path = raw.slice(separator + 1);
+      const base = { header, path, ...(api === undefined ? {} : { api }) };
+      try {
+        await readHeaderFile(path, MAX_FILE_HEADER_VALUE_LENGTH);
+        files.push({ ...base, ok: true });
+      } catch (error) {
+        files.push({ ...base, ok: false, problem: describeHeaderFileError(path, error) });
+      }
+    }
+  }
+  return files;
+};
+
 const humanLinesOf = (data: CheckData): string[] => [
   `environment: ${data.environment.status}`,
   ...data.environment.variables.map(
     (variable) =>
       `  ${variable.name} (${variable.api === undefined ? '' : `${variable.api} `}${variable.flag}): ${variable.set ? 'set' : 'missing'}`,
+  ),
+  ...data.headerFiles.map(
+    (file) =>
+      `  ${displayPath(file.path)} (${file.api === undefined ? '' : `${file.api} `}--header-file ${file.header}): ${file.problem ?? 'ok'}`,
   ),
   // An error can carry spec text: one sanitized line, like a warning
   `startup: ${data.startup.status}${data.startup.error === undefined ? '' : `: ${sanitizeSpecText(data.startup.error.message, DISPLAY_TEXT_MAX)}`}`,
@@ -106,6 +147,7 @@ type Prepared = Awaited<ReturnType<typeof prepareServe>>;
 
 type CheckData = {
   environment: { status: Stage['status']; reason?: ErrorReason; variables: Variable[] };
+  headerFiles: HeaderFile[];
   startup: Stage;
   toolMode?: string;
   toolModeReason?: string;
@@ -131,8 +173,9 @@ export const runCheck = async (
     },
   };
   const variables = variablesOf(command, cmdOpts, occurrences, ctx);
+  const headerFiles = await headerFilesOf(command, cmdOpts, occurrences);
   const missing = variables.some((variable) => !variable.set);
-  let exitCode: number = missing ? EXIT.USAGE : EXIT.OK;
+  let exitCode: number = missing || headerFiles.some((file) => !file.ok) ? EXIT.USAGE : EXIT.OK;
   let startup: Stage = { status: 'skipped' };
   let prepared: Prepared | undefined;
   if (!missing) {
@@ -169,6 +212,7 @@ export const runCheck = async (
     environment: missing
       ? { status: 'failed', reason: 'env_missing', variables }
       : { status: 'ok', variables },
+    headerFiles,
     startup,
     ...(prepared === undefined
       ? {}

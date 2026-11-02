@@ -22,10 +22,11 @@ with `--spec-header-env only applies to URL spec sources`.
 An authenticated spec also needs `--cache-key` or `--trust-spec-updates`. See
 [Spec updates and the cache](spec-updates.md#the-cache-key-rule).
 
-## Secrets come from environment variables only
+## Secrets come from environment variables, or from a file
 
-The server reads secrets only from environment variables. You name the variable on the command
-line, and the server reads its value at startup. A secret is never accepted as a literal flag
+The server reads secrets from environment variables, and an API header also from a file with
+[`--header-file`](#a-token-you-renew-by-hand---header-file). You name the variable on the
+command line, and the server reads its value at startup. A secret is never accepted as a literal flag
 value, so it never appears in the process list (`ps`) or in a committed host config. The server
 also never writes a secret to the cache, a log line, a tool schema or a tool result.
 
@@ -45,6 +46,63 @@ falls back to sending the request without the credential.
 How the variable reaches the server depends on your host. Claude Code expands `${VAR}` in
 `.mcp.json`. Codex forwards the variables you list by name in `env_vars`. See
 [hosts.md](hosts.md).
+
+### A token you renew by hand: `--header-file`
+
+A running server cannot see a new value of an environment variable. A short-lived token that
+you renew yourself, such as your own login token that expires after an hour, would then need a
+restart of the server, and some hosts can only restart all their servers at once.
+`--header-file Header=PATH` reads the header value from a file instead:
+
+```bash
+openapi-mcp serve \
+  --spec https://api.example.com/openapi.json \
+  --base-url https://api.example.com \
+  --header-file Authorization=/home/me/.config/openapi-mcp/api.token
+```
+
+- The file holds the complete header value, like the variable of `--header-env`, for example
+  `Bearer <token>`. One trailing line break is ignored.
+- Each call checks whether the file changed since the last read, by its size, times and inode,
+  and reads it again only then. A renewed token works on the next call, without a restart.
+- A 401 is not sent again. It makes the next call read the file again even if it looks
+  unchanged. The 401 or 403 message names the file: `(check the header file "<path>")`.
+- The server starts when the file is missing. Each call then fails, before anything is sent,
+  with `the header file "<path>" is missing`, until the file is there.
+- The path must be absolute. Hosts start the server in a directory of their choosing and do not
+  expand `~`.
+- The flag can be repeated for different headers and combined with `--header-env` for other
+  headers. A header has one source: the same name in another `--header-file`, `--header-env`,
+  `--basic-auth-env` or, for `Authorization`, `--upstream-oauth-*` is a usage error.
+
+Write the file so that only you can read it, and replace it in one step, by writing a temp file
+in the same directory and renaming it into place:
+
+```bash
+umask 077
+printf '%s\n' "Bearer $RAW_TOKEN" > ~/.config/openapi-mcp/api.token.tmp
+mv ~/.config/openapi-mcp/api.token.tmp ~/.config/openapi-mcp/api.token
+```
+
+The server reads the file on each change with these checks. Any failure fails the call with
+the path and the reason, never the value, and never with the last good value:
+
+| The file | Reason |
+|---|---|
+| `is missing`, `is not a regular file`, `is a symbolic link`, `has more than one link` | the server reads only the file the path names, not a file a link leads to |
+| `belongs to another user`, `can be read or written by other users (chmod 600 it)` | on Linux and macOS the file must be yours and closed to others |
+| `changed while it was opened`, `changed while it was read` | it was written while the server read it; write a temp file and rename it |
+| `is empty`, `is not valid UTF-8`, `contains control characters`, `contains a character above U+00FF`, `is over the 8192-character header value budget` | the same checks as a `--header-env` value |
+| `could not be registered for redaction` | the value cannot be withheld from output (see below) |
+
+On Windows the server cannot check the file's access list; keep the file in your user profile,
+which only you, SYSTEM and administrators can read by default.
+
+Each new value is registered with the redactor before its first use, so the API cannot echo it
+to the agent. A replaced value stays redacted until the server needs its place among the 256
+runtime secrets it holds, which it shares with OAuth2 access tokens. `check` reads every
+`--header-file` as a call would and reports each one as ok or with its reason, never with its
+value.
 
 ## Header flag syntax
 

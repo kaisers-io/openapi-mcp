@@ -122,6 +122,15 @@ export type ExecutorConfig = {
     };
     envVarHint: string;
   };
+  // --header-file (#125): headers whose values each call reads from a file
+  // (http/header-file.ts's HeaderFileSource, spelled out like `oauth`). A
+  // 401 marks the values the call sent as stale; the call is not replayed.
+  fileHeaders?: readonly {
+    name: string;
+    path: string;
+    read: () => Promise<{ ok: string } | { error: string }>;
+    stale: (value: string) => void;
+  }[];
 };
 
 export type ExecutorDeps = {
@@ -297,13 +306,24 @@ const runUpstreamCall = async (
     generatedKey,
     assemble,
   } = preparation.prepared;
+  // --header-file values (#125), read once per call: --retries and an OAuth
+  // replay send the same ones. A file that cannot be used sends nothing.
+  const fileValues: { name: string; value: string }[] = [];
+  for (const source of config.fileHeaders ?? []) {
+    const result = await source.read();
+    if ('error' in result) {
+      report({ outcome: 'token_error', method, pathTemplate: generated.operation.path });
+      return unsent(result.error);
+    }
+    fileValues.push({ name: source.name, value: result.ok });
+  }
   // What is left of the budget; the check before sending refuses at zero
   const callTimeoutMs = timeoutMs - (retryDeps.now() - uploadStarted);
   // The wire headers for one send with the given bearer token (none without
   // --upstream-oauth-*), or undefined when they exceed the final budgets —
   // re-checked per send, since a refreshed token can differ in length.
   const headersFor = (bearer: string | undefined): HopHeaders | undefined => {
-    const headers = assemble(bearer);
+    const headers = assemble(bearer, fileValues);
     return overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)
       ? undefined
       : headers;
@@ -494,15 +514,28 @@ const runUpstreamCall = async (
     attempts += replay.attempts;
   }
   const upstreamMs = Math.max(0, retryDeps.now() - upstreamStarted);
+  // A 401 for a value read from a file: the next call reads the file again
+  if (outcome.kind === 'response' && outcome.status === 401) {
+    for (const [index, source] of (config.fileHeaders ?? []).entries()) {
+      source.stale(fileValues[index]?.value ?? '');
+    }
+  }
   const [firstSecretHeader] = config.secretHeaders;
+  const [firstFileHeader] = config.fileHeaders ?? [];
   const envVarHint = oauth?.envVarHint ?? firstSecretHeader?.envVar;
+  // A 401/403 hint names the file of a --header-file unless OAuth sets the token
+  const envHint: { envVarHint?: string } = envVarHint === undefined ? {} : { envVarHint };
+  const credentialHint =
+    oauth === undefined && firstFileHeader !== undefined
+      ? { credentialFile: firstFileHeader.path }
+      : envHint;
   const mapRest = (): ToolCallOutcome =>
     mapResponse({
       outcome,
       validator,
       outputSchema: tool.wireTool.outputSchema,
       redactor: config.redactor,
-      ...(envVarHint === undefined ? {} : { envVarHint }),
+      ...credentialHint,
       ...(tool.generated?.outputSchemaAssumesDefaultIsError === true
         ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
         : {}),

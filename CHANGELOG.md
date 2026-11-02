@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--header-file <Header=PATH>` reads a credential header from a file, so a renewed token needs
+  no restart.** A running server cannot see a new value of an environment variable, so a
+  short-lived token the user renews by hand stopped working until the host restarted the server.
+  Each call now checks whether the file changed and reads it again only then; a 401 is not sent
+  again, but makes the next call read the file even if it looks unchanged. The server starts
+  without the file and each call fails with the path until it is there. The file must be a
+  regular file with one link, and on Linux and macOS the user's own, closed to others. A value
+  that fails a check fails the call with the path and the reason, never the value. Each new
+  value is registered with the redactor before its first use. `check` reports each file, and a
+  401 or 403 names it (#125).
+
 ## [0.10.0] - 2026-11-02
 
 ### Added

@@ -14,8 +14,14 @@ const byteLength = (value: string): number => textEncoder.encode(value).length;
 // non-loopback http: origin is a credential-leak footgun — refuse the call
 // entirely (no request is ever sent) unless the operator explicitly opted in
 // via --allow-insecure-http.
+// Whether the API sends an operator credential at all
+const sendsCredentials = (config: ExecutorConfig): boolean =>
+  config.secretHeaders.length > 0 ||
+  (config.fileHeaders?.length ?? 0) > 0 ||
+  config.oauth !== undefined;
+
 export const cleartextBlocked = (config: ExecutorConfig, base: URL): boolean =>
-  (config.secretHeaders.length > 0 || config.oauth !== undefined) &&
+  sendsCredentials(config) &&
   base.protocol === 'http:' &&
   !config.allowInsecureHttp &&
   !isLoopbackHost(base.hostname);
@@ -23,11 +29,7 @@ export const cleartextBlocked = (config: ExecutorConfig, base: URL): boolean =>
 // The cleartext gate passes a loopback name such as api.localhost by name, so
 // the request then requires loopback DNS answers (needsLoopbackAnswer)
 export const loopbackAnswerRequired = (config: ExecutorConfig, base: URL): boolean =>
-  needsLoopbackAnswer(
-    base,
-    config.secretHeaders.length > 0 || config.oauth !== undefined,
-    config.allowInsecureHttp,
-  );
+  needsLoopbackAnswer(base, sendsCredentials(config), config.allowInsecureHttp);
 
 // Explicit path-join (never `new URL(relativePath, base)`, which resolves
 // `..`/`.`-style segments against the base's own directory and can escape
@@ -72,6 +74,8 @@ export const assembleHeaders = (
   contentType: string | undefined,
   toolHeaders: Readonly<Record<string, string>>,
   bearer: string | undefined,
+  // --header-file values read for this call (#125)
+  fileHeaders: readonly { name: string; value: string }[] = [],
 ): HopHeaders => {
   // Kept as sequential bracket assignments (not a spread build): the write
   // ORDER is the precedence contract, and bracket assignment on a plain
@@ -93,6 +97,9 @@ export const assembleHeaders = (
     sameOriginHeaders[header.name.toLowerCase()] = header.value;
   }
   for (const header of config.secretHeaders) {
+    sameOriginHeaders[header.name.toLowerCase()] = header.value;
+  }
+  for (const header of fileHeaders) {
     sameOriginHeaders[header.name.toLowerCase()] = header.value;
   }
   // The OAuth2 access token, last of all. --header-env Authorization is a

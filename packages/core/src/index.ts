@@ -48,6 +48,13 @@ export {
   resolveHeaderEnvMappings,
 } from './http/headers.ts';
 export type { HeaderEnvMapping, ResolvedHeader } from './http/headers.ts';
+export {
+  createHeaderFileSource,
+  describeHeaderFileError,
+  displayPath,
+  readHeaderFile,
+} from './http/header-file.ts';
+export type { HeaderFileResult, HeaderFileSource } from './http/header-file.ts';
 export { hashContent, loadSpecFromFile, parseSpecSource } from './spec/load.ts';
 export type { FileLoadDeps, LoadedSpecText, SpecSource } from './spec/load.ts';
 export { assertAllowedRedirectTarget, classifyAddress } from './http/egress.ts';

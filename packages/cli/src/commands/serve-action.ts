@@ -12,6 +12,7 @@ import {
   canonicalSourceOf,
   completeTools,
   createClientCredentialsSource,
+  createHeaderFileSource,
   createEnvelopeCompiler,
   lazyEnvelopeValidators,
   MAX_REDACTED_SECRETS,
@@ -62,6 +63,7 @@ import {
   assertSeparateBases,
   assertSeparateNamespaces,
   combinedContentHash,
+  MAX_FILE_HEADER_VALUE_LENGTH,
   parseImageResponseMode,
   resolveApiConfig,
   resolveImageResponses,
@@ -642,11 +644,13 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
   if (
     !specSourceIsFile &&
     !resolvedBase.trusted &&
-    (apiConfig.secretHeaders.length > 0 || apiConfig.oauth !== undefined)
+    (apiConfig.secretHeaders.length > 0 ||
+      apiConfig.fileHeaders.length > 0 ||
+      apiConfig.oauth !== undefined)
   ) {
     throw usageError(
       withApi(name, [
-        'the spec is fetched from a URL and no --base-url is set, so the spec alone would decide where --header-env/--basic-auth-env/--upstream-oauth-* credentials are sent — pass --base-url <url>',
+        'the spec is fetched from a URL and no --base-url is set, so the spec alone would decide where --header-env/--header-file/--basic-auth-env/--upstream-oauth-* credentials are sent — pass --base-url <url>',
       ]).join('\n'),
     );
   }
@@ -691,8 +695,8 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
     }
   }
   const configuredHeaderNames = new Set(
-    [...apiConfig.staticHeaders, ...apiConfig.secretHeaders].map((header) =>
-      header.name.toLowerCase(),
+    [...apiConfig.staticHeaders, ...apiConfig.secretHeaders, ...apiConfig.fileHeaders].map(
+      (header) => header.name.toLowerCase(),
     ),
   );
   // Startup diagnostics — cache staleness, a pending candidate, dead
@@ -1121,6 +1125,16 @@ const executorConfigOf = async (
     allowPrivateNetwork,
     allowInsecureHttp: apiConfig.allowInsecureHttp,
     secretHeaders: apiConfig.secretHeaders,
+    // --header-file (#125): each value is registered with `redactor` before
+    // it is first sent
+    fileHeaders: apiConfig.fileHeaders.map((header) =>
+      createHeaderFileSource({
+        ...header,
+        maxLength: MAX_FILE_HEADER_VALUE_LENGTH,
+        redactor,
+        now: ctx.now,
+      }),
+    ),
     staticHeaders: apiConfig.staticHeaders,
     reservedHeaderNames: apiConfig.reservedHeaderNames,
     redactor,

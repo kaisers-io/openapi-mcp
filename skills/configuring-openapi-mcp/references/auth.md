@@ -40,7 +40,24 @@ top-level list in the output) gives the flag for each scheme an exposed operatio
 `--header-env` sends the value exactly as stored. For a bearer token the variable must contain
 the word `Bearer`, a space and the token. Tell the user this when they store it.
 
-A spec loaded from a URL needs `--base-url` with `--header-env`, `--basic-auth-env` or
+A token the user renews by hand, such as their own login token that expires after an hour,
+goes in `--header-file Authorization=<absolute path>` instead of `--header-env`. A variable
+changes only when the host restarts the server; the server reads the file again whenever it
+changes, so a renewed token works on the next call. Ask the user before choosing it: an API
+key or a long-lived token stays in a variable.
+
+- The path must be absolute; hosts do not expand `~`.
+- The file holds the complete value (`Bearer <token>`); one trailing line break is ignored.
+- On Linux and macOS the file must belong to the user and be closed to others (`chmod 600`).
+  On Windows, keep it in the user profile; its access list is not checked.
+- Tell the user to write a temp file in the same directory and rename it into place, for
+  example `umask 077; printf '%s\n' "Bearer $RAW_TOKEN" > PATH.tmp && mv PATH.tmp PATH`.
+- The server starts without the file; calls fail with `the header file "<path>" is missing`
+  until it is there. `check` reports each file as ok or with its reason, never its value.
+- A 401 is not sent again. The message says `(check the header file "<path>")`; after the user
+  renews the token, the next call uses it.
+
+A spec loaded from a URL needs `--base-url` with `--header-env`, `--header-file`, `--basic-auth-env` or
 `--upstream-oauth-*`, so that the spec alone does not decide where the credential goes. Take the URL from the spec's
 `servers` and ask the user to confirm it.
 
@@ -56,13 +73,13 @@ The start fails with a text that names the header when a rule is broken:
 |---|---|---|
 | a secret goes in `--header-env`, never `--header` | a secret belongs in a variable, not in the config file | `looks like a credential` for `Authorization`, `Cookie` or a name with `token`, `key`, `secret`, `session`, `password` and similar |
 | no `Host`, `Content-Type`, `Content-Length` or other hop-by-hop header | the server sets them per request | `is a hop-by-hop or client-managed header` |
-| one source per header, never empty | two values would be ambiguous | `duplicate header`, `is configured via both --header and --header-env`, `has an empty value` |
+| one source per header, never empty | two values would be ambiguous | `duplicate header`, `is configured via both --header and --header-env`, `is configured more than once`, `has an empty value` |
 | at most 32 headers, 64 KiB together, 256 characters per name, 8,192 per value | bounded request size | `too many API headers configured`, `-byte aggregate budget` |
 | values in ASCII or Latin-1, without line breaks | HTTP headers cannot carry more | `contains control characters`, `contains a character above U+00FF` |
 | a secret longer than `[redacted]` and not part of it, at most 64 secrets per server | the server must find and redact each secret in output | `too trivial to redact safely`, `too many secrets to redact` |
 
-`--basic-auth-env` cannot go with `--header-env Authorization=...` or `--upstream-oauth-*`,
-since all three set the one `Authorization` header. Its user name must not contain `:`.
+`--basic-auth-env` cannot go with `--header-env Authorization=...`, `--header-file
+Authorization=...` or `--upstream-oauth-*`, since all of them set the one `Authorization` header. Its user name must not contain `:`.
 
 A credential is never sent over `http://` to a host that is not loopback. A call then fails
 with `refusing to send a secret header in cleartext`. `--allow-insecure-http` permits it; add it

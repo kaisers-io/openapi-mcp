@@ -92,11 +92,12 @@ How headers and secrets work is in [credentials.md](credentials.md). How request
 
 | Flag | Repeatable | Meaning | Default |
 |---|---|---|---|
-| `--base-url <url>` | no | the base URL for API requests, instead of the one the spec names; an absolute `http` or `https` URL; required with a spec URL and `--header-env`, `--basic-auth-env` or `--upstream-oauth-*` | `servers[0]` from the spec |
+| `--base-url <url>` | no | the base URL for API requests, instead of the one the spec names; an absolute `http` or `https` URL; required with a spec URL and `--header-env`, `--header-file`, `--basic-auth-env` or `--upstream-oauth-*` | `servers[0]` from the spec |
 | `--header-env <Header=ENV>` | yes | an API header whose value is read from the environment variable `ENV`; treated as a secret | `[]` |
+| `--header-file <Header=PATH>` | yes | an API header whose value is read from the owner-only file at the absolute `PATH`, again on each call when the file changed, so a renewed token needs no restart; treated as a secret; see [credentials.md](credentials.md#a-token-you-renew-by-hand---header-file) | `[]` |
 | `--basic-auth-env <USER_ENV:PASSWORD_ENV>` | no | HTTP Basic auth: the server builds the `Authorization` header from the user name and the password in these variables; without `:PASSWORD_ENV` the password is empty; see [credentials.md](credentials.md#http-basic-authentication) | none |
 | `--header <Header:value>` | yes | a static API header that is not a secret; a name that looks like a credential is refused | `[]` |
-| `--allow-insecure-http` | no | allow a `--header-env` or `--spec-header-env` credential over cleartext `http` to an origin that is not loopback | off |
+| `--allow-insecure-http` | no | allow a `--header-env`, `--header-file` or `--spec-header-env` credential over cleartext `http` to an origin that is not loopback | off |
 | `--allow-offsite-redirects` | no | follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply, and a later hop back onto the API is checked again; see [security.md](security.md#request-authorization) | off |
 | `--no-trace-propagation` | no | do not forward a call's W3C trace context (`_meta.traceparent` and `tracestate`) to the upstream API | forwarded |
 | `--upstream-oauth-client-id-env <ENV>` | no | OAuth2 client credentials: the environment variable that holds the client ID; needs `--upstream-oauth-client-secret-env` | none |
@@ -160,7 +161,7 @@ Both features are explained in [requests-and-responses.md](requests-and-response
 With `--api`, each of these flags starts its value with the API's name and `=`, for example
 `--allow github=tag:repos`: `--allow`, `--spec-header-env`, `--ttl`, `--cache-key`,
 `--nullable-response-fields`, `--omit-output-schema`, `--omit-unsupported-parameters`,
-`--deep-object-indices`, `--base-url`, `--header-env`, `--basic-auth-env`, `--header`
+`--deep-object-indices`, `--base-url`, `--header-env`, `--header-file`, `--basic-auth-env`, `--header`
 and every `--upstream-oauth-*` flag. `--deny` may also be given without a name, and then applies
 to every API. These switches are set per API with `--enable`: `trust-spec-updates`,
 `allow-private-network`, `default-response-is-error`, `allow-insecure-http` and
@@ -263,7 +264,9 @@ openapi-mcp --json check --spec https://api.example.com/openapi.json \
    `--spec-header-env`, `--upstream-oauth-client-id-env`, `--upstream-oauth-client-secret-env`,
    and `--http-token-env` with `--http`), each as set or missing, never with its value. It lists
    all of them, not only the first missing one. When one is missing, `check` skips the next
-   stage and exits with code `2`.
+   stage and exits with code `2`. It also reads every `--header-file` as a call would and lists
+   it as ok or with the reason it fails, never with its value. `serve` starts without such a
+   file, so the next stage still runs, but `check` exits with code `2`.
 2. The startup stage does what `serve` does before it accepts a connection. It loads the spec,
    applies the filters, resolves and checks the base URL and the OAuth token URL, chooses the
    tool mode and compiles the output schemas. Unlike `serve`, `check` compiles every output

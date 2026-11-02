@@ -39,6 +39,8 @@ value), 3 validation (the spec, the cache, a budget, `--strict-filters`), 4 not 
 |---|---|---|
 | `environment variable "X" (for header "H") is not set or empty`, `is not set or empty`, `env var "X" is not set` | the variable does not reach the server | see the host rows above |
 | `invalid header mapping`, `expected <Header>=<ENV_VAR>`, `must match the RFC 9110 token grammar` | `--header-env` or `--spec-header-env` not in `Header=VAR` form, or a header name with spaces or other characters | `--header-env X-Api-Key=VAR` |
+| `invalid --header-file`, `--header-file ...=... needs an absolute path` | not in `Header=PATH` form, or a relative path or one with `~` | `--header-file Authorization=/absolute/path/to/token` |
+| `is configured more than once (--header-file, --header-env, --basic-auth-env)`, `cannot be combined with --header-env Authorization=... or --header-file Authorization=...` | two sources for one header | keep one: `--header-file` for a token the user renews, else `--header-env` |
 | `names an invalid environment variable`, `invalid env var name` | a flag names a variable with characters other than letters, digits and `_` | rename the variable |
 | `contains control characters`, `contains a character above U+00FF` | a variable or `--header` value holds a line break or non-Latin-1 text, which no HTTP header can carry | the user fixes the stored value |
 | `cannot read spec file` | wrong path, or relative to another working directory | absolute path |
@@ -58,7 +60,7 @@ value), 3 validation (the spec, the cache, a budget, `--strict-filters`), 4 not 
 | `operations ... exceeds the 4096-operation limit` | over 4,096 operations | a smaller spec; filters do not help here |
 | `has no absolute server URL ... pass --base-url` | no usable `servers` entry, or `servers[0].url` over 2,048 bytes | `--base-url https://...` |
 | `the resolved API base URL (...) is invalid`, `invalid --base-url` | a query string, a fragment, user and password, or a scheme other than `http(s)` | `--base-url` with only scheme, host and path |
-| `the spec alone would decide where --header-env/--basic-auth-env/--upstream-oauth-* credentials are sent` | a spec URL with `--header-env`, `--basic-auth-env` or `--upstream-oauth-*` (also with `--upstream-oauth-token-url`) and no `--base-url` | `--base-url https://...`, the API base URL the user confirms |
+| `the spec alone would decide where --header-env/--header-file/--basic-auth-env/--upstream-oauth-* credentials are sent` | a spec URL with `--header-env`, `--header-file`, `--basic-auth-env` or `--upstream-oauth-*` (also with `--upstream-oauth-token-url`) and no `--base-url` | `--base-url https://...`, the API base URL the user confirms |
 | `has an output schema that cannot be compiled` | a response schema the validator cannot build | `--omit-output-schema "operationId:<id>"` for that tool, after the user agrees |
 | `could not derive unique tool names` | operationIds that still collide after hashing | rename the operations (overlay) |
 | `is not object-rooted`, `duplicate tool name` | a broken generated tool | report it with the spec, as a bug |

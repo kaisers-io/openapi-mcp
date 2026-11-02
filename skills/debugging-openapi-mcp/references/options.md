@@ -31,10 +31,11 @@ value, `prefix-or-all` applies to every API without one, `enable` is set with
 | `--deep-object-indices <pattern>` |  |  | yes | prefix | for matching operations, send deepObject values as name[key][0]=value, the convention of Stripe and qs, so that those OpenAPI does not define (nested objects, arrays, scalars) no longer omit the operation; use it only for an API that reads that (repeatable, --allow selectors) |
 | `--base-url <url>` |  |  |  | prefix | override the spec-derived base URL for API requests |
 | `--header-env <Header=ENV>` |  |  | yes | prefix | API auth header, value read from env (repeatable, secret) |
+| `--header-file <Header=PATH>` |  |  | yes | prefix | API auth header, value read from this file on each call when it changed, so a renewed token needs no restart (repeatable, secret; owner-only file) |
 | `--basic-auth-env <USER_ENV:PASSWORD_ENV>` |  |  |  | prefix | HTTP Basic auth for API requests: the user name and the password read from these env vars (secret; without :PASSWORD_ENV the password is empty) |
 | `--header <Header:value>` |  |  | yes | prefix | static, non-secret API header (repeatable); a token or key goes in --header-env |
 | `--max-response-bytes <size>` | `"10MB"` |  |  |  | cap the decompressed upstream response body and the outgoing request body (<int><B\|KB\|MB> or a plain byte count) |
-| `--allow-insecure-http` |  |  |  | enable | permit an operator credential (--header-env, --spec-header-env) over cleartext http to a non-loopback origin |
+| `--allow-insecure-http` |  |  |  | enable | permit an operator credential (--header-env, --header-file, --spec-header-env) over cleartext http to a non-loopback origin |
 | `--max-concurrency <n>` | `"16"` |  |  |  | upstream calls in flight at once; further calls wait in a bounded queue |
 | `--rate-limit <calls/duration>` | `"120/1m"` |  |  |  | tool calls allowed per sliding window |
 | `--request-timeout <duration>` | `"30s"` |  |  |  | deadline for each upstream API request (<int><s\|m\|h\|d>); --timeout covers the spec fetch |

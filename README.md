@@ -15,8 +15,8 @@ What you get without configuring anything:
 
 - The agent can only read. Only `GET`, `HEAD` and `QUERY` operations become tools until you
   allow more with `--allow`.
-- Credentials come only from environment variables, so your config holds variable names, not
-  secrets. The server keeps them out of the tool definitions the model sees and redacts them
+- Credentials come from environment variables or owner-only files, so your config holds names
+  and paths, not secrets. The server keeps them out of the tool definitions the model sees and redacts them
   from results, errors and logs.
 - The server checks every tool call against the operation's schema before it sends a request,
   and rejects arguments the operation does not define. When it can derive a schema for the
@@ -179,9 +179,10 @@ guide](docs/filtering.md) explains every selector, with tested examples.
 
 ## Secrets
 
-Credentials are read only from environment variables that you name with `--header-env`,
+Credentials are read from environment variables that you name with `--header-env`,
 `--spec-header-env`, `--upstream-oauth-client-id-env`, `--upstream-oauth-client-secret-env`
-and `--http-token-env`. `--header` takes only values that are not secret, and refuses header
+and `--http-token-env`. A token you renew by hand can come from a file with `--header-file`,
+which the server reads again when it changes, without a restart. `--header` takes only values that are not secret, and refuses header
 names such as `Authorization`. The [credentials guide](docs/credentials.md) shows how to keep
 a token out of your config and your shell history.
 

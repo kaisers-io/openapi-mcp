@@ -167,7 +167,7 @@ export const resolveOAuthConfig = (
   // it would make which credential is sent depend on write order.
   if (secretHeaderNames.has('authorization')) {
     throw usageError(
-      '--upstream-oauth-client-id-env/--upstream-oauth-client-secret-env cannot be combined with --header-env Authorization=... (the OAuth2 access token is sent in Authorization)',
+      '--upstream-oauth-client-id-env/--upstream-oauth-client-secret-env cannot be combined with --header-env Authorization=... or --header-file Authorization=... (the OAuth2 access token is sent in Authorization)',
     );
   }
   if (!(CLIENT_AUTH_METHODS as readonly string[]).includes(opts.upstreamOauthClientAuth)) {

@@ -78,6 +78,7 @@ const SERVE_OPTIONS = [
   ...SPEC_OPTIONS,
   '--base-url',
   '--header-env',
+  '--header-file',
   '--basic-auth-env',
   '--header',
   '--max-response-bytes',

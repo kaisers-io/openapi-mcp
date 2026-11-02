@@ -34,9 +34,9 @@ not a vulnerability. A way around a guarantee it states is one.
 
 ## What is in scope
 
-- **Credential leakage.** The server reads secrets only from environment variables (`--header-env`,
-  `--spec-header-env`, `--http-token-env`, `--upstream-oauth-client-*-env`) and passes every output
-  through a central redactor. In scope: a secret, an upstream OAuth access token, or one of the
+- **Credential leakage.** The server reads secrets from environment variables (`--header-env`,
+  `--spec-header-env`, `--http-token-env`, `--upstream-oauth-client-*-env`) and from owner-only
+  files (`--header-file`), and passes every output through a central redactor. In scope: a secret, an upstream OAuth access token, or one of the
   encoded variants the redactor covers, that reaches argv, the spec cache, a log line, a tool
   schema, a tool result, an error message, `doctor` or `--json` output.
 - **Egress (SSRF).** In scope: an origin taken from the spec (`servers`) or from a redirect reaching
