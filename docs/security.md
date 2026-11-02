@@ -113,21 +113,31 @@ checks:
   connect time therefore cannot return a different, forbidden address.
 - A base URL or path that changes in an updated spec waits for approval like any other change
   (see above). The server reports it and never applies it on its own.
-- With a spec fetched from a URL, the server starts with `--header-env` or `--basic-auth-env`
-  only when `--base-url` is set. The spec then cannot choose where the credential goes.
-- The server refuses to send an operator credential (`--header-env`, `--spec-header-env`) over
+- With a spec fetched from a URL, the server starts with `--header-env`, `--header-file` or
+  `--basic-auth-env` only when `--base-url` is set. The spec then cannot choose where the credential goes.
+- The server refuses to send an operator credential (`--header-env`, `--header-file`,
+  `--spec-header-env`) over
   plain `http://` to a host that is not loopback. `--allow-insecure-http` allows it.
 
 ## Credential hygiene
 
-- The server reads secrets only from environment variables, named by `--spec-header-env`,
+- The server reads secrets from environment variables, named by `--spec-header-env`,
   `--header-env`, `--upstream-oauth-client-id-env`, `--upstream-oauth-client-secret-env` and
-  `--http-token-env`. It never accepts a secret as a literal flag value. A secret therefore
+  `--http-token-env`, and from files named by `--header-file`. It never accepts a secret as a
+  literal flag value. A secret therefore
   never appears in the process arguments, which other users of a shared machine can read with
   `ps`. The server never writes a secret to the on-disk cache, and never puts one in logs, tool
   schemas or tool results.
 - A referenced variable that is missing or empty at startup stops the server with an error that
   names the variable. There is no silent fallback.
+- A `--header-file` is read on each call when it changed, and again after a 401. It must be a
+  regular file with one link, opened without following a link at its name. On Linux and macOS it
+  must belong to the user and be closed to group and others; on Windows its access list is not
+  checked. The parent directories are the user's to protect. A file that is missing or fails a
+  check fails the call before anything is sent, with the path and the reason, never the value
+  and never with an older value. Each new value is registered with the redactor before its
+  first use; a replaced one stays redacted until the 256-entry runtime registry, shared with
+  OAuth2 access tokens, needs its place.
 - `--header` is for static headers that are not secret. It refuses sensitive header names:
   `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie`, plus any name that
   contains `auth`, `token`, `secret`, `key`, `session`, `credential`, `signature`, `password`,
@@ -739,8 +749,8 @@ behave the same on Windows as on POSIX (measured).
 
 `openapi-mcp` defends against:
 
-- credential exposure: secrets come only from environment variables and are redacted
-  everywhere,
+- credential exposure: secrets come only from environment variables and owner-only files, and
+  are redacted everywhere,
 - unbounded or hostile spec parsing: budgets and sanitization,
 - silent growth of privileges or behavior from a remote spec that changes: updates wait for
   approval,

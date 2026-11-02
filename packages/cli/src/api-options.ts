@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type { Command } from '@commander-js/extra-typings';
 import {
   HEADER_NAME_RE,
@@ -8,6 +9,7 @@ import {
   parseHeaderEnvMapping,
   resolveHeaderEnvMappings,
   SYSTEM_HEADERS,
+  trimSpaces,
   usageError,
 } from '@kaisers-io/openapi-mcp-core';
 import type { HeaderEnvMapping } from '@kaisers-io/openapi-mcp-core';
@@ -111,10 +113,14 @@ export type ApiSecretHeader = {
   envVar: string;
 };
 
+// --header-file (#125): a credential header read from a file on each call
+export type ApiFileHeader = { name: string; path: string };
+
 export type ResolvedApiConfig = {
   baseUrlOverride?: string;
   staticHeaders: { name: string; value: string }[];
   secretHeaders: ApiSecretHeader[];
+  fileHeaders: ApiFileHeader[];
   reservedHeaderNames: ReadonlySet<string>;
   // Every --header-env value (always) AND every --header value that is at
   // least MIN_SECRET_REGISTRATION_LENGTH chars: a credential mistakenly
@@ -156,6 +162,7 @@ export type ApiCmdOpts = OAuthCmdOpts & {
   [key: string]: unknown;
   baseUrl?: string;
   headerEnv: readonly string[];
+  headerFile: readonly string[];
   basicAuthEnv?: string;
   header: readonly string[];
   maxResponseBytes: string;
@@ -181,6 +188,12 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
       [] as readonly string[],
     )
     .option(
+      '--header-file <Header=PATH>',
+      'API auth header, value read from this file on each call when it changed, so a renewed token needs no restart (repeatable, secret; owner-only file)',
+      collect,
+      [] as readonly string[],
+    )
+    .option(
       '--basic-auth-env <USER_ENV:PASSWORD_ENV>',
       'HTTP Basic auth for API requests: the user name and the password read from these env vars (secret; without :PASSWORD_ENV the password is empty)',
     )
@@ -197,7 +210,7 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     )
     .option(
       '--allow-insecure-http',
-      'permit an operator credential (--header-env, --spec-header-env) over cleartext http to a non-loopback origin',
+      'permit an operator credential (--header-env, --header-file, --spec-header-env) over cleartext http to a non-loopback origin',
     )
     .option(
       '--max-concurrency <n>',
@@ -278,11 +291,29 @@ const parseSecretHeaders = (
   });
 };
 
-// Strips a leading/trailing run of SP (U+0020) only — deliberately NARROWER
-// than RFC 9110 OWS, which would also cover HTAB: a tab in a header value is
-// a C0 control character here and is rejected below rather than normalized
-// away, keeping the smuggling guard strict.
-const trimOptionalSpace = (value: string): string => value.replace(/^ +/u, '').replace(/ +$/u, '');
+// The longest value a --header-file may hold, as for --header-env
+export const MAX_FILE_HEADER_VALUE_LENGTH = MAX_HEADER_VALUE_LENGTH;
+
+const parseFileHeaders = (raw: readonly string[]): ApiFileHeader[] =>
+  raw.map((entry) => {
+    const separatorIndex = entry.indexOf('=');
+    const name = entry.slice(0, separatorIndex);
+    const path = entry.slice(separatorIndex + 1);
+    if (separatorIndex === -1 || !HEADER_NAME_RE.test(name)) {
+      throw usageError(
+        'invalid --header-file — expected <Header>=<PATH> with a header name in the RFC 9110 token grammar',
+      );
+    }
+    if (name.length > MAX_HEADER_NAME_LENGTH) {
+      throw usageError(`header name "${name}" exceeds the ${MAX_HEADER_NAME_LENGTH}-char budget`);
+    }
+    // A host starts the server in a directory of its choosing, and expands
+    // no `~`
+    if (!isAbsolute(path)) {
+      throw usageError(`--header-file ${name}=... needs an absolute path`);
+    }
+    return { name, path };
+  });
 
 // Imperative on purpose: `seen` accumulates across iterations (duplicate
 // detection depends on every prior entry, not just the current one) and each
@@ -299,7 +330,9 @@ const parseStaticHeaders = (raw: readonly string[]): { name: string; value: stri
       throw usageError('invalid --header (expected "Header: value")');
     }
     const name = entry.slice(0, separatorIndex);
-    const value = trimOptionalSpace(entry.slice(separatorIndex + 1));
+    // Spaces around the value only (trimSpaces), not HTAB: a tab is a control
+    // character and is refused below rather than normalized away
+    const value = trimSpaces(entry.slice(separatorIndex + 1));
     if (!HEADER_NAME_RE.test(name)) {
       throw usageError(`invalid header name "${name}" — must match the RFC 9110 token grammar`);
     }
@@ -343,21 +376,38 @@ type NamedHeader = {
 const crossValidateHeaders = (
   staticHeaders: readonly NamedHeader[],
   secretHeaders: readonly NamedHeader[],
+  fileHeaders: readonly ApiFileHeader[],
 ): ReadonlySet<string> => {
   const secretNames = new Set(secretHeaders.map((header) => header.name.toLowerCase()));
+  // One source per credential header (#125), compared without case
+  const fileNames = new Set<string>();
+  for (const { name } of fileHeaders) {
+    const lower = name.toLowerCase();
+    if (fileNames.has(lower) || secretNames.has(lower)) {
+      throw usageError(
+        `header "${name}" is configured more than once (--header-file, --header-env, --basic-auth-env)`,
+      );
+    }
+    fileNames.add(lower);
+  }
+  for (const name of fileNames) {
+    secretNames.add(name);
+  }
   // `find` (not a combined build-and-check loop) preserves which header the
   // operator sees named in the error: the first --header entry that
   // collides, in the operator's own list order.
   const conflict = staticHeaders.find((header) => secretNames.has(header.name.toLowerCase()));
   if (conflict !== undefined) {
-    throw usageError(`header "${conflict.name}" is configured via both --header and --header-env`);
+    throw usageError(
+      `header "${conflict.name}" is configured via both --header and --header-env or --header-file`,
+    );
   }
   const names = new Set<string>([
     ...SYSTEM_HEADERS,
     ...staticHeaders.map((header) => header.name.toLowerCase()),
-    ...secretHeaders.map((header) => header.name.toLowerCase()),
+    ...secretNames,
   ]);
-  const total = staticHeaders.length + secretHeaders.length;
+  const total = staticHeaders.length + secretNames.size;
   if (total > MAX_HEADER_COUNT) {
     throw usageError(`too many API headers configured (${total} > ${MAX_HEADER_COUNT})`);
   }
@@ -532,8 +582,9 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
     );
   }
   const secretHeaders = basic === undefined ? fromEnv : [...fromEnv, basic];
+  const fileHeaders = parseFileHeaders(cmdOpts.headerFile);
   const staticHeaders = parseStaticHeaders(cmdOpts.header);
-  const reservedHeaderNames = crossValidateHeaders(staticHeaders, secretHeaders);
+  const reservedHeaderNames = crossValidateHeaders(staticHeaders, secretHeaders, fileHeaders);
   // Marker-collision startup footgun: a --header-env value is ALWAYS a real
   // credential and is always registered. A static --header value shorter
   // than MIN_SECRET_REGISTRATION_LENGTH is excluded — createRedactor
@@ -550,7 +601,7 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
   ];
   const oauth = resolveOAuthConfig(
     cmdOpts,
-    new Set(secretHeaders.map((header) => header.name.toLowerCase())),
+    new Set([...secretHeaders, ...fileHeaders].map((header) => header.name.toLowerCase())),
     ctx.env,
   );
   if (oauth !== undefined) {
@@ -563,6 +614,7 @@ export const resolveApiConfig = (cmdOpts: ApiCmdOpts, ctx: CliContext): Resolved
     ...(baseUrlOverride === undefined ? {} : { baseUrlOverride }),
     staticHeaders,
     secretHeaders,
+    fileHeaders,
     reservedHeaderNames,
     secretValues,
     maxResponseBytes,

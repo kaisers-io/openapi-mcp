@@ -37,6 +37,7 @@ export const PER_API_LISTS: Readonly<Record<string, string>> = {
   '--omit-unsupported-parameters': 'omitUnsupportedParameters',
   '--deep-object-indices': 'deepObjectIndices',
   '--header-env': 'headerEnv',
+  '--header-file': 'headerFile',
   '--header': 'header',
   '--upstream-oauth-scope': 'upstreamOauthScope',
 };

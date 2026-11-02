@@ -122,6 +122,15 @@ export type ExecutorConfig = {
     };
     envVarHint: string;
   };
+  // --header-file (#125): headers whose values each call reads from a file
+  // (http/header-file.ts's HeaderFileSource, spelled out like `oauth`). A
+  // 401 marks the values the call sent as stale; the call is not replayed.
+  fileHeaders?: readonly {
+    name: string;
+    path: string;
+    read: () => Promise<{ ok: string } | { error: string }>;
+    stale: (value: string) => void;
+  }[];
 };
 
 export type ExecutorDeps = {
@@ -297,13 +306,16 @@ const runUpstreamCall = async (
     generatedKey,
     assemble,
   } = preparation.prepared;
+  // --header-file values (#125), read below once per call: --retries and an
+  // OAuth replay send the same ones
+  const fileValues: { name: string; value: string }[] = [];
   // What is left of the budget; the check before sending refuses at zero
   const callTimeoutMs = timeoutMs - (retryDeps.now() - uploadStarted);
   // The wire headers for one send with the given bearer token (none without
   // --upstream-oauth-*), or undefined when they exceed the final budgets —
   // re-checked per send, since a refreshed token can differ in length.
   const headersFor = (bearer: string | undefined): HopHeaders | undefined => {
-    const headers = assemble(bearer);
+    const headers = assemble(bearer, fileValues);
     return overFinalBudget(finalUrl, headers.sameOriginHeaders, config.outboundBudgets)
       ? undefined
       : headers;
@@ -402,6 +414,28 @@ const runUpstreamCall = async (
       retryDeps,
     );
   };
+  // A file that cannot be used sends nothing. The wait ends with the call's
+  // cancellation or deadline; the read itself goes on for other callers.
+  for (const source of config.fileHeaders ?? []) {
+    const result = await waitForToken(
+      async () => await source.read(),
+      signal,
+      transport.timeoutSignal(remainingMs()),
+    );
+    if (result === 'cancelled') {
+      report({ outcome: 'cancelled', ...operationFacts });
+      return unsent('the request was cancelled');
+    }
+    if (result === 'timeout') {
+      report({ outcome: 'timeout', ...operationFacts });
+      return unsent('timed out reading a header file; no API request was sent');
+    }
+    if ('error' in result) {
+      report({ outcome: 'token_error', ...operationFacts });
+      return unsent(result.error);
+    }
+    fileValues.push({ name: source.name, value: result.ok });
+  }
   const first = oauth === undefined ? undefined : await tokenFor(oauth.tokens);
   if (first !== undefined && 'failed' in first) {
     return withEffect(first.failed, 'not_sent');
@@ -436,7 +470,17 @@ const runUpstreamCall = async (
       ? withEffectWarning(withRecoveryKey(result), effect, method)
       : rememberEffect(withRecoveryKey(result), effect);
   const allowedRetries = isRetryableMethod(method, idempotencyKeyField) ? retries : 0;
+  // A 401 for a value read from a file: the next call reads the file again.
+  // Marked at once, also when an OAuth replay follows and fails early.
+  const markFilesStale = (answer: typeof sent.outcome): void => {
+    if (answer.kind === 'response' && answer.status === 401) {
+      for (const [index, source] of (config.fileHeaders ?? []).entries()) {
+        source.stale(fileValues[index]?.value ?? '');
+      }
+    }
+  };
   const sent = await send(firstHeaders, allowedRetries);
+  markFilesStale(sent.outcome);
   let { outcome, attempts } = sent;
   // The attempts that speak for the call's effect: a lone first 401 had
   // none, so after its replay only the replay's attempts count
@@ -489,20 +533,28 @@ const runUpstreamCall = async (
     }
     const replay = await send(replayHeaders, Math.max(allowedRetries - (attempts - 1), 0));
     ({ outcome } = replay);
+    markFilesStale(outcome);
     effectAttempts = attempts > 1 ? attempts + replay.attempts : replay.attempts;
     replayed = true;
     attempts += replay.attempts;
   }
   const upstreamMs = Math.max(0, retryDeps.now() - upstreamStarted);
   const [firstSecretHeader] = config.secretHeaders;
+  const [firstFileHeader] = config.fileHeaders ?? [];
   const envVarHint = oauth?.envVarHint ?? firstSecretHeader?.envVar;
+  // A 401/403 hint names the file of a --header-file unless OAuth sets the token
+  const envHint: { envVarHint?: string } = envVarHint === undefined ? {} : { envVarHint };
+  const credentialHint =
+    oauth === undefined && firstFileHeader !== undefined
+      ? { credentialFile: firstFileHeader.path }
+      : envHint;
   const mapRest = (): ToolCallOutcome =>
     mapResponse({
       outcome,
       validator,
       outputSchema: tool.wireTool.outputSchema,
       redactor: config.redactor,
-      ...(envVarHint === undefined ? {} : { envVarHint }),
+      ...credentialHint,
       ...(tool.generated?.outputSchemaAssumesDefaultIsError === true
         ? { undeclaredSuccessHint: DEFAULT_RESPONSE_IS_ERROR_FLAG }
         : {}),

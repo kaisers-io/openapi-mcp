@@ -144,6 +144,10 @@ export const dryRunCall = async (
   if (config.oauth !== undefined) {
     headers.push({ name: 'authorization', credential: 'not evaluated' });
   }
+  // --header-file (#125): the file is read by a call, not by a dry run
+  for (const source of config.fileHeaders ?? []) {
+    headers.push({ name: source.name.toLowerCase(), credential: 'not evaluated' });
+  }
   const refusal = authorizeHop?.(finalUrl, method, 0);
   const given = callArguments(args);
   return {
@@ -190,6 +194,9 @@ export const dryRunCall = async (
         ...(config.oauth === undefined
           ? []
           : ['the OAuth2 access token, its size and its request']),
+        ...((config.fileHeaders?.length ?? 0) === 0
+          ? []
+          : ['the values of --header-file headers and their size']),
       ],
     },
   };

@@ -51,6 +51,7 @@ export const SUBPROCESS_E2E_FILES = [
   'test/serve-route-authorization.test.ts',
   'test/serve-execute.test.ts',
   'test/serve-tool-mode.test.ts',
+  'test/serve-header-file.test.ts',
   'test/serve-upload.test.ts',
   'test/serve-write-effect.test.ts',
 ];

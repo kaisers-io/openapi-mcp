@@ -53,6 +53,7 @@ Nothing was sent after any of these.
 | Error text | Cause | Fix |
 |---|---|---|
 | `upstream request failed with status 401`, `(check the X environment variable)` | missing or wrong credential | check the variable holds the full value (`Bearer <token>` for bearer), and that it reaches the server |
+| `(check the header file "<path>")` after a 401 or 403 | the token in a `--header-file` expired or is wrong | the user renews it in that file; the next call reads it, no restart. The call itself is not sent again |
 | `status 403` | the credential lacks a permission or scope | the user checks the token's permissions; `--upstream-oauth-scope` for OAuth |
 | `status 404` | wrong base URL, or the object does not exist | compare `check`'s `baseUrl` with the API docs; `--base-url` with the API's path prefix |
 | `status 4xx: <text>` | the API's own error text follows the colon | read it; it is the API's answer |
@@ -85,6 +86,11 @@ Nothing was sent after any of these.
 | `the token endpoint could not be reached`, `the token request timed out`, `the token endpoint address is not allowed by the egress policy`, `redirected, which is never followed` | network, a private token URL, or a token URL that redirects | the final token URL; `--allow-private-network` only if the user confirms |
 | `is not a JSON object`, `carries no valid access_token`, `is not a Bearer token`, `exceeded its size budget` | the token endpoint answers in an unexpected form | the user checks the token URL |
 | `timed out waiting for an OAuth2 access token`, `fresh OAuth2 access token` | the token request took the call's time | a faster token endpoint, or a higher `--request-timeout` |
+| `the header file "<path>" is missing`, `is empty`, `is not a regular file`, `is a symbolic link`, `has more than one link` | a `--header-file` the server cannot use; nothing was sent | the user writes the file at that absolute path, a plain file |
+| `belongs to another user`, `can be read or written by other users (chmod 600 it)` | the file is not private (Linux, macOS) | `chmod 600 <path>`, as the user who runs the host |
+| `changed while it was opened`, `changed while it was read` | the file was written while the server read it | write a temp file and rename it into place; the next call works |
+| `is not valid UTF-8`, `contains control characters`, `contains a character above U+00FF`, `is over the 8192-character header value budget` | the stored value cannot be a header; a second line counts as a control character | one line with the complete value (`Bearer <token>`) |
+| `the header file "<path>" could not be registered for redaction` | the value is part of `[redacted]`, or 256 runtime secrets are still in use | a real token; a restart empties the registry |
 | `its result was withheld because it contained a registered secret`, `its error details were withheld` | the API echoed a credential, also JSON-escaped, as markup entities (`&amp;`) or as a JSON number | do not retry; tell the user |
 
 ## Images and uploads
