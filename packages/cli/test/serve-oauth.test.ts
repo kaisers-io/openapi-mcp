@@ -447,18 +447,19 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
   }, 30_000);
 
   it('a call waiting for a fresh token after a 401 stops at its own deadline, before the token request times out', async () => {
-    const session = await start('/oauth/token', [...allowPrivate, '--request-timeout', '3s']);
+    const session = await start('/oauth/token', [...allowPrivate, '--request-timeout', '8s']);
     const warm = await session.call('listPets');
     expect(warm.result?.['isError']).not.toBe(true);
     mock?.revokeAll();
     mock?.hold('api');
     const pending = session.send('listPets');
     await until(() => mock?.waiting('api') === 1, 'the API request');
-    // Two of the call's three seconds pass at the API. The 401 then needs a
-    // new token, whose request has three seconds of its own, so only the
-    // call's deadline can end the wait after one more second.
+    // Five of the call's eight seconds pass at the API. The 401 then needs a
+    // new token, whose request has eight seconds of its own, so only the
+    // call's deadline can end the wait, after three seconds at most. A slow
+    // runner that took longer to get here leaves the call less, never more.
     await new Promise<void>((resolve) => {
-      setTimeout(resolve, 2000);
+      setTimeout(resolve, 5000);
     });
     mock?.hold('token');
     const released = Date.now();
@@ -469,10 +470,10 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
     expect(JSON.stringify(result)).toContain(
       'timed out waiting for a fresh OAuth2 access token; the request was not sent again',
     );
-    expect(waited).toBeLessThan(2500);
+    expect(waited).toBeLessThan(6000);
     expect(mock?.tokenRequests).toHaveLength(2);
     expect(mock?.apiAuthHeaders).toHaveLength(2);
-  }, 20_000);
+  }, 30_000);
 
   // That the cancelled waiter itself stops waiting at once is tested in
   // packages/core/test/server-execute-oauth.test.ts: here a later check
