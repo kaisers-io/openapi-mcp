@@ -1284,6 +1284,45 @@ describe('buildRequest — multipart/form-data body (kaisers-io/openapi-mcp-arch
     expect(file.type).toBe('image/png');
   });
 
+  // Issue #122
+  it('sends an object part as JSON text with its Content-Type next to a file', async () => {
+    const withJson: RequestMapper = {
+      ...mapper,
+      fields: {
+        ...mapper.fields,
+        metadata: {
+          destination: 'body',
+          bodyPath: ['metadata'],
+          required: true,
+          json: true,
+          partContentType: 'application/vnd.example+json',
+        },
+      },
+    };
+    const metadata = { title: 'Line one\r\n--x', tags: ['a', null], size: { w: 4 } };
+    const built = ok(
+      buildRequest(
+        withJson,
+        'post',
+        '/upload',
+        { file: 'AAEC/w==', metadata, note: 'hi' },
+        budgets,
+      ),
+    );
+    const wire = Buffer.from(built.body ?? new Uint8Array()).toString('latin1');
+    expect(wire).toContain(
+      `Content-Disposition: form-data; name="metadata"\r\nContent-Type: application/vnd.example+json\r\n\r\n${JSON.stringify(metadata)}\r\n`,
+    );
+    const form = await parse(built);
+    expect(JSON.parse(form.get('metadata') as string)).toStrictEqual(metadata);
+    expect(form.get('note')).toBe('hi');
+    const file = form.get('file') as File;
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([0, 1, 2, 255]);
+    expect(
+      err(buildRequest(withJson, 'post', '/upload', { file: 'AA==', metadata: [1] }, budgets)),
+    ).toMatch(/multipart part "metadata" must be an object/u);
+  });
+
   it('refuses a required body with zero parts (RFC 2046 needs at least one)', () => {
     const optionalParts: RequestMapper = {
       ...mapper,

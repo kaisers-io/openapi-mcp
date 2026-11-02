@@ -673,13 +673,16 @@ const binaryBody = (payload: unknown): { ok: Uint8Array } | { error: string } =>
 // Text parts carry the scalar's string form as UTF-8 with no part
 // Content-Type (§4.4 default text/plain); binary parts (mapping.binary) carry
 // the decoded base64 bytes as `application/octet-stream` with a filename
-// (§4.2), which most servers require to treat a part as a file. The boundary
+// (§4.2), which most servers require to treat a part as a file. JSON parts
+// (mapping.json, issue #122) carry an object's JSON text with its declared
+// Content-Type; JSON escapes CR/LF, so the text cannot end the part early. The boundary
 // is 192 random bits, generated per request; a part that happens to contain
 // the delimiter fails closed rather than producing an ambiguous body.
 const multipartBody = (
   payload: Record<string, unknown>,
-  // File part name -> its Content-Type.
-  binaryParts: ReadonlyMap<string, string>,
+  // Part name -> how it is sent (a file's bytes or an object's JSON) and its
+  // Content-Type. Any other part is a scalar's text.
+  typedParts: ReadonlyMap<string, { kind: 'file' | 'json'; contentType: string }>,
 ): { ok: Uint8Array; boundary: string } | { error: string } => {
   const boundary = `openapi-mcp-${randomBytes(24).toString('hex')}`;
   const delimiter = Buffer.from(`--${boundary}`);
@@ -692,14 +695,20 @@ const multipartBody = (
     }
     let content: Buffer;
     let headers = `Content-Disposition: form-data; name="${name}"`;
-    const partType = binaryParts.get(name);
-    if (partType !== undefined) {
+    const part = typedParts.get(name);
+    if (part?.kind === 'file') {
       const decoded = binaryBody(value);
       if ('error' in decoded) {
         return { error: `multipart part "${name}" must be a valid base64 string` };
       }
       content = Buffer.from(decoded.ok);
-      headers += `; filename="${name}"\r\nContent-Type: ${partType}`;
+      headers += `; filename="${name}"\r\nContent-Type: ${part.contentType}`;
+    } else if (part?.kind === 'json') {
+      if (!isPlainObject(value)) {
+        return { error: `multipart part "${name}" must be an object` };
+      }
+      content = Buffer.from(JSON.stringify(value), 'utf8');
+      headers += `\r\nContent-Type: ${part.contentType}`;
     } else if (isPrimitive(value)) {
       content = Buffer.from(String(value), 'utf8');
     } else {
@@ -796,14 +805,22 @@ const serializeBody = (
         error: `the multipart/form-data request body needs at least one part (RFC 2046); provide at least one of: ${names}`,
       };
     }
-    const binaryParts = new Map(
-      bodyFieldEntries.flatMap(([, mapping]) =>
-        mapping.binary === true && mapping.bodyPath.length === 1
-          ? [[mapping.bodyPath[0] as string, mapping.partContentType ?? OCTET_STREAM] as const]
-          : [],
-      ),
-    );
-    const encoded = multipartBody(payload, binaryParts);
+    const typedParts = new Map<string, { kind: 'file' | 'json'; contentType: string }>();
+    for (const [, mapping] of bodyFieldEntries) {
+      const [name] = mapping.bodyPath;
+      if (name === undefined || mapping.bodyPath.length !== 1) {
+        continue;
+      }
+      if (mapping.binary === true) {
+        typedParts.set(name, {
+          kind: 'file',
+          contentType: mapping.partContentType ?? OCTET_STREAM,
+        });
+      } else if (mapping.json === true && mapping.partContentType !== undefined) {
+        typedParts.set(name, { kind: 'json', contentType: mapping.partContentType });
+      }
+    }
+    const encoded = multipartBody(payload, typedParts);
     if ('error' in encoded) {
       return encoded;
     }

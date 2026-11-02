@@ -1043,7 +1043,6 @@ describe('buildLayout — multipart/form-data bodies (kaisers-io/openapi-mcp-arc
   });
 
   it.each([
-    ['an encoding object', upload, { encoding: { file: { contentType: 'image/png' } } }],
     ['a non-object root', { type: 'string', format: 'binary' }, {}],
     [
       'a part name that cannot be put in a Content-Disposition header',
@@ -1062,15 +1061,115 @@ describe('buildLayout — multipart/form-data bodies (kaisers-io/openapi-mcp-arc
 
   it.each([
     ['an array of strings', { type: 'array', items: { type: 'string' } }],
-    ['an object', { type: 'object', properties: { a: { type: 'string' } } }],
+    ['a 3.0 nullable object', { type: 'object', nullable: true, properties: {} }],
+    ['a 3.1 nullable object', { type: ['object', 'null'], properties: {} }],
     ['a 3.1 nullable string', { type: ['string', 'null'] }],
     ['a 3.0 nullable string', { type: 'string', nullable: true }],
     ['a typeless schema', {}],
     ['an enum with null', { enum: ['a', null] }],
     ['multiple files', { type: 'array', items: { type: 'string', format: 'binary' } }],
-  ])('omits a multipart part that is %s (the serializer only writes scalars)', (_label, part) => {
-    const r = multipart(withPart(part));
-    expect('unrepresentable' in r && r.unrepresentable).toMatch(/multipart part "extra"/u);
+  ])(
+    'omits a multipart part that is %s (the serializer writes scalars and objects)',
+    (_label, part) => {
+      const r = multipart(withPart(part));
+      expect('unrepresentable' in r && r.unrepresentable).toMatch(/multipart part "extra"/u);
+    },
+  );
+
+  // Issue #122: an object part is sent as JSON text
+  const listing = {
+    type: 'object',
+    required: ['file', 'metadata'],
+    properties: {
+      file: { type: 'string', format: 'binary' },
+      metadata: {
+        type: 'object',
+        required: ['title'],
+        properties: { title: { type: 'string' }, id: { type: 'string', readOnly: true } },
+      },
+    },
+  };
+
+  it('sends an object part as application/json and validates it as an object', () => {
+    const l = layout(multipart(listing));
+    expect(l.mapper.fields['metadata']).toEqual({
+      destination: 'body',
+      bodyPath: ['metadata'],
+      required: true,
+      json: true,
+      partContentType: 'application/json',
+    });
+    const valid = { file: 'aGVsbG8=', metadata: { title: 'Mug' } };
+    expect(l.inputSchema.safeParse(valid).success).toBe(true);
+    expect(l.inputSchema.safeParse({ ...valid, metadata: 'Mug' }).success).toBe(false);
+    expect(l.inputSchema.safeParse({ ...valid, metadata: {} }).success).toBe(false);
+    // readOnly stays out of a request, as in any other object
+    expect(l.inputSchema.safeParse({ ...valid, metadata: { title: 'Mug', id: 'x' } }).success).toBe(
+      false,
+    );
+  });
+
+  it('sends the contentType an Encoding Object names for an object or a file part', () => {
+    const l = layout(
+      multipart(listing, {
+        encoding: {
+          metadata: { contentType: 'application/vnd.example+json', 'x-note': 1 },
+          file: { contentType: 'image/png' },
+        },
+      }),
+    );
+    expect(l.mapper.fields['metadata']).toMatchObject({
+      json: true,
+      partContentType: 'application/vnd.example+json',
+    });
+    expect(l.mapper.fields['file']).toMatchObject({ binary: true, partContentType: 'image/png' });
+  });
+
+  it.each([
+    ['headers', { metadata: { contentType: 'application/json', headers: {} } }],
+    ['style', { metadata: { style: 'form' } }],
+    ['a wildcard', { file: { contentType: 'image/*' } }],
+    ['a list of types', { file: { contentType: 'image/png, image/jpeg' } }],
+    ['a malformed type', { file: { contentType: 'image/png\r\nX-Evil: 1' } }],
+    ['a trailing newline', { file: { contentType: 'image/png\n' } }],
+    ['a type that is not a string', { file: { contentType: 1 } }],
+    ['an undeclared property', { other: { contentType: 'text/plain' } }],
+  ])('omits a multipart body whose Encoding Object declares %s', (_label, encoding) => {
+    const r = multipart(listing, { encoding });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(/multipart encoding of "/u);
+  });
+
+  it('omits an object part whose declared contentType is not JSON in UTF-8', () => {
+    const r = multipart(listing, { encoding: { metadata: { contentType: 'text/plain' } } });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(
+      /part "metadata" is an object, sent as JSON, but its encoding declares text\/plain/u,
+    );
+    const utf16 = 'application/json; charset="UTF-16"';
+    expect(
+      'unrepresentable' in multipart(listing, { encoding: { metadata: { contentType: utf16 } } }),
+    ).toBe(true);
+    const utf8 = layout(
+      multipart(listing, {
+        encoding: { metadata: { contentType: 'application/json; charset=UTF-8' } },
+      }),
+    );
+    expect(utf8.mapper.fields['metadata']).toMatchObject({
+      partContentType: 'application/json; charset=UTF-8',
+    });
+  });
+
+  it('omits a contentType on a scalar part, which is sent with none', () => {
+    const r = multipart(upload, { encoding: { note: { contentType: 'text/plain' } } });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(
+      /part "note" declares a contentType, which only file and object parts support/u,
+    );
+  });
+
+  it('omits a multipart body with an OAS 3.2 prefixEncoding', () => {
+    const r = multipart(listing, { prefixEncoding: [{ contentType: 'text/plain' }] });
+    expect('unrepresentable' in r && r.unrepresentable).toMatch(
+      /encoding object is not supported/u,
+    );
   });
 
   it.each([

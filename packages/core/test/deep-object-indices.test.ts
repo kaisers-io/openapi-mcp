@@ -401,11 +401,13 @@ describe('a form body with a deepObject encoding', () => {
     );
   });
 
-  it('omits a multipart encoding and the OAS 3.2 positional encodings', () => {
+  it('omits a deepObject multipart encoding and the OAS 3.2 positional encodings', () => {
     const tags = { tags: { type: 'string' } };
     expect(
       unrepresentable(formOperation(tags, { tags: DEEP }, {}, 'multipart/form-data'), true),
-    ).toBe('a request body encoding object is not supported');
+    ).toBe(
+      'the multipart encoding of "tags" is not supported: only a contentType of one concrete media type on a declared property',
+    );
     expect(unrepresentable(formOperation(tags, {}, { prefixEncoding: [DEEP] }), true)).toBe(
       'a request body encoding object is not supported',
     );

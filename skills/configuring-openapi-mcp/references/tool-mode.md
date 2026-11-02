@@ -74,7 +74,9 @@ media type. Ask the user before either flag:
   returns the path; `--image-dir-max-bytes` (default 100 MB, at least 5 MiB) caps that folder.
 - `--uploads` lets the agent name a file in `~/.kaisers-io/openapi-mcp/uploads/<api>/` instead
   of sending base64. Names use letters, digits, `_`, `-` and dots, up to 128 characters. The user copies files there; files older than 24 hours are removed at
-  startup. A file counts against `--max-response-bytes`.
+  startup. A file counts against `--max-response-bytes`. A multipart upload can carry an object
+  next to the file, such as its metadata; the agent passes it as a JSON object and the server
+  sends it as a JSON part.
 
 Both need a home directory, and `--uploads` and `file` mode are refused on a non-loopback
 `--http-host`, since a remote client could then read or fill this machine's folders.

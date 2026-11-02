@@ -176,7 +176,8 @@ sends nothing, as OpenAPI defines.
 
 Every other Encoding Object still omits the operation: another `style`, `explode: false`,
 `contentType`, `headers`, `allowReserved`, an entry for a property the body does not declare,
-an encoding of a `multipart/form-data` body, and OAS 3.2 `prefixEncoding` and `itemEncoding`.
+and OAS 3.2 `prefixEncoding` and `itemEncoding`. A `multipart/form-data` body has its own
+rules, below.
 So does a form body with such an encoding whose property names a bracket-parsing server reads
 as one key, such as `a.b` and `a_b`, a name that contains `[` or `]`, an empty name, or one
 that is not well-formed UTF-16.
@@ -195,9 +196,21 @@ Each property of the body object becomes one part:
   (`image/png`), otherwise `application/octet-stream`. A file part with other keywords
   (`maxLength`, `nullable`, `enum` and so on) omits the operation, so it is never sent as
   text.
+- An object part (`type: object`, not nullable) is a JSON object tool argument, checked like
+  any other object, so `readOnly` properties stay out. The server sends its JSON text with
+  `Content-Type: application/json`, the OpenAPI default for an object property. A file with
+  its metadata, such as `{file, metadata: {title}}`, works this way.
 - Any other part must be a single non-null scalar: a string, number, integer or boolean, or
-  an `enum` or `const` of those. Arrays (repeated parts or several files), objects (JSON
-  parts) and nullable parts omit the operation.
+  an `enum` or `const` of those, sent as text with no `Content-Type`. Arrays (repeated parts
+  or several files) and nullable parts omit the operation. Inside an object part, arrays and
+  `null` are fine.
+- An Encoding Object entry may name the part's `contentType`: one concrete JSON type, such as
+  `application/vnd.example+json`, for an object part (the text is UTF-8, so another `charset`
+  omits the operation), or one concrete type, such as
+  `image/png`, for a file part. The server sends that type. With `--uploads`, a file for a
+  declared image type must be that image. Any other entry omits the operation: a `contentType`
+  on a scalar part, a range such as `image/*`, a list of types, `headers`, `style`, `explode`,
+  `allowReserved`, or a property the body does not declare.
 - RFC 2046 requires at least one part. If a call to a required multipart body leaves every
   part out, the server refuses it with a message that names the parts. It does not send an
   empty body, which strict servers reject.

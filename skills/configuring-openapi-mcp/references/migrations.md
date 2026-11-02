@@ -51,6 +51,7 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
+| Unreleased | An operation whose `multipart/form-data` body has an object part, such as the metadata next to a file, is a tool now and sends that part as JSON; it was omitted. An Encoding Object that only names a part's `contentType` no longer omits a multipart operation either. | Compare the tool names of both versions; `--deny` such an operation if the user does not want it. |
 | 0.9.1 | More results that echo a registered secret are withheld: a secret three levels deep in JSON escapes inside a string of a JSON body, on a structured result, a text result and an error excerpt. | Nothing in the config. |
 | 0.9.0 | An operation whose input schema has an `enum` or `const` next to a constraint that every listed value meets (such as `maxLength`) is a tool now; it was omitted. | Compare the tool names of both versions; `--deny` such an operation if the user does not want it. |
 | 0.9.0 | An operation whose form-urlencoded body has an Encoding Object with `style: deepObject` and `explode: true` on an object of scalars is a tool now; it was omitted. | Compare the tool names of both versions; `--deny` such an operation if the user does not want it. |
