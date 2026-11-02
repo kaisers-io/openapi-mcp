@@ -97,6 +97,7 @@ Nothing was sent after any of these.
 | `upload "x" is not a plain file name in the upload folder`, `is not in the upload folder`, `is not a regular file`, `must be a plain file name` | the name has a path, or the file is missing or a link | copy the file into `~/.kaisers-io/openapi-mcp/uploads/<api>/` and pass its name |
 | `is larger than the ... request body limit` | the file is over `--max-response-bytes` | a smaller file, or a higher limit if the user agrees |
 | `is not the declared` | the file's bytes do not match the image type the operation declares | the right file |
+| `multipart part "x" must be an object` | a JSON part, such as the metadata next to a file, got another value | a JSON object with the fields the tool's schema lists |
 
 ## `discover` tools
 

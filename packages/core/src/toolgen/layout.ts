@@ -51,12 +51,16 @@ export type FieldMapping =
       // A multipart/form-data part carrying raw bytes, supplied as base64
       // (kaisers-io/openapi-mcp-archive#71).
       binary?: true;
-      // The part's Content-Type: the property's declared concrete
-      // `contentMediaType` (e.g. `image/png`), else application/octet-stream.
+      // The part's Content-Type: its Encoding Object's `contentType` or the
+      // property's declared concrete `contentMediaType` (e.g. `image/png`),
+      // else application/octet-stream for a file and application/json for an
+      // object.
       partContentType?: string;
       // With --uploads (#29): the value may also be `{ file: <name> }`,
       // a file the server reads from its upload folder
       upload?: true;
+      // A multipart part sent as JSON text with partContentType (issue #122)
+      json?: true;
       // A form body field with a deepObject encoding (issue #96): one level
       // of scalars as OpenAPI defines it, or nested under
       // --deep-object-indices
@@ -740,11 +744,8 @@ const partMediaType = (schema: Record<string, unknown>): string => {
   return parsed === undefined || parsed.essence.includes('*') ? OCTET_STREAM : declared;
 };
 
-// A non-binary multipart part must be ONE scalar that is never null: the
-// serializer writes it as the part's text. Arrays (repeated parts), objects
-// (JSON parts) and null are not encoded (decision for
-// kaisers-io/openapi-mcp-archive#120: unrepresentable), so a tool must not
-// accept a value that can only fail at call time.
+// A scalar multipart part that is never null: the serializer writes it as
+// the part's text.
 const isTextPartSchema = (schema: unknown): boolean => {
   if (!isRecord(schema) || !isScalarSchema(schema) || schema['nullable'] === true) {
     return false;
@@ -757,6 +758,40 @@ const isTextPartSchema = (schema: unknown): boolean => {
   return 'enum' in schema || 'const' in schema
     ? values.every((value) => value !== null && value !== undefined)
     : true;
+};
+
+// How a multipart part that is not a file is sent. An object is JSON text
+// (issue #122) with the `contentType` its Encoding Object names, else
+// application/json, the OpenAPI default for an object property; the result
+// is that type. A scalar is its text with no Content-Type; the result is
+// undefined. Arrays (repeated parts) and null are not encoded (decision for
+// kaisers-io/openapi-mcp-archive#120), so a tool must not accept a value that
+// can only fail at call time.
+const textPartEncoding = (
+  prop: string,
+  schema: unknown,
+  declared: string | undefined,
+): { ok: string } | { unrepresentable: string } | undefined => {
+  if (isRecord(schema) && schema['type'] === 'object' && schema['nullable'] !== true) {
+    const type = declared ?? 'application/json';
+    // The serializer writes UTF-8, so another charset would mislabel the text
+    const otherCharset = /;[ \t]*charset=(?!(?:utf-8|"utf-8")[ \t]*(?:;|$))/iu.test(type);
+    return isJsonEssence(parseMediaType(type)?.essence ?? '') && !otherCharset
+      ? { ok: type }
+      : {
+          unrepresentable: `multipart part "${prop}" is an object, sent as JSON, but its encoding declares ${type}`,
+        };
+  }
+  if (!isTextPartSchema(schema)) {
+    return {
+      unrepresentable: `multipart part "${prop}" is not a non-null scalar, object or file (arrays and null parts are not supported)`,
+    };
+  }
+  return declared === undefined
+    ? undefined
+    : {
+        unrepresentable: `multipart part "${prop}" declares a contentType, which only file and object parts support`,
+      };
 };
 
 const isBinarySchema = (schema: unknown): boolean =>
@@ -985,6 +1020,52 @@ const deepObjectEncodings = (
   return { ok: new Set(Object.keys(encoding)) };
 };
 
+// The part types a multipart body's Encoding Objects declare (issue #122):
+// only `contentType`, one concrete media type, on a declared property. Any
+// other field (`headers`, `style`, `explode`, `allowReserved`) or OAS 3.2
+// `prefixEncoding`/`itemEncoding` changes the bytes in a way this server
+// does not implement, so the operation is omitted. parseMediaType admits no
+// CR/LF, so a type is sent verbatim as the part's Content-Type.
+const multipartEncodings = (
+  entry: Record<string, unknown>,
+  root: unknown,
+): { ok: ReadonlyMap<string, string> } | { unrepresentable: string } => {
+  const declares = (key: string): boolean =>
+    (isRecord(entry[key]) && Object.keys(entry[key]).length > 0) ||
+    (Array.isArray(entry[key]) && entry[key].length > 0);
+  if (declares('prefixEncoding') || declares('itemEncoding')) {
+    return { unrepresentable: ENCODING_UNSUPPORTED };
+  }
+  const types = new Map<string, string>();
+  if (!declares('encoding')) {
+    return { ok: types };
+  }
+  const { encoding } = entry;
+  if (!isRecord(encoding) || !isFlattenableRoot(root)) {
+    return { unrepresentable: ENCODING_UNSUPPORTED };
+  }
+  const properties = root['properties'] as Record<string, unknown>;
+  for (const [prop, value] of Object.entries(encoding)) {
+    const contentType = isRecord(value) ? value['contentType'] : undefined;
+    const essence =
+      typeof contentType === 'string' ? parseMediaType(contentType)?.essence : undefined;
+    if (
+      !isRecord(value) ||
+      !Object.keys(value).every((key) => key === 'contentType' || key.startsWith('x-')) ||
+      !Object.hasOwn(properties, prop) ||
+      (contentType !== undefined && (essence === undefined || essence.includes('*')))
+    ) {
+      return {
+        unrepresentable: `the multipart encoding of "${sanitizeSpecText(prop, SPEC_BUDGETS.maxTextLength)}" is not supported: only a contentType of one concrete media type on a declared property`,
+      };
+    }
+    if (typeof contentType === 'string') {
+      types.set(prop, contentType);
+    }
+  }
+  return { ok: types };
+};
+
 const bodyFields = (
   requestBody: Record<string, unknown> | undefined,
   version: OpenapiVersion = '3.1',
@@ -1023,9 +1104,18 @@ const bodyFields = (
   }
   const bodyRequired = requestBody['required'] === true;
   const root = media.entry['schema'];
-  const encodings = deepObjectEncodings(media.entry, media.contentType, root);
+  const isMultipart = parseMediaType(media.contentType)?.essence === MULTIPART_FORM_DATA;
+  const encodings = isMultipart
+    ? { ok: new Set<string>() }
+    : deepObjectEncodings(media.entry, media.contentType, root);
   if (!('ok' in encodings)) {
     return encodings;
+  }
+  const partTypes = isMultipart
+    ? multipartEncodings(media.entry, root)
+    : { ok: new Map<string, string>() };
+  if (!('ok' in partTypes)) {
+    return partTypes;
   }
   if (isRawBinaryEssence(parseMediaType(media.contentType)?.essence)) {
     if (!isBinarySchema(root)) {
@@ -1056,7 +1146,6 @@ const bodyFields = (
       },
     };
   }
-  const isMultipart = parseMediaType(media.contentType)?.essence === MULTIPART_FORM_DATA;
   if (isMultipart && !isFlattenableRoot(root)) {
     // Multipart parts are the properties of an object root; any other shape
     // has no defined part layout.
@@ -1116,7 +1205,7 @@ const bodyFields = (
             unrepresentable: `multipart file part "${prop}" uses keywords that cannot apply to raw bytes`,
           };
         }
-        const partContentType = partMediaType(child);
+        const partContentType = partTypes.ok.get(prop) ?? partMediaType(child);
         fields.push({
           preferred: prop,
           name: prop,
@@ -1135,10 +1224,11 @@ const bodyFields = (
         });
         continue;
       }
-      if (isMultipart && !isTextPartSchema(child)) {
-        return {
-          unrepresentable: `multipart part "${prop}" is not a single non-null scalar or file (arrays, objects and null parts are not supported)`,
-        };
+      const jsonPart = isMultipart
+        ? textPartEncoding(prop, child, partTypes.ok.get(prop))
+        : undefined;
+      if (jsonPart !== undefined && 'unrepresentable' in jsonPart) {
+        return jsonPart;
       }
       // One level of scalars is what OpenAPI defines for deepObject; the
       // rest needs --deep-object-indices, which then sends every value
@@ -1169,6 +1259,7 @@ const bodyFields = (
           bodyPath: [prop],
           required: propRequired && bodyRequired,
           ...(deepObject === undefined ? {} : { deepObject }),
+          ...(jsonPart === undefined ? {} : { json: true as const, partContentType: jsonPart.ok }),
         },
         ...(bodyRequired ? {} : { bodyGroup: { requiredWhenPresent: propRequired } }),
       });

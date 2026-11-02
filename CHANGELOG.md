@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A multipart upload can send an object part as JSON.** An operation whose
+  `multipart/form-data` body has an object property, such as the metadata next to a file, was
+  left out with `is not a single non-null scalar or file`. The object is now a tool argument,
+  and the server sends its JSON text as one part with `Content-Type: application/json`. An
+  Encoding Object entry that names only a part's `contentType` is honored: a JSON type for an
+  object part, one concrete type such as `image/png` for a file part. Array parts, nullable
+  parts and other Encoding Object fields still leave the operation out (#122).
+
 ## [0.9.1] - 2026-11-02
 
 ### Fixed

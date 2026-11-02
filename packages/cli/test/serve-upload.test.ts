@@ -11,7 +11,7 @@ import { CLI_ENTRY, stopChild } from './cli-subprocess.ts';
 import { SUBPROCESS_TEST_TIMEOUT_MS, SUBPROCESS_WAIT_MS } from './subprocess-budget.ts';
 
 // Issue #29: a binary field takes {"file": "<name>"}, and the server sends
-// that file's bytes. The real CLI over stdio against a local upstream that
+// that file's bytes. Issue #122: next to a JSON object part. The real CLI over stdio against a local upstream that
 // records what it receives. An invented shop API.
 
 const binary = { type: 'string', format: 'binary' };
@@ -31,6 +31,37 @@ const SPEC = {
                 required: ['photo'],
                 properties: { photo: { type: 'string', contentMediaType: 'image/png' } },
               },
+            },
+          },
+        },
+        responses: { '204': { description: 'stored' } },
+      },
+    },
+    // Issue #122: a file with its metadata as a JSON part
+    '/items/listing': {
+      post: {
+        operationId: 'createListing',
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                required: ['photo', 'metadata'],
+                properties: {
+                  photo: binary,
+                  metadata: {
+                    type: 'object',
+                    required: ['title'],
+                    properties: {
+                      title: { type: 'string' },
+                      tags: { type: 'array', items: { type: 'string' } },
+                    },
+                  },
+                  note: { type: 'string' },
+                },
+              },
+              encoding: { photo: { contentType: 'image/png' } },
             },
           },
         },
@@ -188,6 +219,47 @@ describe('serve — uploads by file name (issue #29)', () => {
       expect(multipart?.body.includes(PNG)).toBe(true);
       expect(raw).toMatchObject({ url: '/items/image', type: 'image/png' });
       expect(raw?.body).toStrictEqual(PNG);
+    },
+    SUBPROCESS_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'sends a file, a JSON object part and a text part in one multipart body',
+    async () => {
+      const metadata = { title: 'Blue mug', tags: ['kitchen'] };
+      const replies = await call(
+        ['--uploads'],
+        [
+          {
+            name: 'createListing',
+            arguments: { photo: { file: 'photo.png' }, metadata, note: 'first' },
+          },
+          {
+            name: 'createListing',
+            arguments: { photo: { file: 'notes.txt' }, metadata },
+          },
+        ],
+      );
+      expect(replies[0]).toMatchObject({ isError: false });
+      expect(replies[1]?.text).toContain('upload "notes.txt" is not the declared image/png');
+      expect(received).toHaveLength(1);
+      const [sent] = received;
+      const wire = sent?.body.toString('latin1') ?? '';
+      expect(wire).toContain(
+        `Content-Disposition: form-data; name="metadata"\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(metadata)}\r\n`,
+      );
+      expect(wire).toContain(
+        'Content-Disposition: form-data; name="photo"; filename="photo"\r\nContent-Type: image/png\r\n\r\n',
+      );
+      const form = await new Request('http://example.test/', {
+        method: 'POST',
+        headers: { 'content-type': sent?.type ?? '' },
+        body: sent?.body ?? null,
+      }).formData();
+      expect(JSON.parse(form.get('metadata') as string)).toStrictEqual(metadata);
+      expect(form.get('note')).toBe('first');
+      const photo = form.get('photo') as File;
+      expect(Buffer.from(await photo.arrayBuffer())).toStrictEqual(PNG);
     },
     SUBPROCESS_TEST_TIMEOUT_MS,
   );
