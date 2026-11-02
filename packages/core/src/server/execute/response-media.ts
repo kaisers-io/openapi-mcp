@@ -35,7 +35,7 @@ const decodeJsonEscapes = (text: string): string | undefined => {
   let copied = 0;
   for (let at = text.indexOf('\\'); at !== -1; at = text.indexOf('\\', at + 1)) {
     const letter = text[at + 1];
-    // Never indexOf(''), which is 0: a backslash that ends the text stays
+    // Undefined past the end: a backslash that ends the text stays
     const short = letter === undefined ? -1 : SHORT_ESCAPES.indexOf(letter);
     const hex = text.slice(at + 2, at + 6);
     if (short !== -1 || (letter === 'u' && HEX4_RE.test(hex))) {

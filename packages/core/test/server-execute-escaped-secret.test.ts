@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BOUNDARY_WITHHELD_SUCCESS_TEXT } from '../src/server/withheld.ts';
 import { envelopeHasSecret } from '../src/server/execute/response.ts';
 import { compileEnvelopeValidator, createRedactor, mapResponse } from '../src/index.ts';
-import type { MapResponseOptions, ToolCallOutcome } from '../src/index.ts';
+import type { MapResponseOptions, Redactor, ToolCallOutcome } from '../src/index.ts';
 
 // A secret an upstream echoes in another spelling than its own: escaped as
 // JSON or as markup entities inside a JSON string or a header, or as a JSON
@@ -110,6 +110,30 @@ describe('mapResponse — a secret echoed escaped in a JSON string', () => {
   it.each(ALL_PATHS)('returns ordinary escaped data on the %s path', (path) => {
     const body = JSON.stringify({ note: String.raw`a &amp; b &lt;i&gt; {"k":"\u0026"}` });
     expect(map(path, body, [SECRET]).isError).toBe(false);
+  });
+});
+
+describe('mapResponse — a secret scan that throws on a decoded form', () => {
+  // Fails closed: a decoded form that cannot be scanned counts as a secret.
+  // The stub throws only on a form without a backslash, which the raw body
+  // and its parsed value here never are.
+  const throwing: Redactor = {
+    redactString: (value) => value,
+    redactJson: (value) => value,
+    scanForSecret: (value) => {
+      if (typeof value === 'string' && !value.includes('\\')) {
+        throw new Error('the scan failed');
+      }
+      return false;
+    },
+  };
+  // The note holds a backslash once parsed, so the parsed value decodes too
+  const body = String.raw`{"note":"a\\nb"}`;
+
+  it.each(['text', 'no-schema _fields'] as const)('withholds the result on the %s path', (path) => {
+    expect(withheld(map(path, body, [], { redactor: throwing }))).toBe(
+      BOUNDARY_WITHHELD_SUCCESS_TEXT,
+    );
   });
 });
 
