@@ -70,6 +70,9 @@ export const startUpstream = async (): Promise<Upstream> => {
 
   const server = createServer((req, res) => {
     req.resume();
+    // Any request gets a token: this endpoint only times the lifecycle. The
+    // client credentials and grant_type are checked by the e2e mock in
+    // packages/cli/test/serve-oauth.test.ts.
     if (req.method === 'POST' && req.url === TOKEN_PATH) {
       tokenRequests += 1;
       const token = `bench-token-${String(tokenRequests)}-not-a-secret`;

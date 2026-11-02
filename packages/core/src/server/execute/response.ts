@@ -224,7 +224,7 @@ export const truncateUtf8 = (text: string, maxBytes: number): string => {
 // is serialized whole.
 const SKIPPED = new Set(['undefined', 'function', 'symbol']);
 // Below about 16 times the budget, the native serializer is faster
-const PREVIEW_NATIVE_FACTOR = 16;
+export const PREVIEW_NATIVE_FACTOR = 16;
 // Deeper subtrees go to the native serializer, whose recursion goes further
 // than this one's: valid JSON nested thousands deep must not overflow here
 const PREVIEW_MAX_DEPTH = 256;

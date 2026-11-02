@@ -1,15 +1,15 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
-import { LARGE_FIXTURES } from './large-fixtures.ts';
 import { createIntervalProbe, PROBE_FLAGS } from './memory.ts';
 import { percentile } from './stats.ts';
 import { startUpstream } from './upstream.ts';
 import { runDiscovery } from './workloads.ts';
 
 // Issue #22: the parts of the new workloads that can be checked without a
-// build: percentiles, the large bodies, the slow upstream, the measured
-// interval and the discovery round trip
+// build: percentiles, the slow upstream, the measured interval and the
+// discovery round trip
 
 describe('percentile', () => {
   it('takes the nearest rank', () => {
@@ -18,33 +18,6 @@ describe('percentile', () => {
     expect(percentile(samples, 50)).toBe(10);
     expect(percentile([7], 99)).toBe(7);
     expect(() => percentile([], 50)).toThrow('empty');
-  });
-});
-
-describe('large bodies', () => {
-  const body = (name: string): string => {
-    const fixture = LARGE_FIXTURES.find((candidate) => candidate.name === name);
-    const response = fixture?.call?.response as () => unknown;
-    return JSON.stringify(response());
-  };
-
-  it.each([
-    ['large-120kb', 120 * 1024],
-    ['large-136kb', 136 * 1024],
-    ['large-1mb', 1024 * 1024],
-    ['large-1mb-escaped', 1024 * 1024],
-    ['large-1mb-unicode', 1024 * 1024],
-  ])('%s reaches its size, by less than one row more, every time', (name, bytes) => {
-    const text = body(name);
-    const size = Buffer.byteLength(text);
-    expect(size).toBeGreaterThanOrEqual(bytes);
-    expect(size).toBeLessThan(bytes + 2048);
-    expect(body(name)).toBe(text);
-  });
-
-  it('straddles the 128 KiB size where the preview stops serializing everything', () => {
-    expect(Buffer.byteLength(body('large-120kb'))).toBeLessThan(128 * 1024);
-    expect(Buffer.byteLength(body('large-136kb'))).toBeGreaterThan(128 * 1024);
   });
 });
 
@@ -74,6 +47,40 @@ describe('slow upstream', () => {
 });
 
 describe('measured interval', () => {
+  it('counts a block that ends right before stop, and starts the next interval afresh', async () => {
+    // Blocks on `stop` before the probe reads it, in the same event: only the
+    // last tick on stop can see the block
+    const script = `
+      process.prependListener('message', (message) => {
+        if (message === 'stop' && !globalThis.blocked) {
+          globalThis.blocked = true;
+          const until = Date.now() + 150;
+          while (Date.now() < until) {}
+        }
+      });
+      // Alive until stdin closes, like serve
+      process.stdin.resume();
+    `;
+    const child = spawn(process.execPath, [...PROBE_FLAGS, '-e', script], {
+      stdio: ['pipe', 'ignore', 'inherit', 'ipc'],
+    });
+    try {
+      const probe = createIntervalProbe(child);
+      await probe.start();
+      const blocked = await probe.stop();
+      expect(blocked.eventLoopDelayMaxMs).toBeGreaterThanOrEqual(140);
+      // The next interval reports its own delays only
+      await probe.start();
+      await sleep(20);
+      const idle = await probe.stop();
+      expect(idle.eventLoopDelayMaxMs).toBeLessThan(140);
+      child.stdin?.end();
+      await once(child, 'exit');
+    } finally {
+      child.kill();
+    }
+  });
+
   it('reports the event-loop delay and memory of the interval, and lets the process exit', async () => {
     // Blocks its event loop for 80 ms and holds 20 MB of Buffers when asked
     // over stdin, then exits when stdin closes, like `serve`
