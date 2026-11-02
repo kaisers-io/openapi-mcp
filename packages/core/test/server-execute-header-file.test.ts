@@ -1,8 +1,10 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Response } from 'undici';
+import { Response, fetch as undiciFetch } from 'undici';
 import {
   buildSnapshot,
   buildTools,
@@ -112,12 +114,12 @@ const setup = (statuses: number[], overrides: Partial<ExecutorConfig> = {}) => {
     transport: {
       fetch,
       resolve: () => Promise.reject(new Error('no DNS')),
-      timeoutSignal: () => new AbortController().signal,
+      timeoutSignal: (ms) => AbortSignal.timeout(ms),
     },
     retry: { sleep: () => Promise.resolve(), random: () => 0, now: () => 0 },
   });
-  const call = async () =>
-    await executor(create, { name: 'x' }, new AbortController().signal, undefined, (telemetry) => {
+  const call = async (signal = new AbortController().signal) =>
+    await executor(create, { name: 'x' }, signal, undefined, (telemetry) => {
       reports.push(telemetry);
     });
   return { call, seen, reports };
@@ -195,5 +197,95 @@ describe('createExecutor — --header-file', () => {
     expect(outcome.isError).toBe(true);
     expect(seen).toHaveLength(1);
     expect(stale).toStrictEqual(['example-key-not-a-secret']);
+  });
+
+  it('ends a wait for a slow file read at cancellation and at the deadline, freeing the slot', async () => {
+    const read = Promise.withResolvers<{ ok: string }>();
+    const slow = {
+      name: 'X-Key',
+      path,
+      read: async () => await read.promise,
+      stale: () => {},
+    };
+    const { call, seen } = setup([200], { fileHeaders: [slow], maxConcurrent: 1, timeoutMs: 200 });
+    const controller = new AbortController();
+    const cancelled = call(controller.signal);
+    setTimeout(() => {
+      controller.abort();
+    }, 20);
+    expect(textOf(await cancelled)).toContain('the request was cancelled');
+    // The slot is free again: this call waits for the file, not for a slot
+    const started = Date.now();
+    const timedOut = await call();
+    expect(textOf(timedOut)).toContain('timed out reading a header file; no API request was sent');
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(seen).toHaveLength(0);
+    // The shared read was not cancelled: once it ends, calls use its value
+    read.resolve({ ok: 'example-key-not-a-secret' });
+    const afterRead = await call();
+    expect(afterRead.isError).toBe(false);
+    expect(seen).toStrictEqual([undefined]);
+  });
+
+  // The HTTP client drops spaces around a header value: the value registered
+  // for redaction must be the one it sends
+  it('withholds an echo of a value written with spaces around it, over real HTTP', async () => {
+    writeFileSync(path, ' Bearer example-not-a-real-secret \n', { mode: 0o600 });
+    chmodSync(path, 0o600);
+    const server = createServer((req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end(`you sent ${String(req.headers.authorization)}`);
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', resolve);
+    });
+    const { port } = server.address() as AddressInfo;
+    try {
+      const redactor = createRedactor([]);
+      const executor = createExecutor(
+        {
+          baseUrl: `http://localhost:${String(port)}`,
+          baseTrusted: true,
+          allowPrivateNetwork: false,
+          allowInsecureHttp: false,
+          secretHeaders: [],
+          fileHeaders: [
+            createHeaderFileSource({
+              name: 'Authorization',
+              path,
+              maxLength: 8192,
+              redactor,
+              now: () => 0,
+            }),
+          ],
+          staticHeaders: [],
+          reservedHeaderNames: new Set([...SYSTEM_HEADERS, 'authorization']),
+          redactor,
+          timeoutMs: 5000,
+          maxResponseBytes: 65_536,
+          outboundBudgets: { maxUrlLength: 8192, maxHeaderBytes: 16_384, maxBodyBytes: 65_536 },
+          maxConcurrent: 4,
+          validators: new Map(
+            snapshot.tools.map((entry) => [
+              entry.name,
+              compileEnvelopeValidator(entry.wireTool.outputSchema),
+            ]),
+          ),
+        },
+        {
+          transport: {
+            fetch: undiciFetch,
+            resolve: () => Promise.resolve(['127.0.0.1']),
+            timeoutSignal: (ms) => AbortSignal.timeout(ms),
+          },
+        },
+      );
+      const outcome = await executor(create, { name: 'x' }, new AbortController().signal);
+      expect(textOf(outcome)).not.toContain('example-not-a-real-secret');
+      await executor.close();
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
   });
 });
