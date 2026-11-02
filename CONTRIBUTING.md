@@ -135,10 +135,11 @@ Two kinds of fixture measure more than the call itself:
   each for another operation. A round trip fails the sample when the search does not return the
   operation or a step fails. The time of the whole round trip gates; the time of each step is
   reported.
-- Large responses (`large-1mb` in CI, the others in `heavy`): bodies of 120 KiB, 136 KiB (either
-  side of the size from which the 8 KiB text preview stops serializing the whole result), 1, 5
-  and 10 MiB, one huge string, strings that JSON escapes, multi-byte characters, `_fields`, and an
-  upstream that sends the body slowly in chunks.
+- Large responses (`large-1mb` and `large-1mb-escaped` in CI, the others in `heavy`): bodies of
+  120 KiB, 136 KiB (either side of the size from which the 8 KiB text preview stops serializing
+  the whole result), 1, 5 and 10 MiB, one huge string, strings that JSON escapes, multi-byte
+  characters, `_fields`, and an upstream that sends the body slowly in chunks. The escaped body
+  runs with an API token, so the secret scan matches real needles in every decoded form.
 
 Two scenarios, both in CI, time work at the server's limits. Each sample fails when the server
 does not do what it must, so a burst that went wrong never reads as a fast one:
