@@ -162,14 +162,19 @@ export const createHeaderFileSource = (config: {
   let inFlight: Promise<HeaderFileResult> | undefined;
 
   const reload = async (): Promise<HeaderFileResult> => {
+    // Taken now, so a 401 that arrives during this read marks the value for
+    // the next call; given back when this read fails
+    const wasStale = stale;
+    stale = false;
     let next: HeaderFileRead;
     try {
       const current = await lstat(path, { bigint: true }).catch(() => refuse('is missing'));
-      if (cached !== undefined && !stale && identityOf(current) === cached.identity) {
+      if (cached !== undefined && !wasStale && identityOf(current) === cached.identity) {
         return { ok: cached.value };
       }
       next = await readHeaderFile(path, config.maxLength);
     } catch (error) {
+      stale ||= wasStale;
       return { error: describeHeaderFileError(path, error) };
     }
     if (next.value !== cached?.value) {
@@ -184,6 +189,7 @@ export const createHeaderFileSource = (config: {
         );
       } catch {
         // Unredactable, or the registry is full: never send it
+        stale ||= wasStale;
         return {
           error: `the header file ${displayPath(path)} could not be registered for redaction`,
         };
@@ -193,7 +199,6 @@ export const createHeaderFileSource = (config: {
       }
     }
     cached = next;
-    stale = false;
     return { ok: next.value };
   };
 

@@ -63,7 +63,7 @@ const writeToken = (value: string): void => {
 
 // One executor whose upstream answers each call with the next status; a 200
 // echoes the Authorization header it received
-const setup = (statuses: number[]) => {
+const setup = (statuses: number[], overrides: Partial<ExecutorConfig> = {}) => {
   const seen: (string | undefined)[] = [];
   const reports: CallTelemetry[] = [];
   const redactor = createRedactor([]);
@@ -106,6 +106,7 @@ const setup = (statuses: number[]) => {
         compileEnvelopeValidator(entry.wireTool.outputSchema),
       ]),
     ),
+    ...overrides,
   };
   const executor = createExecutor(config, {
     transport: {
@@ -162,5 +163,37 @@ describe('createExecutor — --header-file', () => {
     const renewed = await call();
     expect(renewed.isError).toBe(false);
     expect(seen).toStrictEqual([TOKEN_1, TOKEN_2]);
+  });
+
+  it('marks the sent value stale on a 401 even when an OAuth replay then fails', async () => {
+    const stale: string[] = [];
+    const fileHeader = {
+      name: 'X-Key',
+      path,
+      read: () => Promise.resolve({ ok: 'example-key-not-a-secret' }),
+      stale: (value: string) => {
+        stale.push(value);
+      },
+    };
+    let tokens = 0;
+    const { call, seen } = setup([401], {
+      fileHeaders: [fileHeader],
+      oauth: {
+        envVarHint: 'CID / CSECRET',
+        tokens: {
+          getToken: () => {
+            tokens += 1;
+            return Promise.resolve(
+              tokens === 1 ? { ok: 'example-access-token' } : { error: 'no token' },
+            );
+          },
+          invalidate: () => true,
+        },
+      },
+    });
+    const outcome = await call();
+    expect(outcome.isError).toBe(true);
+    expect(seen).toHaveLength(1);
+    expect(stale).toStrictEqual(['example-key-not-a-secret']);
   });
 });

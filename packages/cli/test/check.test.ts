@@ -177,6 +177,9 @@ describe('check (issue #77)', () => {
     const good = join(dir, 'good.token');
     await writeFile(good, `Bearer ${SENTINEL}\n`, { mode: 0o600 });
     const missing = join(dir, 'missing.token');
+    // Part of the redaction marker: every call would refuse it
+    const trivial = join(dir, 'trivial.token');
+    await writeFile(trivial, 'red', { mode: 0o600 });
     const result = await check([
       '--spec',
       'small.json',
@@ -185,6 +188,8 @@ describe('check (issue #77)', () => {
       `Authorization=${good}`,
       '--header-file',
       `X-Key=${missing}`,
+      '--header-file',
+      `X-Other=${trivial}`,
     ]);
     expect(result.code).toBe(EXIT.USAGE);
     const report = reportOf(result.lines) as Report & { data: { headerFiles: unknown } };
@@ -195,6 +200,12 @@ describe('check (issue #77)', () => {
         path: missing,
         ok: false,
         problem: `the header file ${JSON.stringify(missing)} is missing`,
+      },
+      {
+        header: 'X-Other',
+        path: trivial,
+        ok: false,
+        problem: `the header file ${JSON.stringify(trivial)} could not be registered for redaction`,
       },
     ]);
     // `serve` starts without the file: the startup is still checked

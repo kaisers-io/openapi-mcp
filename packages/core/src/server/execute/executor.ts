@@ -456,7 +456,17 @@ const runUpstreamCall = async (
       ? withEffectWarning(withRecoveryKey(result), effect, method)
       : rememberEffect(withRecoveryKey(result), effect);
   const allowedRetries = isRetryableMethod(method, idempotencyKeyField) ? retries : 0;
+  // A 401 for a value read from a file: the next call reads the file again.
+  // Marked at once, also when an OAuth replay follows and fails early.
+  const markFilesStale = (answer: typeof sent.outcome): void => {
+    if (answer.kind === 'response' && answer.status === 401) {
+      for (const [index, source] of (config.fileHeaders ?? []).entries()) {
+        source.stale(fileValues[index]?.value ?? '');
+      }
+    }
+  };
   const sent = await send(firstHeaders, allowedRetries);
+  markFilesStale(sent.outcome);
   let { outcome, attempts } = sent;
   // The attempts that speak for the call's effect: a lone first 401 had
   // none, so after its replay only the replay's attempts count
@@ -509,17 +519,12 @@ const runUpstreamCall = async (
     }
     const replay = await send(replayHeaders, Math.max(allowedRetries - (attempts - 1), 0));
     ({ outcome } = replay);
+    markFilesStale(outcome);
     effectAttempts = attempts > 1 ? attempts + replay.attempts : replay.attempts;
     replayed = true;
     attempts += replay.attempts;
   }
   const upstreamMs = Math.max(0, retryDeps.now() - upstreamStarted);
-  // A 401 for a value read from a file: the next call reads the file again
-  if (outcome.kind === 'response' && outcome.status === 401) {
-    for (const [index, source] of (config.fileHeaders ?? []).entries()) {
-      source.stale(fileValues[index]?.value ?? '');
-    }
-  }
   const [firstSecretHeader] = config.secretHeaders;
   const [firstFileHeader] = config.fileHeaders ?? [];
   const envVarHint = oauth?.envVarHint ?? firstSecretHeader?.envVar;

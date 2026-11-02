@@ -4,6 +4,7 @@ import {
   DISPLAY_TEXT_MAX,
   EXIT,
   isEnvVarName,
+  createRedactor,
   describeHeaderFileError,
   displayPath,
   parseHeaderEnvMapping,
@@ -106,11 +107,20 @@ const headerFilesOf = async (
       const header = raw.slice(0, separator);
       const path = raw.slice(separator + 1);
       const base = { header, path, ...(api === undefined ? {} : { api }) };
+      let value: string;
       try {
-        await readHeaderFile(path, MAX_FILE_HEADER_VALUE_LENGTH);
-        files.push({ ...base, ok: true });
+        ({ value } = await readHeaderFile(path, MAX_FILE_HEADER_VALUE_LENGTH));
       } catch (error) {
         files.push({ ...base, ok: false, problem: describeHeaderFileError(path, error) });
+        continue;
+      }
+      // A call registers the value with the redactor before sending it
+      try {
+        createRedactor([]).registerRuntimeSecret(value, Number.POSITIVE_INFINITY, 0);
+        files.push({ ...base, ok: true });
+      } catch {
+        const problem = `the header file ${displayPath(path)} could not be registered for redaction`;
+        files.push({ ...base, ok: false, problem });
       }
     }
   }
