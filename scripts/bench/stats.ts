@@ -77,17 +77,19 @@ export type FixtureMetrics = {
   sequentialCallP95Ms?: Summary;
   // Wall time of one batch of parallel tools/calls
   parallelCallMs?: Summary;
-  // Under --tool-mode discover: the median of each step over the discovery
-  // round trips of one sample, and of the whole round trip
+  // Discovery: per sample, the median of each step and of the round trip
   discoverySearchMs?: Summary;
   discoveryDescribeMs?: Summary;
   discoveryCallMs?: Summary;
   discoveryWorkflowMs?: Summary;
-  // While the warm session's calls ran, in the server: the event-loop delay
-  // and the largest `external` memory (Buffers, ArrayBuffers) sampled
+  // In the server during the warm calls: event-loop delay, sampled `external`
   eventLoopDelayMaxMs?: Summary;
   eventLoopDelayP99Ms?: Summary;
   callExternalMaxMB?: Summary;
+  // Issue #22: release to the last queued answer, and the OAuth2 bursts
+  queueDrainMs?: Summary;
+  oauthColdBurstMs?: Summary;
+  oauthRefreshBurstMs?: Summary;
   toolsListBytes?: number;
   // One call's `result` JSON and its text content, and every result of the
   // discovery round trips together

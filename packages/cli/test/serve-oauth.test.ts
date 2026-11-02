@@ -34,8 +34,16 @@ type Mock = {
   issued: string[];
   // Revokes every token issued so far (the next API call 401s once).
   revokeAll: () => void;
+  // Holds the answers of the token endpoint or of the API from now on,
+  // until released (issue #22)
+  hold: (which: Gate) => void;
+  // Opens the gate, or with `count` lets only that many held answers out
+  release: (which: Gate, count?: number) => void;
+  waiting: (which: Gate) => number;
   close: () => Promise<void>;
 };
+
+type Gate = 'token' | 'api';
 
 const readBody = async (req: IncomingMessage): Promise<string> => {
   const chunks: Buffer[] = [];
@@ -50,6 +58,18 @@ const startMock = (options: MockOptions = {}): Promise<Mock> => {
   const apiAuthHeaders: (string | undefined)[] = [];
   const issued: string[] = [];
   const valid = new Set<string>();
+  const gates: Record<Gate, { held: boolean; waiting: (() => void)[] }> = {
+    token: { held: false, waiting: [] },
+    api: { held: false, waiting: [] },
+  };
+  // The answer is decided on arrival and sent once the gate opens
+  const through = async (which: Gate): Promise<void> => {
+    if (gates[which].held) {
+      await new Promise<void>((resolve) => {
+        gates[which].waiting.push(resolve);
+      });
+    }
+  };
   const server: Server = createServer((req, res) => {
     void (async () => {
       if (req.method === 'POST' && req.url === '/oauth/token') {
@@ -63,6 +83,7 @@ const startMock = (options: MockOptions = {}): Promise<Mock> => {
         const token = `issued-access-token-${String(issued.length + 1)}-abcdefghijklmnop`;
         issued.push(token);
         valid.add(token);
+        await through('token');
         res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
         res.end(
           JSON.stringify({
@@ -75,7 +96,9 @@ const startMock = (options: MockOptions = {}): Promise<Mock> => {
       }
       apiAuthHeaders.push(req.headers.authorization);
       const presented = req.headers.authorization?.replace(/^Bearer /u, '') ?? '';
-      if (options.alwaysUnauthorized === true || !valid.has(presented)) {
+      const authorized = options.alwaysUnauthorized !== true && valid.has(presented);
+      await through('api');
+      if (!authorized) {
         // A hostile/careless upstream that echoes the credential it rejected.
         res.writeHead(401, { 'content-type': 'text/plain' });
         res.end(`invalid token ${presented}`);
@@ -99,6 +122,22 @@ const startMock = (options: MockOptions = {}): Promise<Mock> => {
         apiAuthHeaders,
         issued,
         revokeAll: () => valid.clear(),
+        hold: (which) => {
+          gates[which].held = true;
+        },
+        release: (which, count) => {
+          if (count === undefined) {
+            gates[which].held = false;
+          }
+          const released =
+            count === undefined
+              ? gates[which].waiting.splice(0)
+              : gates[which].waiting.splice(0, count);
+          for (const resume of released) {
+            resume();
+          }
+        },
+        waiting: (which) => gates[which].waiting.length,
         close: () =>
           new Promise<void>((_resolve) => {
             server.closeAllConnections();
@@ -147,6 +186,14 @@ type RpcResponse = { id?: number; result?: Record<string, unknown> };
 
 type Session = {
   call: (name: string, args?: Record<string, unknown>) => Promise<RpcResponse>;
+  // Sends a call and returns its id at once, with its answer to come
+  send: (
+    name: string,
+    args?: Record<string, unknown>,
+  ) => { id: number; answer: Promise<RpcResponse> };
+  cancel: (id: number) => void;
+  // Answered once the server has read everything sent before it
+  ping: () => Promise<RpcResponse>;
   stderr: () => string;
   stdout: () => string;
   exited: Promise<number | null>;
@@ -236,10 +283,10 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
       child?.once('exit', (code) => resolve(code));
     });
     let nextId = 1;
-    const call = (name: string, args: Record<string, unknown> = {}): Promise<RpcResponse> => {
+    const send = (name: string, args: Record<string, unknown> = {}) => {
       const id = nextId;
       nextId += 1;
-      const response = new Promise<RpcResponse>((resolve) => {
+      const answer = new Promise<RpcResponse>((resolve) => {
         pending.set(id, resolve);
       });
       child?.stdin?.write(
@@ -250,9 +297,31 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
           params: { name, arguments: args, _meta: ENVELOPE },
         })}\n`,
       );
-      return response;
+      return { id, answer };
     };
-    return { call, stderr: () => stderr, stdout: () => stdout, exited };
+    const call = async (name: string, args: Record<string, unknown> = {}): Promise<RpcResponse> =>
+      await send(name, args).answer;
+    const cancel = (id: number): void => {
+      child?.stdin?.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'notifications/cancelled',
+          params: { requestId: id, reason: 'test' },
+        })}\n`,
+      );
+    };
+    const ping = async (): Promise<RpcResponse> => {
+      const id = nextId;
+      nextId += 1;
+      const answer = new Promise<RpcResponse>((resolve) => {
+        pending.set(id, resolve);
+      });
+      child?.stdin?.write(
+        `${JSON.stringify({ jsonrpc: '2.0', id, method: 'server/discover', params: { _meta: ENVELOPE } })}\n`,
+      );
+      return await answer;
+    };
+    return { call, send, cancel, ping, stderr: () => stderr, stdout: () => stdout, exited };
   };
 
   const allowPrivate = ['--allow-private-network'];
@@ -297,6 +366,134 @@ describe('serve — OAuth2 client credentials (subprocess E2E)', () => {
       expect(wire).not.toContain(secret);
       expect(session.stderr()).not.toContain(secret);
     }
+  }, 20_000);
+
+  // Issue #22: the OAuth lifecycle under concurrency and deadlines
+  const until = async (predicate: () => boolean, what: string): Promise<void> => {
+    const started = Date.now();
+    while (!predicate()) {
+      if (Date.now() - started > 10_000) {
+        throw new Error(`timed out waiting for ${what}`);
+      }
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 10);
+      });
+    }
+  };
+
+  it('16 parallel 401s for one token cause one refetch and one replay each', async () => {
+    const session = await start('/oauth/token', allowPrivate);
+    const warm = await session.call('listPets');
+    expect(warm.result?.['isError']).not.toBe(true);
+    const [first] = mock?.issued ?? [];
+    mock?.revokeAll();
+    // Every first attempt carries the revoked token before any 401 is sent
+    mock?.hold('api');
+    const answers = Array.from({ length: 16 }, () => session.send('listPets').answer);
+    await until(() => mock?.waiting('api') === 16, '16 API requests');
+    // One 401 first: its replay carries the new token once that is cached.
+    // The other 15 then answer 401 for the old token, which must not drop
+    // the new one again
+    mock?.release('api', 1);
+    await until(() => mock?.waiting('api') === 16, 'the replay with the new token');
+    mock?.release('api');
+    const results = await Promise.all(answers);
+    expect(results.filter((result) => result.result?.['isError'] === true)).toStrictEqual([]);
+    expect(mock?.tokenRequests).toHaveLength(2);
+    const second = mock?.issued[1];
+    expect(mock?.apiAuthHeaders).toStrictEqual([
+      `Bearer ${first ?? ''}`,
+      ...Array.from({ length: 16 }, () => `Bearer ${first ?? ''}`),
+      ...Array.from({ length: 16 }, () => `Bearer ${second ?? ''}`),
+    ]);
+  }, 20_000);
+
+  it('a call waiting for a token times out at its deadline and sends nothing, then the server recovers', async () => {
+    const session = await start('/oauth/token', [...allowPrivate, '--request-timeout', '1s']);
+    // Started: the stopwatch below measures the deadline, not the startup
+    await session.ping();
+    mock?.hold('token');
+    const started = Date.now();
+    const results = await Promise.all([session.call('listPets'), session.call('listPets')]);
+    const elapsed = Date.now() - started;
+    // The token request shares the call's --request-timeout, so either the
+    // call's deadline or the token request's own timeout ends the wait
+    // first. The test below separates the two clocks.
+    for (const result of results) {
+      expect(result.result?.['isError']).toBe(true);
+      expect(JSON.stringify(result)).toMatch(
+        /timed out waiting for an OAuth2 access token; no API request was sent|the token request timed out/u,
+      );
+    }
+    expect(elapsed).toBeLessThan(5000);
+    // The two waited for one shared token request
+    expect(mock?.tokenRequests).toHaveLength(1);
+    expect(mock?.apiAuthHeaders).toStrictEqual([]);
+    mock?.release('token');
+    // The failed request is remembered for a few seconds, then retried
+    let recovered = false;
+    for (let attempt = 0; attempt < 20 && !recovered; attempt += 1) {
+      const result = await session.call('listPets');
+      recovered = result.result?.['isError'] !== true;
+      if (!recovered) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 500);
+        });
+      }
+    }
+    expect(recovered).toBe(true);
+    expect(mock?.tokenRequests).toHaveLength(2);
+    expect(mock?.apiAuthHeaders).toHaveLength(1);
+  }, 30_000);
+
+  it('a call waiting for a fresh token after a 401 stops at its own deadline, before the token request times out', async () => {
+    const session = await start('/oauth/token', [...allowPrivate, '--request-timeout', '8s']);
+    const warm = await session.call('listPets');
+    expect(warm.result?.['isError']).not.toBe(true);
+    mock?.revokeAll();
+    mock?.hold('api');
+    const pending = session.send('listPets');
+    await until(() => mock?.waiting('api') === 1, 'the API request');
+    // Five of the call's eight seconds pass at the API. The 401 then needs a
+    // new token, whose request has eight seconds of its own, so only the
+    // call's deadline can end the wait, after three seconds at most. A slow
+    // runner that took longer to get here leaves the call less, never more.
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 5000);
+    });
+    mock?.hold('token');
+    const released = Date.now();
+    mock?.release('api');
+    const result = await pending.answer;
+    const waited = Date.now() - released;
+    expect(result.result?.['isError']).toBe(true);
+    expect(JSON.stringify(result)).toContain(
+      'timed out waiting for a fresh OAuth2 access token; the request was not sent again',
+    );
+    expect(waited).toBeLessThan(6000);
+    expect(mock?.tokenRequests).toHaveLength(2);
+    expect(mock?.apiAuthHeaders).toHaveLength(2);
+  }, 30_000);
+
+  // That the cancelled waiter itself stops waiting at once is tested in
+  // packages/core/test/server-execute-oauth.test.ts: here a later check
+  // would also keep it from sending
+  it('cancelling one waiter does not cancel the token request the others share', async () => {
+    const session = await start('/oauth/token', allowPrivate);
+    mock?.hold('token');
+    const cancelled = session.send('listPets');
+    const kept = session.send('listPets');
+    await until(() => mock?.waiting('token') === 1, 'the token request');
+    session.cancel(cancelled.id);
+    // A cancelled request gets no answer (MCP): the next request's answer
+    // shows the server read the cancellation, as it reads stdin in order
+    await session.ping();
+    mock?.release('token');
+    const result = await kept.answer;
+    expect(result.result?.['isError']).not.toBe(true);
+    expect(mock?.tokenRequests).toHaveLength(1);
+    // Only the call still waiting reached the API
+    expect(mock?.apiAuthHeaders).toStrictEqual([`Bearer ${mock?.issued[0] ?? ''}`]);
   }, 20_000);
 
   it('a second 401 is returned, not retried again', async () => {
