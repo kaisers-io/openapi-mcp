@@ -15,6 +15,8 @@ import {
 } from './forwarded-headers.ts';
 import type { PageHint, PageInput } from './forwarded-headers.ts';
 import {
+  decodedForms,
+  MAX_BODY_JSON_DECODES,
   someDecodedForm,
   isJsonEssence,
   isTextEssence,
@@ -316,6 +318,17 @@ const escapedSecretIn = (redactor: Redactor, value: unknown): boolean => {
   }
 };
 
+// The same for a whole body text, JSON or not, one JSON level deeper
+// (MAX_BODY_JSON_DECODES): a string in a JSON body is then decoded as far as
+// it would be once parsed
+const escapedSecretInBody = (redactor: Redactor, text: string): boolean => {
+  try {
+    return decodedForms(text, MAX_BODY_JSON_DECODES).some((form) => redactor.scanForSecret(form));
+  } catch {
+    return true;
+  }
+};
+
 // Every secret check of a parsed value: its literal needles, then their
 // decoded spellings
 const parsedHasSecret = (redactor: Redactor, value: unknown): boolean =>
@@ -360,7 +373,7 @@ const mapHttpError = (
   // this redaction, over the already-secret-free text, so a secret cannot
   // be split across the excerpt boundary and leak a surviving fragment.
   const redacted = redactor.redactString(decoded.ok);
-  if (escapedSecretIn(redactor, redacted)) {
+  if (escapedSecretInBody(redactor, redacted)) {
     return textOutcome(`upstream request failed with status ${status}`, true);
   }
   // An HTML page shows its title and visible text, not its markup (issue
@@ -451,7 +464,7 @@ const mapNoSchemaSuccess = (
   // Redact BEFORE truncating, same rationale as mapHttpError above: the
   // text/JSON success path must never return the raw body either.
   const redacted = redactor.redactString(decoded.ok);
-  if (escapedSecretIn(redactor, redacted)) {
+  if (escapedSecretInBody(redactor, redacted)) {
     return withheldSuccess();
   }
   const truncated = truncateUtf8(redacted, maxTextBytes);
@@ -490,7 +503,7 @@ export const envelopeHasSecret = (
   // forms cover those of `data`'s strings in one pass.
   if (
     scanSafely(redactor, rawJson) ||
-    escapedSecretIn(redactor, rawJson) ||
+    escapedSecretInBody(redactor, rawJson) ||
     parsedHasSecret(redactor, rest)
   ) {
     return true;

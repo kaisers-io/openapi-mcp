@@ -68,6 +68,10 @@ const withheld = (outcome: ToolCallOutcome): string =>
     ? (outcome.content[0]?.text ?? '')
     : '';
 
+// The text a JSON string holds for `text`, escaped once more, twice
+const escapeTwice = (text: string): string =>
+  JSON.stringify(JSON.stringify(text).slice(1, -1)).slice(1, -1);
+
 describe('mapResponse — a secret echoed escaped in a JSON string', () => {
   const bodies: [string, string][] = [
     ['as markup entities', JSON.stringify({ note: `<p>key ${ENTITIES}</p>` })],
@@ -76,6 +80,9 @@ describe('mapResponse — a secret echoed escaped in a JSON string', () => {
     ['as JSON escapes inside a JSON string', JSON.stringify({ note: `{"key":"${U_ESCAPES}"}` })],
     ['as entities written with JSON escapes', `{"note":"${ENTITIES.replaceAll('&', '\\u0026')}"}`],
     ['in a key', JSON.stringify({ note: { [`key ${ENTITIES}`]: 1 } })],
+    // Three levels of JSON escapes in the parsed string, the most a string
+    // is decoded: the raw body has four, since parsing removes one
+    ['as JSON escapes three levels deep', JSON.stringify({ note: escapeTwice(U_ESCAPES) })],
   ];
 
   it.each(ALL_PATHS.flatMap((path) => bodies.map(([label, body]) => [label, path, body])))(
@@ -84,6 +91,21 @@ describe('mapResponse — a secret echoed escaped in a JSON string', () => {
       expect(withheld(map(path as Path, body, [SECRET]))).toBe(BOUNDARY_WITHHELD_SUCCESS_TEXT);
     },
   );
+
+  it('reduces an error body to its status when it holds the secret three levels deep', () => {
+    const body = JSON.stringify({ note: escapeTwice(U_ESCAPES) });
+    const outcome = map('text', body, [SECRET], {
+      outcome: {
+        kind: 'response',
+        status: 500,
+        contentType: 'application/json',
+        bodyBytes: new TextEncoder().encode(body),
+        headers: {},
+        url: 'https://api.example.test/',
+      },
+    });
+    expect(outcome.content[0]?.text).toBe('upstream request failed with status 500');
+  });
 
   it.each(ALL_PATHS)('returns ordinary escaped data on the %s path', (path) => {
     const body = JSON.stringify({ note: String.raw`a &amp; b &lt;i&gt; {"k":"\u0026"}` });
