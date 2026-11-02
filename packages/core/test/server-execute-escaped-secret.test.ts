@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BOUNDARY_WITHHELD_SUCCESS_TEXT } from '../src/server/withheld.ts';
 import { envelopeHasSecret } from '../src/server/execute/response.ts';
 import { compileEnvelopeValidator, createRedactor, mapResponse } from '../src/index.ts';
-import type { MapResponseOptions, ToolCallOutcome } from '../src/index.ts';
+import type { MapResponseOptions, Redactor, ToolCallOutcome } from '../src/index.ts';
 
 // A secret an upstream echoes in another spelling than its own: escaped as
 // JSON or as markup entities inside a JSON string or a header, or as a JSON
@@ -68,6 +68,10 @@ const withheld = (outcome: ToolCallOutcome): string =>
     ? (outcome.content[0]?.text ?? '')
     : '';
 
+// The text a JSON string holds for `text`, escaped once more, twice
+const escapeTwice = (text: string): string =>
+  JSON.stringify(JSON.stringify(text).slice(1, -1)).slice(1, -1);
+
 describe('mapResponse — a secret echoed escaped in a JSON string', () => {
   const bodies: [string, string][] = [
     ['as markup entities', JSON.stringify({ note: `<p>key ${ENTITIES}</p>` })],
@@ -76,6 +80,9 @@ describe('mapResponse — a secret echoed escaped in a JSON string', () => {
     ['as JSON escapes inside a JSON string', JSON.stringify({ note: `{"key":"${U_ESCAPES}"}` })],
     ['as entities written with JSON escapes', `{"note":"${ENTITIES.replaceAll('&', '\\u0026')}"}`],
     ['in a key', JSON.stringify({ note: { [`key ${ENTITIES}`]: 1 } })],
+    // Three levels of JSON escapes in the parsed string, the most a string
+    // is decoded: the raw body has four, since parsing removes one
+    ['as JSON escapes three levels deep', JSON.stringify({ note: escapeTwice(U_ESCAPES) })],
   ];
 
   it.each(ALL_PATHS.flatMap((path) => bodies.map(([label, body]) => [label, path, body])))(
@@ -85,9 +92,48 @@ describe('mapResponse — a secret echoed escaped in a JSON string', () => {
     },
   );
 
+  it('reduces an error body to its status when it holds the secret three levels deep', () => {
+    const body = JSON.stringify({ note: escapeTwice(U_ESCAPES) });
+    const outcome = map('text', body, [SECRET], {
+      outcome: {
+        kind: 'response',
+        status: 500,
+        contentType: 'application/json',
+        bodyBytes: new TextEncoder().encode(body),
+        headers: {},
+        url: 'https://api.example.test/',
+      },
+    });
+    expect(outcome.content[0]?.text).toBe('upstream request failed with status 500');
+  });
+
   it.each(ALL_PATHS)('returns ordinary escaped data on the %s path', (path) => {
     const body = JSON.stringify({ note: String.raw`a &amp; b &lt;i&gt; {"k":"\u0026"}` });
     expect(map(path, body, [SECRET]).isError).toBe(false);
+  });
+});
+
+describe('mapResponse — a secret scan that throws on a decoded form', () => {
+  // Fails closed: a decoded form that cannot be scanned counts as a secret.
+  // The stub throws only on a form without a backslash, which the raw body
+  // and its parsed value here never are.
+  const throwing: Redactor = {
+    redactString: (value) => value,
+    redactJson: (value) => value,
+    scanForSecret: (value) => {
+      if (typeof value === 'string' && !value.includes('\\')) {
+        throw new Error('the scan failed');
+      }
+      return false;
+    },
+  };
+  // The note holds a backslash once parsed, so the parsed value decodes too
+  const body = String.raw`{"note":"a\\nb"}`;
+
+  it.each(['text', 'no-schema _fields'] as const)('withholds the result on the %s path', (path) => {
+    expect(withheld(map(path, body, [], { redactor: throwing }))).toBe(
+      BOUNDARY_WITHHELD_SUCCESS_TEXT,
+    );
   });
 });
 

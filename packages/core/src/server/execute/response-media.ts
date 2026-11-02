@@ -21,35 +21,58 @@ export const readableErrorText = (essence: string | undefined, body: string): st
 // What each JSON short escape stands for, by its letter's place in SHORT_ESCAPES
 const SHORT_ESCAPES = String.raw`"\/bfnrt`;
 const SHORT_DECODED = '"\\/\b\f\n\r\t';
+const HEX4_RE = /^[0-9a-fA-F]{4}$/u;
 
-// The JSON string escapes of a text decoded, one at a time: every encoder's
+// The JSON string escapes of a text decoded left to right, as a regex
+// alternation of `\uXXXX` and the short escapes would: every encoder's
 // spelling (`\u0026`, `\u003C`, `\/`) reads back as the character it stands
-// for. A surrogate pair decodes as its two units, which then form the pair.
-const decodeJsonEscapes = (text: string): string =>
-  text.replaceAll(/\\(?:u(?<hex>[0-9a-fA-F]{4})|(?<short>["\\/bfnrt]))/gu, (_escape, hex, short) =>
-    hex === undefined
-      ? (SHORT_DECODED[SHORT_ESCAPES.indexOf(short as string)] ?? '')
-      : String.fromCodePoint(Number.parseInt(hex as string, 16)),
-  );
+// for, and a backslash that starts no escape stays. A surrogate pair decodes
+// as its two units, which then form the pair. A loop over indexOf, because a
+// replace callback per escape took three times as long on a 1 MiB body
+// dense with escapes. `undefined` when the text has no escape.
+const decodeJsonEscapes = (text: string): string | undefined => {
+  const parts: string[] = [];
+  let copied = 0;
+  for (let at = text.indexOf('\\'); at !== -1; at = text.indexOf('\\', at + 1)) {
+    const letter = text[at + 1];
+    // Undefined past the end: a backslash that ends the text stays
+    const short = letter === undefined ? -1 : SHORT_ESCAPES.indexOf(letter);
+    const hex = text.slice(at + 2, at + 6);
+    if (short !== -1 || (letter === 'u' && HEX4_RE.test(hex))) {
+      parts.push(
+        text.slice(copied, at),
+        short === -1
+          ? String.fromCodePoint(Number.parseInt(hex, 16))
+          : (SHORT_DECODED[short] ?? ''),
+      );
+      // On the escape's last character, so the search goes on right after it
+      at += short === -1 ? 5 : 1;
+      copied = at + 1;
+    }
+  }
+  if (parts.length === 0) {
+    return undefined;
+  }
+  parts.push(text.slice(copied));
+  return parts.join('');
+};
 
 // JSON in a JSON string (an echoed request body) escapes twice; a few
-// levels cover every plausible nesting and keep the cost bounded.
+// levels cover every plausible nesting and keep the cost bounded. A whole
+// JSON or text body is decoded one level more: parsing removes one, so each
+// string in it is decoded as far as a parsed string is.
 const MAX_JSON_DECODES = 3;
+export const MAX_BODY_JSON_DECODES = MAX_JSON_DECODES + 1;
 
-// A text body decoded each way an upstream may have escaped a secret in it:
-// as a JSON string (repeatedly, until it stops changing), as markup
-// entities, and as both. A text with neither escape character yields
-// nothing.
-export const decodedForms = (text: string): string[] => {
+// A text decoded each way an upstream may have escaped a secret in it: as a
+// JSON string (repeatedly, `levels` times at most, until nothing is left to
+// decode), as markup entities, and as both. A text with neither escape
+// character yields nothing.
+export const decodedForms = (text: string, levels = MAX_JSON_DECODES): string[] => {
   const json: string[] = [];
-  let current = text;
-  while (json.length < MAX_JSON_DECODES && current.includes('\\')) {
-    const next = decodeJsonEscapes(current);
-    if (next === current) {
-      break;
-    }
+  for (let next = decodeJsonEscapes(text); next !== undefined;) {
     json.push(next);
-    current = next;
+    next = json.length < levels ? decodeJsonEscapes(next) : undefined;
   }
   // Entities after JSON escapes, the order an encoder applies them: Go's
   // encoding/json writes the `&` of an HTML entity as `\u0026`

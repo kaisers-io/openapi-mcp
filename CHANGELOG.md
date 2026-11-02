@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A secret echoed three levels deep in JSON escapes inside a JSON string is withheld.** A
+  string inside a JSON body was decoded one level less than a parsed value: the scan decoded the
+  body text three times, and parsing already takes one. A secret written as `\\\\u0026` in
+  such a string reached the agent on a structured result, a text result and an error excerpt.
+  The body text is now decoded four times, so each string in it gets the same three levels as
+  every other value the server returns.
+
+### Changed
+
+- **A response dense with JSON escapes maps faster.** The secret scan decodes the escapes with a
+  loop instead of a regular expression with a callback per escape. In the benchmark, a call with
+  a 1 MiB body of quotes, backslashes and control characters went from 76 to 59 ms, and 16 such
+  calls at once from 861 to 580 ms, with the event loop blocked for at most 319 ms instead of
+  586 ms. A body without escapes maps as fast as before.
+
 ## [0.9.0] - 2026-11-01
 
 ### Added

@@ -107,11 +107,17 @@ export const LARGE_FIXTURES: readonly Fixture[] = [
     { tool: 'getBlob', args: {}, response: () => ({ id: 'b', blob: 'x'.repeat(MIB) }) },
     'heavy',
   ),
+  // With an API token, as most servers run: the secret scan then matches
+  // real needles in every decoded form of the body
   largeFixture(
     'large-1mb-escaped',
-    '1 MiB of small objects whose strings JSON escapes (quotes, backslashes, controls)',
+    '1 MiB of small objects whose strings JSON escapes (quotes, backslashes, controls), with an API token',
     report(MIB, ESCAPED),
-    'heavy',
+    'ci',
+    {
+      serveArgs: ['--header-env', 'Authorization=OPENAPI_MCP_BENCH_API_TOKEN'],
+      env: { OPENAPI_MCP_BENCH_API_TOKEN: 'Bearer example-token-not-a-secret' },
+    },
   ),
   largeFixture(
     'large-1mb-unicode',

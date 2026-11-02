@@ -153,12 +153,14 @@ checks:
     HTML error body. That form contains an escape the raw value lacks, so it may also match the
     escape in a body without the secret. That redacts more, never less.
   - A text, XML or HTML body is also decoded before it is scanned, for JSON string escapes
-    (`\u0026`, `\u003C`, `\"`, `\/`) and for markup entities (`&amp;`, `&#38;`, `&#x26;`).
-    JSON escapes are decoded repeatedly, up to three levels, so JSON echoed inside a JSON
-    string is covered too. If a decoding rebuilds a registered secret, the server withholds a
-    success and reduces an error to its status. Entity decoding covers numeric references and
-    the named entities for `&`, `<`, `>`, `"` and `'`, plus a few typographic ones. Other named
-    entities stay as written.
+    (`\u0026`, `\u003C`, `\"`, `\/`) and for markup entities (`&amp;`, `&#38;`, `&#x26;`). JSON
+    escapes are decoded repeatedly, up to three levels, so JSON echoed inside a JSON string is
+    covered too. A string inside a JSON body counts its levels from its parsed value, so a body
+    text, JSON or not, is decoded four times. For a text that is not JSON, that extra level can only
+    withhold more. If a decoding rebuilds a registered secret, the server withholds a success and
+    reduces an error to its status. Entity decoding covers numeric references and the named entities
+    for `&`, `<`, `>`, `"` and `'`, plus a few typographic ones. Other named entities stay as
+    written.
   - The same decoding applies to every string and key of a structured result, of a `_fields`
     selection and of a forwarded response header. A header whose decoded value or name holds a
     secret is dropped; the other results are withheld.
