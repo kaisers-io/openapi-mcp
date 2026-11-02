@@ -144,13 +144,15 @@ export const runCalls = async (
       request(1000 + index, 'tools/call', params),
     ),
   );
+  // Before the byte metrics below, which parse and serialize a whole result
+  const parallelCallMs = performance.now() - parallelStarted;
   return {
     sequentialCallMs: summarize(sequential).median,
     sequentialCallP95Ms: percentile(sequential, 95),
     ...(first === undefined
       ? {}
       : { callResultBytes: resultBytes(first), callTextBytes: textBytes(first) }),
-    parallelCallMs: performance.now() - parallelStarted,
+    parallelCallMs,
     // Calls the server refused under load (its concurrency cap) are counted,
     // not thrown: they are a measured property of the server
     parallelErrors: lines.filter((line) => isCallError(line)).length,

@@ -41,6 +41,21 @@ const childEnv = (
   USERPROFILE: home,
 });
 
+// Splits stdout into lines. A multi-byte character can be split between two
+// chunks, so the bytes are decoded across them.
+export const createLineReader = (onLine: (line: string) => void): ((chunk: Buffer) => void) => {
+  const decoder = new StringDecoder('utf8');
+  let buffer = '';
+  return (chunk) => {
+    buffer += decoder.write(chunk);
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines.filter((candidate) => candidate !== '')) {
+      onLine(line);
+    }
+  };
+};
+
 const spawnRpc = (
   cli: string,
   args: readonly string[],
@@ -53,9 +68,6 @@ const spawnRpc = (
     stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
   }) as ChildProcessByStdio<Writable, Readable, Readable>;
   const pending = new Map<number, PromiseWithResolvers<string>>();
-  // A multi-byte character can be split between two chunks
-  const decoder = new StringDecoder('utf8');
-  let buffer = '';
   let stderr = '';
   const liveHeap = createLiveHeapReader(child);
   // A hung server must not hang the benchmark: kill it, which rejects every
@@ -64,11 +76,9 @@ const spawnRpc = (
     stderr += `timed out after ${String(SESSION_TIMEOUT_MS)} ms\n`;
     child.kill('SIGKILL');
   }, SESSION_TIMEOUT_MS);
-  child.stdout.on('data', (chunk: Buffer) => {
-    buffer += decoder.write(chunk);
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines.filter((candidate) => candidate !== '')) {
+  child.stdout.on(
+    'data',
+    createLineReader((line) => {
       let id: number | undefined;
       try {
         ({ id } = JSON.parse(line) as JsonRpcResponse);
@@ -83,8 +93,8 @@ const spawnRpc = (
         pending.get(id)?.resolve(line);
         pending.delete(id);
       }
-    }
-  });
+    }),
+  );
   child.stderr.on('data', (chunk: Buffer) => {
     const text = chunk.toString('utf8');
     stderr += text;
