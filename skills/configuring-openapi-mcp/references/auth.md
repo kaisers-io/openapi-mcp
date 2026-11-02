@@ -37,7 +37,7 @@ top-level list in the output) gives the flag for each scheme an exposed operatio
 | `oauth2` with `clientCredentials` | `--upstream-oauth-client-id-env ID_VAR --upstream-oauth-client-secret-env SECRET_VAR` | client ID, client secret |
 | `oauth2` other flows, `openIdConnect` | `--header-env Authorization=VAR` | `Bearer <token>` the user gets elsewhere |
 
-`--header-env` sends the value exactly as stored. For a bearer token the variable must contain
+`--header-env` sends the value as stored, without spaces around it. For a bearer token the variable must contain
 the word `Bearer`, a space and the token. Tell the user this when they store it.
 
 A token the user renews by hand, such as their own login token that expires after an hour,
@@ -47,7 +47,7 @@ changes, so a renewed token works on the next call. Ask the user before choosing
 key or a long-lived token stays in a variable.
 
 - The path must be absolute; hosts do not expand `~`.
-- The file holds the complete value (`Bearer <token>`); one trailing line break is ignored.
+- The file holds the complete value (`Bearer <token>`); one trailing line break and the spaces around the value are dropped.
 - On Linux and macOS the file must belong to the user and be closed to others (`chmod 600`).
   On Windows, keep it in the user profile; its access list is not checked.
 - Tell the user to write a temp file in the same directory and rename it into place, for

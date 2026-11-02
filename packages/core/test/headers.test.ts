@@ -107,3 +107,15 @@ describe('resolveHeaderEnvMappings', () => {
     expect(resolved.map((header) => header.name)).toEqual(['Authorization', 'X-Tenant']);
   });
 });
+
+// The HTTP client drops spaces around a header value, so the value kept (and
+// registered for redaction) is the one it sends
+describe('resolveHeaderEnvMappings — spaces around the value', () => {
+  it('drops them, and refuses a value of only spaces', () => {
+    const mapping = [{ headerName: 'Authorization', envVar: 'T' }];
+    expect(
+      resolveHeaderEnvMappings(mapping, { T: '  Bearer example-not-a-real-secret ' }),
+    ).toStrictEqual([{ name: 'Authorization', value: 'Bearer example-not-a-real-secret' }]);
+    expect(() => resolveHeaderEnvMappings(mapping, { T: '   ' })).toThrow('is not set or empty');
+  });
+});

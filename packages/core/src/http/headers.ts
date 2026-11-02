@@ -63,7 +63,9 @@ export const resolveHeaderEnvMappings = (
       );
     }
     seen.add(lower);
-    const value = env[mapping.envVar];
+    // Spaces around the value are dropped, as the HTTP client drops them when
+    // it sends the header: the value registered for redaction is the one sent
+    const value = env[mapping.envVar]?.replaceAll(/^ +| +$/gu, '');
     if (value === undefined || value === '') {
       throw usageError(
         `environment variable "${mapping.envVar}" (for header "${mapping.headerName}") is not set or empty`,

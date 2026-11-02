@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value is registered with the redactor before its first use. `check` reports each file, and a
   401 or 403 names it (#125).
 
+### Changed
+
+- **Spaces around a `--header-env` or `--spec-header-env` value are dropped when the server
+  reads it.** The HTTP client dropped them when it sent the header, so the request does not
+  change; the server now keeps the value it sends.
+
 ## [0.10.0] - 2026-11-02
 
 ### Added

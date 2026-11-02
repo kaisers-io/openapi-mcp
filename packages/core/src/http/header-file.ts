@@ -82,7 +82,9 @@ const valueOf = (bytes: Uint8Array, maxLength: number): string => {
   } catch {
     refuse('is not valid UTF-8');
   }
-  const value = text.replace(/\r?\n$/u, '');
+  // Spaces around the value are dropped, as the HTTP client drops them when it
+  // sends the header: the value registered for redaction is the one sent
+  const value = text.replace(/\r?\n$/u, '').replaceAll(/^ +| +$/gu, '');
   if (value === '') {
     refuse('is empty');
   }

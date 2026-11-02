@@ -62,7 +62,7 @@ openapi-mcp serve \
 ```
 
 - The file holds the complete header value, like the variable of `--header-env`, for example
-  `Bearer <token>`. One trailing line break is ignored.
+  `Bearer <token>`. One trailing line break and the spaces around the value are dropped.
 - Each call checks whether the file changed since the last read, by its size, times and inode,
   and reads it again only then. A renewed token works on the next call, without a restart.
 - A 401 is not sent again. It makes the next call read the file again even if it looks
@@ -125,7 +125,8 @@ openapi-mcp serve \
 
 ### The variable holds the complete header value
 
-The server sends the variable's value as the header value, exactly as it is. It does not add a
+The server sends the variable's value as the header value, without spaces around it, which
+HTTP drops anyway. It does not add a
 scheme. For an API that expects `Authorization: Bearer <token>`, the variable must contain the
 word `Bearer`, a space and the token:
 
