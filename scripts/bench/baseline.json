@@ -12,63 +12,89 @@
     "head": {
       "cli": {
         "versionMs": {
-          "median": 56.26,
-          "min": 55.99,
-          "max": 62.91,
-          "samples": [62.91, 57.41, 55.99, 56.26, 56.11]
+          "median": 61.28,
+          "min": 60.72,
+          "max": 61.62,
+          "samples": [60.72, 60.82, 61.62, 61.28, 61.45]
         },
         "toolsMs": {
-          "median": 105.42,
-          "min": 101.36,
-          "max": 108.98,
-          "samples": [101.36, 108.77, 102.8, 108.98, 105.42]
+          "median": 108.23,
+          "min": 107.44,
+          "max": 123.37,
+          "samples": [108.11, 108.23, 107.44, 123.37, 110.28]
         }
       },
       "fixtures": {
         "petstore": {
           "startupMs": {
-            "median": 239.86,
-            "min": 237.53,
-            "max": 241.66,
-            "samples": [241.66, 237.53, 238.68, 239.86, 240.14]
+            "median": 248.44,
+            "min": 246.52,
+            "max": 250.67,
+            "samples": [248.44, 246.52, 247.98, 250.67, 248.92]
           },
           "warmStartupMs": {
-            "median": 156.98,
-            "min": 155.34,
-            "max": 159.1,
-            "samples": [159.1, 156.98, 158.66, 155.34, 155.61]
+            "median": 164.59,
+            "min": 162.93,
+            "max": 171.05,
+            "samples": [163.6, 162.93, 171.05, 164.69, 164.59]
           },
           "toolsListMs": {
-            "median": 2.86,
-            "min": 2.73,
-            "max": 2.93,
-            "samples": [2.86, 2.91, 2.93, 2.84, 2.73]
+            "median": 2.85,
+            "min": 2.68,
+            "max": 3.1,
+            "samples": [2.93, 3.1, 2.78, 2.85, 2.68]
           },
           "liveHeapMB": {
-            "median": 30.98,
-            "min": 30.98,
-            "max": 30.98,
-            "samples": [30.98, 30.98, 30.98, 30.98, 30.98]
+            "median": 32.1,
+            "min": 32.1,
+            "max": 32.1,
+            "samples": [32.1, 32.1, 32.1, 32.1, 32.1]
           },
           "warmLiveHeapMB": {
-            "median": 32.77,
-            "min": 32.77,
-            "max": 32.77,
-            "samples": [32.77, 32.77, 32.77, 32.77, 32.77]
+            "median": 33.92,
+            "min": 33.92,
+            "max": 33.92,
+            "samples": [33.92, 33.92, 33.92, 33.92, 33.92]
           },
           "sequentialCallMs": {
-            "median": 24.18,
-            "min": 23.47,
-            "max": 24.2,
-            "samples": [24.19, 24.06, 23.47, 24.18, 24.2]
+            "median": 23.94,
+            "min": 23.23,
+            "max": 24.3,
+            "samples": [24.3, 23.94, 24.23, 23.51, 23.23]
+          },
+          "sequentialCallP95Ms": {
+            "median": 30.35,
+            "min": 25.5,
+            "max": 31.88,
+            "samples": [31.88, 27.29, 30.51, 30.35, 25.5]
           },
           "parallelCallMs": {
-            "median": 40.73,
-            "min": 27.62,
-            "max": 43.53,
-            "samples": [43.53, 31.78, 27.62, 42.65, 40.73]
+            "median": 54.54,
+            "min": 32.26,
+            "max": 57.47,
+            "samples": [57.47, 32.26, 54.54, 57.27, 48.82]
+          },
+          "eventLoopDelayMaxMs": {
+            "median": 21.12,
+            "min": 16.35,
+            "max": 27.12,
+            "samples": [27.12, 16.35, 16.56, 22.27, 21.12]
+          },
+          "eventLoopDelayP99Ms": {
+            "median": 16.35,
+            "min": 16.16,
+            "max": 21.12,
+            "samples": [16.56, 16.35, 16.16, 16.33, 21.12]
+          },
+          "callExternalMaxMB": {
+            "median": 9.77,
+            "min": 9.77,
+            "max": 9.77,
+            "samples": [9.77, 9.77, 9.77, 9.77, 9.77]
           },
           "toolsListBytes": 3887,
+          "callResultBytes": 246,
+          "callTextBytes": 78,
           "toolCount": 3,
           "omittedCount": 1,
           "parallelErrors": 0,
@@ -76,48 +102,74 @@
         },
         "flat-500": {
           "startupMs": {
-            "median": 311.58,
-            "min": 307.28,
-            "max": 317.53,
-            "samples": [317.53, 314.25, 307.28, 311.28, 311.58]
+            "median": 327.34,
+            "min": 325.29,
+            "max": 330.12,
+            "samples": [325.49, 328.1, 330.12, 325.29, 327.34]
           },
           "warmStartupMs": {
-            "median": 216.83,
-            "min": 211.26,
-            "max": 220.42,
-            "samples": [219.32, 216.83, 211.26, 220.42, 213.72]
+            "median": 222.95,
+            "min": 220.9,
+            "max": 226.97,
+            "samples": [220.9, 221.84, 226.97, 225.3, 222.95]
           },
           "toolsListMs": {
-            "median": 4.21,
-            "min": 4.01,
-            "max": 4.26,
-            "samples": [4.26, 4.21, 4.01, 4.1, 4.22]
+            "median": 4.18,
+            "min": 4.1,
+            "max": 4.21,
+            "samples": [4.19, 4.11, 4.21, 4.1, 4.18]
           },
           "liveHeapMB": {
-            "median": 38.05,
-            "min": 38.04,
-            "max": 38.05,
-            "samples": [38.05, 38.04, 38.05, 38.04, 38.05]
+            "median": 39.19,
+            "min": 39.19,
+            "max": 39.19,
+            "samples": [39.19, 39.19, 39.19, 39.19, 39.19]
           },
           "warmLiveHeapMB": {
-            "median": 39.66,
-            "min": 39.66,
-            "max": 39.66,
-            "samples": [39.66, 39.66, 39.66, 39.66, 39.66]
+            "median": 40.85,
+            "min": 40.83,
+            "max": 40.85,
+            "samples": [40.85, 40.83, 40.85, 40.85, 40.85]
           },
           "sequentialCallMs": {
-            "median": 24.23,
-            "min": 24.11,
-            "max": 24.52,
-            "samples": [24.24, 24.23, 24.12, 24.11, 24.52]
+            "median": 23.72,
+            "min": 23.33,
+            "max": 24.71,
+            "samples": [23.33, 23.33, 24.71, 24.39, 23.72]
+          },
+          "sequentialCallP95Ms": {
+            "median": 28.03,
+            "min": 24.41,
+            "max": 31.47,
+            "samples": [24.41, 25.13, 28.03, 28.46, 31.47]
           },
           "parallelCallMs": {
-            "median": 37.07,
-            "min": 33.56,
-            "max": 44.03,
-            "samples": [37.07, 44.03, 35.93, 33.56, 41.99]
+            "median": 33.49,
+            "min": 29.62,
+            "max": 55.51,
+            "samples": [33.49, 29.62, 50.93, 32.33, 55.51]
+          },
+          "eventLoopDelayMaxMs": {
+            "median": 16.44,
+            "min": 13.87,
+            "max": 18.17,
+            "samples": [16.49, 16.44, 18.17, 16.24, 13.87]
+          },
+          "eventLoopDelayP99Ms": {
+            "median": 16.24,
+            "min": 12.23,
+            "max": 16.49,
+            "samples": [16.49, 16.44, 15.39, 16.24, 12.23]
+          },
+          "callExternalMaxMB": {
+            "median": 9.98,
+            "min": 9.98,
+            "max": 9.98,
+            "samples": [9.98, 9.98, 9.98, 9.98, 9.98]
           },
           "toolsListBytes": 356300,
+          "callResultBytes": 218,
+          "callTextBytes": 65,
           "toolCount": 502,
           "omittedCount": 0,
           "parallelErrors": 0,
@@ -125,48 +177,74 @@
         },
         "layered-100": {
           "startupMs": {
-            "median": 332.43,
-            "min": 320.82,
-            "max": 338.02,
-            "samples": [335.23, 332.43, 320.82, 338.02, 326.49]
+            "median": 346.45,
+            "min": 344.58,
+            "max": 348.62,
+            "samples": [346.45, 348.62, 347.18, 344.58, 346.14]
           },
           "warmStartupMs": {
-            "median": 241.13,
-            "min": 236.96,
-            "max": 243.35,
-            "samples": [242.7, 243.35, 236.96, 241.13, 239.37]
+            "median": 250.97,
+            "min": 250.05,
+            "max": 256.12,
+            "samples": [250.05, 250.35, 253.26, 250.97, 256.12]
           },
           "toolsListMs": {
-            "median": 10.39,
-            "min": 9.22,
-            "max": 10.83,
-            "samples": [10.39, 10.83, 10.48, 10.38, 9.22]
+            "median": 9.7,
+            "min": 9.52,
+            "max": 9.99,
+            "samples": [9.99, 9.69, 9.52, 9.7, 9.7]
           },
           "liveHeapMB": {
-            "median": 37.34,
-            "min": 37.33,
-            "max": 37.34,
-            "samples": [37.34, 37.33, 37.34, 37.34, 37.34]
+            "median": 38.47,
+            "min": 38.47,
+            "max": 38.48,
+            "samples": [38.47, 38.47, 38.47, 38.48, 38.47]
           },
           "warmLiveHeapMB": {
-            "median": 39.26,
-            "min": 39.26,
-            "max": 39.26,
-            "samples": [39.26, 39.26, 39.26, 39.26, 39.26]
+            "median": 40.45,
+            "min": 40.45,
+            "max": 40.45,
+            "samples": [40.45, 40.45, 40.45, 40.45, 40.45]
           },
           "sequentialCallMs": {
-            "median": 23.56,
-            "min": 23.48,
-            "max": 24.31,
-            "samples": [23.56, 23.55, 24.21, 23.48, 24.31]
+            "median": 24.49,
+            "min": 23.91,
+            "max": 25.07,
+            "samples": [23.92, 24.49, 25.07, 23.91, 24.88]
+          },
+          "sequentialCallP95Ms": {
+            "median": 28.86,
+            "min": 27.85,
+            "max": 35.89,
+            "samples": [27.85, 28.69, 29.72, 35.89, 28.86]
           },
           "parallelCallMs": {
-            "median": 38.76,
-            "min": 29.92,
-            "max": 40.29,
-            "samples": [29.92, 40.29, 39.51, 35.71, 38.76]
+            "median": 53.3,
+            "min": 39.64,
+            "max": 62.66,
+            "samples": [39.64, 62.66, 51.52, 53.3, 59.81]
+          },
+          "eventLoopDelayMaxMs": {
+            "median": 21.07,
+            "min": 16.75,
+            "max": 28.88,
+            "samples": [17.24, 28.88, 16.75, 21.07, 25.89]
+          },
+          "eventLoopDelayP99Ms": {
+            "median": 16.47,
+            "min": 14.24,
+            "max": 17.24,
+            "samples": [17.24, 14.24, 15.29, 16.57, 16.47]
+          },
+          "callExternalMaxMB": {
+            "median": 9.84,
+            "min": 9.84,
+            "max": 9.84,
+            "samples": [9.84, 9.84, 9.84, 9.84, 9.84]
           },
           "toolsListBytes": 944310,
+          "callResultBytes": 218,
+          "callTextBytes": 65,
           "toolCount": 102,
           "omittedCount": 0,
           "parallelErrors": 0,
@@ -174,38 +252,213 @@
         },
         "yaml-400": {
           "startupMs": {
-            "median": 345.49,
-            "min": 342.58,
-            "max": 347.75,
-            "samples": [343.68, 345.62, 345.49, 342.58, 347.75]
+            "median": 353.11,
+            "min": 350.43,
+            "max": 356.05,
+            "samples": [356.05, 350.43, 353.11, 352.14, 353.12]
           },
           "warmStartupMs": {
-            "median": 176.77,
-            "min": 175.28,
-            "max": 181.12,
-            "samples": [178.75, 181.12, 175.28, 175.32, 176.77]
+            "median": 183.63,
+            "min": 182.4,
+            "max": 184.64,
+            "samples": [184.64, 184.19, 183.63, 182.83, 182.4]
           },
           "toolsListMs": {
-            "median": 2.58,
-            "min": 2.54,
-            "max": 2.61,
-            "samples": [2.58, 2.6, 2.61, 2.54, 2.56]
+            "median": 2.63,
+            "min": 2.51,
+            "max": 2.87,
+            "samples": [2.6, 2.87, 2.51, 2.81, 2.63]
           },
           "liveHeapMB": {
-            "median": 38.05,
-            "min": 38.04,
-            "max": 38.06,
-            "samples": [38.04, 38.05, 38.05, 38.06, 38.04]
+            "median": 38.85,
+            "min": 38.84,
+            "max": 38.85,
+            "samples": [38.85, 38.84, 38.85, 38.84, 38.85]
           },
           "warmLiveHeapMB": {
-            "median": 35.34,
-            "min": 35.34,
-            "max": 35.35,
-            "samples": [35.35, 35.34, 35.34, 35.34, 35.35]
+            "median": 36.17,
+            "min": 36.16,
+            "max": 36.17,
+            "samples": [36.16, 36.17, 36.17, 36.17, 36.17]
           },
           "toolsListBytes": 244830,
           "toolCount": 402,
           "omittedCount": 0
+        },
+        "discover-500": {
+          "startupMs": {
+            "median": 290.74,
+            "min": 287.32,
+            "max": 301.15,
+            "samples": [291.12, 290.74, 301.15, 289.7, 287.32]
+          },
+          "warmStartupMs": {
+            "median": 192.88,
+            "min": 190.71,
+            "max": 195.02,
+            "samples": [192.88, 190.71, 195.02, 193.51, 191.43]
+          },
+          "toolsListMs": {
+            "median": 1.22,
+            "min": 1.19,
+            "max": 1.26,
+            "samples": [1.25, 1.2, 1.26, 1.22, 1.19]
+          },
+          "liveHeapMB": {
+            "median": 37.75,
+            "min": 37.75,
+            "max": 37.75,
+            "samples": [37.75, 37.75, 37.75, 37.75, 37.75]
+          },
+          "warmLiveHeapMB": {
+            "median": 41.04,
+            "min": 41.04,
+            "max": 41.06,
+            "samples": [41.05, 41.04, 41.06, 41.04, 41.04]
+          },
+          "sequentialCallMs": {
+            "median": 25.72,
+            "min": 24.59,
+            "max": 25.98,
+            "samples": [25.72, 24.59, 25.98, 25.09, 25.79]
+          },
+          "sequentialCallP95Ms": {
+            "median": 27.86,
+            "min": 26.92,
+            "max": 29.96,
+            "samples": [27.86, 28.61, 27.59, 26.92, 29.96]
+          },
+          "parallelCallMs": {
+            "median": 49.55,
+            "min": 39.48,
+            "max": 56.51,
+            "samples": [39.48, 49.55, 44.34, 51.55, 56.51]
+          },
+          "discoverySearchMs": {
+            "median": 0.52,
+            "min": 0.48,
+            "max": 0.55,
+            "samples": [0.54, 0.55, 0.48, 0.51, 0.52]
+          },
+          "discoveryDescribeMs": {
+            "median": 0.52,
+            "min": 0.45,
+            "max": 0.54,
+            "samples": [0.52, 0.54, 0.45, 0.53, 0.5]
+          },
+          "discoveryCallMs": {
+            "median": 23.49,
+            "min": 23.1,
+            "max": 23.77,
+            "samples": [23.77, 23.45, 23.1, 23.49, 23.62]
+          },
+          "discoveryWorkflowMs": {
+            "median": 24.41,
+            "min": 23.92,
+            "max": 24.92,
+            "samples": [24.92, 24.4, 23.92, 24.41, 24.67]
+          },
+          "eventLoopDelayMaxMs": {
+            "median": 26.61,
+            "min": 24.36,
+            "max": 28.43,
+            "samples": [24.36, 28.43, 26.02, 26.61, 26.87]
+          },
+          "eventLoopDelayP99Ms": {
+            "median": 24.23,
+            "min": 12.02,
+            "max": 25.72,
+            "samples": [12.02, 24.23, 21.27, 25.36, 25.72]
+          },
+          "callExternalMaxMB": {
+            "median": 9.98,
+            "min": 9.98,
+            "max": 9.99,
+            "samples": [9.99, 9.98, 9.98, 9.98, 9.98]
+          },
+          "toolsListBytes": 6433,
+          "callResultBytes": 218,
+          "callTextBytes": 65,
+          "discoveryBytes": 31534,
+          "toolCount": 5,
+          "omittedCount": 0,
+          "parallelErrors": 0,
+          "upstreamConnections": 15
+        },
+        "large-1mb": {
+          "startupMs": {
+            "median": 254.98,
+            "min": 252.9,
+            "max": 258.73,
+            "samples": [254.07, 256.58, 252.9, 258.73, 254.98]
+          },
+          "warmStartupMs": {
+            "median": 164.23,
+            "min": 162.7,
+            "max": 164.78,
+            "samples": [163.62, 162.7, 164.45, 164.23, 164.78]
+          },
+          "toolsListMs": {
+            "median": 1.31,
+            "min": 1.29,
+            "max": 3.03,
+            "samples": [3.03, 1.34, 1.31, 1.29, 1.3]
+          },
+          "liveHeapMB": {
+            "median": 32.11,
+            "min": 32.11,
+            "max": 32.11,
+            "samples": [32.11, 32.11, 32.11, 32.11, 32.11]
+          },
+          "warmLiveHeapMB": {
+            "median": 34.19,
+            "min": 34.19,
+            "max": 34.19,
+            "samples": [34.19, 34.19, 34.19, 34.19, 34.19]
+          },
+          "sequentialCallMs": {
+            "median": 40.96,
+            "min": 40.55,
+            "max": 41.18,
+            "samples": [41.07, 41.18, 40.96, 40.56, 40.55]
+          },
+          "sequentialCallP95Ms": {
+            "median": 44.35,
+            "min": 43.69,
+            "max": 45,
+            "samples": [44.76, 45, 44.33, 43.69, 44.35]
+          },
+          "parallelCallMs": {
+            "median": 310.93,
+            "min": 307.63,
+            "max": 312.91,
+            "samples": [310.93, 312.91, 307.63, 312.88, 310.54]
+          },
+          "eventLoopDelayMaxMs": {
+            "median": 86.97,
+            "min": 83.89,
+            "max": 89.78,
+            "samples": [86.84, 89.78, 86.97, 87.16, 83.89]
+          },
+          "eventLoopDelayP99Ms": {
+            "median": 31.64,
+            "min": 25.95,
+            "max": 31.87,
+            "samples": [31.64, 31.87, 31.74, 31.59, 25.95]
+          },
+          "callExternalMaxMB": {
+            "median": 28.84,
+            "min": 28.79,
+            "max": 28.84,
+            "samples": [28.84, 28.84, 28.84, 28.84, 28.79]
+          },
+          "toolsListBytes": 4384,
+          "callResultBytes": 1057695,
+          "callTextBytes": 8269,
+          "toolCount": 4,
+          "omittedCount": 0,
+          "parallelErrors": 0,
+          "upstreamConnections": 16
         }
       }
     }

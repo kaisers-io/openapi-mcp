@@ -7,9 +7,10 @@
 // HOME: once with an empty cache (cold) and once reusing the cache the first
 // start wrote (warm). The cold process measures time to the `initialize`
 // response, the first tools/list, peak RSS and the heap still in use after a
-// full GC (heap-probe.ts); the warm one additionally runs sequential and
-// parallel tools/calls against a local mock upstream with a fixed artificial
-// latency. When several CLIs are given, their runs are
+// full GC (heap-probe.ts); the warm one additionally runs the discovery round
+// trips of a fixture that has them, then sequential and parallel tools/calls
+// against a local mock upstream with a fixed artificial latency, while the
+// probe records the event-loop delay and memory (issue #22). When several CLIs are given, their runs are
 // interleaved (ABBA order) so drift on the machine hits every CLI equally.
 //
 //   node scripts/bench/run.ts [--cli label=path/to/openapi-mcp.mjs ...]

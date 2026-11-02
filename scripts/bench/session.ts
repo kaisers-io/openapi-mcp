@@ -2,29 +2,22 @@
 // (JSON-RPC, one message per line) or a plain command such as `--version`.
 
 import { spawn } from 'node:child_process';
+import type { ChildProcessByStdio } from 'node:child_process';
 import { once } from 'node:events';
+import type { Readable, Writable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import type { Fixture } from './fixtures.ts';
-import { createLiveHeapReader, peakRssMB, PROBE_FLAGS } from './memory.ts';
-import { summarize } from './stats.ts';
+import { createIntervalProbe, createLiveHeapReader, peakRssMB, PROBE_FLAGS } from './memory.ts';
+import type { IntervalProbe } from './memory.ts';
+import { runCalls, runDiscovery } from './workloads.ts';
+import type { JsonRpcResponse } from './workloads.ts';
 import type { Upstream } from './upstream.ts';
 
-export const SEQUENTIAL_CALLS = 20;
-// Equal to serve's concurrency cap (MAX_CONCURRENT_UPSTREAM_CALLS = 16), so the
-// parallel batch measures concurrent throughput. With more calls than the cap,
-// the excess is refused immediately and the wall time mostly measured those
-// rejections, so a server that queued instead of refusing would have looked
-// slower. parallelErrors still gates any refusal at this load. Keep in sync.
-export const PARALLEL_CALLS = 16;
+export { PARALLEL_CALLS, SEQUENTIAL_CALLS } from './workloads.ts';
 const SESSION_TIMEOUT_MS = 120_000;
 // The 2025 handshake: every released version answers it, so the harness can
 // measure an older base build the same way
 const PROTOCOL_VERSION = '2025-11-25';
-
-type JsonRpcResponse = {
-  id?: number;
-  result?: Record<string, unknown>;
-  error?: { message: string };
-};
 
 type RpcChild = {
   request: (id: number, method: string, params: Record<string, unknown>) => Promise<string>;
@@ -32,6 +25,7 @@ type RpcChild = {
   // Heap in use after a full GC, in MB (heap-probe.ts); undefined where
   // POSIX signals are unavailable
   liveHeapMB: () => Promise<number | undefined>;
+  interval: IntervalProbe;
   pid: number;
   close: () => Promise<void>;
 };
@@ -42,13 +36,28 @@ const childEnv = (home: string): NodeJS.ProcessEnv => ({
   USERPROFILE: home,
 });
 
+// Splits stdout into lines. A multi-byte character can be split between two
+// chunks, so the bytes are decoded across them.
+export const createLineReader = (onLine: (line: string) => void): ((chunk: Buffer) => void) => {
+  const decoder = new StringDecoder('utf8');
+  let buffer = '';
+  return (chunk) => {
+    buffer += decoder.write(chunk);
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines.filter((candidate) => candidate !== '')) {
+      onLine(line);
+    }
+  };
+};
+
 const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild => {
+  // The fourth descriptor is the IPC channel of the interval probe
   const child = spawn(process.execPath, [...PROBE_FLAGS, cli, ...args], {
     env: childEnv(home),
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+    stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+  }) as ChildProcessByStdio<Writable, Readable, Readable>;
   const pending = new Map<number, PromiseWithResolvers<string>>();
-  let buffer = '';
   let stderr = '';
   const liveHeap = createLiveHeapReader(child);
   // A hung server must not hang the benchmark: kill it, which rejects every
@@ -57,11 +66,9 @@ const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild 
     stderr += `timed out after ${String(SESSION_TIMEOUT_MS)} ms\n`;
     child.kill('SIGKILL');
   }, SESSION_TIMEOUT_MS);
-  child.stdout.on('data', (chunk: Buffer) => {
-    buffer += chunk.toString('utf8');
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines.filter((candidate) => candidate !== '')) {
+  child.stdout.on(
+    'data',
+    createLineReader((line) => {
       let id: number | undefined;
       try {
         ({ id } = JSON.parse(line) as JsonRpcResponse);
@@ -76,8 +83,8 @@ const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild 
         pending.get(id)?.resolve(line);
         pending.delete(id);
       }
-    }
-  });
+    }),
+  );
   child.stderr.on('data', (chunk: Buffer) => {
     const text = chunk.toString('utf8');
     stderr += text;
@@ -104,6 +111,7 @@ const spawnRpc = (cli: string, args: readonly string[], home: string): RpcChild 
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', method })}\n`);
     },
     liveHeapMB: liveHeap.read,
+    interval: createIntervalProbe(child),
     pid: child.pid ?? -1,
     close: async () => {
       // Closing stdin ends the stdio session, and the server exits on its own
@@ -121,56 +129,48 @@ export type SessionSample = {
   rssMB?: number;
   liveHeapMB?: number;
   sequentialCallMs?: number;
+  sequentialCallP95Ms?: number;
   parallelCallMs?: number;
   parallelErrors?: number;
   upstreamConnections?: number;
+  // The JSON of one call's `result` (no JSON-RPC id), and its text content
+  callResultBytes?: number;
+  callTextBytes?: number;
+  // Medians over the discovery steps of this session, and their bytes
+  discoverySearchMs?: number;
+  discoveryDescribeMs?: number;
+  discoveryCallMs?: number;
+  discoveryWorkflowMs?: number;
+  discoveryBytes?: number;
+  // While the calls ran (heap-probe.ts): lower bounds, sampled
+  eventLoopDelayMaxMs?: number;
+  eventLoopDelayP99Ms?: number;
+  callExternalMaxMB?: number;
 };
 
-const isCallError = (line: string): boolean => {
-  const parsed = JSON.parse(line) as JsonRpcResponse;
-  return parsed.error !== undefined || parsed.result?.['isError'] === true;
-};
-
-type CallMetrics = Pick<
-  SessionSample,
-  'sequentialCallMs' | 'parallelCallMs' | 'parallelErrors' | 'upstreamConnections'
->;
-
-const runCalls = async (
+// The discovery steps, then the calls, inside one measured interval
+const runWarmWork = async (
   rpc: RpcChild,
   fixture: Fixture,
   upstream: Upstream,
-): Promise<CallMetrics> => {
-  const { call } = fixture;
-  if (call === undefined) {
+): Promise<Partial<SessionSample>> => {
+  if (fixture.call === undefined && fixture.discovery === undefined) {
     return {};
   }
-  upstream.setResponse(call.response);
-  const params = { name: call.tool, arguments: call.args };
-  const connectionsBefore = upstream.connections();
-  const sequential: number[] = [];
-  for (let index = 0; index < SEQUENTIAL_CALLS; index += 1) {
-    const started = performance.now();
-    const line = await rpc.request(100 + index, 'tools/call', params);
-    sequential.push(performance.now() - started);
-    if (isCallError(line)) {
-      // A failing sequential call means the fixture is broken, not slow
-      throw new Error(`tools/call ${call.tool} failed: ${line.slice(0, 300)}`);
-    }
+  await rpc.interval.start();
+  if (fixture.discovery !== undefined) {
+    upstream.setResponse(fixture.call?.response ?? {});
   }
-  const parallelStarted = performance.now();
-  const lines = await Promise.all(
-    Array.from({ length: PARALLEL_CALLS }, (_unused, index) =>
-      rpc.request(1000 + index, 'tools/call', params),
-    ),
-  );
+  const discovery =
+    fixture.discovery === undefined ? {} : await runDiscovery(rpc.request, fixture.discovery);
+  const calls = await runCalls(rpc.request, fixture, upstream);
+  const interval = await rpc.interval.stop();
   return {
-    sequentialCallMs: summarize(sequential).median,
-    parallelCallMs: performance.now() - parallelStarted,
-    // Calls the server refused under load (its concurrency cap) are counted,
-    // not thrown: they are a measured property of the server
-    parallelErrors: lines.filter((line) => isCallError(line)).length,
-    upstreamConnections: upstream.connections() - connectionsBefore,
+    ...discovery,
+    ...calls,
+    eventLoopDelayMaxMs: interval.eventLoopDelayMaxMs,
+    eventLoopDelayP99Ms: interval.eventLoopDelayP99Ms,
+    callExternalMaxMB: interval.externalMaxMB,
   };
 };
 
@@ -203,7 +203,7 @@ const measureSession = async (
     throw new Error(`tools/list failed: ${list.error.message}`);
   }
   const tools = (list.result?.['tools'] ?? []) as unknown[];
-  const calls = input.withCalls ? await runCalls(rpc, input.fixture, input.upstream) : {};
+  const calls = input.withCalls ? await runWarmWork(rpc, input.fixture, input.upstream) : {};
   // Peak RSS first: it is the process's high-water mark, which the forced
   // collection below cannot lower but would otherwise come after
   const rssMB = await peakRssMB(rpc.pid);
