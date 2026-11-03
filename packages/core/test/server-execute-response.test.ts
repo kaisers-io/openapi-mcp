@@ -775,10 +775,10 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     'application/x-yaml',
     'application/openapi+yaml',
   ])('a %s body is returned as text', (type) => {
-    const outcome = response(200, type, '<feed><item>1</item></feed>');
+    const outcome = response(200, type, '<catalog><book id="1">Example</book></catalog>');
     const result = mapResponse(defaultOpts({ outcome }));
     expect(result.isError).toBe(false);
-    expect(result.content[0]?.text).toBe('<feed><item>1</item></feed>');
+    expect(result.content[0]?.text).toBe('<catalog><book id="1">Example</book></catalog>');
   });
 
   it.each(['application/octet-stream', 'application/pdf', 'image/svg+xml', 'application/xmlish'])(
