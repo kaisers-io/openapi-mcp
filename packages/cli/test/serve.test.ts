@@ -329,6 +329,11 @@ describe('serve — stdio subprocess E2E', () => {
     await waitFor(() => stdoutLines.length > 0);
     const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
     expect(initResponse.result?.['protocolVersion']).toBe('2025-11-25');
+    // The spec title is the default serverInfo.title; the name stays openapi-mcp
+    expect(initResponse.result?.['serverInfo']).toMatchObject({
+      name: 'openapi-mcp',
+      title: 'Petstore',
+    });
     send(child, { jsonrpc: '2.0', method: 'notifications/initialized' });
 
     send(child, { jsonrpc: '2.0', id: 2, method: 'tools/list' });
@@ -534,6 +539,60 @@ describe('serve — stdio subprocess E2E', () => {
       expect(code).toBe(2); // EXIT.USAGE
       expect(rawStdout()).toBe('');
       expect(stderrLines.join('\n')).toContain('--tools-page-size');
+    },
+  );
+
+  it('--server-title replaces the spec title in serverInfo', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    child = spawn(
+      process.execPath,
+      [
+        CLI_ENTRY,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        'http://127.0.0.1:1',
+        '--trust-spec-updates',
+        '--server-title',
+        'Example API (dev)',
+      ],
+      { cwd: fixturesDir, env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome } },
+    );
+    const { stdoutLines } = collectLines(child);
+    send(child, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'e2e', version: '1.0.0' },
+      },
+    });
+    await waitFor(() => stdoutLines.length > 0);
+    const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(initResponse.result?.['serverInfo']).toMatchObject({
+      name: 'openapi-mcp',
+      title: 'Example API (dev)',
+    });
+  });
+
+  it.each(['', ' padded', 'two\nlines'])(
+    'rejects --server-title %j as a usage error naming the flag',
+    async (value) => {
+      child = spawn(
+        process.execPath,
+        [CLI_ENTRY, 'serve', '--spec', 'petstore.json', '--server-title', value],
+        { cwd: fixturesDir },
+      );
+      const { stderrLines, rawStdout } = collectLines(child);
+      const code = await new Promise<number | null>((resolve) => {
+        child?.once('exit', (exitCode) => resolve(exitCode));
+      });
+      expect(code).toBe(2); // EXIT.USAGE
+      expect(rawStdout()).toBe('');
+      expect(stderrLines.join('\n')).toContain('--server-title');
     },
   );
 

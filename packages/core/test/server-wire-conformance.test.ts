@@ -352,6 +352,8 @@ describe('2026-07-28 wire conformance — result stamping', () => {
       // assertion. It must carry THIS server's identity, not a placeholder.
       expect(payload.result?.['_meta']?.[SERVER_INFO_META_KEY]).toEqual({
         name: 'core-wire-conformance',
+        // The spec title, the default serverInfo.title
+        title: 't',
         version: '9.9.9',
       });
     } finally {
@@ -380,6 +382,8 @@ describe('2026-07-28 wire conformance — result stamping', () => {
       expect(payload.result?.cacheScope).toBe('private');
       expect(payload.result?.['_meta']?.[SERVER_INFO_META_KEY]).toEqual({
         name: 'core-wire-conformance',
+        // The spec title, the default serverInfo.title
+        title: 't',
         version: '9.9.9',
       });
     } finally {

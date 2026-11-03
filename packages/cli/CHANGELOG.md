@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--server-title <text>` sets the server name a client shows, and the spec title is the
+  default.** The server sent `serverInfo.name: "openapi-mcp"` and no `title`, so a client that
+  labels a server by its metadata, such as the Codex desktop app under Sources, showed
+  "openapi-mcp" for every openapi-mcp server. The server now sends `serverInfo.title`: the spec's
+  `info.title`, with several APIs their names joined by ", ", or the value of `--server-title`.
+  `name` stays `openapi-mcp`. Clients that show the name from their own config, such as Claude
+  Code, Claude Desktop and the Codex CLI, show the same as before (#128).
+
 ## [0.11.0] - 2026-11-02
 
 ### Added

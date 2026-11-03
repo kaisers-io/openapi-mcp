@@ -51,6 +51,10 @@ export const TOOLS_LIST_CACHE_HINT: CacheHint = { ttlMs: 3_600_000, cacheScope: 
 export type ProtocolSessionOptions = {
   name: string;
   version: string;
+  // The serverInfo.title, the name a client may show for this server (serve
+  // --server-title). Defaults to the spec title, which with several APIs is
+  // their names joined by ", ".
+  title?: string;
   snapshot: ServerSnapshot;
   dispatcherDeps: Omit<DispatcherDeps, 'snapshot'>;
   // Interval between progress notifications for a call that asked for them
@@ -172,8 +176,9 @@ const boundRawName = (name: string): string => {
 // case" the deprecation notice carves out for Server.
 // oxlint-disable-next-line no-deprecated -- see comment above; only the low-level Server serves the derived JSON Schemas unaltered
 export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
+  const title = opts.title ?? opts.snapshot.meta.specTitle;
   const server = new Server(
-    { name: opts.name, version: opts.version },
+    { name: opts.name, version: opts.version, ...(title === '' ? {} : { title }) },
     {
       // Capabilities MUST be set before registering the tools/list and
       // tools/call handlers below — the registration-time capability
