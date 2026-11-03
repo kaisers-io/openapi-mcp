@@ -802,8 +802,8 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
 
   it.each([
     ['a plain', (secret: string) => secret],
-    ['an &amp;-escaped', (secret: string) => secret.replace('&', '&amp;')],
-    ['a &#38;-escaped', (secret: string) => secret.replace('&', '&#38;')],
+    ['an &amp;-escaped', (secret: string) => secret.replaceAll('&', '&amp;')],
+    ['a &#38;-escaped', (secret: string) => secret.replaceAll('&', '&#38;')],
   ])('withholds a 200 XML body that echoes %s secret', (_label, spell) => {
     const secret = 'example&token-not-a-secret';
     const outcome = response(200, 'application/xml', `<key>${spell(secret)}</key>`);
