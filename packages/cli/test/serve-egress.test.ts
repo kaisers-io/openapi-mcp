@@ -110,6 +110,10 @@ describe('serve — untrusted spec-derived base: startup egress classification (
     const text = errLines.join('\n');
     expect(text).toContain('127.0.0.1');
     expect(text).toContain('private/loopback');
+    // The message names where the address came from and the narrow fix first
+    expect(text).toContain("the spec's servers URL host");
+    expect(text).not.toContain('redirect target');
+    expect(text).toContain('--base-url');
     expect(text).toContain('--allow-private-network');
     // Never got far enough to attempt the (busy) HTTP bind at all.
     expect(text).not.toContain('EADDRINUSE');

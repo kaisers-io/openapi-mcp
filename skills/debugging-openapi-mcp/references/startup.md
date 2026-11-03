@@ -89,7 +89,9 @@ with `expected <calls>/<duration>, e.g. "120/1m"`. The accepted values:
 
 An unknown flag, command or missing value fails with the parser's text, such as `unknown option`,
 `unknown command` or
-`required option '--spec <url|file>' not specified (or --api <name>=<source>)`.
+`required option '--spec <url|file>' not specified (or --api <name>=<source>)`. `tools` takes only
+the spec and filter options; for a serve option it adds `--base-url is a serve option, and check
+takes every serve option`. Run `check` with the full serve command line instead.
 
 ## Credentials and OAuth
 
@@ -139,10 +141,11 @@ An unknown flag, command or missing value fails with the parser's text, such as 
 
 | `check` or stderr says | Cause | Fix |
 |---|---|---|
-| `points at the private/loopback address`, `is loopback`, `resolves to a private/loopback address`, `rejected:` after the spec URL | the spec, its redirect or the API address from the spec is on a private network | `--allow-private-network`, only after the user confirms the address is theirs |
+| `the spec's servers URL host "..." points at the private/loopback address` or `is loopback` | no `--base-url`, and the API address in the spec's `servers` is on a private network | `--base-url <url>` with the address the user confirms; `--allow-private-network` only if the user wants every private address allowed |
+| `points at the private/loopback address`, `is loopback`, `resolves to a private/loopback address`, `rejected:` after the spec URL | the spec or a redirect is on a private network | `--allow-private-network`, only after the user confirms the address is theirs |
 | `resolves to the non-loopback address`, `plain http goes only to loopback` | `--spec-header-env` over `http://` to `localhost` or `*.localhost`, and the name resolves to another address | make the name resolve to `127.0.0.1` or `::1`, or use `https://`; `--allow-insecure-http` only if the user agrees |
 | `is a cloud-metadata address`, `is a cloud-metadata endpoint`, `points at the cloud-metadata address` | a metadata host, or a link-local address (`169.254.0.0/16`, `fe80::/10`) | no flag admits it, `--allow-private-network` neither; use another address of the API |
-| `cannot resolve redirect target` | this machine cannot resolve the API host from the spec | the right base URL or network |
+| `cannot resolve the spec's servers URL host`, `cannot resolve redirect target` | this machine cannot resolve the API host from the spec, or a redirect's host | the right base URL or network |
 | `tools would be exposed after filtering`, `exceeds the 512-tool budget` | too many operations for `per-operation` (4,096 under `discover`) | narrow `--allow`, or `--tool-mode discover` |
 | filter warnings that stop the start | `--strict-filters` turns every filter warning into an error | fix the pattern with the suggestion it prints (the missing-tools file of the routing table) |
 | `a filter pattern needs a selector; write` | a pattern from before 0.5.0 | apply the replacement it names |
