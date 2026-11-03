@@ -1,5 +1,6 @@
 import { array, assert, constantFrom, property } from 'fast-check';
 import { describe, expect, it } from 'vitest';
+import { decodeEntities } from '../src/server/execute/html-text.ts';
 import { decodedForms } from '../src/server/execute/response-media.ts';
 
 // The JSON escape decoding of the secret scan is a loop over indexOf. It
@@ -33,7 +34,8 @@ const referenceForms = (text: string, levels: number): string[] => {
 };
 
 // Characters that start, continue or break an escape, plus surrogates. No
-// `&`, so no markup entity form joins the JSON forms.
+// `&` itself, but `\u0026` decodes to one, and then decodedForms appends
+// the entity form of every form that has an `&`, after the JSON forms.
 const PIECES = [
   '\\',
   '\\',
@@ -62,7 +64,11 @@ describe('decodedForms — JSON escapes', () => {
     const texts = array(constantFrom(...PIECES), { maxLength: 24 });
     const same = property(texts, (pieces) => {
       const text = pieces.join('');
-      expect(decodedForms(text, 4)).toStrictEqual(referenceForms(text, 4));
+      const json = referenceForms(text, 4);
+      const entities = [text, ...json]
+        .filter((form) => form.includes('&'))
+        .map((form) => decodeEntities(form));
+      expect(decodedForms(text, 4)).toStrictEqual([...json, ...entities]);
     });
     assert(same, { numRuns: 20_000 });
   });
@@ -72,6 +78,7 @@ describe('decodedForms — JSON escapes', () => {
     ['a short \\u', String.raw`a\u00`, []],
     ['\\u with a non-hex digit', String.raw`\u00g6`, []],
     ['five hex digits, of which four count', String.raw`\u00411`, ['A1']],
+    ['an escaped ampersand, then its entity form', String.raw`\u0026`, ['&', '&']],
     ['an escaped backslash before u', String.raw`\\u0041`, [String.raw`\u0041`, 'A']],
     ['an invalid escape before a valid one', String.raw`\x\n`, ['\\x\n']],
     ['a surrogate pair', String.raw`\uD83D\uDE00`, ['😀']],

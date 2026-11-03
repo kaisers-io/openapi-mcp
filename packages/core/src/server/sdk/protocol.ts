@@ -14,6 +14,7 @@ import { hasDefaultDialect, listedTool, pageTools } from '../tool-list.ts';
 import { traceContextFromMeta } from '../trace.ts';
 import { EXECUTE_TOOL_NAME } from '../discovery.ts';
 import type { ServerSnapshot } from '../types.ts';
+import { serverIdentity } from './server-identity.ts';
 
 // STATIC, package-authored — NEVER spec-derived: the instructions a server
 // hands the client are a high-impact prompt-injection surface. This string
@@ -51,6 +52,10 @@ export const TOOLS_LIST_CACHE_HINT: CacheHint = { ttlMs: 3_600_000, cacheScope: 
 export type ProtocolSessionOptions = {
   name: string;
   version: string;
+  // The serverInfo.title, the name a client may show for this server (serve
+  // --server-title). Defaults to the spec title, which with several APIs is
+  // their names joined by ", ".
+  title?: string;
   snapshot: ServerSnapshot;
   dispatcherDeps: Omit<DispatcherDeps, 'snapshot'>;
   // Interval between progress notifications for a call that asked for them
@@ -173,7 +178,12 @@ const boundRawName = (name: string): string => {
 // oxlint-disable-next-line no-deprecated -- see comment above; only the low-level Server serves the derived JSON Schemas unaltered
 export const createProtocolSession = (opts: ProtocolSessionOptions): Server => {
   const server = new Server(
-    { name: opts.name, version: opts.version },
+    serverIdentity({
+      name: opts.name,
+      version: opts.version,
+      title: opts.title ?? opts.snapshot.meta.specTitle,
+      redactor: opts.dispatcherDeps.redactor,
+    }),
     {
       // Capabilities MUST be set before registering the tools/list and
       // tools/call handlers below — the registration-time capability
