@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Three error messages say where to look.**
+  - A response that doesn't match the output schema now says that the server's call log
+    (`serve --log json`) names the field and the rule. The details stay in that log.
+  - `tools` with an option only `serve` and `check` take, such as `--base-url`, now says that it is
+    a serve option and that `check` takes every serve option.
+  - Without `--base-url`, a private or loopback address in the spec's `servers` URL was refused as
+    a "redirect target". The message now names the spec's `servers` URL and suggests `--base-url`
+    first. A refused OAuth token URL names its host the same way (#133).
+
 ## [0.11.0] - 2026-11-02
 
 ### Added

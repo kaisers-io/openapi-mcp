@@ -376,6 +376,19 @@ const parseToolsPageSize = (raw: string | undefined): number | undefined => {
   return Number(raw);
 };
 
+// How the startup egress checks name their URL (issue #133). The spec's
+// `servers` URL is only checked when no --base-url is set, so --base-url is
+// the narrow way to use such an address on purpose.
+const SPEC_SERVERS_SUBJECT = {
+  name: "the spec's servers URL host",
+  privateHint:
+    'pass --base-url <url> to choose the API address yourself, or --allow-private-network to permit private addresses',
+};
+const TOKEN_URL_SUBJECT = {
+  name: 'its host',
+  privateHint: 'pass --allow-private-network to permit it',
+};
+
 // Validated like --port: before any spec, cache or network work.
 const parseToolMode = (raw: string): RequestedToolMode => {
   const mode = TOOL_MODES.find((candidate) => candidate === raw);
@@ -666,6 +679,7 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
       { allowPrivateNetwork },
       ctx.lookup,
       AbortSignal.timeout(args.options.timeoutMs),
+      SPEC_SERVERS_SUBJECT,
     );
   }
 
@@ -687,6 +701,7 @@ const finishApi = async (api: LoadedApi, deferOutput: boolean, ctx: CliContext) 
         { allowPrivateNetwork },
         ctx.lookup,
         AbortSignal.timeout(args.options.timeoutMs),
+        TOKEN_URL_SUBJECT,
       );
     } catch (error) {
       throw validationError(

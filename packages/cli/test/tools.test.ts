@@ -203,6 +203,40 @@ describe('tools command — file specs', () => {
     expect(code).toBe(EXIT.NOT_FOUND);
   });
 
+  it('names check for a serve option passed to tools', async () => {
+    const { lines, ctx } = fileCtx();
+    const code = await run(ctx, [
+      'node',
+      'openapi-mcp',
+      '--json',
+      'tools',
+      '--spec',
+      'petstore.json',
+      '--base-url=http://127.0.0.1:1',
+    ]);
+    expect(code).toBe(EXIT.USAGE);
+    const { error } = JSON.parse(lines.join('')) as { error: { message: string } };
+    expect(error.message).toBe(
+      "unknown option '--base-url=http://127.0.0.1:1' — tools takes only the spec and filter options; --base-url is a serve option, and check takes every serve option",
+    );
+  });
+
+  it('keeps the plain message for an option no command takes', async () => {
+    const { lines, ctx } = fileCtx();
+    const code = await run(ctx, [
+      'node',
+      'openapi-mcp',
+      '--json',
+      'tools',
+      '--spec',
+      'petstore.json',
+      '--no-such-option',
+    ]);
+    expect(code).toBe(EXIT.USAGE);
+    const { error } = JSON.parse(lines.join('')) as { error: { message: string } };
+    expect(error.message).toBe("unknown option '--no-such-option'");
+  });
+
   it('rejects an invalid --timeout with exit 2', async () => {
     const { ctx } = fileCtx();
     const code = await run(ctx, [

@@ -370,37 +370,45 @@ const hostnameOf = (url: URL): string => stripBrackets(url.hostname);
 
 const describeCause = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
+// What a refusal calls the checked URL and how it says to permit a private
+// address. A redirect is the default; a startup check names its own source,
+// such as the spec's `servers` URL.
+export type EgressSubject = { name: string; privateHint: string };
+
+const REDIRECT_SUBJECT: EgressSubject = {
+  name: 'redirect target',
+  privateHint: 'pass --allow-private-network to permit it',
+};
+
 export const assertAllowedRedirectTarget = async (
   url: URL,
   opts: EgressPolicyOptions,
   lookup: DnsLookup,
   signal: AbortSignal,
+  subject: EgressSubject = REDIRECT_SUBJECT,
 ): Promise<void> => {
   const hostname = hostnameOf(url);
   const lower = canonicalHostname(hostname);
+  const target = `${subject.name} "${lower}"`;
   const check = (address: string): void => {
     if (isIP(address) === 0) {
       // Fail closed: a DnsLookup implementation must return IP addresses
-      throw validationError(
-        `DNS lookup for redirect target "${lower}" returned a non-IP answer — failing closed`,
-      );
+      throw validationError(`DNS lookup for ${target} returned a non-IP answer — failing closed`);
     }
     const classified = classifyAddress(address);
     if (classified === 'metadata') {
       throw validationError(
-        `redirect target "${lower}" points at the cloud-metadata address ${address} — never allowed`,
+        `${target} points at the cloud-metadata address ${address} — never allowed`,
       );
     }
     if (classified === 'private' && !opts.allowPrivateNetwork) {
       throw validationError(
-        `redirect target "${lower}" points at the private/loopback address ${address} — pass --allow-private-network to permit it`,
+        `${target} points at the private/loopback address ${address} — ${subject.privateHint}`,
       );
     }
   };
   if (METADATA_HOSTNAMES.has(lower)) {
-    throw validationError(
-      `redirect target "${lower}" is a cloud-metadata endpoint — never allowed`,
-    );
+    throw validationError(`${target} is a cloud-metadata endpoint — never allowed`);
   }
   if (isIP(lower) !== 0) {
     check(lower);
@@ -408,9 +416,7 @@ export const assertAllowedRedirectTarget = async (
   }
   if (lower === 'localhost' || lower.endsWith('.localhost')) {
     if (!opts.allowPrivateNetwork) {
-      throw validationError(
-        `redirect target "${lower}" is loopback — pass --allow-private-network to permit it`,
-      );
+      throw validationError(`${target} is loopback — ${subject.privateHint}`);
     }
     return;
   }
@@ -424,10 +430,10 @@ export const assertAllowedRedirectTarget = async (
     // outlive the fetch timeout budget
     addresses = await lookup(hostname, signal);
   } catch (error) {
-    throw validationError(`cannot resolve redirect target "${lower}": ${describeCause(error)}`);
+    throw validationError(`cannot resolve ${target}: ${describeCause(error)}`);
   }
   if (addresses.length === 0) {
-    throw validationError(`redirect target "${lower}" did not resolve to any address`);
+    throw validationError(`${target} did not resolve to any address`);
   }
   // Post-resolution validation of EVERY answer. The remaining
   // resolve-vs-connect TOCTOU window is closed by the DNS-pinning dispatcher

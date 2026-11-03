@@ -1329,7 +1329,8 @@ describe('mapResponse — null property values under nullableResponseFields (#3)
     return { outputSchema, validator: compileEnvelopeValidator(outputSchema) as EnvelopeValidator };
   };
   const failure =
-    "upstream response for status 200 did not match the tool's declared output schema";
+    "upstream response for status 200 did not match the tool's declared output schema; " +
+    "the server's call log (serve --log json) names the field and the rule";
   const mapped = (overrides: Partial<MapResponseOptions>): ToolCallOutcome =>
     mapResponse(defaultOpts(overrides));
 

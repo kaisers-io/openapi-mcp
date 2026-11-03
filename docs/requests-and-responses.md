@@ -359,7 +359,8 @@ Some generators (springdoc, for one) leave `nullable` out unless a field is anno
 the server serializes every unset field as `null`. OpenAPI 3.0 defaults `nullable` to
 `false`, so the derived output schema rejects such a response, and the call fails with
 "upstream response for status N did not match the tool's declared output schema", even though
-the data is usable.
+the data is usable. The message adds that the server's call log names the field: run `serve`
+with `--log json` to see it (see [the call log](#call-log)).
 
 With the flag, every value under an object's `properties` in the derived response (`data`)
 schema also admits `null`. That applies at every depth, through `$ref`s, and in the
