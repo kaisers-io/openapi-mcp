@@ -107,19 +107,15 @@ export const someDecodedForm = (value: unknown, hit: (form: string) => boolean):
   return false;
 };
 
-// XML and YAML are text too: `application/xml`, `application/yaml` and the
-// structured syntax suffixes `+xml` (RFC 7303: RSS, Atom, SOAP) and `+yaml`
-// (RFC 9512). They come back as text, decoded and scanned like `text/*`.
-const TEXT_APPLICATION_TYPES: ReadonlySet<string> = new Set([
-  'application/xml',
-  'application/yaml',
-  'application/x-yaml',
-]);
-
+// XML is text too: `application/xml` and the `+xml` structured syntax
+// suffix (RFC 7303: RSS, Atom, SOAP). It comes back as text, decoded and
+// scanned like `text/*`, whose entity forms the secret scan already reads.
+// YAML is not: its own escapes (a doubled quote, `\x` escapes) would carry
+// a secret past that scan, so it stays an unsupported media type.
 export const isTextEssence = (essence: string): boolean =>
   essence.startsWith('text/') ||
-  TEXT_APPLICATION_TYPES.has(essence) ||
-  (essence.startsWith('application/') && (essence.endsWith('+xml') || essence.endsWith('+yaml')));
+  essence === 'application/xml' ||
+  (essence.startsWith('application/') && essence.endsWith('+xml'));
 
 // A response in a sequential media type (OAS 3.2.1 §4.14.3.1), read as the
 // array of its items in order, the JSON data model the spec maps such a body
