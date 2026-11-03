@@ -380,6 +380,21 @@ describe('check (issue #77)', () => {
     ]);
   });
 
+  it('lists the variables of --spec-basic-auth-env', async () => {
+    const result = await check([
+      '--spec',
+      'small.json',
+      ...BASE,
+      '--spec-basic-auth-env',
+      'SPEC_USER:SPEC_PASSWORD',
+    ]);
+    expect(result.code).toBe(EXIT.USAGE);
+    expect(reportOf(result.lines).data.environment.variables).toEqual([
+      { name: 'SPEC_USER', flag: '--spec-basic-auth-env', set: false },
+      { name: 'SPEC_PASSWORD', flag: '--spec-basic-auth-env', set: false },
+    ]);
+  });
+
   it('prints a failed startup and the API names without --json', async () => {
     const failed = await check(['--spec', 'small.json'], {}, []);
     expect(failed.code).toBe(EXIT.USAGE);

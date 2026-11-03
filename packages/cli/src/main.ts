@@ -83,8 +83,31 @@ const stripCommanderPrefix = (message: string): string => message.replace(/^erro
 // start with '-' (e.g. `--log-level info`) would have that value token
 // mistaken for the command positional, and this detection would need to
 // skip it explicitly.
-const isServeInvocation = (rawArgv: readonly string[]): boolean =>
-  rawArgv.slice(2).find((token) => !token.startsWith('-')) === 'serve';
+const commandOf = (rawArgv: readonly string[]): string | undefined =>
+  rawArgv.slice(2).find((token) => !token.startsWith('-'));
+
+const isServeInvocation = (rawArgv: readonly string[]): boolean => commandOf(rawArgv) === 'serve';
+
+// `tools` lists operations, not what a server built from the same options
+// offers, so it takes none of serve's other options. A serve command line
+// copied to it fails on the first such option; the message then says which
+// command takes it (issue #133).
+const UNKNOWN_OPTION_RE = /^unknown option '(?<flag>--[^'=]+)/u;
+
+const withServeOptionHint = (
+  program: Command,
+  rawArgv: readonly string[],
+  message: string,
+): string => {
+  const flag = UNKNOWN_OPTION_RE.exec(message)?.groups?.['flag'];
+  if (flag === undefined || commandOf(rawArgv) !== 'tools') {
+    return message;
+  }
+  const serve = program.commands.find((command) => command.name() === 'serve');
+  return serve?.options.some((option) => option.long === flag) === true
+    ? `${message} — tools takes only the spec and filter options; ${flag} is a serve option, and check takes every serve option`
+    : message;
+};
 
 export const run = async (
   ctx: CliContext,
@@ -107,7 +130,8 @@ export const run = async (
       ? { json: false, verbose: false }
       : getGlobalOpts(program);
     if (error instanceof CommanderError) {
-      return emitError(ctx, errorOpts, usageError(stripCommanderPrefix(error.message)));
+      const message = withServeOptionHint(program, argv, stripCommanderPrefix(error.message));
+      return emitError(ctx, errorOpts, usageError(message));
     }
     return emitError(ctx, errorOpts, error);
   }

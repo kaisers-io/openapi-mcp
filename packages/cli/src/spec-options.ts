@@ -5,8 +5,6 @@ import {
   parseAgeDuration,
   parseDuration,
   parseFilterPatterns,
-  parseHeaderEnvMapping,
-  resolveHeaderEnvMappings,
   sanitizeSpecText,
   usageError,
 } from '@kaisers-io/openapi-mcp-core';
@@ -14,12 +12,12 @@ import type {
   FilterPattern,
   NullableFieldScope,
   OmittedOperation,
-  ResolvedHeader,
   SpecPipelineDeps,
   SpecPipelineOptions,
 } from '@kaisers-io/openapi-mcp-core';
 import type { CliContext } from './context.ts';
 import { collect, declareChoices } from './option-meta.ts';
+import { resolveSpecHeaders, SPEC_BASIC_AUTH_HELP } from './spec-headers.ts';
 
 export { exposureReport, reachableTools, unreachableHeads } from './exposure-report.ts';
 export { withOutputSchemaOptOut } from './output-schema-opt-out.ts';
@@ -91,6 +89,7 @@ export type SpecCmdOpts = {
   deny: readonly string[];
   strictFilters?: boolean;
   specHeaderEnv: readonly string[];
+  specBasicAuthEnv?: string;
   timeout: string;
   ttl: string;
   cacheKey?: string;
@@ -165,6 +164,7 @@ export const registerSpecOptions = (
       collect,
       [] as readonly string[],
     )
+    .option('--spec-basic-auth-env <USER_ENV:PASSWORD_ENV>', SPEC_BASIC_AUTH_HELP)
     .option('--timeout <duration>', 'spec fetch timeout (<int><s|m|h|d>)', '30s')
     .option(
       '--ttl <duration>',
@@ -249,8 +249,7 @@ export type SpecPipelineArgs = {
 // Builds the exact runSpecPipeline call shape both `tools` and `serve` need,
 // so their spec/cache/filter behaviour can never silently diverge.
 export const parseSpecPipelineArgs = (cmdOpts: SpecCmdOpts, ctx: CliContext): SpecPipelineArgs => {
-  const mappings = cmdOpts.specHeaderEnv.map((raw) => parseHeaderEnvMapping(raw));
-  const specHeaders: readonly ResolvedHeader[] = resolveHeaderEnvMappings(mappings, ctx.env);
+  const specHeaders = resolveSpecHeaders(cmdOpts, ctx.env);
   const timeoutMs = parseDuration(cmdOpts.timeout, '--timeout');
   // An age, not a timer: --ttl is only compared with a cache entry's age, so
   // it is not bound by the Node timer limit that --timeout is

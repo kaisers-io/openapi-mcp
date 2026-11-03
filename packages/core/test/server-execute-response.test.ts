@@ -767,6 +767,52 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     expect(result.content[0]?.text).toBe('hello world');
   });
 
+  it.each(['application/xml', 'application/rss+xml; charset=utf-8', 'application/soap+xml'])(
+    'a %s body is returned as text',
+    (type) => {
+      const outcome = response(200, type, '<catalog><book id="1">Example</book></catalog>');
+      const result = mapResponse(defaultOpts({ outcome }));
+      expect(result.isError).toBe(false);
+      expect(result.content[0]?.text).toBe('<catalog><book id="1">Example</book></catalog>');
+    },
+  );
+
+  it.each([
+    'application/octet-stream',
+    'application/pdf',
+    'image/svg+xml',
+    'application/xmlish',
+    'application/yaml',
+    'application/x-yaml',
+    'application/openapi+yaml',
+  ])('a %s body is still an unsupported media type', (type) => {
+    const outcome = response(200, type, '<x/>');
+    const result = mapResponse(defaultOpts({ outcome }));
+    expect(isError(result)).toContain('unsupported media type');
+  });
+
+  it('an XML body that is not UTF-8 fails, whatever its declaration says', () => {
+    const latin1 = Buffer.from(
+      '<?xml version="1.0" encoding="ISO-8859-1"?><a>\u00E9</a>',
+      'latin1',
+    );
+    const outcome = response(200, 'application/xml', latin1);
+    const result = mapResponse(defaultOpts({ outcome }));
+    expect(isError(result)).toBe('upstream response body was not valid UTF-8 text');
+  });
+
+  it.each([
+    ['a plain', (secret: string) => secret],
+    ['an &amp;-escaped', (secret: string) => secret.replaceAll('&', '&amp;')],
+    ['a &#38;-escaped', (secret: string) => secret.replaceAll('&', '&#38;')],
+    ['a &#x26;-escaped', (secret: string) => secret.replaceAll('&', '&#x26;')],
+  ])('withholds a 200 XML body that echoes %s secret', (_label, spell) => {
+    const secret = 'example&token-not-a-secret';
+    const outcome = response(200, 'application/xml', `<key>${spell(secret)}</key>`);
+    const result = mapResponse(defaultOpts({ outcome, redactor: createRedactor([secret]) }));
+    expect(result.content[0]?.text).not.toContain('token-not-a-secret');
+  });
+
   it('a 200 text/* body echoing a bare Bearer credential is returned redacted (kaisers-io/openapi-mcp-archive#58)', () => {
     const redactor = createRedactor(['Bearer example-token-not-a-secret']);
     const outcome = response(200, 'text/plain', 'your key is example-token-not-a-secret');
@@ -1329,7 +1375,8 @@ describe('mapResponse — null property values under nullableResponseFields (#3)
     return { outputSchema, validator: compileEnvelopeValidator(outputSchema) as EnvelopeValidator };
   };
   const failure =
-    "upstream response for status 200 did not match the tool's declared output schema";
+    "upstream response for status 200 did not match the tool's declared output schema; " +
+    "the server's call log (serve --log json) names the field and the rule";
   const mapped = (overrides: Partial<MapResponseOptions>): ToolCallOutcome =>
     mapResponse(defaultOpts(overrides));
 

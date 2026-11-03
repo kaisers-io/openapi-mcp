@@ -45,8 +45,8 @@ value), 3 validation (the spec, the cache, a budget, `--strict-filters`), 4 not 
 | `contains control characters`, `contains a character above U+00FF` | a variable or `--header` value holds a line break or non-Latin-1 text, which no HTTP header can carry | the user fixes the stored value |
 | `cannot read spec file` | wrong path, or relative to another working directory | absolute path |
 | `--spec must not be empty`, `invalid spec URL`, `unsupported URL scheme` | a typo, or a file path with `:` | a full `https://` URL; a relative path with `:` starts with `./` |
-| `spec URLs must not contain userinfo credentials`, `looks credential-bearing` | user and password in the URL, or a query parameter such as `token=` | `--spec-header-env`; query-string secrets are not supported |
-| `spec fetch failed with HTTP 401` or `403` | the spec URL needs a credential | `--spec-header-env Authorization=VAR` and a `--cache-key` |
+| `spec URLs must not contain userinfo credentials`, `looks credential-bearing` | user and password in the URL, or a query parameter such as `token=` | `--spec-basic-auth-env USER_VAR:PASSWORD_VAR` for a user and password, `--spec-header-env` for a token; query-string secrets are not supported |
+| `spec fetch failed with HTTP 401` or `403` | the spec URL needs a credential | `--spec-header-env Authorization=VAR`, or `--spec-basic-auth-env USER_VAR:PASSWORD_VAR` for HTTP Basic auth, and a `--cache-key` |
 | `spec fetch failed with HTTP` and another status | wrong spec URL | find the right URL with the user |
 | `spec fetch timed out` | slow or unreachable URL | check the URL in a browser; raise `--timeout` only for a slow spec |
 | `spec fetch failed for` | DNS, TLS or network; the text after the colon says which | test the URL from the same machine |
@@ -80,6 +80,7 @@ with `expected <calls>/<duration>, e.g. "120/1m"`. The accepted values:
 | `--rate-limit` | `<calls>/<duration>`, calls 1 to 100,000 |
 | `--retries` | 0 to 3 |
 | `--tools-page-size` | 1 to 512 |
+| `--server-title` | 1 to 256 characters, no tabs, line breaks or other control characters, no spaces at the start or end |
 | `--port` | 1 to 65535 |
 | `--log` | `json` only |
 | `--tool-mode`, `--output-schema`, `--image-responses`, `--nullable-response-fields`, `--http-auth`, `--upstream-oauth-client-auth` | one of the values `CLI --json help` lists (`is not one of`) |
@@ -88,7 +89,9 @@ with `expected <calls>/<duration>, e.g. "120/1m"`. The accepted values:
 
 An unknown flag, command or missing value fails with the parser's text, such as `unknown option`,
 `unknown command` or
-`required option '--spec <url|file>' not specified (or --api <name>=<source>)`.
+`required option '--spec <url|file>' not specified (or --api <name>=<source>)`. `tools` takes only
+the spec and filter options; for a serve option it adds `--base-url is a serve option, and check
+takes every serve option`. Run `check` with the full serve command line instead.
 
 ## Credentials and OAuth
 
@@ -109,9 +112,10 @@ An unknown flag, command or missing value fails with the parser's text, such as 
 | `too many --upstream-oauth-scope values`, `a scope is one RFC 6749 scope-token` | over 64 scopes, or a scope with a space or quote | one flag per scope |
 | `the OAuth token URL is refused` | token URL private or not allowed | check the URL with the user |
 | `too trivial to redact safely`, `secret exceeds the redaction length budget`, `too many secrets to redact` | a secret that is part of `[redacted]`, over 8,192 characters, or more than 64 secrets | a real secret; fewer headers or APIs |
-| `refusing to send a --spec-header-env credential in cleartext` | an `http://` spec URL to a host that is not loopback | an `https://` spec URL; `--allow-insecure-http` (also on `tools` and `cache refresh`) only if the user agrees |
-| `--spec-header-env only applies to URL spec sources` | a file spec with a spec credential | remove `--spec-header-env` |
-| `an authenticated spec source ... requires an explicit cache decision` | `--spec-header-env` without a cache key | `--cache-key <name>`; `--trust-spec-updates` skips the cache instead, if the user agrees |
+| `refusing to send a --spec-header-env or --spec-basic-auth-env credential in cleartext` | an `http://` spec URL to a host that is not loopback | an `https://` spec URL; `--allow-insecure-http` (also on `tools` and `cache refresh`) only if the user agrees |
+| `--spec-header-env and --spec-basic-auth-env only apply to URL spec sources` | a file spec with a spec credential | remove the spec credential flag |
+| `--spec-basic-auth-env cannot be combined with --spec-header-env Authorization=...` | both set the spec fetch's `Authorization` | keep one |
+| `an authenticated spec source ... requires an explicit cache decision` | `--spec-header-env` or `--spec-basic-auth-env` without a cache key | `--cache-key <name>`; `--trust-spec-updates` skips the cache instead, if the user agrees |
 
 ## Several APIs and HTTP
 
@@ -138,10 +142,11 @@ An unknown flag, command or missing value fails with the parser's text, such as 
 
 | `check` or stderr says | Cause | Fix |
 |---|---|---|
-| `points at the private/loopback address`, `is loopback`, `resolves to a private/loopback address`, `rejected:` after the spec URL | the spec, its redirect or the API address from the spec is on a private network | `--allow-private-network`, only after the user confirms the address is theirs |
+| `the spec's servers URL host "..." points at the private/loopback address` or `is loopback` | no `--base-url`, and the API address in the spec's `servers` is on a private network | `--base-url <url>` with the address the user confirms; `--allow-private-network` only if the user wants every private address allowed |
+| `points at the private/loopback address`, `is loopback`, `resolves to a private/loopback address`, `rejected:` after the spec URL | the spec or a redirect is on a private network | `--allow-private-network`, only after the user confirms the address is theirs |
 | `resolves to the non-loopback address`, `plain http goes only to loopback` | `--spec-header-env` over `http://` to `localhost` or `*.localhost`, and the name resolves to another address | make the name resolve to `127.0.0.1` or `::1`, or use `https://`; `--allow-insecure-http` only if the user agrees |
 | `is a cloud-metadata address`, `is a cloud-metadata endpoint`, `points at the cloud-metadata address` | a metadata host, or a link-local address (`169.254.0.0/16`, `fe80::/10`) | no flag admits it, `--allow-private-network` neither; use another address of the API |
-| `cannot resolve redirect target` | this machine cannot resolve the API host from the spec | the right base URL or network |
+| `cannot resolve the spec's servers URL host`, `cannot resolve redirect target` | this machine cannot resolve the API host from the spec, or a redirect's host | the right base URL or network |
 | `tools would be exposed after filtering`, `exceeds the 512-tool budget` | too many operations for `per-operation` (4,096 under `discover`) | narrow `--allow`, or `--tool-mode discover` |
 | filter warnings that stop the start | `--strict-filters` turns every filter warning into an error | fix the pattern with the suggestion it prints (the missing-tools file of the routing table) |
 | `a filter pattern needs a selector; write` | a pattern from before 0.5.0 | apply the replacement it names |

@@ -19,6 +19,7 @@ value, `prefix-or-all` applies to every API without one, `enable` is set with
 | `--deny <pattern>` |  |  | yes | prefix-or-all | exclude what this selector matches, always wins (repeatable) |
 | `--strict-filters` |  |  |  |  | exit with an error instead of a warning on dead patterns, case collisions and tools whose path overlaps an excluded one |
 | `--spec-header-env <Header=ENV>` |  |  | yes | prefix | auth header for the spec fetch, value read from env (repeatable) |
+| `--spec-basic-auth-env <USER_ENV:PASSWORD_ENV>` |  |  |  | prefix | HTTP Basic auth for the spec fetch, user name and password read from env (password optional) |
 | `--timeout <duration>` | `"30s"` |  |  |  | spec fetch timeout (<int><s\|m\|h\|d>) |
 | `--ttl <duration>` | `"1h"` |  |  | prefix | how long a cached spec is used before it is re-validated at startup (<int><s\|m\|h\|d>, up to 365d) |
 | `--cache-key <name>` |  |  |  | prefix | durable cache namespace label; required for authenticated specs |
@@ -35,7 +36,7 @@ value, `prefix-or-all` applies to every API without one, `enable` is set with
 | `--basic-auth-env <USER_ENV:PASSWORD_ENV>` |  |  |  | prefix | HTTP Basic auth for API requests: the user name and the password read from these env vars (secret; without :PASSWORD_ENV the password is empty) |
 | `--header <Header:value>` |  |  | yes | prefix | static, non-secret API header (repeatable); a token or key goes in --header-env |
 | `--max-response-bytes <size>` | `"10MB"` |  |  |  | cap the decompressed upstream response body and the outgoing request body (<int><B\|KB\|MB> or a plain byte count) |
-| `--allow-insecure-http` |  |  |  | enable | permit an operator credential (--header-env, --header-file, --spec-header-env) over cleartext http to a non-loopback origin |
+| `--allow-insecure-http` |  |  |  | enable | permit an operator credential (--header-env, --header-file, --spec-header-env, --spec-basic-auth-env) over cleartext http to a non-loopback origin |
 | `--max-concurrency <n>` | `"16"` |  |  |  | upstream calls in flight at once; further calls wait in a bounded queue |
 | `--rate-limit <calls/duration>` | `"120/1m"` |  |  |  | tool calls allowed per sliding window |
 | `--request-timeout <duration>` | `"30s"` |  |  |  | deadline for each upstream API request (<int><s\|m\|h\|d>); --timeout covers the spec fetch |
@@ -60,6 +61,7 @@ value, `prefix-or-all` applies to every API without one, `enable` is set with
 | `--log <format>` |  | json |  |  | write one structured line per tool call to stderr (only "json"; never arguments, header values or bodies) |
 | `--response-projection` |  |  |  |  | offer an optional _fields argument (JSON Pointers) on JSON tools, so a call returns only the selected fields; adds about a third to tools/list |
 | `--allow-offsite-redirects` |  |  |  | enable | follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply |
+| `--server-title <text>` |  |  |  |  | the server name a client may show (MCP serverInfo.title); default: the spec title, or the API names with several APIs |
 | `--tools-page-size <n>` |  |  |  |  | page tools/list with n tools per page (only for MCP hosts that follow nextCursor); default: all tools in one response |
 | `--tool-mode <mode>` | `"per-operation"` | per-operation, discover, auto |  |  | per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above 64 operations or 40 KB of tool definitions) |
 | `--no-execute` | `true` |  |  |  | do not offer execute_code, which runs a short JavaScript program in a sandbox that calls read-only operations and returns only its result |

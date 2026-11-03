@@ -67,6 +67,9 @@ const variablesOf = (
     for (const raw of options.specHeaderEnv) {
       add(parseHeaderEnvMapping(raw).envVar, '--spec-header-env', api);
     }
+    for (const name of (options.specBasicAuthEnv ?? '').split(':').filter(Boolean)) {
+      add(name, '--spec-basic-auth-env', api);
+    }
     for (const raw of options.headerEnv) {
       add(parseHeaderEnvMapping(raw).envVar, '--header-env', api);
     }

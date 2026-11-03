@@ -157,7 +157,11 @@ const TEST_TOKEN = 'core-wire-conformance-bearer-token';
 const ACCEPT_HEADER = 'application/json, text/event-stream';
 const MODERN_VERSION = '2026-07-28';
 
-const makeServer = (port: number, snapshot: ServerSnapshot = buildBaseSnapshot()) =>
+const makeServer = (
+  port: number,
+  snapshot: ServerSnapshot = buildBaseSnapshot(),
+  redactor = NOOP_REDACTOR,
+) =>
   createStreamableHttpServer({
     name: 'core-wire-conformance',
     version: '9.9.9',
@@ -167,7 +171,7 @@ const makeServer = (port: number, snapshot: ServerSnapshot = buildBaseSnapshot()
       now: () => Date.now(),
       executor: noopExecutor,
       metaExecutor: createMetaExecutor(),
-      redactor: NOOP_REDACTOR,
+      redactor,
     },
     guard: {
       allowedOrigins: new Set(),
@@ -352,8 +356,37 @@ describe('2026-07-28 wire conformance — result stamping', () => {
       // assertion. It must carry THIS server's identity, not a placeholder.
       expect(payload.result?.['_meta']?.[SERVER_INFO_META_KEY]).toEqual({
         name: 'core-wire-conformance',
+        // The spec title, the default serverInfo.title
+        title: 't',
         version: '9.9.9',
       });
+    } finally {
+      await server.close();
+    }
+  }, 15_000);
+
+  it('leaves a title out of the serverInfo stamp once it holds a secret registered at runtime', async () => {
+    // Outside every other suite's ports (see server-http-oauth-transport.test.ts)
+    const port = 4690;
+    const secret = 'example-token-not-a-secret';
+    const built = buildTools([namedOp], { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
+    const snapshot = buildSnapshot(built, {
+      spec: { title: `Example ${secret}`, specVersion: '1', omitted: [] },
+      contentHash: 'h',
+      displaySource: 's',
+      deadPatterns: [],
+    });
+    const redactor = createRedactor([]);
+    const server = makeServer(port, snapshot, redactor);
+    await server.listen();
+    try {
+      const stamp = async (id: number): Promise<unknown> => {
+        const answer = await post(port, modernHeaders('tools/list'), modernBody(id, 'tools/list'));
+        return answer.envelope.result?.['_meta']?.[SERVER_INFO_META_KEY];
+      };
+      expect(await stamp(1)).toHaveProperty('title', `Example ${secret}`);
+      redactor.registerRuntimeSecret(secret, Number.POSITIVE_INFINITY, Date.now());
+      expect(await stamp(2)).toEqual({ name: 'core-wire-conformance', version: '9.9.9' });
     } finally {
       await server.close();
     }
@@ -380,6 +413,8 @@ describe('2026-07-28 wire conformance — result stamping', () => {
       expect(payload.result?.cacheScope).toBe('private');
       expect(payload.result?.['_meta']?.[SERVER_INFO_META_KEY]).toEqual({
         name: 'core-wire-conformance',
+        // The spec title, the default serverInfo.title
+        title: 't',
         version: '9.9.9',
       });
     } finally {

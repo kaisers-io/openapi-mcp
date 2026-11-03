@@ -262,9 +262,9 @@ const runSpecPipelineOnce = async (
   const source = parseSpecSource(rawSource, { cwd: opts.cwd });
   const authenticated = opts.specHeaders.length > 0;
   // Diagnosed before the policy: the missing-cache-decision usage error also
-  // names --spec-header-env, and this is the more specific answer
+  // names the spec credential flags, and this is the more specific answer
   if (source.kind === 'file' && authenticated) {
-    throw usageError('--spec-header-env only applies to URL spec sources');
+    throw usageError('--spec-header-env and --spec-basic-auth-env only apply to URL spec sources');
   }
   // Policy is a value, not an assertion — bypass means cacheFs is never touched
   const policy = resolveCachePolicy({

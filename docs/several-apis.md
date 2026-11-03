@@ -39,7 +39,7 @@ Here, `github` exposes its `repos` tag and `shop` exposes its order paths. The u
 
 These options take the `<name>=` prefix and apply to that API only:
 
-- `--allow`, `--deny`, `--spec-header-env`, `--cache-key`, `--ttl`
+- `--allow`, `--deny`, `--spec-header-env`, `--spec-basic-auth-env`, `--cache-key`, `--ttl`
 - `--nullable-response-fields`, for example `shop=all`
 - `--omit-output-schema`, `--base-url`, `--header-env`, `--basic-auth-env`, `--header`
 - every `--upstream-oauth-*` option
@@ -71,8 +71,9 @@ The CLI rejects these as usage errors:
 These options are global and take no name: `--tool-mode`, `--rate-limit`,
 `--max-concurrency`, `--max-response-bytes`, `--request-timeout`, `--retries`, `--timeout`,
 `--strict-filters`, `--log`, `--response-projection`, the output schema options, the image
-and upload options, `--tools-page-size` and the HTTP options. All APIs share one
-`--max-concurrency` limit and one `--rate-limit` window.
+and upload options, `--tools-page-size`, `--server-title` and the HTTP options. All APIs share one
+`--max-concurrency` limit and one `--rate-limit` window. Without `--server-title`, the server's
+title is the API names joined by `, `.
 
 ## Tool names
 

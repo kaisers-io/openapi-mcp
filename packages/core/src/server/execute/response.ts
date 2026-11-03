@@ -550,6 +550,12 @@ const checkEnvelope = (
   return valid ? { valid } : { valid, ...(mismatch === undefined ? {} : { mismatch }) };
 };
 
+// The field and the rule are in the call log only (issue #24): the observed
+// type is a fact about the response. The message says where to look.
+const schemaMismatchText = (status: unknown): string =>
+  `upstream response for status ${String(status)} did not match the tool's declared output schema; ` +
+  "the server's call log (serve --log json) names the field and the rule";
+
 // A refusal the call log can explain with a category alone
 const refused = (
   outcome: ToolCallOutcome,
@@ -575,13 +581,7 @@ const projectEnvelope = (
   const { status } = envelope;
   const checked = check();
   if (!checked.valid) {
-    return withMismatch(
-      textOutcome(
-        `upstream response for status ${String(status)} did not match the tool's declared output schema`,
-        true,
-      ),
-      checked.mismatch,
-    );
+    return withMismatch(textOutcome(schemaMismatchText(status), true), checked.mismatch);
   }
   const projection = project(data, fields, bodyBytes);
   if (projection === undefined) {
@@ -771,13 +771,7 @@ const mapSchemaSuccess = (opts: SchemaSuccessOptions): ToolCallOutcome => {
     // Never forward raw ajv errors — they can embed offending instance
     // values. A status-only summary is safe to return verbatim; the reason
     // goes to the operator's call log only.
-    return withMismatch(
-      textOutcome(
-        `upstream response for status ${status} did not match the tool's declared output schema`,
-        true,
-      ),
-      checked.mismatch,
-    );
+    return withMismatch(textOutcome(schemaMismatchText(status), true), checked.mismatch);
   }
   // The dispatch boundary would otherwise repeat the full tree scan above.
   markSecretScanned(envelope, redactor);

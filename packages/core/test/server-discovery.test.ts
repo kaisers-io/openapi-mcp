@@ -887,7 +887,8 @@ describe('call_operation — captured upstream request', () => {
     const strict = await run('discover', false);
     expect(strict.isError).toBe(true);
     expect(textOf(strict)).toBe(
-      "upstream response for status 200 did not match the tool's declared output schema",
+      "upstream response for status 200 did not match the tool's declared output schema; " +
+        "the server's call log (serve --log json) names the field and the rule",
     );
   });
 });
