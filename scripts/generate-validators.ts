@@ -8,13 +8,15 @@
 // validate.test.ts fails while the committed files differ from its output.
 import { writeFile } from 'node:fs/promises';
 import {
+  GENERATED_DIAGNOSER_FILES,
   GENERATED_FILES,
   generateValidator,
 } from '../packages/core/src/spec/generate-validators.ts';
 
+const generated = (file: string): URL =>
+  new URL(`../packages/core/src/spec/generated/${file}`, import.meta.url);
+
 for (const version of ['3.0', '3.1', '3.2'] as const) {
-  await writeFile(
-    new URL(`../packages/core/src/spec/generated/${GENERATED_FILES[version]}`, import.meta.url),
-    generateValidator(version),
-  );
+  await writeFile(generated(GENERATED_FILES[version]), generateValidator(version));
+  await writeFile(generated(GENERATED_DIAGNOSER_FILES[version]), generateValidator(version, true));
 }

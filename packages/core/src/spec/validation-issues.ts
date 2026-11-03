@@ -3,9 +3,10 @@ import { sanitizeSpecText } from './sanitize.ts';
 // The locations where a spec fails OpenAPI schema validation, one entry
 // each (issue #131). Ajv runs with allErrors, so it reports every failing
 // location at once, plus noise: an object that fails also fails the
-// `oneOf` of "this object or a $ref", and every parent of a failing node
-// fails the same way. Only the deepest locations are kept, each with the
-// messages that say what is wrong there.
+// `oneOf` of "this object or a $ref" and the `if` that picks its shape, at
+// its own location and at every parent. A location keeps its own causes,
+// such as a missing required property; one with only that noise is
+// dropped when a deeper location says why.
 
 export type ValidationIssue = { path: string; messages: readonly string[] };
 
@@ -21,12 +22,13 @@ const PATH_MAX = 256;
 const NAME_MAX = 64;
 export const MAX_ISSUES = 20;
 
-// The "or a $ref" half of a Reference-or-Object `oneOf`, and the `oneOf`
-// itself: true but never the cause when anything else failed there. An
-// `anyOf` stays: it says that its alternatives, listed next to it, are
+// Errors that follow from another one: the "or a $ref" half of a
+// Reference-or-Object `oneOf`, the `oneOf` itself, and an `if` whose `then`
+// failed. An `anyOf` is not a cause either, but it stays next to its
 // alternatives (3.1 needs one of `paths`, `components`, `webhooks`).
 const isNoise = (error: AjvErrorLike): boolean =>
   error.keyword === 'oneOf' ||
+  error.keyword === 'if' ||
   (error.keyword === 'required' && error.params?.['missingProperty'] === '$ref');
 
 const messageOf = (error: AjvErrorLike): string => {
@@ -61,25 +63,36 @@ export const validationIssues = (errors: readonly AjvErrorLike[]): ValidationIss
       group.push(error);
     }
   }
-  // A parent fails because a child does; the child says why
   const ancestors = ancestorsOf(byPath.keys());
-  const deepest = [...byPath.keys()].filter((path) => !ancestors.has(path));
-  return deepest.map((path) => {
-    const all = byPath.get(path) ?? [];
-    const causes = all.filter((error) => !isNoise(error));
-    const shown = causes.length === 0 ? all : causes;
-    return {
+  const issues: ValidationIssue[] = [];
+  for (const [path, all] of byPath) {
+    const causes = all.filter((error) => !isNoise(error) && error.keyword !== 'anyOf');
+    // Only noise here, and a deeper location says why: nothing of its own
+    if (causes.length === 0 && ancestors.has(path)) {
+      continue;
+    }
+    const shown = causes.length === 0 ? all : all.filter((error) => !isNoise(error));
+    issues.push({
       path: path === '' ? '/' : sanitizeSpecText(path, PATH_MAX),
       messages: [...new Set(shown.map((error) => messageOf(error)))],
-    };
-  });
+    });
+  }
+  return issues;
 };
 
-export const formatValidationIssues = (issues: readonly ValidationIssue[]): string => {
+export const formatValidationIssues = (
+  issues: readonly ValidationIssue[],
+  capped = false,
+): string => {
   const lines = issues
     .slice(0, MAX_ISSUES)
     .map((issue) => `  ${issue.path}: ${issue.messages.join('; ')}`);
-  const more =
-    issues.length > MAX_ISSUES ? `\n  … and ${issues.length - MAX_ISSUES} more locations` : '';
-  return `${lines.join('\n')}${more}`;
+  const hidden = issues.length - Math.min(issues.length, MAX_ISSUES);
+  // A capped run stopped collecting, so how many more is not known
+  if (capped) {
+    return `${lines.join('\n')}\n  … and more locations`;
+  }
+  return hidden > 0
+    ? `${lines.join('\n')}\n  … and ${String(hidden)} more locations`
+    : lines.join('\n');
 };

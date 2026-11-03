@@ -1,5 +1,5 @@
 import type { ValidateFunction } from 'ajv';
-import { specValidationError, validationError } from '../errors.ts';
+import { OpenapiMcpError, specValidationError, validationError } from '../errors.ts';
 import { sanitizeSpecText } from './sanitize.ts';
 import { formatValidationIssues, validationIssues } from './validation-issues.ts';
 
@@ -28,6 +28,35 @@ export const loadOpenApiValidators = async (): Promise<OpenApiValidators> => {
   return OPENAPI_VALIDATORS;
 };
 
+// The validators above stop at the first error. These collect every error,
+// up to DIAGNOSER_ERROR_CAP (generate-validators.ts), and run only on a
+// spec the fast one refused, so the verdict never depends on them (#131).
+const loadOpenApiDiagnosers = async (): Promise<OpenApiValidators> => {
+  const { OPENAPI_DIAGNOSERS } = await import('./diagnosers.ts');
+  return OPENAPI_DIAGNOSERS;
+};
+
+type ErrorCap = { openapiMcpErrorCap: NonNullable<ValidateFunction['errors']> };
+
+const isErrorCap = (thrown: unknown): thrown is ErrorCap =>
+  typeof thrown === 'object' && thrown !== null && 'openapiMcpErrorCap' in thrown;
+
+// The errors a diagnoser collects, and whether it stopped at its cap
+const diagnosed = (
+  diagnose: ValidateFunction,
+  document: Record<string, unknown>,
+): { errors: NonNullable<ValidateFunction['errors']>; capped: boolean } => {
+  try {
+    diagnose(document);
+    return { errors: diagnose.errors ?? [], capped: false };
+  } catch (error) {
+    if (isErrorCap(error)) {
+      return { errors: error.openapiMcpErrorCap, capped: true };
+    }
+    throw error;
+  }
+};
+
 // What to do about it: fix the spec, or, when it can't be changed,
 // correct a copy with an OpenAPI Overlay
 const FIX_HINT =
@@ -46,6 +75,7 @@ export const openapiVersionOf = (declared: string): OpenapiVersion | undefined =
 export const validateOpenApiDocument = (
   document: Record<string, unknown>,
   validators: OpenApiValidators,
+  diagnosers?: OpenApiValidators,
 ): ValidatedSpec => {
   // Any `swagger` field marks a 2.0 document: unquoted in YAML (`swagger: 2.0`)
   // the version parses as a number. The value is never echoed.
@@ -64,11 +94,32 @@ export const validateOpenApiDocument = (
     // The declared version is attacker-controlled past the "3.x." prefix
     // checked by the gate above: sanitize and cap it before it is echoed
     const declaredDisplay = sanitizeSpecText(declared, DECLARED_VERSION_MAX);
-    const issues = validationIssues(validate.errors ?? []);
+    const first = { errors: validate.errors ?? [], capped: false };
+    const found = diagnosers === undefined ? first : diagnosed(diagnosers[version](), document);
+    const { errors, capped } = found.errors.length === 0 ? first : found;
+    const issues = validationIssues(errors);
+    const count = `${String(issues.length)}${capped ? ' or more' : ''}`;
+    const noun = issues.length === 1 && !capped ? 'location' : 'locations';
     throw specValidationError(
-      `spec failed OpenAPI ${declaredDisplay} schema validation at ${issues.length} ${issues.length === 1 ? 'location' : 'locations'}:\n${formatValidationIssues(issues)}\n${FIX_HINT}`,
+      `spec failed OpenAPI ${declaredDisplay} schema validation at ${count} ${noun}:\n${formatValidationIssues(issues, capped)}\n${FIX_HINT}`,
       issues,
     );
   }
   return { document, version };
+};
+
+// Validates with the fast validator, and lists every failing location only
+// for a spec it refused
+export const validateSpecDocument = async (
+  document: Record<string, unknown>,
+): Promise<ValidatedSpec> => {
+  const validators = await loadOpenApiValidators();
+  try {
+    return validateOpenApiDocument(document, validators);
+  } catch (error) {
+    if (!(error instanceof OpenapiMcpError) || error.errors === undefined) {
+      throw error;
+    }
+    return validateOpenApiDocument(document, validators, await loadOpenApiDiagnosers());
+  }
 };

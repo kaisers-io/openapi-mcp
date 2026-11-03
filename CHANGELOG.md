@@ -10,11 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **A spec that fails validation lists every failing location in one run.** Validation stopped
-  at the first problem, so a spec with several needed one run per problem. The message now
-  lists each location (up to 20) with what is wrong there, without the `oneOf` lines every
-  invalid object also produced, and says how to correct a spec you cannot change with an
-  OpenAPI Overlay. `--json` adds `error.errors`, with every location. The spec is still refused
-  as a whole. `docs/overlays.md` has a recipe for two common 3.0 mistakes: a response `schema`
+  at the first problem, so a spec with several needed one run per problem. The fast check still
+  decides; only a spec it refuses is checked again for all its errors, up to the first 1,000.
+  The message lists each location (up to 20) with what is wrong there, without the `oneOf`
+  lines every invalid object also produced, and says how to correct a spec you cannot change
+  with an OpenAPI Overlay. `--json` adds `error.errors`, with every location found. The spec is
+  still refused as a whole. `docs/overlays.md` has a recipe for two common 3.0 mistakes: a response `schema`
   next to `content`, and an `examples` map in a schema (#131).
 
 ## [0.11.0] - 2026-11-02

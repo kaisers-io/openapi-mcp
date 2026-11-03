@@ -41,7 +41,7 @@ import type { NormalizedSpec, OmittedOperation, OperationRecord } from './normal
 import { parseSpecText } from './parse.ts';
 import { operationKeysOf, pendingCandidateKeys, withholdRemoved } from './pending-candidate.ts';
 import { serverUrlRejectedWarning } from './server-url.ts';
-import { loadOpenApiValidators, validateOpenApiDocument } from './validate.ts';
+import { validateSpecDocument } from './validate.ts';
 import type { OpenapiVersion } from './validate.ts';
 
 export type SpecPipelineOptions = {
@@ -169,7 +169,7 @@ const enforceOperationBudget = (spec: NormalizedSpec): void => {
 // source's own size, where its dereferenced form was 15-30x larger.
 const processSpecText = async (text: string): Promise<ProcessedSpec> => {
   const parsed = parseSpecText(text);
-  const validated = validateOpenApiDocument(parsed, await loadOpenApiValidators());
+  const validated = await validateSpecDocument(parsed);
   checkRefs(validated.document);
   const spec = normalizeSpec(validated.document, validated.version);
   enforceOperationBudget(spec);

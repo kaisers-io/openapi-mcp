@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OpenapiMcpError } from '../src/index.ts';
-import { validateOpenApiDocument } from '../src/spec/validate.ts';
+import { OPENAPI_DIAGNOSERS } from '../src/spec/diagnosers.ts';
+import { validateOpenApiDocument, validateSpecDocument } from '../src/spec/validate.ts';
 import { OPENAPI_VALIDATORS } from '../src/spec/validators.ts';
 import { validationIssues } from '../src/spec/validation-issues.ts';
 
@@ -24,7 +25,7 @@ const spec30 = (paths: Record<string, unknown>): Record<string, unknown> => ({
 
 const failure = (doc: Record<string, unknown>): OpenapiMcpError => {
   try {
-    validateOpenApiDocument(doc, OPENAPI_VALIDATORS);
+    validateOpenApiDocument(doc, OPENAPI_VALIDATORS, OPENAPI_DIAGNOSERS);
   } catch (error) {
     return error as OpenapiMcpError;
   }
@@ -82,15 +83,59 @@ describe('spec validation reports every failing location (issue #131)', () => {
     ).toEqual([{ path: '/x', messages: ['must match exactly one schema in oneOf'] }]);
   });
 
-  it('drops a parent whose child fails, but keeps a sibling with a shared prefix', () => {
+  it('drops a parent with only noise, keeps one with its own cause, and keeps a sibling with a shared prefix', () => {
     expect(
       validationIssues([
-        { instancePath: '/paths/~1a', keyword: 'type', message: 'parent' },
+        { instancePath: '/paths/~1a', keyword: 'oneOf', message: 'noise' },
         { instancePath: '/paths/~1a/get', keyword: 'type', message: 'child' },
         { instancePath: '/paths/~1a-b', keyword: 'type', message: 'sibling' },
         { instancePath: '', keyword: 'required', message: 'root' },
       ]).map((issue) => issue.path),
-    ).toEqual(['/paths/~1a/get', '/paths/~1a-b']);
+    ).toEqual(['/paths/~1a/get', '/paths/~1a-b', '/']);
+  });
+
+  it('keeps a missing description on a response next to an invalid schema inside it', () => {
+    const error = failure(
+      spec30({
+        '/pets': {
+          get: {
+            responses: {
+              '200': { content: { 'application/json': { schema: { type: 'pet' } } } },
+            },
+          },
+        },
+      }),
+    );
+    expect(error.errors).toEqual([
+      expect.objectContaining({
+        path: '/paths/~1pets/get/responses/200',
+        messages: ["must have required property 'description'"],
+      }),
+      expect.objectContaining({
+        path: '/paths/~1pets/get/responses/200/content/application~1json/schema/type',
+      }),
+    ]);
+  });
+
+  it('keeps a missing info at the root next to an invalid operation', () => {
+    const doc = spec30({ '/pets': { get: { responses: SCHEMA_BESIDE_CONTENT } } });
+    delete doc['info'];
+    const paths = failure(doc).errors?.map((location) => location.path);
+    expect(paths).toContain('/');
+    expect(paths).toContain('/paths/~1pets/get/responses/200');
+  });
+
+  it('stops collecting at the cap, so a spec failing in 200,000 places is answered at once', async () => {
+    const doc = spec30({});
+    doc['servers'] = Array.from({ length: 200_000 }, () => ({}));
+    const started = performance.now();
+    const error = await validateSpecDocument(doc).catch(
+      (error_: unknown) => error_ as OpenapiMcpError,
+    );
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect((error as OpenapiMcpError).message).toContain('or more locations:');
+    expect((error as OpenapiMcpError).message).toContain('… and more locations');
+    expect((error as OpenapiMcpError).errors?.length).toBeLessThanOrEqual(1000);
   });
 
   it('strips control characters from a path and a property name', () => {
