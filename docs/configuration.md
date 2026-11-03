@@ -707,3 +707,16 @@ errors of `serve` have no reason.
 The reasons are part of the stable interface. A new reason may be added in any release;
 removing one or changing what it means is a breaking change. `code` and the exit codes stay
 as they are.
+
+
+### Spec validation errors
+
+A spec that fails OpenAPI schema validation is refused with the code `validation` and exit code
+3. The message lists the failing locations, up to 20, each as a JSON Pointer with what is wrong
+there, and says how to correct a spec you cannot change ([overlays.md](overlays.md)). With
+`--json`, `error.errors` has every location found, each with `path` and `messages`. The search
+stops after 1,000 errors; the message then says `or more locations`.
+
+```json
+{"ok": false, "error": {"code": "validation", "message": "spec failed OpenAPI 3.0.3 schema validation at 1 location: ...", "errors": [{"path": "/paths/~1reports/get/responses/200", "messages": ["must NOT have additional properties (\"schema\")"]}]}}
+```

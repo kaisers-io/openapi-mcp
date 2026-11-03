@@ -52,7 +52,7 @@ value), 3 validation (the spec, the cache, a budget, `--strict-filters`), 4 not 
 | `spec fetch failed for` | DNS, TLS or network; the text after the colon says which | test the URL from the same machine |
 | `spec fetch exceeded 5 redirects`, `has no Location header`, `without a conditional request` | the spec server misbehaves | use the final URL of the spec |
 | `exceeds the 20971520-byte budget` | the spec is over 20 MiB | a smaller spec |
-| `is neither valid JSON ... nor valid YAML`, `spec document is empty`, `spec root must be a JSON/YAML object`, `failed OpenAPI ... schema validation` | the URL serves a web page, or the spec is broken | find the JSON or YAML document; for schema errors, fix the paths it lists |
+| `is neither valid JSON ... nor valid YAML`, `spec document is empty`, `spec root must be a JSON/YAML object`, `failed OpenAPI ... schema validation` | the URL serves a web page, or the spec is broken | find the JSON or YAML document. For schema errors, every failing location is listed (`--json`: `error.errors`); the API owner fixes the spec, or, if it can't change, the user corrects a copy with an OpenAPI Overlay ([overlays.md](https://github.com/kaisers-io/openapi-mcp/blob/main/docs/overlays.md)). openapi-mcp never repairs or partly accepts a spec |
 | `OpenAPI 2.0 (swagger) documents are not supported`, `must declare an "openapi" version of 3.0.x, 3.1.x or 3.2.x` | Swagger 2.0, or no version | convert it to OpenAPI 3 first |
 | `external $ref "..." is not supported` | the spec spans several files | bundle it into one file first |
 | `does not resolve`, `only JSON-pointer fragments ("#/...") are supported`, `contains an invalid URI escape` | a broken `$ref` in the spec | the spec needs a fix (overlay) |

@@ -10,6 +10,7 @@ import {
   validateOpenApiDocument,
 } from '../src/index.ts';
 import {
+  GENERATED_DIAGNOSER_FILES,
   GENERATED_FILES,
   generateValidator,
   unwrapDefault,
@@ -19,6 +20,12 @@ import load31 from '../src/spec/generated/openapi-3.1-validator.cjs';
 import load32 from '../src/spec/generated/openapi-3.2-validator.cjs';
 
 const OPENAPI_VALIDATORS = { '3.0': load30, '3.1': load31, '3.2': load32 };
+
+// Imported where a test needs the full error list, as the pipeline does
+const loadDiagnosers = async () => {
+  const { OPENAPI_DIAGNOSERS } = await import('../src/spec/diagnosers.ts');
+  return OPENAPI_DIAGNOSERS;
+};
 
 const minimal30 = (): Record<string, unknown> => ({
   openapi: '3.0.3',
@@ -151,21 +158,26 @@ describe('validateOpenApiDocument', () => {
     );
   });
 
-  it('caps the reported error list at 10 entries', () => {
+  it('caps the reported locations at 20', async () => {
+    const OPENAPI_DIAGNOSERS = await loadDiagnosers();
     const doc = minimal30();
     const paths: Record<string, unknown> = {};
-    for (let index = 0; index < 15; index += 1) {
+    for (let index = 0; index < 25; index += 1) {
       // Each bogus path item yields at least one meta-schema error
       paths[`/p${index}`] = { get: 'bogus' };
     }
     doc['paths'] = paths;
     try {
-      validateOpenApiDocument(doc, OPENAPI_VALIDATORS);
+      validateOpenApiDocument(doc, OPENAPI_VALIDATORS, OPENAPI_DIAGNOSERS);
       expect.unreachable('expected a validation error');
     } catch (error) {
-      const lines = (error as OpenapiMcpError).message.split('\n');
-      // Header line + max 10 error lines + optional "and N more" line
-      expect(lines.length).toBeLessThanOrEqual(12);
+      const { message, errors } = error as OpenapiMcpError;
+      const lines = message.split('\n');
+      // Header line + max 20 location lines + "and N more" + the fix hint
+      expect(lines).toHaveLength(23);
+      expect(lines[21]).toBe('  … and 5 more locations');
+      // The --json list is complete
+      expect(errors).toHaveLength(25);
     }
   });
 
@@ -215,7 +227,31 @@ describe('precompiled meta-schema validators (issue kaisers-io/openapi-mcp-archi
         'utf8',
       );
       expect(committed).toBe(generateValidator(version));
+      const diagnoser = readFileSync(
+        new URL(`../src/spec/generated/${GENERATED_DIAGNOSER_FILES[version]}`, import.meta.url),
+        'utf8',
+      );
+      expect(diagnoser).toBe(generateValidator(version, true));
     }
+  });
+
+  it('diagnose with the errors Ajv collects with allErrors, below the cap', async () => {
+    const OPENAPI_DIAGNOSERS = await loadDiagnosers();
+    const require = createRequire(import.meta.url);
+    const { default: Ctor } = require('ajv-draft-04') as {
+      default: new (opts: object) => { compile: (schema: object) => ValidateFunction };
+    };
+    const reference = new Ctor({ strict: false, allErrors: true }).compile(
+      require('@seriousme/openapi-schema-validator/schemas/v3.0/schema.json') as object,
+    );
+    const doc = {
+      ...minimal30(),
+      paths: { '/a': { get: 'bogus' }, '/b': { get: { responses: 1 } } },
+    };
+    const diagnose = OPENAPI_DIAGNOSERS['3.0']();
+    expect(diagnose(doc)).toBe(false);
+    expect(reference(doc)).toBe(false);
+    expect(diagnose.errors).toEqual(reference.errors);
   });
 
   it('load each validator once, on first use (#33)', () => {

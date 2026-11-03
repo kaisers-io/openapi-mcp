@@ -37,9 +37,9 @@ vi.mock(import('../src/spec/validate.ts'), async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    validateOpenApiDocument: (...args: Parameters<typeof actual.validateOpenApiDocument>) => {
+    validateSpecDocument: (...args: Parameters<typeof actual.validateSpecDocument>) => {
       counts.validate += 1;
-      return actual.validateOpenApiDocument(...args);
+      return actual.validateSpecDocument(...args);
     },
   };
 });

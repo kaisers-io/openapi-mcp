@@ -194,6 +194,38 @@ describe('tools command — file specs', () => {
     expect(errLines.join('\n')).toContain('schema validation');
   });
 
+  it('lists every failing location under error.errors with --json', async () => {
+    const { lines, ctx } = fileCtx({
+      readFileText: () => Promise.resolve('{"openapi":"3.1.0"}'),
+      fileSizeBytes: () => Promise.resolve(20),
+    });
+    const code = await run(ctx, [
+      'node',
+      'openapi-mcp',
+      '--json',
+      'tools',
+      '--spec',
+      'broken.json',
+    ]);
+    expect(code).toBe(EXIT.VALIDATION);
+    const { error } = JSON.parse(lines.join('')) as {
+      error: { message: string; errors: { path: string; messages: string[] }[] };
+    };
+    expect(error.errors).toEqual([
+      {
+        path: '/',
+        messages: [
+          "must have required property 'paths'",
+          "must have required property 'components'",
+          "must have required property 'webhooks'",
+          'must match a schema in anyOf',
+          "must have required property 'info'",
+        ],
+      },
+    ]);
+    expect(error.message).toContain('docs/overlays.md');
+  });
+
   it('maps a missing spec file to exit 4', async () => {
     const { ctx } = fileCtx({
       readFileText: () => Promise.reject(new Error('ENOENT')),

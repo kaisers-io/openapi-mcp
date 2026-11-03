@@ -1,0 +1,55 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Reports",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://reports.example.test"
+    }
+  ],
+  "paths": {
+    "/reports": {
+      "get": {
+        "operationId": "listReports",
+        "description": "List the reports.",
+        "responses": {
+          "200": {
+            "description": "The reports",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Report"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Report": {
+        "type": "object",
+        "required": [
+          "id",
+          "period"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string",
+            "example": "2026-Q1"
+          }
+        }
+      }
+    }
+  }
+}

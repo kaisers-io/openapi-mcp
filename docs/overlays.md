@@ -128,6 +128,45 @@ actions:
 npx @quobix/vacuum@0.35.1 apply-overlay --fail-on-warnings --no-style shop-3.0.json nullable-order-note-3.0.overlay.yaml shop-3.0.nullable-note.json
 ```
 
+### 3. A spec that fails validation
+
+`openapi-mcp` refuses a spec that breaks the OpenAPI schema, and lists every location that
+fails. It doesn't repair the spec. Two mistakes are common in specs that declare 3.0 but use
+3.1 features. A response has a `schema` next to `content`, which only 2.0 had. A schema has an
+`examples` map, which only 3.1 allows; 3.0 has a single `example`.
+[`reports-3.0.json`](overlays/reports-3.0.json) has both. `openapi-mcp tools` reports them as:
+
+```text
+spec failed OpenAPI 3.0.3 schema validation at 2 locations:
+  /paths/~1reports/get/responses/200: must NOT have additional properties ("schema")
+  /components/schemas/Report/properties/period: must NOT have additional properties ("examples")
+```
+
+Each location is a JSON Pointer into the spec, where `~1` stands for `/`. The overlay removes
+the response's `schema`, and turns the `examples` map into one `example`.
+[`fix-reports-3.0.overlay.yaml`](overlays/fix-reports-3.0.overlay.yaml):
+
+```yaml
+overlay: 1.2.0
+info:
+  title: Reports — remove what OpenAPI 3.0 does not allow
+  version: 1.0.0
+actions:
+  - target: $.paths['/reports'].get.responses['200'].schema
+    description: A 3.0 response has its schema under content only.
+    remove: true
+  - target: $.components.schemas.Report.properties.period
+    description: A 3.0 schema has one example, not an examples map.
+    update:
+      example: 2026-Q1
+  - target: $.components.schemas.Report.properties.period.examples
+    remove: true
+```
+
+```sh
+npx @quobix/vacuum@0.35.1 apply-overlay --fail-on-warnings --no-style reports-3.0.json fix-reports-3.0.overlay.yaml reports-3.0.fixed.json
+```
+
 The repository contains the corrected specs these commands produce, next to the inputs, so
 you can compare your output with them.
 
