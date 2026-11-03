@@ -45,8 +45,8 @@ value), 3 validation (the spec, the cache, a budget, `--strict-filters`), 4 not 
 | `contains control characters`, `contains a character above U+00FF` | a variable or `--header` value holds a line break or non-Latin-1 text, which no HTTP header can carry | the user fixes the stored value |
 | `cannot read spec file` | wrong path, or relative to another working directory | absolute path |
 | `--spec must not be empty`, `invalid spec URL`, `unsupported URL scheme` | a typo, or a file path with `:` | a full `https://` URL; a relative path with `:` starts with `./` |
-| `spec URLs must not contain userinfo credentials`, `looks credential-bearing` | user and password in the URL, or a query parameter such as `token=` | `--spec-header-env`; query-string secrets are not supported |
-| `spec fetch failed with HTTP 401` or `403` | the spec URL needs a credential | `--spec-header-env Authorization=VAR` and a `--cache-key` |
+| `spec URLs must not contain userinfo credentials`, `looks credential-bearing` | user and password in the URL, or a query parameter such as `token=` | `--spec-basic-auth-env USER_VAR:PASSWORD_VAR` for a user and password, `--spec-header-env` for a token; query-string secrets are not supported |
+| `spec fetch failed with HTTP 401` or `403` | the spec URL needs a credential | `--spec-header-env Authorization=VAR`, or `--spec-basic-auth-env USER_VAR:PASSWORD_VAR` for HTTP Basic auth, and a `--cache-key` |
 | `spec fetch failed with HTTP` and another status | wrong spec URL | find the right URL with the user |
 | `spec fetch timed out` | slow or unreachable URL | check the URL in a browser; raise `--timeout` only for a slow spec |
 | `spec fetch failed for` | DNS, TLS or network; the text after the colon says which | test the URL from the same machine |
@@ -112,9 +112,10 @@ takes every serve option`. Run `check` with the full serve command line instead.
 | `too many --upstream-oauth-scope values`, `a scope is one RFC 6749 scope-token` | over 64 scopes, or a scope with a space or quote | one flag per scope |
 | `the OAuth token URL is refused` | token URL private or not allowed | check the URL with the user |
 | `too trivial to redact safely`, `secret exceeds the redaction length budget`, `too many secrets to redact` | a secret that is part of `[redacted]`, over 8,192 characters, or more than 64 secrets | a real secret; fewer headers or APIs |
-| `refusing to send a --spec-header-env credential in cleartext` | an `http://` spec URL to a host that is not loopback | an `https://` spec URL; `--allow-insecure-http` (also on `tools` and `cache refresh`) only if the user agrees |
-| `--spec-header-env only applies to URL spec sources` | a file spec with a spec credential | remove `--spec-header-env` |
-| `an authenticated spec source ... requires an explicit cache decision` | `--spec-header-env` without a cache key | `--cache-key <name>`; `--trust-spec-updates` skips the cache instead, if the user agrees |
+| `refusing to send a --spec-header-env or --spec-basic-auth-env credential in cleartext` | an `http://` spec URL to a host that is not loopback | an `https://` spec URL; `--allow-insecure-http` (also on `tools` and `cache refresh`) only if the user agrees |
+| `--spec-header-env and --spec-basic-auth-env only apply to URL spec sources` | a file spec with a spec credential | remove the spec credential flag |
+| `--spec-basic-auth-env cannot be combined with --spec-header-env Authorization=...` | both set the spec fetch's `Authorization` | keep one |
+| `an authenticated spec source ... requires an explicit cache decision` | `--spec-header-env` or `--spec-basic-auth-env` without a cache key | `--cache-key <name>`; `--trust-spec-updates` skips the cache instead, if the user agrees |
 
 ## Several APIs and HTTP
 

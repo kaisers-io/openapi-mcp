@@ -82,7 +82,7 @@ export const registerTools: CommandRegistrar = (program, ctx, state) => {
   (
     registerSpecOptions(program.command('tools')).option(
       '--allow-insecure-http',
-      'permit a --spec-header-env credential over cleartext http to a non-loopback origin',
+      'permit a --spec-header-env or --spec-basic-auth-env credential over cleartext http to a non-loopback origin',
     ) as unknown as Command<[], SpecCmdOpts>
   )
     .description(

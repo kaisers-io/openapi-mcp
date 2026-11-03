@@ -5,18 +5,17 @@ import {
   parseCacheKey,
   parseContentHash,
   parseDuration,
-  parseHeaderEnvMapping,
   parseSpecSource,
   promoteCandidate,
   readCacheEntry,
   resolveCachePolicy,
-  resolveHeaderEnvMappings,
   runSpecPipeline,
   sanitizeSpecText,
   unlockNamespace,
   usageError,
 } from '@kaisers-io/openapi-mcp-core';
 import { wrapAction } from '../output.ts';
+import { resolveSpecHeaders, SPEC_BASIC_AUTH_HELP } from '../spec-headers.ts';
 import {
   CACHE_DISPLAY_MAX,
   clearAllNamespaces,
@@ -122,18 +121,18 @@ const registerRefresh: CommandRegistrar = (program, ctx, state) => {
       collect,
       [] as readonly string[],
     )
+    .option('--spec-basic-auth-env <USER_ENV:PASSWORD_ENV>', SPEC_BASIC_AUTH_HELP)
     .option('--timeout <duration>', 'spec fetch timeout (<int><s|m|h|d>)', '30s')
     .option('--trust-spec-updates', 'accept the refreshed spec directly instead of gating it')
     .option('--allow-private-network', 'permit private/loopback redirect targets during the fetch')
     .option(
       '--allow-insecure-http',
-      'permit a --spec-header-env credential over cleartext http to a non-loopback origin',
+      'permit a --spec-header-env or --spec-basic-auth-env credential over cleartext http to a non-loopback origin',
     )
     .action(async (cmdOpts) => {
       const opts = globalOptsOf(program);
       state.exitCode = await wrapAction(ctx, opts, async () => {
-        const mappings = cmdOpts.specHeaderEnv.map((raw) => parseHeaderEnvMapping(raw));
-        const specHeaders = resolveHeaderEnvMappings(mappings, ctx.env);
+        const specHeaders = resolveSpecHeaders(cmdOpts, ctx.env);
         const cacheKey =
           cmdOpts.cacheKey === undefined ? undefined : parseCacheKey(cmdOpts.cacheKey);
         const cacheRoot = rootOf(ctx);

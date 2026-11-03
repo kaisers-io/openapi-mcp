@@ -148,7 +148,7 @@ export const resolveCachePolicy = (opts: {
       // Without a durable baseline every restart would silently
       // re-accept a changed spec, so the operator must choose explicitly
       throw usageError(
-        'an authenticated spec source (--spec-header-env) requires an explicit cache decision:' +
+        'an authenticated spec source (--spec-header-env or --spec-basic-auth-env) requires an explicit cache decision:' +
           ' pass --cache-key <name> for a durable, credential-scoped baseline,' +
           ' or --trust-spec-updates to accept refreshed specs automatically without persisting a baseline',
       );

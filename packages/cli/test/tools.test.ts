@@ -318,6 +318,114 @@ describe('tools command — URL specs', () => {
     expect(lines.join('\n')).toContain('listThings');
   });
 
+  describe('--spec-basic-auth-env', () => {
+    const urlArgs = [
+      'node',
+      'openapi-mcp',
+      'tools',
+      '--spec',
+      'https://api.example.com/openapi.json',
+    ];
+    const basicEnv = { SPEC_USER: 'example-user', SPEC_PASSWORD: 'example-password-not-a-secret' };
+
+    it('fetches the spec with the Basic header built from both variables', async () => {
+      const seen: Headers[] = [];
+      const fetcher = ((_url: string | URL | Request, init?: RequestInit) => {
+        seen.push(new Headers(init?.headers));
+        return Promise.resolve(new Response(specText));
+      }) as unknown as CliContext['fetcher'];
+      const { lines, ctx } = fileCtx({ fetcher, env: basicEnv });
+      const code = await run(ctx, [
+        ...urlArgs,
+        '--spec-basic-auth-env',
+        'SPEC_USER:SPEC_PASSWORD',
+        '--cache-key',
+        'test',
+      ]);
+      expect(code).toBe(EXIT.OK);
+      expect(seen[0]?.get('authorization')).toBe(
+        `Basic ${Buffer.from('example-user:example-password-not-a-secret').toString('base64')}`,
+      );
+      expect(lines.join('\n')).toContain('listThings');
+    });
+
+    it('needs a cache decision like any spec credential', async () => {
+      const { errLines, ctx } = fileCtx({ env: basicEnv });
+      const code = await run(ctx, [...urlArgs, '--spec-basic-auth-env', 'SPEC_USER:SPEC_PASSWORD']);
+      expect(code).toBe(EXIT.USAGE);
+      expect(errLines.join('\n')).toContain('requires an explicit cache decision');
+    });
+
+    it('never shows the password, the encoded header or the user name on a 401', async () => {
+      const fetcher = (() =>
+        Promise.resolve(
+          new Response(`denied example-password-not-a-secret`, { status: 401 }),
+        )) as unknown as CliContext['fetcher'];
+      const { lines, errLines, ctx } = fileCtx({ fetcher, env: basicEnv });
+      const code = await run(ctx, [
+        ...urlArgs,
+        '--spec-basic-auth-env',
+        'SPEC_USER:SPEC_PASSWORD',
+        '--cache-key',
+        'test',
+      ]);
+      expect(code).toBe(EXIT.VALIDATION);
+      const allOutput = [...lines, ...errLines].join('\n');
+      expect(allOutput).not.toContain('example-password-not-a-secret');
+      expect(allOutput).not.toContain(
+        Buffer.from('example-user:example-password-not-a-secret').toString('base64'),
+      );
+      expect(allOutput).toContain('--spec-basic-auth-env');
+    });
+
+    it('refuses cleartext http to a host that is not loopback', async () => {
+      const { errLines, ctx } = fileCtx({ env: basicEnv });
+      const code = await run(ctx, [
+        'node',
+        'openapi-mcp',
+        'tools',
+        '--spec',
+        'http://api.example.com/openapi.json',
+        '--spec-basic-auth-env',
+        'SPEC_USER:SPEC_PASSWORD',
+        '--cache-key',
+        'test',
+      ]);
+      expect(code).toBe(EXIT.VALIDATION);
+      expect(errLines.join('\n')).toContain('credential in cleartext');
+    });
+
+    it.each([
+      [
+        ['--spec-header-env', 'Authorization=SPEC_USER'],
+        'cannot be combined with --spec-header-env Authorization',
+      ],
+      [[], 'invalid --spec-basic-auth-env'],
+    ])('rejects %j as a usage error', async (extra, message) => {
+      const { errLines, ctx } = fileCtx({ env: basicEnv });
+      const value =
+        extra.length === 0 ? 'SPEC_USER:SPEC_PASSWORD:EXTRA' : 'SPEC_USER:SPEC_PASSWORD';
+      const code = await run(ctx, [...urlArgs, '--spec-basic-auth-env', value, ...extra]);
+      expect(code).toBe(EXIT.USAGE);
+      expect(errLines.join('\n')).toContain(message);
+    });
+
+    it('applies to URL spec sources only', async () => {
+      const { errLines, ctx } = fileCtx({ env: basicEnv });
+      const code = await run(ctx, [
+        'node',
+        'openapi-mcp',
+        'tools',
+        '--spec',
+        'petstore.json',
+        '--spec-basic-auth-env',
+        'SPEC_USER:SPEC_PASSWORD',
+      ]);
+      expect(code).toBe(EXIT.USAGE);
+      expect(errLines.join('\n')).toContain('only apply to URL spec sources');
+    });
+  });
+
   it('fails hard with exit 2 when the env var is missing, naming it', async () => {
     const { errLines, ctx } = fileCtx();
     const code = await run(ctx, [

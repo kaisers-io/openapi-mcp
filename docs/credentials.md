@@ -11,13 +11,21 @@ The server can need two separate credentials, and you configure them separately.
 
 | Credential | Used for | Flag |
 |---|---|---|
-| Spec credential | downloading the OpenAPI description from a URL | `--spec-header-env Header=ENV` |
+| Spec credential | downloading the OpenAPI description from a URL | `--spec-header-env Header=ENV`, or `--spec-basic-auth-env USER_ENV:PASSWORD_ENV` for HTTP Basic auth |
 | API credential | every request a tool call sends to the API | `--header-env Header=ENV`, or `--upstream-oauth-*` for OAuth2 client credentials |
 
 The server never sends a spec credential to the API, and it never sends an API credential when it
-fetches the spec. If one token works for both, pass it twice, once with each flag. A
-`--spec-header-env` only applies to a spec loaded from a URL. With a local file, `serve` stops
-with `--spec-header-env only applies to URL spec sources`.
+fetches the spec. If one token works for both, pass it twice, once with each flag. A spec
+credential only applies to a spec loaded from a URL. With a local file, `serve` stops with
+`--spec-header-env and --spec-basic-auth-env only apply to URL spec sources`.
+
+`--spec-basic-auth-env USER_ENV:PASSWORD_ENV` builds the `Authorization: Basic ...` header
+from a user name and a password, like `--basic-auth-env` does for API requests, so you don't
+have to encode it yourself. `USER_ENV` alone sends an empty password. It can't be combined with
+`--spec-header-env Authorization=...`, and it follows the same rules as a `--spec-header-env`
+value: no cleartext `http` to a host that isn't loopback, and a cache key unique per account.
+The encoded header, the decoded `user:password` and the password are redacted, as with
+`--basic-auth-env`; the user name alone is not, since it is an identifier.
 
 An authenticated spec also needs `--cache-key` or `--trust-spec-updates`. See
 [Spec updates and the cache](spec-updates.md#the-cache-key-rule).
@@ -33,6 +41,7 @@ also never writes a secret to the cache, a log line, a tool schema or a tool res
 | Flag | Environment variable holds |
 |---|---|
 | `--spec-header-env Header=ENV` | the header value for the spec fetch |
+| `--spec-basic-auth-env USER_ENV:PASSWORD_ENV` | the user name and the password for the spec fetch |
 | `--header-env Header=ENV` | the header value for API requests |
 | `--upstream-oauth-client-id-env ENV` | the OAuth2 client id |
 | `--upstream-oauth-client-secret-env ENV` | the OAuth2 client secret |

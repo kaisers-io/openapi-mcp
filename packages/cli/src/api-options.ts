@@ -210,7 +210,7 @@ export const registerApiOptions = (command: Command): Command<[], ApiCmdOpts> =>
     )
     .option(
       '--allow-insecure-http',
-      'permit an operator credential (--header-env, --header-file, --spec-header-env) over cleartext http to a non-loopback origin',
+      'permit an operator credential (--header-env, --header-file, --spec-header-env, --spec-basic-auth-env) over cleartext http to a non-loopback origin',
     )
     .option(
       '--max-concurrency <n>',
@@ -518,9 +518,10 @@ const parseRequestTimeout = (raw: string): number => {
 // secret header, so the cleartext gate, the conflict checks, the 401 hint and
 // the redaction (which also covers the decoded user and password, redact.ts)
 // treat it like a --header-env Authorization value.
-const parseBasicAuth = (
+export const parseBasicAuth = (
   raw: string | undefined,
   env: Readonly<Record<string, string | undefined>>,
+  flag = '--basic-auth-env',
 ): ApiSecretHeader | undefined => {
   if (raw === undefined) {
     return undefined;
@@ -531,15 +532,13 @@ const parseBasicAuth = (
     !isEnvVarName(userEnv) ||
     (passwordEnv !== undefined && !isEnvVarName(passwordEnv))
   ) {
-    throw usageError(
-      `invalid --basic-auth-env "${raw}" — expected <USER_ENV>:<PASSWORD_ENV> or <USER_ENV>`,
-    );
+    throw usageError(`invalid ${flag} "${raw}" — expected <USER_ENV>:<PASSWORD_ENV> or <USER_ENV>`);
   }
   const read = (name: string, what: string, required: boolean): string => {
     const value = env[name];
     if (value === undefined || (required && value === '')) {
       throw usageError(
-        `environment variable "${name}" (the ${what} of --basic-auth-env) is not set or empty`,
+        `environment variable "${name}" (the ${what} of ${flag}) is not set or empty`,
         'env_missing',
       );
     }

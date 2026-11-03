@@ -57,7 +57,7 @@ export const parseSpecSource = (
     if (url.username !== '' || url.password !== '') {
       // Do not echo the raw URL: userinfo may contain a credential
       throw usageError(
-        'spec URLs must not contain userinfo credentials — use --spec-header-env for authentication',
+        'spec URLs must not contain userinfo credentials — use --spec-basic-auth-env or --spec-header-env for authentication',
       );
     }
     const sensitiveParam = findSensitiveQueryParam(url);
