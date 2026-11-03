@@ -578,6 +578,46 @@ describe('serve — stdio subprocess E2E', () => {
     });
   });
 
+  it('sends no title that holds a configured credential', async () => {
+    tempHome = await mkdtemp(join(tmpdir(), 'openapi-mcp-serve-'));
+    const secret = 'example-token-not-a-secret';
+    child = spawn(
+      process.execPath,
+      [
+        CLI_ENTRY,
+        'serve',
+        '--spec',
+        'petstore.json',
+        '--base-url',
+        'http://127.0.0.1:1',
+        '--trust-spec-updates',
+        '--header-env',
+        'X-Api-Key=EXAMPLE_API_KEY',
+        '--server-title',
+        `Example ${secret}`,
+      ],
+      {
+        cwd: fixturesDir,
+        env: { ...process.env, HOME: tempHome, USERPROFILE: tempHome, EXAMPLE_API_KEY: secret },
+      },
+    );
+    const { stdoutLines, rawStdout } = collectLines(child);
+    send(child, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-11-25',
+        capabilities: {},
+        clientInfo: { name: 'e2e', version: '1.0.0' },
+      },
+    });
+    await waitFor(() => stdoutLines.length > 0);
+    const initResponse = JSON.parse(stdoutLines[0] as string) as JsonRpcMessage;
+    expect(initResponse.result?.['serverInfo']).not.toHaveProperty('title');
+    expect(rawStdout()).not.toContain(secret);
+  });
+
   it.each(['', ' padded', 'two\nlines'])(
     'rejects --server-title %j as a usage error naming the flag',
     async (value) => {

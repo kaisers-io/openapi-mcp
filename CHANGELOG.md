@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   labels a server by its metadata, such as the Codex desktop app under Sources, showed
   "openapi-mcp" for every openapi-mcp server. The server now sends `serverInfo.title`: the spec's
   `info.title`, with several APIs their names joined by ", ", or the value of `--server-title`.
-  `name` stays `openapi-mcp`. Clients that show the name from their own config, such as Claude
-  Code, Claude Desktop and the Codex CLI, show the same as before (#128).
+  `name` stays `openapi-mcp`. A title that contains a credential the server holds is not sent.
+  Clients that show the name from their own config, such as Claude Code, Claude Desktop and the
+  Codex CLI, show the same as before (#128).
 
 ## [0.11.0] - 2026-11-02
 
