@@ -108,6 +108,7 @@ const SERVE_OPTIONS = [
   '--log',
   '--response-projection',
   '--allow-offsite-redirects',
+  '--server-title',
   '--tools-page-size',
   '--tool-mode',
   '--no-execute',

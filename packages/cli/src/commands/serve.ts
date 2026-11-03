@@ -81,6 +81,10 @@ export const registerServeOptions = (base: Command) => {
       'follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply',
     )
     .option(
+      '--server-title <text>',
+      'the server name a client may show (MCP serverInfo.title); default: the spec title, or the API names with several APIs',
+    )
+    .option(
       '--tools-page-size <n>',
       'page tools/list with n tools per page (only for MCP hosts that follow nextCursor); default: all tools in one response',
     )

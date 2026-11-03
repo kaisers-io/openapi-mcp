@@ -321,10 +321,12 @@ one JSON media type (in a 3.2 spec, a sequential type counts too) and nothing el
 How the schema is shown to the host is covered in
 [Output schema form](tool-modes.md#output-schema-form).
 
-A tool without an output schema returns its result as text. A JSON, `text/*` or sequential
-body comes back as text, also cut at 8 KB with the same marker; a truncated result says that
-it was cut. Any other media type, such as a binary file or `application/xml`, is a tool error
-that names the media type. Images are the exception when you turn on
+A tool without an output schema returns its result as text. A JSON, `text/*`, XML or
+sequential body comes back as text, also cut at 8 KB with the same marker; a truncated result
+says that it was cut. XML is `application/xml` and any `application/...+xml` type, such as RSS,
+Atom or SOAP. A text body must be UTF-8, even when an XML declaration names another encoding.
+Any other media type, such as YAML, a PDF or another binary file, is a tool error that names
+the media type. Images are the exception when you turn on
 [image responses](#image-responses).
 
 ### Response validation
@@ -359,7 +361,8 @@ Some generators (springdoc, for one) leave `nullable` out unless a field is anno
 the server serializes every unset field as `null`. OpenAPI 3.0 defaults `nullable` to
 `false`, so the derived output schema rejects such a response, and the call fails with
 "upstream response for status N did not match the tool's declared output schema", even though
-the data is usable.
+the data is usable. The message adds that the server's call log names the field: run `serve`
+with `--log json` to see it (see [the call log](#call-log)).
 
 With the flag, every value under an object's `properties` in the derived response (`data`)
 schema also admits `null`. That applies at every depth, through `$ref`s, and in the

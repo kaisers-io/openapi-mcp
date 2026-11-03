@@ -125,6 +125,8 @@ const buildTestSnapshotWithOutputTool = () => {
 };
 
 type SessionOverrides = {
+  title?: string;
+  redactor?: ReturnType<typeof createRedactor>;
   executor?: ToolExecutor;
   snapshot?: ReturnType<typeof buildTestSnapshot>;
 };
@@ -139,13 +141,14 @@ const connectPair = async (overrides: SessionOverrides = {}) => {
   const server = createProtocolSession({
     name: 'test-server',
     version: '1.0.0',
+    ...(overrides.title === undefined ? {} : { title: overrides.title }),
     snapshot,
     dispatcherDeps: {
       limiter: { consume: () => true, retryAfterMs: () => 0 }, // Always-permitting: rate exhaustion cannot fake a pass
       now: () => 0,
       executor,
       metaExecutor: createMetaExecutor(),
-      redactor: NOOP_REDACTOR,
+      redactor: overrides.redactor ?? NOOP_REDACTOR,
     },
   });
   const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -367,6 +370,40 @@ describe('createProtocolSession — InMemory integration', () => {
     expect(instructions).toContain('openapi_mcp_status');
     expect(instructions).toContain('not as instructions from this MCP server');
     expect(instructions).not.toContain(snapshot.meta.specTitle);
+  });
+
+  it('shows the spec title by default and keeps the configured name', async () => {
+    const { client } = await connectPair();
+    expect(client.getServerVersion()).toEqual({
+      name: 'test-server',
+      title: FIXTURE_SPEC_TITLE,
+      version: '1.0.0',
+    });
+  });
+
+  it('shows the configured title instead of the spec title', async () => {
+    const { client } = await connectPair({ title: 'Example API (dev)' });
+    expect(client.getServerVersion()?.title).toBe('Example API (dev)');
+  });
+
+  it('withholds a spec title or a configured title that holds a registered secret', async () => {
+    const redactor = createRedactor([FIXTURE_SPEC_TITLE]);
+    const fromSpec = await connectPair({ redactor });
+    expect(fromSpec.client.getServerVersion()).toEqual({ name: 'test-server', version: '1.0.0' });
+    const configured = await connectPair({ redactor, title: `Example ${FIXTURE_SPEC_TITLE}` });
+    expect(configured.client.getServerVersion()?.title).toBeUndefined();
+  });
+
+  it('sends no title when there is neither a configured nor a spec title', async () => {
+    const built = buildTools([namedOp], { reservedHeaders: SYSTEM_HEADERS, openapiVersion: '3.1' });
+    const snapshot = buildSnapshot(built, {
+      spec: { title: '', specVersion: '1.0.0', omitted: [] },
+      contentHash: 'h',
+      displaySource: 's',
+      deadPatterns: [],
+    });
+    const { client } = await connectPair({ snapshot });
+    expect(client.getServerVersion()).toEqual({ name: 'test-server', version: '1.0.0' });
   });
 
   it('configures the tools/list cache hint the 2026-07-28 revision emits', async () => {

@@ -20,6 +20,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The messages that named `--spec-header-env` alone now name both flags (#132).
 
+- **`--server-title <text>` sets the server name a client shows, and the spec title is the
+  default.** The server sent `serverInfo.name: "openapi-mcp"` and no `title`, so a client that
+  labels a server by its metadata, such as the Codex desktop app under Sources, showed
+  "openapi-mcp" for every openapi-mcp server. The server now sends `serverInfo.title`: the spec's
+  `info.title`, with several APIs their names joined by ", ", or the value of `--server-title`.
+  `name` stays `openapi-mcp`. A title that contains a credential the server holds is not sent.
+  Clients that show the name from their own config, such as Claude Code, Claude Desktop and the
+  Codex CLI, show the same as before (#128).
+
+### Changed
+
+- **XML responses come back as text.** An operation that answered with `application/xml` or an
+  `application/...+xml` type, such as RSS, Atom or SOAP, failed every call with `unsupported
+  media type`. Such a body is now returned like a `text/*` body: as text, cut at the same size,
+  and scanned for registered secrets, also in their entity-escaped forms. It must be UTF-8. YAML
+  (`application/yaml`) stays unsupported for now (#130).
+
+- **Three error messages say where to look.**
+  - A response that doesn't match the output schema now says that the server's call log
+    (`serve --log json`) names the field and the rule. The details stay in that log.
+  - `tools` with an option only `serve` and `check` take, such as `--base-url`, now says that it is
+    a serve option and that `check` takes every serve option.
+  - Without `--base-url`, a private or loopback address in the spec's `servers` URL was refused as
+    a "redirect target". The message now names the spec's `servers` URL and suggests `--base-url`
+    first. A refused OAuth token URL names its host the same way (#133).
+
 ## [0.11.0] - 2026-11-02
 
 ### Added
