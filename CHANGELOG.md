@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **XML and YAML responses come back as text.** An operation that answered with
+  `application/xml`, `application/yaml`, `application/x-yaml` or an `application/...+xml` or
+  `+yaml` type, such as RSS, Atom or SOAP, failed every call with `unsupported media type`. Such
+  a body is now returned like a `text/*` body: as text, cut at the same size, and scanned for
+  registered secrets, also in their entity-escaped forms. It must be UTF-8 (#130).
+
 ## [0.11.0] - 2026-11-02
 
 ### Added

@@ -321,10 +321,13 @@ one JSON media type (in a 3.2 spec, a sequential type counts too) and nothing el
 How the schema is shown to the host is covered in
 [Output schema form](tool-modes.md#output-schema-form).
 
-A tool without an output schema returns its result as text. A JSON, `text/*` or sequential
-body comes back as text, also cut at 8 KB with the same marker; a truncated result says that
-it was cut. Any other media type, such as a binary file or `application/xml`, is a tool error
-that names the media type. Images are the exception when you turn on
+A tool without an output schema returns its result as text. A JSON, `text/*`, XML, YAML or
+sequential body comes back as text, also cut at 8 KB with the same marker; a truncated result
+says that it was cut. XML and YAML are `application/xml`, `application/yaml`,
+`application/x-yaml` and any `application/...+xml` or `application/...+yaml` type, such as RSS,
+Atom or SOAP. A text body must be UTF-8, even when an XML declaration names another encoding.
+Any other media type, such as a PDF or another binary file, is a tool error that names the
+media type. Images are the exception when you turn on
 [image responses](#image-responses).
 
 ### Response validation
