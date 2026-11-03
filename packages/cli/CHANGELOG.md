@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`--spec-basic-auth-env <USER_ENV:PASSWORD_ENV>` fetches a spec behind HTTP Basic auth.** A
+  spec behind Basic auth needed a hand-built `Basic <base64>` value in a variable for
+  `--spec-header-env`. The new flag builds the header from a user name and a password, like
+  `--basic-auth-env` does for API requests. It is a spec credential like `--spec-header-env`:
+  - it works on `serve`, `check`, `tools` and `cache refresh`, and per API with `--api`;
+  - it needs a cache key, and no cleartext `http` to a host that isn't loopback;
+  - the encoded header, the decoded `user:password` and the password are redacted, as with
+    `--basic-auth-env`.
+
+  The messages that named `--spec-header-env` alone now name both flags (#132).
+
 ## [0.11.0] - 2026-11-02
 
 ### Added

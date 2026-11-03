@@ -44,7 +44,7 @@ export const assertNoCleartextCredential = (
     !isLoopbackHost(url.hostname)
   ) {
     throw validationError(
-      `refusing to send a --spec-header-env credential in cleartext to ${displaySource(url)} (use https, or pass --allow-insecure-http to override)`,
+      `refusing to send a --spec-header-env or --spec-basic-auth-env credential in cleartext to ${displaySource(url)} (use https, or pass --allow-insecure-http to override)`,
     );
   }
 };
@@ -122,8 +122,8 @@ const failureHint = (status: number, hasHeaders: boolean): string => {
     return '';
   }
   return hasHeaders
-    ? ' — check the env vars configured via --spec-header-env'
-    : ' — the spec URL may require authentication via --spec-header-env';
+    ? ' — check the env vars configured via --spec-header-env or --spec-basic-auth-env'
+    : ' — the spec URL may require authentication via --spec-header-env or --spec-basic-auth-env';
 };
 
 export const fetchFailedError = (status: number, source: string, hasHeaders: boolean): Error =>

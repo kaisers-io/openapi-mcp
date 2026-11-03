@@ -119,12 +119,13 @@ Use it for an API you own and control, not for a third-party one. It also works 
 
 ## The cache key rule
 
-`--cache-key <name>` is required for any spec fetched with `--spec-header-env`, that is, an
+`--cache-key <name>` is required for any spec fetched with `--spec-header-env` or
+`--spec-basic-auth-env`, that is, an
 authenticated spec, unless you pass `--trust-spec-updates` instead. Passing neither is a startup
 usage error (exit code 2):
 
 ```text
-openapi-mcp: an authenticated spec source (--spec-header-env) requires an explicit cache decision: pass --cache-key <name> for a durable, credential-scoped baseline, or --trust-spec-updates to accept refreshed specs automatically without persisting a baseline
+openapi-mcp: an authenticated spec source (--spec-header-env or --spec-basic-auth-env) requires an explicit cache decision: pass --cache-key <name> for a durable, credential-scoped baseline, or --trust-spec-updates to accept refreshed specs automatically without persisting a baseline
 ```
 
 There are two reasons for the rule. Two host entries that fetch the same URL with different

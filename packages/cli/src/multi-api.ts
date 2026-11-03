@@ -19,6 +19,7 @@ export const MAX_APIS = 32;
 export const PER_API_SCALARS: Readonly<Record<string, string>> = {
   '--base-url': 'baseUrl',
   '--basic-auth-env': 'basicAuthEnv',
+  '--spec-basic-auth-env': 'specBasicAuthEnv',
   '--cache-key': 'cacheKey',
   '--ttl': 'ttl',
   '--nullable-response-fields': 'nullableResponseFields',

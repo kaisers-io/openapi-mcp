@@ -109,17 +109,20 @@ local API prefer `http://127.0.0.1:<port>`, which needs no lookup.
 ## A spec behind authentication
 
 When the spec URL itself needs a credential, add `--spec-header-env Authorization=VAR` and a
+`--cache-key <name>`. For HTTP Basic auth, use `--spec-basic-auth-env USER_VAR:PASSWORD_VAR`
+instead: it builds the header from both values, so the user never encodes it by hand. Use a
 `--cache-key <name>` (1 to 64 letters, digits, `.`, `_`, `-`), unique per account.
 `--header-env` does not authenticate the spec fetch. Without a cache key the start fails with
 `requires an explicit cache decision`: the cache must not share one entry between accounts.
 `--trust-spec-updates` instead of a key accepts every changed spec without review and keeps no
-cache; propose it only if the user wants that. `--spec-header-env` works with URL specs only.
+cache; propose it only if the user wants that. Both flags work with URL specs only.
 
 The spec URL must not carry a credential itself: user and password in the URL, or a query
-parameter such as `token=` or `api_key=`, are refused. Use `--spec-header-env` for them.
+parameter such as `token=` or `api_key=`, are refused. Use `--spec-basic-auth-env` for a user
+and password, `--spec-header-env` for a token.
 
 The spec URL must use `https`, unless its host is loopback. Over plain `http` the start fails
-with `refusing to send a --spec-header-env credential in cleartext`. `--allow-insecure-http`
+with `refusing to send a --spec-header-env or --spec-basic-auth-env credential in cleartext`. `--allow-insecure-http`
 permits it on `serve`, `check`, `tools` and `cache refresh`. Add it only if the spec has no
 `https` address and the user agrees.
 
