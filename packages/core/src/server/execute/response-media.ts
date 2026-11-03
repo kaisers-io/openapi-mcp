@@ -107,7 +107,13 @@ export const someDecodedForm = (value: unknown, hit: (form: string) => boolean):
   return false;
 };
 
-export const isTextEssence = (essence: string): boolean => essence.startsWith('text/');
+// XML is text too: `application/xml` and the `+xml` structured syntax
+// suffix (RFC 7303: RSS, Atom, SOAP). It comes back as text, decoded and
+// scanned like `text/*`. YAML stays an unsupported media type for now.
+export const isTextEssence = (essence: string): boolean =>
+  essence.startsWith('text/') ||
+  essence === 'application/xml' ||
+  (essence.startsWith('application/') && essence.endsWith('+xml'));
 
 // A response in a sequential media type (OAS 3.2.1 §4.14.3.1), read as the
 // array of its items in order, the JSON data model the spec maps such a body

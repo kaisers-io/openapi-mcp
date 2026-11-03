@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Clients that show the name from their own config, such as Claude Code, Claude Desktop and the
   Codex CLI, show the same as before (#128).
 
+### Changed
+
+- **XML responses come back as text.** An operation that answered with `application/xml` or an
+  `application/...+xml` type, such as RSS, Atom or SOAP, failed every call with `unsupported
+  media type`. Such a body is now returned like a `text/*` body: as text, cut at the same size,
+  and scanned for registered secrets, also in their entity-escaped forms. It must be UTF-8. YAML
+  (`application/yaml`) stays unsupported for now (#130).
+
 ## [0.11.0] - 2026-11-02
 
 ### Added
