@@ -35,17 +35,17 @@ describe('spec validation reports every failing location (issue #131)', () => {
   it('lists each invalid object once, with its cause and without the oneOf noise', () => {
     const error = failure(
       spec30({
-        '/ok': { get: { responses: OK } },
-        '/a': { get: { responses: SCHEMA_BESIDE_CONTENT } },
-        '/b': { get: { responses: SCHEMA_BESIDE_CONTENT } },
-        '/c': {
-          post: {
+        '/pets': { get: { responses: OK } },
+        '/owners': { get: { responses: SCHEMA_BESIDE_CONTENT } },
+        '/visits': { get: { responses: SCHEMA_BESIDE_CONTENT } },
+        '/pets/{id}': {
+          put: {
             requestBody: {
               content: {
                 'application/json': {
                   schema: {
                     type: 'object',
-                    properties: { p: { type: 'string', examples: { one: { value: 'x' } } } },
+                    properties: { name: { type: 'string', examples: { cat: { value: 'Tom' } } } },
                   },
                 },
               },
@@ -57,15 +57,15 @@ describe('spec validation reports every failing location (issue #131)', () => {
     );
     expect(error.errors).toEqual([
       {
-        path: '/paths/~1a/get/responses/200',
+        path: '/paths/~1owners/get/responses/200',
         messages: ['must NOT have additional properties ("schema")'],
       },
       {
-        path: '/paths/~1b/get/responses/200',
+        path: '/paths/~1visits/get/responses/200',
         messages: ['must NOT have additional properties ("schema")'],
       },
       {
-        path: '/paths/~1c/post/requestBody/content/application~1json/schema/properties/p',
+        path: '/paths/~1pets~1{id}/put/requestBody/content/application~1json/schema/properties/name',
         messages: ['must NOT have additional properties ("examples")'],
       },
     ]);
