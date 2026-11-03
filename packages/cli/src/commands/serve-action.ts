@@ -39,6 +39,7 @@ import {
   definitionBytes,
   runSpecPipeline,
   SPEC_BUDGETS,
+  sanitizeSpecText,
   serveStdioSession,
   SYSTEM_HEADERS,
   unsatisfiedSecurityWarnings,
@@ -255,6 +256,7 @@ export type ServeCmdOpts = SpecCmdOpts &
     oauthRequiredScope?: string[];
     log?: string;
     toolsPageSize?: string;
+    serverTitle?: string;
     responseProjection?: boolean;
     allowOffsiteRedirects?: boolean;
     toolMode: string;
@@ -374,6 +376,22 @@ const parseToolsPageSize = (raw: string | undefined): number | undefined => {
     );
   }
   return Number(raw);
+};
+
+// Same bound as a spec title (normalize.ts). Control and bidi characters are
+// refused rather than stripped, so the client shows exactly what was passed.
+const SERVER_TITLE_MAX = 256;
+
+const parseServerTitle = (raw: string | undefined): { title?: string } => {
+  if (raw === undefined) {
+    return {};
+  }
+  if (raw === '' || sanitizeSpecText(raw, SERVER_TITLE_MAX) !== raw) {
+    throw usageError(
+      `invalid --server-title — expected 1 to ${SERVER_TITLE_MAX} characters without control characters or surrounding spaces`,
+    );
+  }
+  return { title: raw };
 };
 
 // Validated like --port: before any spec, cache or network work.
@@ -775,6 +793,7 @@ const prepareServe = async (
   const logJson = cmdOpts.log === 'json';
   const toolsPageSize = parseToolsPageSize(cmdOpts.toolsPageSize);
   const paging = toolsPageSize === undefined ? {} : { toolsPageSize };
+  const identity = parseServerTitle(cmdOpts.serverTitle);
   const requestedToolMode = parseToolMode(cmdOpts.toolMode);
   // Usage errors first, before any spec or network work
   parseImageResponseMode(cmdOpts.imageResponses);
@@ -1072,6 +1091,7 @@ const prepareServe = async (
     snapshot,
     dispatcherDeps,
     paging,
+    identity,
     // Inbound OAuth (issuer discovery, JWKS) follows --allow-private-network
     // with one API; with several there is no single setting, so it stays off
     allowPrivateNetwork: multi ? false : first.allowPrivateNetwork,
@@ -1212,13 +1232,27 @@ export const runServe = async (
   // to process exit.
   let closeExecutor: (() => Promise<void>) | undefined;
   try {
-    const { httpConfig, snapshot, dispatcherDeps, paging, allowPrivateNetwork, timeoutMs } =
-      await prepareServe(command, cmdOpts, ctx, occurrences, (close) => {
-        closeExecutor = close;
-      });
+    const {
+      httpConfig,
+      snapshot,
+      dispatcherDeps,
+      paging,
+      identity,
+      allowPrivateNetwork,
+      timeoutMs,
+    } = await prepareServe(command, cmdOpts, ctx, occurrences, (close) => {
+      closeExecutor = close;
+    });
     if (httpConfig === undefined) {
       const session = serveStdioSession(
-        { name: 'openapi-mcp', version: pkg.version, snapshot, dispatcherDeps, ...paging },
+        {
+          name: 'openapi-mcp',
+          version: pkg.version,
+          ...identity,
+          snapshot,
+          dispatcherDeps,
+          ...paging,
+        },
         {
           // Out-of-band transport errors carry no JSON-RPC reply — route
           // them through the SAME sanitizing stderr path the startup
@@ -1268,6 +1302,7 @@ export const runServe = async (
       const httpServer = createStreamableHttpServer({
         name: 'openapi-mcp',
         version: pkg.version,
+        ...identity,
         snapshot,
         dispatcherDeps,
         ...paging,

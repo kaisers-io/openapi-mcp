@@ -80,6 +80,7 @@ with `expected <calls>/<duration>, e.g. "120/1m"`. The accepted values:
 | `--rate-limit` | `<calls>/<duration>`, calls 1 to 100,000 |
 | `--retries` | 0 to 3 |
 | `--tools-page-size` | 1 to 512 |
+| `--server-title` | 1 to 256 characters, no tabs, line breaks or other control characters, no spaces at the start or end |
 | `--port` | 1 to 65535 |
 | `--log` | `json` only |
 | `--tool-mode`, `--output-schema`, `--image-responses`, `--nullable-response-fields`, `--http-auth`, `--upstream-oauth-client-auth` | one of the values `CLI --json help` lists (`is not one of`) |

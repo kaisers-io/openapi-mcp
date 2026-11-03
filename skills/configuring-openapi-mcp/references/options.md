@@ -60,6 +60,7 @@ value, `prefix-or-all` applies to every API without one, `enable` is set with
 | `--log <format>` |  | json |  |  | write one structured line per tool call to stderr (only "json"; never arguments, header values or bodies) |
 | `--response-projection` |  |  |  |  | offer an optional _fields argument (JSON Pointers) on JSON tools, so a call returns only the selected fields; adds about a third to tools/list |
 | `--allow-offsite-redirects` |  |  |  | enable | follow a redirect that leaves the API base URL (another host, or outside the base path); egress checks still apply |
+| `--server-title <text>` |  |  |  |  | the server name a client may show (MCP serverInfo.title); default: the spec title, or the API names with several APIs |
 | `--tools-page-size <n>` |  |  |  |  | page tools/list with n tools per page (only for MCP hosts that follow nextCursor); default: all tools in one response |
 | `--tool-mode <mode>` | `"per-operation"` | per-operation, discover, auto |  |  | per-operation (one tool per operation), discover (search_operations/describe_operation/call_operation), or auto (discover above 64 operations or 40 KB of tool definitions) |
 | `--no-execute` | `true` |  |  |  | do not offer execute_code, which runs a short JavaScript program in a sandbox that calls read-only operations and returns only its result |
