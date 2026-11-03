@@ -109,9 +109,7 @@ export const someDecodedForm = (value: unknown, hit: (form: string) => boolean):
 
 // XML is text too: `application/xml` and the `+xml` structured syntax
 // suffix (RFC 7303: RSS, Atom, SOAP). It comes back as text, decoded and
-// scanned like `text/*`, whose entity forms the secret scan already reads.
-// YAML is not: its own escapes (a doubled quote, `\x` escapes) would carry
-// a secret past that scan, so it stays an unsupported media type.
+// scanned like `text/*`. YAML stays an unsupported media type for now.
 export const isTextEssence = (essence: string): boolean =>
   essence.startsWith('text/') ||
   essence === 'application/xml' ||

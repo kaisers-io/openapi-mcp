@@ -777,7 +777,6 @@ describe('mapResponse — no outputSchema (validator undefined)', () => {
     },
   );
 
-  // YAML's own escapes would carry a secret past the scan of a text body
   it.each([
     'application/octet-stream',
     'application/pdf',
