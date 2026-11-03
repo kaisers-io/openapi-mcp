@@ -44,6 +44,8 @@ const LOOPBACK_BINDS = new Set([LOOPBACK_BIND, '::1', 'localhost']);
 export type StreamableHttpOptions = {
   name: string;
   version: string;
+  // The serverInfo.title; see ProtocolSessionOptions
+  title?: string;
   snapshot: ServerSnapshot;
   dispatcherDeps: Omit<DispatcherDeps, 'snapshot'>;
   // Page size for tools/list; undefined = no paging (see tool-list.ts).
@@ -236,6 +238,7 @@ export const createStreamableHttpServer = (
       createProtocolSession({
         name: opts.name,
         version: opts.version,
+        ...(opts.title === undefined ? {} : { title: opts.title }),
         snapshot: opts.snapshot,
         dispatcherDeps: opts.dispatcherDeps,
         ...(opts.toolsPageSize === undefined ? {} : { toolsPageSize: opts.toolsPageSize }),

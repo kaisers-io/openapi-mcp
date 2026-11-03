@@ -51,6 +51,7 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
+| Unreleased | The server sends a title, the spec's `info.title` (with several APIs, their names joined by ", "). The Codex desktop app shows it under Sources instead of "openapi-mcp". | Nothing in the config. `--server-title` sets another title. |
 | Unreleased | An XML response (`application/xml`, `application/...+xml`) comes back as text; it was a tool error. YAML stays unsupported. | Nothing in the config. An operation the user kept off the allow list for this reason can be allowed now. |
 | 0.11.0 | Spaces around a `--header-env` or `--spec-header-env` value are dropped when the server reads it. The HTTP client dropped them when it sent the header, so requests do not change. | Nothing in the config. |
 | 0.10.0 | An operation whose `multipart/form-data` body has an object part, such as the metadata next to a file, is a tool now and sends that part as JSON; it was omitted. An Encoding Object that only names a part's `contentType` no longer omits a multipart operation either. | Compare the tool names of both versions; `--deny` such an operation if the user does not want it. |
