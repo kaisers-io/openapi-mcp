@@ -151,10 +151,10 @@ describe('validateOpenApiDocument', () => {
     );
   });
 
-  it('caps the reported error list at 10 entries', () => {
+  it('caps the reported locations at 20', () => {
     const doc = minimal30();
     const paths: Record<string, unknown> = {};
-    for (let index = 0; index < 15; index += 1) {
+    for (let index = 0; index < 25; index += 1) {
       // Each bogus path item yields at least one meta-schema error
       paths[`/p${index}`] = { get: 'bogus' };
     }
@@ -163,9 +163,13 @@ describe('validateOpenApiDocument', () => {
       validateOpenApiDocument(doc, OPENAPI_VALIDATORS);
       expect.unreachable('expected a validation error');
     } catch (error) {
-      const lines = (error as OpenapiMcpError).message.split('\n');
-      // Header line + max 10 error lines + optional "and N more" line
-      expect(lines.length).toBeLessThanOrEqual(12);
+      const { message, errors } = error as OpenapiMcpError;
+      const lines = message.split('\n');
+      // Header line + max 20 location lines + "and N more" + the fix hint
+      expect(lines).toHaveLength(23);
+      expect(lines[21]).toBe('  … and 5 more locations');
+      // The --json list is complete
+      expect(errors).toHaveLength(25);
     }
   });
 
@@ -240,7 +244,7 @@ describe('precompiled meta-schema validators (issue kaisers-io/openapi-mcp-archi
       const { default: Ctor } = require(
         version === '3.0' ? 'ajv-draft-04' : 'ajv/dist/2020.js',
       ) as { default: new (opts: object) => Compiler };
-      const ajv = new Ctor({ strict: false });
+      const ajv = new Ctor({ strict: false, allErrors: true });
       (require('ajv-formats') as { default: (instance: Compiler) => unknown }).default(ajv);
       ajv.addFormat('media-range', true);
       const schema = require(

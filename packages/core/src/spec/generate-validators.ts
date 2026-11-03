@@ -86,8 +86,10 @@ export const generateValidator = (version: OpenapiVersion): string => {
   const schema: object = require(
     `@seriousme/openapi-schema-validator/schemas/v${version}/schema.json`,
   );
-  // Strict mode stays off: the official meta-schemas are not strict-mode clean
-  const ajv = new Ctor({ strict: false, code: { source: true } });
+  // Strict mode stays off: the official meta-schemas are not strict-mode clean.
+  // allErrors reports every failing location in one run (issue #131); on a
+  // valid spec it costs the same, and on an invalid one it adds milliseconds
+  const ajv = new Ctor({ strict: false, allErrors: true, code: { source: true } });
   addFormats(ajv);
   // Mirrors @seriousme/openapi-schema-validator: media-range is used by the 3.1 and 3.2 schemas
   ajv.addFormat('media-range', true);

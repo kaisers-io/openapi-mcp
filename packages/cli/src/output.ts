@@ -145,6 +145,7 @@ export const emitError = (ctx: CliContext, opts: OutputOptions, err: unknown): n
           code: rendered.code,
           ...(rendered.reason === undefined ? {} : { reason: rendered.reason }),
           message: rendered.message,
+          ...(rendered.errors === undefined ? {} : { errors: rendered.errors }),
           ...(rendered.stack === undefined ? {} : { stack: rendered.stack }),
         },
       }),

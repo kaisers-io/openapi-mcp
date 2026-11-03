@@ -63,7 +63,21 @@ const RECIPES = [
     changed: ['/components/schemas/Order/properties/note/nullable'],
     fixesNullNote: true,
   },
+  {
+    input: 'reports-3.0.json',
+    overlay: 'fix-reports-3.0.overlay.yaml',
+    output: 'reports-3.0.fixed.json',
+    changed: [
+      '/paths/~1reports/get/responses/200/schema',
+      '/components/schemas/Report/properties/period/examples',
+      '/components/schemas/Report/properties/period/example',
+    ],
+    fixesNullNote: false,
+  },
 ] as const;
+
+// The recipes whose input is a valid spec, so both sides list an inventory
+const VALID_INPUT_RECIPES = RECIPES.filter((recipe) => recipe.input !== 'reports-3.0.json');
 
 describe('docs/overlays.md (issue #26)', () => {
   const guide = readFileSync(GUIDE, 'utf8');
@@ -172,8 +186,39 @@ describe('openapi-mcp on the corrected specs (issue #26)', () => {
     }
   };
 
-  it.each(RECIPES)('$output exposes the same inventory as $input', ({ input, output }) => {
-    expect(reviewed(output)).toEqual(reviewed(input));
+  it.each(VALID_INPUT_RECIPES)(
+    '$output exposes the same inventory as $input',
+    ({ input, output }) => {
+      expect(reviewed(output)).toEqual(reviewed(input));
+    },
+  );
+
+  // Recipe 3: the spec fails validation at both places, the corrected one passes
+  it('fix-reports-3.0.overlay.yaml fixes every location the validation error lists', () => {
+    const cacheHome = mkdtempSync(join(tmpdir(), 'openapi-mcp-overlays-invalid-'));
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [CLI_ENTRY, '--json', 'tools', '--spec', 'reports-3.0.json', '--allow', 'path:/**'],
+        {
+          cwd: OVERLAYS_DIR,
+          env: { ...process.env, HOME: cacheHome, USERPROFILE: cacheHome },
+          encoding: 'utf8',
+        },
+      );
+      expect(result.status).toBe(3);
+      const { error } = JSON.parse(result.stdout) as { error: { errors: { path: string }[] } };
+      expect(error.errors.map((location) => location.path)).toEqual([
+        '/paths/~1reports/get/responses/200',
+        '/components/schemas/Report/properties/period',
+      ]);
+      const fixed = tools('reports-3.0.fixed.json', cacheHome);
+      expect((fixed['tools'] as { name: string }[]).map((tool) => tool.name)).toEqual([
+        'listReports',
+      ]);
+    } finally {
+      rmSync(cacheHome, { recursive: true, force: true });
+    }
   });
 
   // "Serving the corrected spec": a regenerated file at an accepted path stays
@@ -260,7 +305,7 @@ describe('openapi-mcp on the corrected specs (issue #26)', () => {
     }
   };
 
-  it.each(RECIPES)(
+  it.each(VALID_INPUT_RECIPES)(
     '$output: a null note in the response is accepted only after the correction',
     async ({ input, output, fixesNullNote }) => {
       const before = await callBoth(input);

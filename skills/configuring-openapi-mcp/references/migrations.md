@@ -51,6 +51,7 @@ These change behavior silently. Check each one that applies and tell the user.
 
 | Version | Change | What to do |
 |---|---|---|
+| Unreleased | A spec validation error lists every failing location (`at N locations:`), without the `oneOf` lines, and ends with a hint to OpenAPI Overlays; `--json` adds `error.errors`. | Nothing in the config. Update scripts that match the old text. |
 | 0.11.0 | Spaces around a `--header-env` or `--spec-header-env` value are dropped when the server reads it. The HTTP client dropped them when it sent the header, so requests do not change. | Nothing in the config. |
 | 0.10.0 | An operation whose `multipart/form-data` body has an object part, such as the metadata next to a file, is a tool now and sends that part as JSON; it was omitted. An Encoding Object that only names a part's `contentType` no longer omits a multipart operation either. | Compare the tool names of both versions; `--deny` such an operation if the user does not want it. |
 | 0.9.1 | More results that echo a registered secret are withheld: a secret three levels deep in JSON escapes inside a string of a JSON body, on a structured result, a text result and an error excerpt. | Nothing in the config. |

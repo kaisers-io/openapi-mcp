@@ -19,17 +19,28 @@ export type ErrorReason =
   | 'spec_external_ref'
   | 'filter_no_selector';
 
+// One failing location of a spec, for `--json` output (issue #131)
+export type ErrorLocation = { readonly path: string; readonly messages: readonly string[] };
+
 export class OpenapiMcpError extends Error {
   readonly code: string;
   readonly exitCode: ExitCode;
   readonly reason: ErrorReason | undefined;
+  readonly errors: readonly ErrorLocation[] | undefined;
 
-  constructor(code: string, message: string, exitCode: ExitCode, reason?: ErrorReason) {
+  constructor(
+    code: string,
+    message: string,
+    exitCode: ExitCode,
+    reason?: ErrorReason,
+    errors?: readonly ErrorLocation[],
+  ) {
     super(message);
     this.name = 'OpenapiMcpError';
     this.code = code;
     this.exitCode = exitCode;
     this.reason = reason;
+    this.errors = errors;
   }
 }
 
@@ -57,6 +68,13 @@ export const usageError = (message: string, reason?: ErrorReason): OpenapiMcpErr
 export const validationError = (message: string, reason?: ErrorReason): OpenapiMcpError =>
   new OpenapiMcpError('validation', message, EXIT.VALIDATION, reason);
 
+// A spec that fails OpenAPI schema validation, with every failing location
+export const specValidationError = (
+  message: string,
+  errors: readonly ErrorLocation[],
+): OpenapiMcpError =>
+  new OpenapiMcpError('validation', message, EXIT.VALIDATION, undefined, errors);
+
 // A dedicated code for "a namespace-shaped path exists but is not a real
 // directory" (a planted file or symlink), distinct from `validationError`.
 // It carries the SAME exit code (3) — a single-namespace `cache clear` on
@@ -81,6 +99,7 @@ export type RenderedError = {
   reason?: ErrorReason;
   exitCode: ExitCode;
   message: string;
+  errors?: readonly ErrorLocation[];
   stack?: string;
 };
 
@@ -91,6 +110,7 @@ export const renderError = (err: unknown, opts: { verbose: boolean }): RenderedE
       ...(err.reason === undefined ? {} : { reason: err.reason }),
       exitCode: err.exitCode,
       message: err.message,
+      ...(err.errors === undefined ? {} : { errors: err.errors }),
       ...(opts.verbose && err.stack !== undefined ? { stack: err.stack } : {}),
     };
   }

@@ -1,6 +1,7 @@
 import type { ValidateFunction } from 'ajv';
-import { validationError } from '../errors.ts';
+import { specValidationError, validationError } from '../errors.ts';
 import { sanitizeSpecText } from './sanitize.ts';
+import { formatValidationIssues, validationIssues } from './validation-issues.ts';
 
 // The official OpenAPI meta-schemas (3.0: JSON Schema draft-04, 3.1 and 3.2:
 // draft 2020-12), precompiled at development time into Ajv standalone code (issue
@@ -27,24 +28,14 @@ export const loadOpenApiValidators = async (): Promise<OpenApiValidators> => {
   return OPENAPI_VALIDATORS;
 };
 
+// What to do about it: fix the spec, or, when it can't be changed,
+// correct a copy with an OpenAPI Overlay
+const FIX_HINT =
+  'Fix the spec; if you cannot change it, correct a copy with an OpenAPI Overlay: ' +
+  'https://github.com/kaisers-io/openapi-mcp/blob/main/docs/overlays.md';
+
 // The declared version is spec content: bound it before it reaches any message
 const DECLARED_VERSION_MAX = 32;
-
-type AjvErrorLike = {
-  instancePath?: string;
-  message?: string;
-};
-
-const formatAjvErrors = (errors: readonly AjvErrorLike[]): string => {
-  const lines = errors
-    .slice(0, 10)
-    .map(
-      (error) =>
-        `  ${error.instancePath === undefined || error.instancePath === '' ? '/' : error.instancePath}: ${error.message ?? 'invalid'}`,
-    );
-  const more = errors.length > 10 ? `\n  … and ${errors.length - 10} more` : '';
-  return `${lines.join('\n')}${more}`;
-};
 
 // The minor version a declared "openapi" value belongs to, or undefined when
 // it is none this package supports. Patch releases add no features (OAS
@@ -73,8 +64,10 @@ export const validateOpenApiDocument = (
     // The declared version is attacker-controlled past the "3.x." prefix
     // checked by the gate above: sanitize and cap it before it is echoed
     const declaredDisplay = sanitizeSpecText(declared, DECLARED_VERSION_MAX);
-    throw validationError(
-      `spec failed OpenAPI ${declaredDisplay} schema validation:\n${formatAjvErrors(validate.errors ?? [])}`,
+    const issues = validationIssues(validate.errors ?? []);
+    throw specValidationError(
+      `spec failed OpenAPI ${declaredDisplay} schema validation at ${issues.length} ${issues.length === 1 ? 'location' : 'locations'}:\n${formatValidationIssues(issues)}\n${FIX_HINT}`,
+      issues,
     );
   }
   return { document, version };
