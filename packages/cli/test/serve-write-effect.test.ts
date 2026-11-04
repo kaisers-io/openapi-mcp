@@ -55,6 +55,9 @@ const REPORTED = 'the upstream reported success and the write was likely applied
 
 type Result = { isError: boolean; text: string; effect: unknown };
 
+// The last --request-timeout wins
+const SHORT_TIMEOUT = ['--request-timeout', '1s'];
+
 describe('serve — effect of a failed call (issue #25)', () => {
   let home: string;
   let specPath: string;
@@ -189,8 +192,10 @@ describe('serve — effect of a failed call (issue #25)', () => {
         'operationId:exportOrder',
         '--max-response-bytes',
         '2KB',
+        // Above the macOS runner stalls (subprocess-budget.ts), so only a test
+        // that passes SHORT_TIMEOUT sees a call time out
         '--request-timeout',
-        '1s',
+        '20s',
         ...extraArgs,
       ],
       { env: { ...process.env, HOME: home, USERPROFILE: home } },
@@ -249,10 +254,12 @@ describe('serve — effect of a failed call (issue #25)', () => {
     'marks a write that may have been applied, and never as not sent',
     async () => {
       const cases = ['invalid-json', 'oversized', 'closed', 'slow', 'redirected', 'failed', 'echo'];
-      const results = await call(
+      const fast = await call(
         [],
-        cases.map((name) => post(name)),
+        cases.filter((name) => name !== 'slow').map((name) => post(name)),
       );
+      const timedOut = await call(SHORT_TIMEOUT, [post('slow')]);
+      const results = [...fast.slice(0, 3), ...timedOut, ...fast.slice(3)];
       for (const [index, result] of results.entries()) {
         expect({ case: cases[index], ...result }).toMatchObject({
           case: cases[index],
@@ -268,7 +275,9 @@ describe('serve — effect of a failed call (issue #25)', () => {
         });
       }
       // Every write reached the upstream exactly once
-      expect(received.filter((line) => line.startsWith('POST'))).toHaveLength(cases.length);
+      expect(received.filter((line) => line.startsWith('POST')).toSorted()).toEqual(
+        cases.map((name) => `POST /orders/${name}`).toSorted(),
+      );
       // Upstream text saying "do not retry" does not replace the server's own warning
       expect(results.at(-1)?.text).toContain(WARNING);
     },
@@ -295,15 +304,12 @@ describe('serve — effect of a failed call (issue #25)', () => {
   it(
     'says not sent only when nothing reached the upstream, and keeps read messages as they are',
     async () => {
-      const results = await call(
-        [],
-        [
-          // Request authorization: getOrder must not reach the excluded export
-          { name: 'getOrder', arguments: { case: 'x/export' } },
-          { name: 'createOrder', arguments: { case: 7 } },
-          { name: 'getOrder', arguments: { case: 'slow' } },
-        ],
-      );
+      const results = await call(SHORT_TIMEOUT, [
+        // Request authorization: getOrder must not reach the excluded export
+        { name: 'getOrder', arguments: { case: 'x/export' } },
+        { name: 'createOrder', arguments: { case: 7 } },
+        { name: 'getOrder', arguments: { case: 'slow' } },
+      ]);
       expect(results[0]).toMatchObject({ isError: true, effect: 'not_sent' });
       expect(results[1]).toMatchObject({ isError: true, effect: 'not_sent' });
       expect(received).toEqual(['GET /orders/slow']);
