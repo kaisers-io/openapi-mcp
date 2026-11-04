@@ -24,6 +24,8 @@ concurrency:
 #   and restoring the cached store failed on macOS runners ("Egress is over the account limit") and
 #   then stalled setup-node for about ten minutes before it continued without the cache.
 # - `timeout-minutes` on every job: the GitHub default is 6 hours, which a hung subprocess test would burn.
+#   Each limit is about twice the slowest recent run, and at least 5 minutes. A job that hits one is a
+#   regression to look into; raise the limit only once the job is known to need longer.
 jobs:
   check:
     timeout-minutes: 20
@@ -52,7 +54,7 @@ jobs:
   # and are already gated by the ubuntu job above, while subprocess coverage would be incomplete here
   # (ChildProcess#kill() terminates a Windows child abruptly, so it writes no V8 coverage).
   windows:
-    timeout-minutes: 30
+    timeout-minutes: 10
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,7 +69,7 @@ jobs:
   # from commit-pinned URLs and checked against a pinned sha256 (scripts/bench/public-specs.ts); about
   # 23 MB per run, no cache, so a poisoned cache can never feed the check. A failed download fails the job.
   filters-real-specs:
-    timeout-minutes: 15
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -95,7 +97,7 @@ jobs:
         with: { node-version-file: .node-version, package-manager-cache: false }
       - run: node scripts/versions/run.ts --check
   bundle-determinism:
-    timeout-minutes: 10
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -108,7 +110,7 @@ jobs:
   # The packed tarball is installed globally and driven through the installed bin on every supported
   # platform: on Windows that path goes through npm's `.cmd` shim, which no other job exercises.
   smoke:
-    timeout-minutes: 10
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -139,7 +141,7 @@ jobs:
   # installed without lifecycle scripts. Linux only: the transport is stdio JSON-RPC, which the
   # per-platform suites already cover.
   inspector:
-    timeout-minutes: 10
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -155,7 +157,7 @@ jobs:
   # Lints the workflows themselves (template injection, credential persistence, unpinned `uses:` —
   # zizmor's default policy requires every action to be SHA-pinned, so an unpinned ref fails here).
   zizmor:
-    timeout-minutes: 10
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
