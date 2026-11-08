@@ -10,7 +10,7 @@
 
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { readFile } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 // The credential every scenario's user has set
@@ -64,6 +64,18 @@ export const run = async (
   });
   const [code] = (await once(child, 'close')) as [number | null];
   return { code, stdout, stderr };
+};
+
+// The final reply of a run in `project`: reply.txt when it exists, even empty, so that an empty
+// reply is never replaced by a transcript that holds the agent's intermediate steps;
+// transcript.txt only for a run saved by hand without reply.txt
+export const readReply = async (project: string): Promise<string> => {
+  const hasReply = await access(join(project, 'reply.txt')).then(
+    () => true,
+    () => false,
+  );
+  const file = hasReply ? 'reply.txt' : 'transcript.txt';
+  return readFile(join(project, file), 'utf8').catch(() => '');
 };
 
 // The tools the written Claude Code entry exposes, from `check` with its own arguments. `cli` is

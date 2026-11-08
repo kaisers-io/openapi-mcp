@@ -2,7 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { verify } from './grade.ts';
+import { readReply, verify } from './grade.ts';
 import type { Expect, Scenario } from './grade.ts';
 
 // Self-tests of the skill eval graders: every scenario in evals/scenarios.json is graded against a
@@ -334,6 +334,14 @@ describe('skill eval graders', () => {
     expect(Object.keys(RUNS).toSorted()).toStrictEqual(
       scenarios.map((scenario) => scenario.id).toSorted(),
     );
+  });
+
+  it('reads an empty reply as empty, not the transcript', async () => {
+    expect.hasAssertions();
+    const root = await project({ 'reply.txt': '', 'transcript.txt': 'read-only --allow' });
+    expect(await readReply(root)).toBe('');
+    const manual = await project({ 'transcript.txt': 'read-only --allow' });
+    expect(await readReply(manual)).toBe('read-only --allow');
   });
 
   describe.each(scenarios)('$id', (scenario) => {

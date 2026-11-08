@@ -18,7 +18,7 @@
 import { chmod, cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { RUN_ENV, run, verify } from './grade.ts';
+import { RUN_ENV, readReply, run, verify } from './grade.ts';
 import type { Scenario } from './grade.ts';
 
 const ROOT = join(import.meta.dirname, '..', '..');
@@ -126,9 +126,7 @@ const manual = async (mode: string, id: string, project: string | undefined): Pr
   if (project === undefined) {
     throw new Error('verify needs the project directory');
   }
-  const reply =
-    (await readFile(join(project, 'reply.txt'), 'utf8').catch(() => '')) ||
-    (await readFile(join(project, 'transcript.txt'), 'utf8').catch(() => ''));
+  const reply = await readReply(project);
   const failures = await verify(project, reply, scenario.expect, BIN);
   process.stdout.write(
     `${failures.length === 0 ? 'pass' : 'FAIL'} ${id}\n${failures.map((line) => `  ${line}\n`).join('')}`,
