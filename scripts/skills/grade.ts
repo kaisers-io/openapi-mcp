@@ -21,7 +21,9 @@ export const RUN_ENV: Record<string, string> = {
 export interface Expect {
   // A file the agent must write, relative to the project
   file?: string;
-  // Substrings that file must contain
+  // Substrings that file must contain. For a Codex config this is a text check only: it cannot
+  // tell a command and its arguments from a comment, because parsing TOML would need a dependency
+  // for the graders alone. A Claude Code entry is also run through `check` (`exposed`).
   contains?: string[];
   // Substrings that file must not contain, such as a token written literally
   absent?: string[];
