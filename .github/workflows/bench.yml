@@ -5,9 +5,10 @@ on:
 # PR-controlled code runs here (install/build/benchmark) — keep the ambient token read-only.
 permissions:
   contents: read
+# Superseded pull request runs are cancelled; runs on main never are (see ci.yml).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 # Performance regression gate (issue kaisers-io/openapi-mcp-archive#80). On a pull request the PR
 # base is built in the SAME job and both builds are benchmarked interleaved on this one runner, so
 # the comparison is relative and the runner's speed cancels out (absolute timings from another machine

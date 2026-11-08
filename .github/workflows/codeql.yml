@@ -3,9 +3,10 @@ on:
   push: { branches: [main] }
   pull_request:
 permissions: {}
+# Superseded pull request runs are cancelled; runs on main never are (see ci.yml).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
 jobs:
   analyze:
     timeout-minutes: 6
