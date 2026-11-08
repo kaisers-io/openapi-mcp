@@ -2,7 +2,8 @@
 # - the SHA-pinned actions in .github/workflows (Dependabot reads the `# vX.Y.Z` comment next to each
 #   pin and bumps SHA and comment together), and
 # - pnpm-lock.yaml / the exact-pinned package.json versions.
-# Weekly and grouped, so routine bumps arrive as one reviewable PR per ecosystem instead of a stream.
+# Weekly and grouped, so routine bumps arrive as one reviewable PR per ecosystem instead of a stream;
+# only the libraries bundled into the CLI come one PR each (see the npm entry).
 # `cooldown` holds a fresh release back for a week before proposing it: most malicious npm releases
 # are detected and pulled within days. It applies to version updates only — security updates (from
 # Dependabot alerts) are never delayed.
@@ -20,12 +21,39 @@ updates:
     directory: /
     schedule: { interval: weekly }
     cooldown: { default-days: 7 }
-    commit-message: { prefix: chore, include: scope }
+    commit-message: { prefix: build, prefix-development: chore, include: scope }
+    # The bundled libraries below each get their own pull request, so one week can bring more than the
+    # default limit of 5
+    open-pull-requests-limit: 20
     groups:
-      # Minor/patch bumps travel together; a major gets its own PR, since it is the one that needs reading.
-      npm-minor-patch:
+      # Toolchain only: lint, format, types, test, build, all covered by `pnpm check`. Minor/patch bumps
+      # travel together; a major gets its own PR, since it is the one that needs reading.
+      # The libraries bundled into the CLI are excluded on purpose: the published package has no
+      # runtime dependencies because tsdown inlines them into dist/, so a bump of one changes what
+      # users run with the next release, and gets its own pull request and its own review. They are
+      # excluded by name, not by dependency type: half of them are production dependencies of the
+      # private packages/core, and the rest are devDependencies of packages/cli.
+      # scripts/audit/dependabot.test.ts fails when a dependency of packages/core or a non-workspace
+      # devDependency of packages/cli matches no entry here.
+      dev-tooling:
         update-types: [minor, patch]
         patterns: ['*']
+        exclude-patterns:
+          - commander
+          - '@commander-js/*'
+          - undici
+          # server and node ship; client is a test dependency that moves in lockstep with server
+          - '@modelcontextprotocol/*'
+          - zod
+          - ajv
+          # ajv-formats ships; ajv-draft-04 is an input of the generated validators
+          - ajv-*
+          - yaml
+          - re2js
+          - quickjs-emscripten-core
+          - '@jitl/*'
+          # an input of the generated validators (packages/core/src/spec/generated/)
+          - '@seriousme/*'
     ignore:
       # @types/node tracks the oldest supported major (22; engines: node ^22.19.0 || >=24.11.0), not the
       # newest Node. Types for a newer major would let code use APIs that do not exist on Node 22. Raise
