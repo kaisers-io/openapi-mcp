@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The skills tell the user about instructions planted in a spec.** They already ignored text
+  in a spec, a web page or tool output that addresses the agent. Now they also say where it is,
+  what it asks for, and that they did not act on it. Before, an agent could pass over such text
+  in silence, and the user did not learn that the spec tries to steer agents.
+- **The configuring skill no longer takes a failed network test in a sandbox for an unreachable
+  API.** A DNS lookup in a sandbox without network failed while the user's host could reach the
+  API, and the agent wrote no config. The skill now has it run `check` outside the sandbox,
+  with the user's approval, before it concludes that the API cannot be reached.
+- **The Codex reference explains the sandbox.** A spec-cache error with `EPERM` can come from
+  Codex's sandbox: the agent runs the command outside the sandbox, with the user's approval, and
+  reads the error there if it fails again.
+
 ## [0.12.0] - 2026-11-03
 
 ### Added
