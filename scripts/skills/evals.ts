@@ -48,20 +48,29 @@ const writeShim = async (dir: string, realNpx: string, version: string): Promise
   await chmod(shim, 0o755);
 };
 
+// The files a scenario's setup writes, with CURRENT replaced by this checkout's version
+const setupFiles = (scenario: Scenario, version: string): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(scenario.setup ?? {}).map(([file, content]) => [
+      file,
+      content.replaceAll('CURRENT', version),
+    ]),
+  );
+
 const prepare = async (scenario: Scenario, version: string): Promise<string> => {
   const project = await mkdtemp(join(tmpdir(), `openapi-mcp-eval-${scenario.id}-`));
   const skillsDir = scenario.host === 'codex' ? '.agents/skills' : '.claude/skills';
   await cp(join(ROOT, 'skills', scenario.skill), join(project, skillsDir, scenario.skill), {
     recursive: true,
   });
-  await cp(join(EVALS, 'shop.json'), join(project, 'shop.json'));
+  await cp(join(EVALS, scenario.spec ?? 'shop.json'), join(project, 'shop.json'));
   await cp(
     join(ROOT, 'packages', 'cli', 'test', 'fixtures', 'petstore.json'),
     join(project, 'petstore.json'),
   );
-  for (const [file, content] of Object.entries(scenario.setup ?? {})) {
+  for (const [file, content] of Object.entries(setupFiles(scenario, version))) {
     await mkdir(dirname(join(project, file)), { recursive: true });
-    await writeFile(join(project, file), content.replaceAll('CURRENT', version));
+    await writeFile(join(project, file), content);
   }
   return project;
 };
@@ -127,7 +136,8 @@ const manual = async (mode: string, id: string, project: string | undefined): Pr
     throw new Error('verify needs the project directory');
   }
   const reply = await readReply(project);
-  const failures = await verify(project, reply, scenario.expect, BIN);
+  const setup = setupFiles(scenario, await cliVersion());
+  const failures = await verify(project, reply, scenario.expect, { cli: BIN, setup });
   process.stdout.write(
     `${failures.length === 0 ? 'pass' : 'FAIL'} ${id}\n${failures.map((line) => `  ${line}\n`).join('')}`,
   );
@@ -166,7 +176,10 @@ const playOnce = async (
   await writeFile(join(project, 'reply.txt'), result.stdout);
   const failures = [
     ...(result.code === 0 ? [] : [`the agent exited with ${String(result.code)}`]),
-    ...(await verify(project, result.stdout, scenario.expect, BIN)),
+    ...(await verify(project, result.stdout, scenario.expect, {
+      cli: BIN,
+      setup: setupFiles(scenario, context.version),
+    })),
   ];
   return { project, failures };
 };
@@ -204,6 +217,7 @@ const main = async (): Promise<void> => {
   const context = { version, shimDir: await shimPath(version) };
   const count = runs ?? (ids.length === 0 ? FULL_RUNS : 1);
   const scores: string[] = [];
+  const boundary: string[] = [];
   let allPassed = true;
   for (const scenario of selected) {
     let passed = 0;
@@ -215,9 +229,17 @@ const main = async (): Promise<void> => {
       );
     }
     allPassed &&= passed === count;
-    scores.push(`${scenario.id} (${agent} ${model}): ${String(passed)}/${String(count)} passed`);
+    const line = `${scenario.id} (${agent} ${model}): ${String(passed)}/${String(count)} passed`;
+    (scenario.boundary === true ? boundary : scores).push(line);
   }
-  process.stdout.write(`\n${scores.join('\n')}\n`);
+  // The hostile-content scenarios are read on their own: a run that obeyed planted text is not
+  // offset by a good score elsewhere
+  if (scores.length > 0) {
+    process.stdout.write(`\n${scores.join('\n')}\n`);
+  }
+  if (boundary.length > 0) {
+    process.stdout.write(`\nhostile content (read on their own):\n${boundary.join('\n')}\n`);
+  }
   process.exitCode = allPassed ? 0 : 1;
 };
 
