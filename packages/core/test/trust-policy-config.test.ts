@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import { readFile } from 'node:fs/promises';
 
-// Guards the supply-chain setting in the root pnpm-workspace.yaml against accidental removal.
+// Guards the supply-chain settings in the root pnpm-workspace.yaml against accidental removal.
 // It does not re-implement pnpm; it pins the settings that would quietly switch the check off.
 // A reviewed exception stays possible: trustPolicyExclude may list exact `name@version` entries.
 // pnpm reads an entry without a version (a bare name or a name glob) as "every version", which
@@ -49,5 +49,30 @@ describe('pnpm trust policy in pnpm-workspace.yaml', () => {
     const blanket = ['chokidar', '@babel/*', '*', 'chokidar@^4.0.0', 'chokidar@4', 'a@1.0.0 || ^2'];
     expect(unpinnedExclusions({ trustPolicyExclude: pinned })).toStrictEqual([]);
     expect(unpinnedExclusions({ trustPolicyExclude: blanket })).toStrictEqual(blanket);
+  });
+});
+
+// Guards the build-script setting in the same file. With strictDepBuilds on, a dependency whose
+// lifecycle script allowBuilds does not allow fails the install (ERR_PNPM_IGNORED_BUILDS), and CI
+// installs without --ignore-scripts so that failure shows. An allowBuilds entry set to true lets a
+// script run; it needs a review, so this test makes adding one a visible change.
+// https://pnpm.io/settings/build#strictdepbuilds
+const allowedBuilds = (settings: Record<string, unknown>): string[] =>
+  Object.entries((settings['allowBuilds'] ?? {}) as Record<string, unknown>)
+    .filter(([, allowed]) => allowed !== false)
+    .map(([name]) => name);
+
+describe('pnpm build scripts in pnpm-workspace.yaml', () => {
+  it('fails the install on a dependency build script', async () => {
+    expect.hasAssertions();
+    const settings = await workspaceSettings();
+    expect(settings['strictDepBuilds']).toBe(true);
+    expect(allowedBuilds(settings)).toStrictEqual([]);
+  });
+
+  it('counts every allowBuilds value but false as allowed', () => {
+    expect.hasAssertions();
+    const allowBuilds = { esbuild: true, 'core-js': false, 'nx@21.6.4': 'true' };
+    expect(allowedBuilds({ allowBuilds })).toStrictEqual(['esbuild', 'nx@21.6.4']);
   });
 });

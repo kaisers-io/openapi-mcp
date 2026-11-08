@@ -2,6 +2,12 @@ packages:
   - packages/*
 saveExact: true
 engineStrict: true
+# A dependency that needs a build script fails the install instead of being built or skipped
+# silently. Allow one only through allowBuilds, with a comment that gives the reason. CI installs
+# without --ignore-scripts so this failure shows on the pull request that causes it.
+# packages/core/test/trust-policy-config.test.ts fails if this is weakened.
+# https://pnpm.io/settings/build#strictdepbuilds
+strictDepBuilds: true
 # Refuse a dependency version published with weaker trust evidence (trusted publisher,
 # provenance) than an earlier release of the same package. That does not prove a compromise,
 # but it is what a publish with a stolen token looks like, and the CLI bundles its dependencies,
