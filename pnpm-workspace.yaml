@@ -2,6 +2,22 @@ packages:
   - packages/*
 saveExact: true
 engineStrict: true
+# Refuse a dependency version published with weaker trust evidence (trusted publisher,
+# provenance) than an earlier release of the same package. That does not prove a compromise,
+# but it is what a publish with a stolen token looks like, and the CLI bundles its dependencies,
+# so such a release would ship to users. The lockfile is re-checked on every install because
+# trustLockfile stays at its default false. Add a reviewed exception to trustPolicyExclude as
+# `name@version` with its reason (a bare name waives every version); never use
+# trustPolicyIgnoreAfter, which waives the check by age rather than by review. What to do on
+# ERR_PNPM_TRUST_DOWNGRADE: CONTRIBUTING.md, "Dependency audit".
+# packages/core/test/trust-policy-config.test.ts fails if these settings are weakened.
+# https://pnpm.io/settings/dependency-resolution#trustpolicy
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  # @types/node 22.x depends on undici-types ~6.21.0. 6.13.0 to 6.19.2 were published with
+  # provenance, 6.19.3 to 6.21.0 without. Type declarations only, never bundled. Review again
+  # when @types/node moves past 22.
+  - undici-types@6.21.0
 overrides:
   # @modelcontextprotocol/node accepts both majors; 1.x has GHSA-rmxm-3fg6-px4f.
   # The empty range after "@" makes it a convergence override: it rewrites only
