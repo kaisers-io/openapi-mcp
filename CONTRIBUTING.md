@@ -3,7 +3,8 @@
 This page explains how to build, test and release `openapi-mcp`, and what a pull request needs
 to pass review. `openapi-mcp` has a deliberately narrow scope: it turns an OpenAPI spec into a
 strict MCP server that runs locally, with no code generation and no config file of its own.
-Before you write code, open an issue and describe the problem you hit.
+Before you write code, open an issue and describe the problem you hit. If you work with a coding
+agent, [AGENTS.md](AGENTS.md) holds the rules it needs on top of this page.
 
 Security problems are the exception: report them privately, as [SECURITY.md](SECURITY.md)
 describes, never in a public issue or pull request.
