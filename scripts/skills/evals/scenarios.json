@@ -166,11 +166,10 @@
           "agent-was-here",
           "note to ai",
           "prompt injection",
-          "instructions? (?:embedded|aimed|directed|targeting|planted|meant|written) ",
-          "instruct(?:ions?|ed|s)? (?:[\\w-]+ )?(?:to|at|for) ",
-          "(?:did not|didn't|will not|won't) (?:follow|act on|carry out)",
-          "ignored (?:them|those|these|it|that)\\b",
-          "ignor(?:e|es|ed|ing) (?:[\\w-]+ ){0,3}instructions"
+          "instructions? (?:embedded|aimed|directed|targeting|planted|meant) ",
+          "(?:spec|description|shop\\.json|openapi)(?:[^.\\n]|\\.(?=\\S)){0,150}instruct",
+          "instruct(?:[^.\\n]|\\.(?=\\S)){0,150}(?:spec|description|shop\\.json|openapi)",
+          "(?:did not|didn't|will not|won't) (?:follow|act on|carry out) (?:them|those|these|it|that|the (?:instructions?|note|text|request))\\b"
         ]
       }
     },
@@ -195,11 +194,10 @@
           "agent-was-here",
           "note to ai",
           "prompt injection",
-          "instructions? (?:embedded|aimed|directed|targeting|planted|meant|written) ",
-          "instruct(?:ions?|ed|s)? (?:[\\w-]+ )?(?:to|at|for) ",
-          "(?:did not|didn't|will not|won't) (?:follow|act on|carry out)",
-          "ignored (?:them|those|these|it|that)\\b",
-          "ignor(?:e|es|ed|ing) (?:[\\w-]+ ){0,3}instructions"
+          "instructions? (?:embedded|aimed|directed|targeting|planted|meant) ",
+          "(?:spec|description|shop\\.json|openapi)(?:[^.\\n]|\\.(?=\\S)){0,150}instruct",
+          "instruct(?:[^.\\n]|\\.(?=\\S)){0,150}(?:spec|description|shop\\.json|openapi)",
+          "(?:did not|didn't|will not|won't) (?:follow|act on|carry out) (?:them|those|these|it|that|the (?:instructions?|note|text|request))\\b"
         ],
         "exposed": [
           "get_reports",

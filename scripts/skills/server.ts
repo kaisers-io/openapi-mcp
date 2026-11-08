@@ -14,6 +14,7 @@ import { once } from 'node:events';
 import { chmod, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { setTimeout as delay } from 'node:timers/promises';
 import { parse as parseToml } from 'smol-toml';
 
 // The server's own tools, which every config exposes besides the operations
@@ -25,6 +26,7 @@ const OWN_TOOLS = new Set([
   'call_operation',
 ]);
 const START_TIMEOUT_MS = 30_000;
+const STOP_TIMEOUT_MS = 5000;
 
 export interface ServerEntry {
   command: string;
@@ -124,10 +126,27 @@ export const entryOf = (
 const request = (id: number, method: string, params: Record<string, unknown> = {}): string =>
   `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`;
 
-// The operation tools the server lists after an MCP initialize over stdio, sorted
+// Kills the server and everything it started: a wrapper's child can keep stdout open after the
+// wrapper itself is gone. The server runs in a process group of its own (`detached`), so the group
+// receives the signal.
+const killGroup = (pid: number | undefined, signal: NodeJS.Signals): void => {
+  if (pid === undefined) {
+    return;
+  }
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    // The group is gone already
+  }
+};
+
+// The operation tools the server lists after an MCP initialize over stdio, sorted. `timeoutMs`
+// bounds the whole exchange; `stopMs` bounds the wait for a clean exit after SIGTERM, after which
+// the group is killed. Neither a server that ignores SIGTERM nor a child that keeps the pipe open
+// can hold the graders past these deadlines.
 export const listTools = async (
   entry: ServerEntry,
-  options: { cwd: string; home: string; shimDir: string },
+  options: { cwd: string; home: string; shimDir: string; timeoutMs?: number; stopMs?: number },
 ): Promise<string[]> => {
   const child = spawn(entry.command, entry.args, {
     cwd: options.cwd,
@@ -137,6 +156,7 @@ export const listTools = async (
       ...entry.env,
     },
     stdio: ['pipe', 'pipe', 'ignore'],
+    detached: true,
   });
   // A command that cannot start ends stdout at once, which the loop below reports
   child.on('error', () => {
@@ -147,9 +167,20 @@ export const listTools = async (
   child.stdin.on('error', () => {
     // Reported through the closed stdout
   });
+  const exited = (async (): Promise<void> => {
+    try {
+      await once(child, 'exit');
+    } catch {
+      // The command did not start; nothing to wait for
+    }
+  })();
+  const lines = createInterface({ input: child.stdout });
+  // Closing the interface ends the read loop below; killing the group alone would not, while a
+  // child the kill missed still held the pipe
   const timer = setTimeout(() => {
-    child.kill('SIGKILL');
-  }, START_TIMEOUT_MS);
+    killGroup(child.pid, 'SIGKILL');
+    lines.close();
+  }, options.timeoutMs ?? START_TIMEOUT_MS);
   try {
     child.stdin.write(
       request(1, 'initialize', {
@@ -158,7 +189,7 @@ export const listTools = async (
         clientInfo: { name: 'openapi-mcp-skill-evals', version: '1' },
       }),
     );
-    for await (const line of createInterface({ input: child.stdout })) {
+    for await (const line of lines) {
       const message = JSON.parse(line) as { id?: number; result?: { tools?: { name: string }[] } };
       if (message.id === 1) {
         child.stdin.write(
@@ -175,9 +206,15 @@ export const listTools = async (
     throw new Error('the server exited before it listed its tools');
   } finally {
     clearTimeout(timer);
-    child.kill('SIGTERM');
+    killGroup(child.pid, 'SIGTERM');
     if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
-      await once(child, 'exit');
+      await Promise.race([
+        exited,
+        delay(options.stopMs ?? STOP_TIMEOUT_MS, undefined, { ref: false }),
+      ]);
     }
+    killGroup(child.pid, 'SIGKILL');
+    lines.close();
+    child.stdout.destroy();
   }
 };
