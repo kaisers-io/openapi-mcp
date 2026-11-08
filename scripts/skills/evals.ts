@@ -15,38 +15,17 @@
 // reply (stdout, also saved as reply.txt). The graders live in grade.ts and are tested offline
 // by evals.test.ts.
 
-import { chmod, cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { RUN_ENV, readReply, run, verify } from './grade.ts';
+import { writeShim } from './server.ts';
 import type { Scenario } from './grade.ts';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const EVALS = join(import.meta.dirname, 'evals');
 const BIN = join(ROOT, 'packages', 'cli', 'bin', 'openapi-mcp.mjs');
 const FULL_RUNS = 3;
-
-// `npx -y @kaisers-io/openapi-mcp@<this version> ...` runs this repository's CLI; anything else,
-// an older version included, goes to the real npx
-const writeShim = async (dir: string, realNpx: string, version: string): Promise<void> => {
-  const shim = join(dir, 'npx');
-  await writeFile(
-    shim,
-    [
-      '#!/bin/sh',
-      'for arg in "$@"; do',
-      '  case "$arg" in',
-      `    @kaisers-io/openapi-mcp@${version})`,
-      '      while [ "$1" != "$arg" ]; do shift; done; shift',
-      `      exec "${process.execPath}" "${BIN}" "$@" ;;`,
-      '  esac',
-      'done',
-      `exec "${realNpx}" "$@"`,
-      '',
-    ].join('\n'),
-  );
-  await chmod(shim, 0o755);
-};
 
 // The files a scenario's setup writes, with CURRENT replaced by this checkout's version
 const setupFiles = (scenario: Scenario, version: string): Record<string, string> =>
@@ -94,7 +73,7 @@ const shimPath = async (version: string): Promise<string> => {
   // The npx next to this Node, not the one PATH finds: a version manager's npx shim would
   // resolve npx through PATH again and reach this shim
   const shimDir = await mkdtemp(join(tmpdir(), 'openapi-mcp-eval-bin-'));
-  await writeShim(shimDir, join(dirname(process.execPath), 'npx'), version);
+  await writeShim(shimDir, { cli: BIN, version, realNpx: join(dirname(process.execPath), 'npx') });
   return shimDir;
 };
 
@@ -157,6 +136,22 @@ const parseArgs = (argv: string[]): { positional: string[]; runs: number | undef
   return { positional: argv.filter((_arg, index) => index !== at && index !== at + 1), runs };
 };
 
+// Codex runs commands in a sandbox that may write only the project, so the CLI's spec cache under
+// HOME would fail with EPERM and the agent could not use the CLI at all. Its HOME is a directory
+// inside the project instead; CODEX_HOME keeps the login and config. That HOME also keeps the
+// user's own skills out of the run, so the agent sees only the skill under test.
+const codexHome = async (scenario: Scenario, project: string): Promise<Record<string, string>> => {
+  if (scenario.host !== 'codex') {
+    return {};
+  }
+  const home = join(project, '.home');
+  await mkdir(home, { recursive: true });
+  return {
+    HOME: home,
+    CODEX_HOME: process.env['CODEX_HOME'] ?? join(homedir(), '.codex'),
+  };
+};
+
 // One run of one scenario in a fresh project: the failures, empty when it passed
 const playOnce = async (
   scenario: Scenario,
@@ -170,6 +165,7 @@ const playOnce = async (
     ...process.env,
     PATH: `${context.shimDir}:${process.env['PATH'] ?? ''}`,
     ...RUN_ENV,
+    ...(await codexHome(scenario, project)),
   };
   const result = await run(command, args, { cwd: project, env });
   await writeFile(join(project, 'transcript.txt'), `${result.stderr}${result.stdout}`);
