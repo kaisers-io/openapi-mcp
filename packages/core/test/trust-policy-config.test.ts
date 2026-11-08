@@ -53,26 +53,47 @@ describe('pnpm trust policy in pnpm-workspace.yaml', () => {
 });
 
 // Guards the build-script setting in the same file. With strictDepBuilds on, a dependency whose
-// lifecycle script allowBuilds does not allow fails the install (ERR_PNPM_IGNORED_BUILDS), and CI
-// installs without --ignore-scripts so that failure shows. An allowBuilds entry set to true lets a
-// script run; it needs a review, so this test makes adding one a visible change.
-// https://pnpm.io/settings/build#strictdepbuilds
-const allowedBuilds = (settings: Record<string, unknown>): string[] =>
-  Object.entries((settings['allowBuilds'] ?? {}) as Record<string, unknown>)
+// lifecycle script is not allowed fails the install (ERR_PNPM_IGNORED_BUILDS), and CI installs
+// without --ignore-scripts so that failure shows. pnpm 12 has three more ways to let a script run
+// or to hide that failure, and each one makes this test fail, so it can only change with review:
+// an allowBuilds entry, a `permissions.<package>.build` entry (it outranks allowBuilds), and the
+// `dangerouslyAllowAllBuilds` and `ignoreScripts` settings.
+// https://pnpm.io/settings/build
+const allowedBuilds = (settings: Record<string, unknown>): string[] => {
+  const viaAllowBuilds = Object.entries((settings['allowBuilds'] ?? {}) as Record<string, unknown>)
     .filter(([, allowed]) => allowed !== false)
     .map(([name]) => name);
+  const viaPermissions = Object.entries((settings['permissions'] ?? {}) as Record<string, unknown>)
+    .filter(([, permission]) => {
+      const build = (permission as { build?: unknown } | null)?.build;
+      return build !== undefined && build !== false;
+    })
+    .map(([name]) => `permissions:${name}`);
+  return [...viaAllowBuilds, ...viaPermissions];
+};
 
 describe('pnpm build scripts in pnpm-workspace.yaml', () => {
   it('fails the install on a dependency build script', async () => {
     expect.hasAssertions();
     const settings = await workspaceSettings();
     expect(settings['strictDepBuilds']).toBe(true);
+    expect(settings['dangerouslyAllowAllBuilds']).toBeUndefined();
+    expect(settings['ignoreScripts']).toBeUndefined();
     expect(allowedBuilds(settings)).toStrictEqual([]);
   });
 
-  it('counts every allowBuilds value but false as allowed', () => {
+  it('counts every allowBuilds or permissions build value but false as allowed', () => {
     expect.hasAssertions();
     const allowBuilds = { esbuild: true, 'core-js': false, 'nx@21.6.4': 'true' };
-    expect(allowedBuilds({ allowBuilds })).toStrictEqual(['esbuild', 'nx@21.6.4']);
+    const permissions = {
+      esbuild: { build: true },
+      sharp: { build: false },
+      'drizzle-kit': { skills: [] },
+    };
+    expect(allowedBuilds({ allowBuilds, permissions })).toStrictEqual([
+      'esbuild',
+      'nx@21.6.4',
+      'permissions:esbuild',
+    ]);
   });
 });
