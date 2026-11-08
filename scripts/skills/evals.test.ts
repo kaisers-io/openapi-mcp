@@ -2,7 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { readReply, verify } from './grade.ts';
+import { parseClaudeStream, readReply, verify } from './grade.ts';
 import { listTools } from './server.ts';
 import type { Expect, Scenario } from './grade.ts';
 
@@ -518,6 +518,28 @@ describe.skipIf(process.platform === 'win32')('skill eval graders', () => {
       listTools(entry, { cwd: root, home: root, shimDir: root, timeoutMs: 500, stopMs: 300 }),
     ).rejects.toThrow('the server exited before it listed its tools');
     expect(Date.now() - started).toBeLessThan(4000);
+  });
+
+  it('takes the reply and every tool call from Claude Code stream-json output', () => {
+    expect.hasAssertions();
+    const events = [
+      { type: 'system', subtype: 'init' },
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: 'a.txt' } }] },
+      },
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', content: [{ type: 'text', text: 'hello' }] }] },
+      },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'hello' }] } },
+      { type: 'result', subtype: 'success', result: 'hello' },
+    ];
+    const stdout = `${events.map((event) => JSON.stringify(event)).join('\n')}\nnot json\n`;
+    expect(parseClaudeStream(stdout)).toStrictEqual({
+      reply: 'hello',
+      transcript: '[tool_use Read] {"file_path":"a.txt"}\n[tool_result] hello\n[assistant] hello\n',
+    });
   });
 
   it('reads an empty reply as empty, not the transcript', async () => {

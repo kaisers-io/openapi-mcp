@@ -77,6 +77,60 @@ export const run = async (
   return { code, stdout, stderr };
 };
 
+// The text of a tool result, which is a string or a list of text parts
+const resultText = (content: unknown): string => {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
+  return content
+    .map((part: { text?: unknown }) => (typeof part.text === 'string' ? part.text : ''))
+    .join('\n');
+};
+
+// Claude Code's `--output-format stream-json` output, one JSON event per line: the final reply
+// (the `result` event) and a readable log of the run, with every tool call and its result, so a
+// failing run can be read like a Codex transcript
+export const parseClaudeStream = (stdout: string): { reply: string; transcript: string } => {
+  const lines: string[] = [];
+  let reply = '';
+  for (const line of stdout.split('\n')) {
+    let event: {
+      type?: string;
+      result?: unknown;
+      message?: {
+        content?: {
+          type?: string;
+          text?: string;
+          name?: string;
+          input?: unknown;
+          content?: unknown;
+        }[];
+      };
+    };
+    try {
+      event = JSON.parse(line) as typeof event;
+    } catch {
+      continue;
+    }
+    if (event.type === 'result' && typeof event.result === 'string') {
+      ({ result: reply } = event as { result: string });
+    }
+    for (const part of event.message?.content ?? []) {
+      if (part.type === 'text') {
+        lines.push(`[${event.type ?? ''}] ${part.text ?? ''}`);
+      } else if (part.type === 'tool_use') {
+        lines.push(`[tool_use ${part.name ?? ''}] ${JSON.stringify(part.input)}`);
+      } else if (part.type === 'tool_result') {
+        lines.push(`[tool_result] ${resultText(part.content)}`);
+      }
+    }
+  }
+  return { reply, transcript: `${lines.join('\n')}\n` };
+};
+
 // The final reply of a run in `project`: reply.txt when it exists, even empty, so that an empty
 // reply is never replaced by a transcript that holds the agent's intermediate steps;
 // transcript.txt only for a run saved by hand without reply.txt
