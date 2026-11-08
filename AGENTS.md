@@ -5,8 +5,10 @@ is the source of truth for humans: requirements, what CI runs, review rules, rel
 adds what an agent needs to know on top and points to CONTRIBUTING.md instead of repeating it.
 
 Claude Code (v2.1.277 or later) reads this file only while no `CLAUDE.md`, `.claude/CLAUDE.md`
-or `CLAUDE.local.md` sits in the working directory or above it. If you keep one of those, put
-`@AGENTS.md` in it so these rules are still imported. `/memory` lists the files a session read.
+or `CLAUDE.local.md` sits in the working directory or above it. If you keep one of those, import
+this file from it: `@AGENTS.md` in a root `CLAUDE.md` or `CLAUDE.local.md`, `@../AGENTS.md` in
+`.claude/CLAUDE.md` (imports resolve relative to the importing file). `/memory` lists the files a
+session read.
 
 ## Finish every PR with a real test
 
