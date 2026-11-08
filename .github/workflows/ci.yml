@@ -168,12 +168,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      # `advanced-security: false`: report to the log and fail the job on findings, instead of uploading
-      # SARIF to code scanning (SARIF mode never fails the job, so a finding would not block a merge).
-      # The action installs zizmor from a hash-pinned wheel lock for the exact version below.
-      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
-        with:
-          advanced-security: false
-          annotations: true
-          version: 1.31.1
+      # zizmor runs directly instead of through zizmorcore/zizmor-action, because the action cannot
+      # pass --strict-collection (zizmorcore/zizmor-action#141). Without the flag, a file zizmor
+      # cannot load (syntax newer than this zizmor, or a file GitHub tolerates but zizmor cannot
+      # parse) is skipped with a warning, and the job still passes with that file unaudited. The cost
+      # is a red job when GitHub adds syntax this version does not know; the fix then is a version
+      # bump, not an exception.
+      # The wheel is pinned by version and sha256 (the manylinux x86_64 wheel, the same hash as the
+      # action's own lock for this version) and installed with --require-hashes, as the action does.
+      # Dependabot cannot see this pin: it is bumped by hand (CONTRIBUTING.md, "Tool pins bumped by
+      # hand"). `--format github` writes findings as annotations and fails the job on any finding.
+      # GH_TOKEN enables the online audits, as the action does by default.
+      - name: zizmor
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/zizmor"
+          "$RUNNER_TEMP/zizmor/bin/pip" install --quiet --no-deps --only-binary :all: --require-hashes \
+            -r /dev/stdin <<'REQUIREMENTS'
+          zizmor==1.31.1 --hash=sha256:58e878eb2dbd2c6183c105e1ac28c14f7dd1eca44a783f1fe2a69647d012c410
+          REQUIREMENTS
+          "$RUNNER_TEMP/zizmor/bin/zizmor" --version
+          "$RUNNER_TEMP/zizmor/bin/zizmor" --strict-collection --format github .
 # NOTE: no publish job here — publishing lives in release.yml (tag-triggered, OIDC).
