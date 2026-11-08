@@ -131,6 +131,16 @@ export const parseClaudeStream = (stdout: string): { reply: string; transcript: 
   return { reply, transcript: `${lines.join('\n')}\n` };
 };
 
+// What keeps a Claude Code eval run independent of the developer's own setup and of earlier runs.
+// `--setting-sources project,local` leaves out the user's plugins, hooks, MCP servers, rules and
+// globally installed skills; auto memory still loads without the variable below, and fresh temp
+// projects outside git can share one memory namespace, so notes from one run could reach the
+// next. https://code.claude.com/docs/en/memory
+export const CLAUDE_ISOLATION = {
+  args: ['--setting-sources', 'project,local'],
+  env: { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+} as const;
+
 // The final reply of a run in `project`: reply.txt when it exists, even empty, so that an empty
 // reply is never replaced by a transcript that holds the agent's intermediate steps;
 // transcript.txt only for a run saved by hand without reply.txt

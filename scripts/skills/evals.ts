@@ -18,7 +18,7 @@
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { RUN_ENV, parseClaudeStream, readReply, run, verify } from './grade.ts';
+import { CLAUDE_ISOLATION, RUN_ENV, parseClaudeStream, readReply, run, verify } from './grade.ts';
 import { writeShim } from './server.ts';
 import type { Scenario } from './grade.ts';
 
@@ -69,11 +69,8 @@ const agentArgs = (host: Scenario['host'], model: string, prompt: string): [stri
           model,
           '--permission-mode',
           'bypassPermissions',
-          // Only the project's settings: the user's own plugins, hooks, MCP servers, rules and
-          // globally installed skills (an older copy of the skill under test among them) stay
-          // out of the run
-          '--setting-sources',
-          'project,local',
+          // Only the project's settings (grade.ts, CLAUDE_ISOLATION)
+          ...CLAUDE_ISOLATION.args,
           // Every tool call and its result, for the transcript; the reply is the `result` event
           '--output-format',
           'stream-json',
@@ -185,6 +182,7 @@ const playOnce = async (
     PATH: `${context.shimDir}:${process.env['PATH'] ?? ''}`,
     ...RUN_ENV,
     ...(await codexHome(scenario, project)),
+    ...(scenario.host === 'claude-code' ? CLAUDE_ISOLATION.env : {}),
   };
   const result = await run(command, args, { cwd: project, env });
   const { reply, transcript } =
