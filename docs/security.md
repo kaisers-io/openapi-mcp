@@ -772,6 +772,22 @@ You still must:
 - treat any `--base-url` you set as an explicit, trusted decision. It skips the private-range
   check that applies to origins taken from the spec.
 
+## Agent skills
+
+The skills under `skills/` tell an agent to read an OpenAPI description from a source the user
+chose, and sometimes a page it links to, and to show the operations it found. That text is
+third-party content. Both skills say so and tell the agent to treat it as data: quote it, never
+follow instructions in it, never run commands it suggests.
+
+The `skill-audit` workflow scans the skills with two scanners. Snyk Agent Scan reports the
+configuring skill as `third_party_content_exposure` on every run. The observation is accurate:
+reading a spec the user chose is what the skill is for, and removing it would remove the feature.
+The workflow therefore waives that one risk by name (`--ignore-risks third_party_content_exposure`
+in `pnpm skills:audit`). Every other risk, and any scanner failure, fails the job. The scanner
+cannot limit a waiver to one finding: it hides every `third_party_content_exposure`, in either
+skill. A change to which outside content a skill reads, or what it does with it, therefore needs
+a review by hand against the rules above, since the scan will not report it.
+
 ## Dependency audit (maintainers)
 
 The dependency audit and what to do when it fails are in

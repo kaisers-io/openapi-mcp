@@ -22,6 +22,7 @@
     "versions": "node scripts/versions/run.ts",
     "skills:sync": "node scripts/skills/skills.ts sync",
     "skills:check": "node scripts/skills/skills.ts check",
+    "skills:audit": "uvx snyk-agent-scan@0.6.10 scan --skills --ci --dangerously-run-mcp-servers --ignore-risks third_party_content_exposure skills",
     "check": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm skills:check && pnpm test:coverage"
   },
   "packageManager": "pnpm@12.16.1",

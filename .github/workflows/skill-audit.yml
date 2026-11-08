@@ -1,14 +1,17 @@
 name: skill-audit
-# Scans the agent skills under skills/ for injected instructions, exfiltration patterns, malicious
-# code and obfuscation before they are merged: skills.sh shows its own scan of a published skill on
-# a public page, with no way to re-run it. Credential-free, so pull requests from forks are covered.
+# Scans the agent skills under skills/ before they are merged: skills.sh shows its own scans of a
+# published skill on a public page, Snyk's among them, with no way to re-run them. Two scanners:
+# `static` (Cisco's skill scanner, credential-free, so pull requests from forks are covered) and
+# `snyk` (Snyk Agent Scan, the engine behind one of the verdicts skills.sh publishes).
 #
 # Path-filtered: only a change to a skill, this workflow or the root package.json can change the
-# result. The scanner is a Python package run through uvx; it and uv are pinned to exact versions at
+# result, and the Snyk job uploads the skills' text to a hosted API.
+#
+# Both scanners are Python packages run through uvx; they and uv are pinned to exact versions at
 # least a week old, as Dependabot's cooldown does for the other dependencies. Dependabot does not
-# read versions in `run:` steps, so both pins are bumped by hand (CONTRIBUTING.md, "Tool pins
-# bumped by hand"). pipx ships on GitHub's Ubuntu images, so installing uv adds no third-party
-# action.
+# read versions in `run:` steps or in package.json scripts, so these pins are bumped by hand
+# (CONTRIBUTING.md, "Tool pins bumped by hand"). pipx ships on GitHub's Ubuntu images, so
+# installing uv adds no third-party action.
 #
 # Pinning the scanner does not pin what it resolves: every run resolves its transitive dependencies
 # afresh. UV_EXCLUDE_NEWER holds every release uv resolves back for a week, so a freshly hijacked
@@ -22,12 +25,19 @@ on:
     paths: ['skills/**', '.github/workflows/skill-audit.yml', 'package.json']
 permissions:
   contents: read
+# Superseded pull request runs are cancelled; runs on main never are (see ci.yml). Cancelling also
+# spares the Snyk API scans nobody will read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+env:
+  UV_EXCLUDE_NEWER: 7 days
 jobs:
+  # Different engine from Snyk's, and different findings: injected instructions, exfiltration
+  # patterns, malicious code, obfuscation.
   static:
     timeout-minutes: 5
     runs-on: ubuntu-latest
-    env:
-      UV_EXCLUDE_NEWER: 7 days
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
@@ -37,3 +47,65 @@ jobs:
       - run: >
           uvx --from cisco-ai-skill-scanner==2.3.2 skill-scanner scan-all skills
           --policy balanced --recursive --fail-on-severity medium --format summary
+  # Analysis is server-side and needs SNYK_TOKEN, an Actions secret. Two kinds of run cannot have it
+  # and are skipped: pull requests from forks get no secrets, and Dependabot runs read Dependabot
+  # secrets rather than Actions secrets. Both would fail on an empty token rather than on a finding.
+  # main picks the change up on push. `pull_request_target` would hand repository secrets to
+  # PR-controlled content and is not an option.
+  # Until the secret exists in the repository, the job passes with a warning and scans nothing; once
+  # it is set, every run scans. SNYK_TOKEN is a personal token and expires: an expired one fails the
+  # job the same way a finding does, and a log line asking to set SNYK_TOKEN means the token, not
+  # the skill.
+  snyk:
+    if: >
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name == 'push' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    env:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+    steps:
+      - if: env.SNYK_TOKEN == ''
+        run: echo "::warning::SNYK_TOKEN is not set in this repository's Actions secrets, so Snyk Agent Scan did not run"
+      - if: env.SNYK_TOKEN != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - if: env.SNYK_TOKEN != ''
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - if: env.SNYK_TOKEN != ''
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version-file: .node-version, package-manager-cache: false }
+      # --dangerously-run-mcp-servers (below) starts every stdio MCP server configured in the scanned
+      # tree, with SNYK_TOKEN in its environment. skills/ holds only Markdown and the agents'
+      # openai.yaml, so there is none; this step keeps it that way instead of trusting a comment.
+      - if: env.SNYK_TOKEN != ''
+        name: refuse files the scanner could read as MCP configuration
+        run: |
+          set -euo pipefail
+          unexpected=$(git ls-files skills | grep -vE '(\.md|/agents/openai\.yaml)$' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::skills/ may hold only Markdown and agents/openai.yaml before Snyk Agent Scan runs MCP servers it finds: $unexpected"
+            exit 1
+          fi
+      - if: env.SNYK_TOKEN != ''
+        run: pipx install uv==0.13.6
+      # `pnpm skills:audit` keeps the scanner pin in one place and runs here what a contributor runs
+      # locally (no install needed: it only calls uvx). Its flags:
+      #   --ci                          exit non-zero on any finding, and also when no token is
+      #                                 usable, so a run that analyzed nothing fails rather than
+      #                                 reporting clean skills.
+      #   --dangerously-run-mcp-servers required by --ci, because a CI run cannot answer the
+      #                                 per-server consent prompt. It starts every stdio MCP server
+      #                                 configured in the scanned tree, and is inert only because
+      #                                 skills/ holds no MCP config (enforced by the step above).
+      #   --ignore-risks                third_party_content_exposure: the accurate observation that
+      #                                 the configuring skill reads a spec the user chose. Argued in
+      #                                 docs/security.md ("Agent skills"). This is the whole waiver;
+      #                                 every other risk or scanner failure fails the job.
+      # The target is skills/: discovery is one level deep (`<path>/<name>/SKILL.md`), so
+      # skills/_shared (no SKILL.md) is not scanned as a skill.
+      # Snyk's judges are LLM-based and not deterministic. Re-run a lone red result and reproduce it
+      # with `pnpm skills:audit` before acting on it.
+      - if: env.SNYK_TOKEN != ''
+        run: pnpm skills:audit
