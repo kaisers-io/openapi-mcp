@@ -142,6 +142,11 @@ export const listTools = async (
   child.on('error', () => {
     // Reported through the closed stdout
   });
+  // A server that exits or closes stdin before it reads the requests makes the writes fail with
+  // EPIPE; that, too, is reported through the closed stdout
+  child.stdin.on('error', () => {
+    // Reported through the closed stdout
+  });
   const timer = setTimeout(() => {
     child.kill('SIGKILL');
   }, START_TIMEOUT_MS);

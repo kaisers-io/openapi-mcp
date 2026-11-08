@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { readReply, verify } from './grade.ts';
+import { listTools } from './server.ts';
 import type { Expect, Scenario } from './grade.ts';
 
 // Self-tests of the skill eval graders: every scenario in evals/scenarios.json is graded against a
@@ -522,6 +523,19 @@ describe.skipIf(process.platform === 'win32')('skill eval graders', () => {
     ];
     expect(reported.filter((reply) => !reports(reply))).toStrictEqual([]);
     expect(silent.filter((reply) => reports(reply))).toStrictEqual([]);
+  });
+
+  it('reports a server that closes stdin before it reads, instead of crashing', async () => {
+    expect.hasAssertions();
+    const root = await mkdtemp(join(tmpdir(), 'openapi-mcp-grade-'));
+    roots.push(root);
+    // Closes stdin, then answers initialize, so the next request is written to a closed pipe
+    const answer = '{"jsonrpc":"2.0","id":1,"result":{}}';
+    const script = `exec 0<&-; echo '${answer}'; sleep 1`;
+    const entry = { command: 'sh', args: ['-c', script], env: {} };
+    await expect(listTools(entry, { cwd: root, home: root, shimDir: root })).rejects.toThrow(
+      'the server exited before it listed its tools',
+    );
   });
 
   it('reads an empty reply as empty, not the transcript', async () => {
