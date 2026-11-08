@@ -240,7 +240,8 @@ When a run fails:
    the vulnerable code cannot be reached. Add the ID to `audit.ignore` in `pnpm-workspace.yaml`,
    with a comment that gives the reason and a review-by date. Remove it once a fix ships, or when
    the date passes. Do not put `pnpm audit --ignore` into a workflow: it writes the ID to
-   `pnpm-workspace.yaml` and prints no report, so the step would pass without auditing.
+   `pnpm-workspace.yaml` and lists only the IDs it wrote, not the advisories that remain, and
+   it exits 0 once every advisory it found is in that list.
 4. **Treat shipped code as a release blocker.** If the vulnerable code is in the shipped bundle
    and can be reached, fix it, then cut a patch release.
 
