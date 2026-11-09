@@ -5,11 +5,14 @@ on:
 # PR-controlled code runs in every job (install/build/test) — keep the ambient token read-only.
 permissions:
   contents: read
-# A newer push supersedes the previous run on the same ref, so cancel it instead of letting the whole
-# matrix finish. This includes main: when several PRs are merged in a row, only the newest main commit
-# needs a complete result, because each merged PR was already tested on top of everything before it.
+# A newer push to a pull request makes the older run's answer moot, so that run is cancelled.
+# Every other run (a push to main) gets a group of its own, the run id, and is never cancelled or
+# replaced, so every main commit keeps a complete result to bisect with and to tag a release on.
+# A shared group would not do even without cancel-in-progress: GitHub keeps at most one run pending
+# per group and cancels the pending one a newer run displaces. bench.yml, codeql.yml and audit.yml
+# use the same block.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: true
 # Supply-chain conventions shared by every job (same as release.yml):
 # - Actions are pinned to full commit SHAs (a tag can be moved by its owner or by whoever compromises
