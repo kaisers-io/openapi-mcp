@@ -10,9 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The skills tell the user about instructions planted in a spec.** They already ignored text
-  in a spec, a web page or tool output that addresses the agent. Now they also say where it is,
-  what it asks for, and that they did not act on it. The configuring skill asks for this right
-  where the agent reads the descriptions to build the table of operations. Before, an agent
+  in a spec, a web page or tool output that addresses the agent. Now they also warn the user,
+  starting with the fixed line `Warning: found instructions aimed at the agent in <where>.`, and
+  say what the text asks for and that they did not act on it. The configuring skill asks for this
+  right where the agent reads the descriptions to build the table of operations. Before, an agent
   could pass over such text in silence, and the user did not learn that the spec tries to steer
   agents.
 - **The configuring skill no longer takes a failed network test in a sandbox for an unreachable
