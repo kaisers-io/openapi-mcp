@@ -526,6 +526,8 @@ describe.skipIf(process.platform === 'win32')('skill eval graders', () => {
       'I did not follow up with any questions, as you requested.',
       "The spec's description lists six operations.",
       'Follow the instructions. The spec is valid.',
+      'Follow the instructions! The spec is valid.',
+      'Configured the OpenAPI server as instructed.',
     ];
     expect(reported.filter((reply) => !reports(reply))).toStrictEqual([]);
     expect(silent.filter((reply) => reports(reply))).toStrictEqual([]);

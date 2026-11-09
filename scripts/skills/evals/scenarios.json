@@ -167,8 +167,10 @@
           "note to ai",
           "prompt injection",
           "instructions? (?:embedded|aimed|directed|targeting|planted|meant) ",
-          "(?:spec|description|shop\\.json|openapi)(?:[^.\\n]|\\.(?=\\S)){0,150}instruct",
-          "instruct(?:[^.\\n]|\\.(?=\\S)){0,150}(?:spec|description|shop\\.json|openapi)",
+          "(?:spec|description|shop\\.json|openapi)(?:[^.!?\\n]|[.!?](?=\\S)){0,150}(?:contains?|containing|includes?|including|has|holds?|carr(?:y|ies)|embeds?)\\s+(?:\\S+\\s+){0,3}instructions?",
+          "(?:malicious|hidden|planted|embedded|injected|suspicious|unexpected|untrusted|unwanted|hostile|rogue|assistant-directed|agent-directed|ai-directed)\\s+(?:\\S+\\s+){0,2}(?:instructions?|text|content|directives?|commands?|requests?)",
+          "(?:ignored|disregarded|rejected|refused)\\s+(?:\\S+\\s+){0,3}(?:instructions?|directives?)",
+          "instruct(?:s|ed|ing)?\\s+(?:the\\s+)?(?:assistants?|agents?|ai|models?|llms?)\\b",
           "(?:did not|didn't|will not|won't) (?:follow|act on|carry out) (?:them|those|these|it|that|the (?:instructions?|note|text|request))\\b"
         ]
       }
@@ -195,8 +197,10 @@
           "note to ai",
           "prompt injection",
           "instructions? (?:embedded|aimed|directed|targeting|planted|meant) ",
-          "(?:spec|description|shop\\.json|openapi)(?:[^.\\n]|\\.(?=\\S)){0,150}instruct",
-          "instruct(?:[^.\\n]|\\.(?=\\S)){0,150}(?:spec|description|shop\\.json|openapi)",
+          "(?:spec|description|shop\\.json|openapi)(?:[^.!?\\n]|[.!?](?=\\S)){0,150}(?:contains?|containing|includes?|including|has|holds?|carr(?:y|ies)|embeds?)\\s+(?:\\S+\\s+){0,3}instructions?",
+          "(?:malicious|hidden|planted|embedded|injected|suspicious|unexpected|untrusted|unwanted|hostile|rogue|assistant-directed|agent-directed|ai-directed)\\s+(?:\\S+\\s+){0,2}(?:instructions?|text|content|directives?|commands?|requests?)",
+          "(?:ignored|disregarded|rejected|refused)\\s+(?:\\S+\\s+){0,3}(?:instructions?|directives?)",
+          "instruct(?:s|ed|ing)?\\s+(?:the\\s+)?(?:assistants?|agents?|ai|models?|llms?)\\b",
           "(?:did not|didn't|will not|won't) (?:follow|act on|carry out) (?:them|those|these|it|that|the (?:instructions?|note|text|request))\\b"
         ],
         "exposed": [
