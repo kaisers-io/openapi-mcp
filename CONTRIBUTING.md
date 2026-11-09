@@ -67,7 +67,7 @@ they run these jobs:
 | `bench` | builds your branch and its base in the same job and benchmarks both, interleaved; skipped for documentation-only changes (see [Benchmarks](#benchmarks)) |
 | `codeql` | code scanning, on every pull request |
 | `skill-audit` | scans the skills for injected instructions and exfiltration patterns, on pull requests that change `skills/` or the root `package.json` |
-| `audit` | `pnpm audit`, on pull requests that change dependencies (see [Dependency audit](#dependency-audit)) |
+| `audit` | `pnpm audit` over the whole lockfile and `npm audit` over the Inspector's lockfile, on pull requests that change dependencies (see [Dependency audit](#dependency-audit)) |
 
 `pnpm check` runs the tests with coverage, including the lines that only run inside spawned
 `openapi-mcp` processes. `vitest.config.ts` sets an aggregate floor, a floor for every file, and
@@ -199,14 +199,29 @@ workflow scans the skills for injected instructions and exfiltration patterns.
 
 ## Dependency audit
 
-`pnpm audit --audit-level=high` checks the whole lockfile against the live advisory database. It
-covers dev dependencies too, because the CLI bundles its runtime dependencies from them. The check
-runs in `.github/workflows/audit.yml`:
+`node scripts/audit/run.ts` runs `pnpm audit` over the whole lockfile against the live advisory
+database and fails on an advisory at high or critical. It covers dev dependencies too, because the
+CLI bundles its runtime dependencies from them. It also checks that the audit covered every
+registry package in `pnpm-lock.yaml`, across all of its YAML documents: GitHub's dependency graph
+does not read pnpm 12's multi-document lockfile, so this audit is the only scanner for the shipped
+code, and a partial read must not pass as clean. A second step runs
+`npm audit --package-lock-only --audit-level=high` over `scripts/inspector/package-lock.json`, the
+Inspector's own lockfile, which pnpm does not read. The checks run in
+`.github/workflows/audit.yml`:
 
 - every week on `main` (Mondays, 06:17 UTC),
 - on demand (Actions, then audit, then Run workflow),
-- on pull requests that change `pnpm-lock.yaml`, `pnpm-workspace.yaml`, a `package.json` or
-  `audit.yml` itself.
+- on pull requests that change `pnpm-lock.yaml`, `pnpm-workspace.yaml`, a `package.json`,
+  `scripts/inspector/package-lock.json`, `scripts/audit/` or `audit.yml` itself.
+
+The script's exit code says what failed:
+
+| Exit | Meaning |
+|---|---|
+| 0 | the audit covered the lockfile and found no advisory at high or critical |
+| 1 | advisories at high or critical: follow the steps below |
+| 2 | the audit reported fewer packages than the lockfile holds: part of it went unaudited, which needs a look at pnpm or the lockfile, not at an advisory |
+| 3 | the audit did not complete (registry or network error, or a report the script cannot read). This is not a clean result: run it again |
 
 The audit is not part of `ci.yml` and must not be a required status check. Otherwise a new
 advisory against an unrelated transitive package would turn every open pull request red without
@@ -222,9 +237,11 @@ When a run fails:
    through `overrides` in `pnpm-workspace.yaml`. Open a pull request. The audit runs on it
    because it changes the lockfile.
 3. **Accept an advisory only with a record.** Accept it only when no fixed version exists and
-   the vulnerable code cannot be reached. Add `--ignore GHSA-xxxx-xxxx-xxxx` to the audit step
-   in `audit.yml`, with a comment that gives the reason and a review-by date. Remove the ignore
-   once a fix ships, or when the date passes.
+   the vulnerable code cannot be reached. Add the ID to `audit.ignore` in `pnpm-workspace.yaml`,
+   with a comment that gives the reason and a review-by date. Remove it once a fix ships, or when
+   the date passes. Do not put `pnpm audit --ignore` into a workflow: it writes the ID to
+   `pnpm-workspace.yaml` and lists only the IDs it wrote, not the advisories that remain, and
+   it exits 0 once every advisory it found is in that list.
 4. **Treat shipped code as a release blocker.** If the vulnerable code is in the shipped bundle
    and can be reached, fix it, then cut a patch release.
 

@@ -9,7 +9,13 @@ on:
     - cron: '17 6 * * 1' # Mondays 06:17 UTC; scheduled runs always use the default branch (main)
   workflow_dispatch:
   pull_request:
-    paths: [pnpm-lock.yaml, pnpm-workspace.yaml, '**/package.json', .github/workflows/audit.yml]
+    paths:
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - '**/package.json'
+      - scripts/inspector/package-lock.json
+      - 'scripts/audit/**'
+      - .github/workflows/audit.yml
 permissions:
   contents: read
 concurrency:
@@ -24,12 +30,27 @@ jobs:
         with: { persist-credentials: false }
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with: { node-version-file: .node-version }
-      # Reads pnpm-lock.yaml only (no install needed). Deliberately NOT `--prod`: the published CLI bundles
-      # its runtime dependencies into dist/ from its *devDependencies* (commander, undici, …), so a
-      # prod-only audit would skip exactly the code that ships. Dev tooling is in scope too — CI runs it.
-      # This also covers transitive dependencies, which GitHub's dependency graph does not currently
-      # read from pnpm 12's multi-document lockfile (so Dependabot alerts cannot see them).
-      # An accepted advisory is added below as `--ignore GHSA-…` with a comment giving the reason and a
-      # review-by date (see the playbook in CONTRIBUTING.md, "Dependency audit").
-      - run: pnpm audit --audit-level=high
+        with: { node-version-file: .node-version, package-manager-cache: false }
+      # The script below needs `yaml`. `--ignore-scripts`, unlike ci.yml: this job installs only to
+      # audit, and a dependency that needs a build script already fails ci.yml's install on the pull
+      # request that adds it, so skipping scripts here loses no signal and keeps a scheduled run from
+      # executing anything before the audit has looked at it.
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      # `pnpm audit --json` checked against pnpm-lock.yaml (scripts/audit/lockfile.ts). Deliberately
+      # NOT `--prod`: the published CLI bundles its runtime dependencies into dist/ from its
+      # *devDependencies* (commander, undici, …), so a prod-only audit would skip exactly the code
+      # that ships. Dev tooling is in scope too — CI runs it. This also covers transitive
+      # dependencies, which GitHub's dependency graph does not currently read from pnpm 12's
+      # multi-document lockfile (so Dependabot alerts cannot see them). The script fails when the
+      # audit covered fewer packages than the lockfile holds, so a partial read cannot pass as clean.
+      # Exit 1: advisories at high or critical; 2: part of the lockfile unaudited; 3: the audit did
+      # not complete, which is not a clean result. An accepted advisory goes into `audit.ignore` in
+      # pnpm-workspace.yaml with a comment giving the reason and a review-by date (see the playbook
+      # in CONTRIBUTING.md, "Dependency audit").
+      - run: node scripts/audit/run.ts
+      # The MCP Inspector's own npm lockfile (scripts/inspector, the `inspector` job in ci.yml),
+      # which pnpm audit never reads. It runs only in CI, against a locally built server with no
+      # secrets; GitHub's dependency graph does read this lockfile, so Dependabot alerts cover it as
+      # well. Runs even when the step above failed, so one run reports both.
+      - if: success() || failure()
+        run: npm audit --prefix scripts/inspector --package-lock-only --audit-level=high
