@@ -35,6 +35,17 @@ startup_timeout_sec = 60
   restrict operations with
   `--allow` and `--deny` instead.
 
+## Sandbox
+
+- Codex runs commands in a sandbox that may write only the project and, by default, has no
+  network. openapi-mcp keeps its spec cache under `~/.kaisers-io/openapi-mcp/`, so a command
+  can fail there with `the spec cache could not prepare the namespace for …: EPERM: operation
+  not permitted`. Run the same command outside the sandbox, with the user's approval. If it
+  passes there, the sandbox caused the error. If it fails there too, read that error: it names
+  its own cause. Do not point `HOME` elsewhere to get around it.
+- A DNS lookup or registry request that fails inside the sandbox says nothing about whether
+  the user's machine can reach the API. Ask before you conclude that it cannot.
+
 ## Status
 
 - `codex mcp list` and `codex mcp get shop` in a terminal, `/mcp` in a session.

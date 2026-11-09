@@ -18,7 +18,7 @@
 import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { RUN_ENV, readReply, run, verify } from './grade.ts';
+import { CLAUDE_ISOLATION, RUN_ENV, parseClaudeStream, readReply, run, verify } from './grade.ts';
 import { writeShim } from './server.ts';
 import type { Scenario } from './grade.ts';
 
@@ -60,7 +60,23 @@ const agentArgs = (host: Scenario['host'], model: string, prompt: string): [stri
         'codex',
         ['exec', '--model', model, '--sandbox', 'workspace-write', '--skip-git-repo-check', prompt],
       ]
-    : ['claude', ['-p', prompt, '--model', model, '--permission-mode', 'bypassPermissions']];
+    : [
+        'claude',
+        [
+          '-p',
+          prompt,
+          '--model',
+          model,
+          '--permission-mode',
+          'bypassPermissions',
+          // Only the project's settings (grade.ts, CLAUDE_ISOLATION)
+          ...CLAUDE_ISOLATION.args,
+          // Every tool call and its result, for the transcript; the reply is the `result` event
+          '--output-format',
+          'stream-json',
+          '--verbose',
+        ],
+      ];
 
 const loadScenarios = async (): Promise<Scenario[]> => {
   const data = JSON.parse(await readFile(join(EVALS, 'scenarios.json'), 'utf8')) as {
@@ -166,13 +182,18 @@ const playOnce = async (
     PATH: `${context.shimDir}:${process.env['PATH'] ?? ''}`,
     ...RUN_ENV,
     ...(await codexHome(scenario, project)),
+    ...(scenario.host === 'claude-code' ? CLAUDE_ISOLATION.env : {}),
   };
   const result = await run(command, args, { cwd: project, env });
-  await writeFile(join(project, 'transcript.txt'), `${result.stderr}${result.stdout}`);
-  await writeFile(join(project, 'reply.txt'), result.stdout);
+  const { reply, transcript } =
+    scenario.host === 'codex'
+      ? { reply: result.stdout, transcript: `${result.stderr}${result.stdout}` }
+      : parseClaudeStream(result.stdout);
+  await writeFile(join(project, 'transcript.txt'), `${result.stderr}${transcript}`);
+  await writeFile(join(project, 'reply.txt'), reply);
   const failures = [
     ...(result.code === 0 ? [] : [`the agent exited with ${String(result.code)}`]),
-    ...(await verify(project, result.stdout, scenario.expect, {
+    ...(await verify(project, reply, scenario.expect, {
       cli: BIN,
       setup: setupFiles(scenario, context.version),
     })),
