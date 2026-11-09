@@ -5,52 +5,26 @@
 // Each scenario gets a fresh project with the skill installed where the agent reads skills
 // (.claude/skills or .agents/skills), the eval specs, and its setup files. `npx` resolves
 // @kaisers-io/openapi-mcp to this repository's build through a shim first in PATH, so the
-// skill can use commands that are not released yet. Not part of CI: it needs the agent CLI,
-// its login, and spends tokens.
+// skill can use commands that are not released yet. The bin prefers dist/, so the runner
+// rebuilds (`pnpm build`) before anything else: a stale build would grade the previous code.
+// Not part of CI: it needs the agent CLI, its login, and spends tokens.
+//
+// `--runs N` plays each scenario N times, each in a fresh project, and prints a pass count per
+// scenario. The default is 3 for a full run and 1 when scenario ids are given, for iteration.
+// A run's transcript.txt holds everything the agent printed; the graders read only its final
+// reply (stdout, also saved as reply.txt). The graders live in grade.ts and are tested offline
+// by evals.test.ts.
 
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
 import { chmod, cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { RUN_ENV, readReply, run, verify } from './grade.ts';
+import type { Scenario } from './grade.ts';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const EVALS = join(import.meta.dirname, 'evals');
 const BIN = join(ROOT, 'packages', 'cli', 'bin', 'openapi-mcp.mjs');
-// The credential every scenario's user has set
-const RUN_ENV: Record<string, string> = { SHOP_API_TOKEN: 'Bearer example-token-not-a-secret' };
-
-interface Expect {
-  file?: string;
-  contains?: string[];
-  absent?: string[];
-  exposed?: string[];
-  transcript?: string[];
-}
-interface Scenario {
-  id: string;
-  skill: string;
-  host: 'claude-code' | 'codex';
-  prompt: string;
-  setup?: Record<string, string>;
-  expect: Expect;
-}
-
-const run = async (
-  command: string,
-  args: readonly string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv },
-): Promise<{ code: number; output: string }> => {
-  const child = spawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
-  let output = '';
-  const append = (chunk: Buffer): void => {
-    output += chunk.toString();
-  };
-  child.stdout.on('data', append);
-  child.stderr.on('data', append);
-  const [code] = (await once(child, 'close')) as [number];
-  return { code, output };
-};
+const FULL_RUNS = 3;
 
 // `npx -y @kaisers-io/openapi-mcp@<this version> ...` runs this repository's CLI; anything else,
 // an older version included, goes to the real npx
@@ -100,77 +74,6 @@ const agentArgs = (host: Scenario['host'], model: string, prompt: string): [stri
       ]
     : ['claude', ['-p', prompt, '--model', model, '--permission-mode', 'bypassPermissions']];
 
-// The tools the written Claude Code entry exposes, from `check` with its own arguments
-const exposedBy = async (project: string, configText: string): Promise<string[]> => {
-  const config = JSON.parse(configText) as {
-    mcpServers: Record<string, { args: string[]; env?: Record<string, string> }>;
-  };
-  const [entry] = Object.values(config.mcpServers);
-  const args = entry?.args ?? [];
-  // The entry's env as Claude Code expands it, from the run's own variables
-  const expanded = Object.fromEntries(
-    Object.entries(entry?.env ?? {}).map(([name, value]) => [
-      name,
-      value.replaceAll(
-        /\$\{(?<variable>\w+)\}/gu,
-        (_match, variable: string) => RUN_ENV[variable] ?? '',
-      ),
-    ]),
-  );
-  const serve = args.indexOf('serve');
-  const { output } = await run(
-    process.execPath,
-    [BIN, '--json', 'check', ...args.slice(serve + 1)],
-    {
-      cwd: project,
-      env: {
-        PATH: process.env['PATH'] ?? '',
-        HOME: project,
-        ...RUN_ENV,
-        ...expanded,
-      },
-    },
-  );
-  const report = JSON.parse(output) as { data: { apis?: { exposed: string[] }[] } };
-  return (report.data.apis ?? []).flatMap((api) => api.exposed).toSorted();
-};
-
-const verify = async (project: string, transcript: string, expect: Expect): Promise<string[]> => {
-  const failures: string[] = [];
-  const lower = transcript.toLowerCase();
-  for (const text of expect.transcript ?? []) {
-    if (!lower.includes(text.toLowerCase())) {
-      failures.push(`transcript lacks "${text}"`);
-    }
-  }
-  if (expect.file === undefined) {
-    return failures;
-  }
-  let text: string;
-  try {
-    text = await readFile(join(project, expect.file), 'utf8');
-  } catch {
-    return [...failures, `${expect.file} was not written`];
-  }
-  for (const part of expect.contains ?? []) {
-    if (!text.includes(part)) {
-      failures.push(`${expect.file} lacks "${part}"`);
-    }
-  }
-  for (const part of expect.absent ?? []) {
-    if (text.includes(part)) {
-      failures.push(`${expect.file} contains "${part}"`);
-    }
-  }
-  if (expect.exposed !== undefined) {
-    const exposed = await exposedBy(project, text);
-    if (exposed.join(' ') !== expect.exposed.toSorted().join(' ')) {
-      failures.push(`exposes ${exposed.join(' ')}`);
-    }
-  }
-  return failures;
-};
-
 const loadScenarios = async (): Promise<Scenario[]> => {
   const data = JSON.parse(await readFile(join(EVALS, 'scenarios.json'), 'utf8')) as {
     scenarios: Scenario[];
@@ -191,8 +94,20 @@ const cliVersion = async (): Promise<string> => {
   return (JSON.parse(text) as { version: string }).version;
 };
 
+// The bin runs dist/ whenever it exists, so every run rebuilds first: a run after a source change
+// would otherwise grade the previous build
+const build = async (): Promise<void> => {
+  const result = await run('pnpm', ['build'], { cwd: ROOT, env: process.env });
+  if (result.code !== 0) {
+    throw new Error(
+      `pnpm build failed (exit ${String(result.code)}):\n${result.stderr}${result.stdout}`,
+    );
+  }
+};
+
 // `prepare <id>`: a project and a shim directory for an agent that runs outside this script;
-// `verify <id> <project>`: the expectations against that project and its transcript.txt
+// `verify <id> <project>`: the expectations against that project and the agent's final reply,
+// saved by hand as reply.txt (or transcript.txt when it holds only the reply)
 const manual = async (mode: string, id: string, project: string | undefined): Promise<void> => {
   const scenarios = await loadScenarios();
   const scenario = scenarios.find((candidate) => candidate.id === id);
@@ -200,6 +115,7 @@ const manual = async (mode: string, id: string, project: string | undefined): Pr
     throw new Error(`no scenario ${id}`);
   }
   if (mode === 'prepare') {
+    await build();
     const version = await cliVersion();
     const prepared = await prepare(scenario, version);
     const shim = await shimPath(version);
@@ -210,31 +126,67 @@ const manual = async (mode: string, id: string, project: string | undefined): Pr
   if (project === undefined) {
     throw new Error('verify needs the project directory');
   }
-  const transcript = await readFile(join(project, 'transcript.txt'), 'utf8').catch(() => '');
-  const failures = await verify(project, transcript, scenario.expect);
+  const reply = await readReply(project);
+  const failures = await verify(project, reply, scenario.expect, BIN);
   process.stdout.write(
     `${failures.length === 0 ? 'pass' : 'FAIL'} ${id}\n${failures.map((line) => `  ${line}\n`).join('')}`,
   );
   process.exitCode = failures.length === 0 ? 0 : 1;
 };
 
+// `--runs N` anywhere in the arguments; the rest are the agent, the model and scenario ids
+const parseArgs = (argv: string[]): { positional: string[]; runs: number | undefined } => {
+  const at = argv.indexOf('--runs');
+  if (at === -1) {
+    return { positional: argv, runs: undefined };
+  }
+  const runs = Number(argv[at + 1]);
+  if (!Number.isSafeInteger(runs) || runs < 1) {
+    throw new Error('--runs needs a whole number of at least 1');
+  }
+  return { positional: argv.filter((_arg, index) => index !== at && index !== at + 1), runs };
+};
+
+// One run of one scenario in a fresh project: the failures, empty when it passed
+const playOnce = async (
+  scenario: Scenario,
+  model: string,
+  context: { version: string; shimDir: string },
+): Promise<{ project: string; failures: string[] }> => {
+  const project = await prepare(scenario, context.version);
+  const prompt = `Use the ${scenario.skill} skill. ${scenario.prompt}`;
+  const [command, args] = agentArgs(scenario.host, model, prompt);
+  const env = {
+    ...process.env,
+    PATH: `${context.shimDir}:${process.env['PATH'] ?? ''}`,
+    ...RUN_ENV,
+  };
+  const result = await run(command, args, { cwd: project, env });
+  await writeFile(join(project, 'transcript.txt'), `${result.stderr}${result.stdout}`);
+  await writeFile(join(project, 'reply.txt'), result.stdout);
+  const failures = [
+    ...(result.code === 0 ? [] : [`the agent exited with ${String(result.code)}`]),
+    ...(await verify(project, result.stdout, scenario.expect, BIN)),
+  ];
+  return { project, failures };
+};
+
 const main = async (): Promise<void> => {
-  const [agent, model, ...ids] = process.argv.slice(2);
+  const { positional, runs } = parseArgs(process.argv.slice(2));
+  const [agent, model, ...ids] = positional;
   if ((agent === 'prepare' || agent === 'verify') && model !== undefined) {
     await manual(agent, model, ids[0]);
     return;
   }
   if ((agent !== 'claude' && agent !== 'codex') || model === undefined) {
     process.stderr.write(
-      'usage: node scripts/skills/evals.ts <claude|codex> <model> [id...]\n       node scripts/skills/evals.ts prepare <id> | verify <id> <project>\n',
+      'usage: node scripts/skills/evals.ts <claude|codex> <model> [id...] [--runs N]\n       node scripts/skills/evals.ts prepare <id> | verify <id> <project>\n',
     );
     process.exitCode = 2;
     return;
   }
   const host = agent === 'codex' ? 'codex' : 'claude-code';
   const scenarios = await loadScenarios();
-  const version = await cliVersion();
-  const shimDir = await shimPath(version);
   const selected = scenarios.filter(
     (scenario) => scenario.host === host && (ids.length === 0 || ids.includes(scenario.id)),
   );
@@ -247,28 +199,31 @@ const main = async (): Promise<void> => {
     process.exitCode = 2;
     return;
   }
-  let failed = 0;
+  await build();
+  const version = await cliVersion();
+  const context = { version, shimDir: await shimPath(version) };
+  const count = runs ?? (ids.length === 0 ? FULL_RUNS : 1);
+  const scores: string[] = [];
+  let allPassed = true;
   for (const scenario of selected) {
-    const project = await prepare(scenario, version);
-    const prompt = `Use the ${scenario.skill} skill. ${scenario.prompt}`;
-    const [command, args] = agentArgs(scenario.host, model, prompt);
-    const env = {
-      ...process.env,
-      PATH: `${shimDir}:${process.env['PATH'] ?? ''}`,
-      ...RUN_ENV,
-    };
-    const result = await run(command, args, { cwd: project, env });
-    await writeFile(join(project, 'transcript.txt'), result.output);
-    const failures = [
-      ...(result.code === 0 ? [] : [`the agent exited with ${String(result.code)}`]),
-      ...(await verify(project, result.output, scenario.expect)),
-    ];
-    failed += failures.length === 0 ? 0 : 1;
-    process.stdout.write(
-      `${failures.length === 0 ? 'pass' : 'FAIL'} ${scenario.id} (${agent} ${model}) ${project}\n${failures.map((line) => `  ${line}\n`).join('')}`,
-    );
+    let passed = 0;
+    for (let index = 1; index <= count; index += 1) {
+      const { project, failures } = await playOnce(scenario, model, context);
+      passed += failures.length === 0 ? 1 : 0;
+      process.stdout.write(
+        `${failures.length === 0 ? 'pass' : 'FAIL'} ${scenario.id} run ${String(index)}/${String(count)} (${agent} ${model}) ${project}\n${failures.map((line) => `  ${line}\n`).join('')}`,
+      );
+    }
+    allPassed &&= passed === count;
+    scores.push(`${scenario.id} (${agent} ${model}): ${String(passed)}/${String(count)} passed`);
   }
-  process.exitCode = failed === 0 ? 0 : 1;
+  process.stdout.write(`\n${scores.join('\n')}\n`);
+  process.exitCode = allPassed ? 0 : 1;
 };
 
-await main();
+try {
+  await main();
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 2;
+}

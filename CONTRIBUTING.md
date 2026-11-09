@@ -198,16 +198,26 @@ secret rules in `scripts/skills/rules.ts`. If you change a flag or a behavior a 
 update the skill in the same pull request.
 
 `scripts/skills/evals/scenarios.json` describes how the skills must behave.
-`node scripts/skills/evals.ts <claude|codex> <model> [scenario...]` plays the scenarios against
-an agent with this checkout's CLI. It needs the agent CLI and its login, so it is not part of
-CI. When you change a skill's text, run the affected scenarios while you work, and run all of
-them with at least two models before the pull request. Put the results in its description.
-Before you change the skill after a failed run, read the run's transcript (`transcript.txt` in
-the project the runner prints): a scenario or its check can be wrong too. The `skill-audit`
-workflow scans the skills for injected instructions and exfiltration patterns. To run the Snyk
-scan locally, install `uv`, set `SNYK_TOKEN` to a Snyk API token and run `pnpm skills:audit`. It
-fails on any risk except the one waived in `docs/security.md` ("Agent skills"), and when no token
-is set. Its judges are LLM-based: re-run a lone finding before you act on it.
+`node scripts/skills/evals.ts <claude|codex> <model> [scenario...] [--runs N]` plays the
+scenarios against an agent with this checkout's CLI. It runs `pnpm build` first, because the bin
+prefers `dist/`. Each scenario runs N times, each in a fresh project (3 for a full run, 1 when you
+name scenarios), and the runner prints a pass count per scenario. It needs the agent CLI and its
+login, and every run costs money, so it is not part of CI. When you change a skill's text, run the
+affected scenarios while you work, and run all of them with at least two models before the pull
+request. Put the pass counts in its description. Before you change the skill after a failed run,
+read the run's transcript (`transcript.txt` in the project the runner prints): a scenario or its
+check can be wrong too. The checks read only the agent's final reply (`reply.txt`), not the
+steps that led to it.
+
+The checks themselves are tested without an agent: `scripts/skills/evals.test.ts` grades a
+crafted right run and crafted wrong runs for every scenario, and runs in `pnpm check`. A new
+scenario needs both, and every wrong run must fail.
+
+The `skill-audit` workflow scans the skills for injected instructions and exfiltration patterns.
+To run the Snyk scan locally, install `uv`, set `SNYK_TOKEN` to a Snyk API token and run
+`pnpm skills:audit`. It fails on any risk except the one waived in `docs/security.md` ("Agent
+skills"), and when no token is set. Its judges are LLM-based: re-run a lone finding before you
+act on it.
 
 ## Dependency audit
 

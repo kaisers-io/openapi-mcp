@@ -63,7 +63,9 @@ The skills under `skills/` have their own evals: `scripts/skills/evals/scenarios
   under Claude Code and Codex. The pull request reports the results.
 - A failing run is not a verdict until you have read its transcript (`transcript.txt` in the
   project the runner prints). The scenario or its check can be wrong too.
-- Run `pnpm build` first: the runner's `npx` shim runs the bin, which prefers `dist/`.
+- The runner rebuilds before it plays a scenario, because its `npx` shim runs the bin, which
+  prefers `dist/`. Its checks are tested offline in `scripts/skills/evals.test.ts`: a new
+  scenario needs a crafted right run and wrong runs there, and every wrong run must fail.
 - After a change to a flag or a behaviour a skill describes, run `pnpm skills:sync` and update
   the skill in the same pull request. `pnpm skills:check` (part of `pnpm check`) fails otherwise.
 

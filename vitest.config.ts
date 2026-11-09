@@ -8,6 +8,7 @@ export default defineConfig({
       'packages/cli/vitest.e2e.config.ts',
       'scripts/audit/vitest.config.ts',
       'scripts/bench/vitest.config.ts',
+      'scripts/skills/vitest.config.ts',
       'scripts/versions/vitest.config.ts',
     ],
     coverage: {
