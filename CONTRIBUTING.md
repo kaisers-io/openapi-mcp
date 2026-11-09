@@ -228,6 +228,15 @@ When a run fails:
 4. **Treat shipped code as a release blocker.** If the vulnerable code is in the shipped bundle
    and can be reached, fix it, then cut a patch release.
 
+`pnpm-workspace.yaml` sets `trustPolicy: no-downgrade`: an install fails with
+`ERR_PNPM_TRUST_DOWNGRADE` when a version was published with weaker trust evidence (no trusted
+publisher, no provenance) than an earlier release of the same package. When that happens, check
+who published the flagged version and how, with `npm view <package>@<version>` and the package's
+page on the registry. Add an exclusion to `trustPolicyExclude` only after that review, as
+`name@version` with a comment that gives the reason. Never add a bare package name, which waives
+every version, and never use `trustPolicyIgnoreAfter`, which waives the check by age.
+`packages/core/test/trust-policy-config.test.ts` fails when these settings are weakened.
+
 ## Security audit
 
 The source is audited with
