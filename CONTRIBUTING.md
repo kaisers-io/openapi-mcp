@@ -73,6 +73,20 @@ they run these jobs:
 `openapi-mcp` processes. `vitest.config.ts` sets an aggregate floor, a floor for every file, and
 stricter floors for the cache and the commands.
 
+### Tool pins bumped by hand
+
+Dependabot bumps the SHA-pinned actions and the npm dependencies. It does not read versions
+inside `run:` steps, so these pins are bumped by hand:
+
+| Pin | Where |
+|---|---|
+| `uv` | `.github/workflows/skill-audit.yml` (`pipx install uv==…`) |
+| `cisco-ai-skill-scanner` | `.github/workflows/skill-audit.yml` (`uvx --from …`) |
+
+Bump to the newest release that is at least a week old, the same cooldown Dependabot applies.
+Read the release notes first: a security release is a reason to bump outside the usual rhythm.
+`skill-audit.yml` sets `UV_EXCLUDE_NEWER: 7 days`, so a pin younger than a week fails the job.
+
 ## Things that will fail review
 
 - **Loosening configuration to make a check pass.** `.oxlintrc.json`, the vitest configs, the

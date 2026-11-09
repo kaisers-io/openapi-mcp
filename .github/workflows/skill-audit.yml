@@ -5,9 +5,15 @@ name: skill-audit
 #
 # Path-filtered: only a change to a skill, this workflow or the root package.json can change the
 # result. The scanner is a Python package run through uvx; it and uv are pinned to exact versions at
-# least a week old, as Dependabot's cooldown does for the other dependencies, and Dependabot cannot
-# see these two pins, so they are bumped by hand. pipx ships on GitHub's Ubuntu images, so
-# installing uv adds no third-party action.
+# least a week old, as Dependabot's cooldown does for the other dependencies. Dependabot does not
+# read versions in `run:` steps, so both pins are bumped by hand (CONTRIBUTING.md, "Tool pins
+# bumped by hand"). pipx ships on GitHub's Ubuntu images, so installing uv adds no third-party
+# action.
+#
+# Pinning the scanner does not pin what it resolves: every run resolves its transitive dependencies
+# afresh. UV_EXCLUDE_NEWER holds every release uv resolves back for a week, so a freshly hijacked
+# transitive release is not picked up in its first days, and a scanner pin younger than a week
+# fails resolution instead of passing quietly.
 on:
   push:
     branches: [main]
@@ -20,12 +26,14 @@ jobs:
   static:
     timeout-minutes: 5
     runs-on: ubuntu-latest
+    env:
+      UV_EXCLUDE_NEWER: 7 days
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
-      - run: pipx install uv==0.13.3
+      - run: pipx install uv==0.13.6
       # `scan-all skills` enumerates the skill directories below skills/; given one skill's own
       # directory it reports "No skills found to scan" and exits 0
       - run: >
-          uvx --from cisco-ai-skill-scanner==2.3.0 skill-scanner scan-all skills
+          uvx --from cisco-ai-skill-scanner==2.3.2 skill-scanner scan-all skills
           --policy balanced --recursive --fail-on-severity medium --format summary
