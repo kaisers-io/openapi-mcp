@@ -63,7 +63,7 @@ they run these jobs:
 | `ci` / smoke | packs the CLI, installs the tarball globally and runs `scripts/smoke-cli.sh` against the installed bundle, on Linux, macOS and Windows |
 | `ci` / inspector | lists and calls the tools of the built server with the official MCP Inspector CLI, in both protocol eras (`scripts/inspector/run.ts`) |
 | `ci` / versions | `pnpm versions --check`: every version site (the package version, the README and `docs/` pins, the `--json doctor` example) must agree, `CHANGELOG.md` must have one `## [Unreleased]` heading, and `packages/cli/CHANGELOG.md` must equal `CHANGELOG.md` |
-| `ci` / zizmor | lints the workflows themselves |
+| `ci` / zizmor | lints the workflows themselves, and fails when it cannot load one (`--strict-collection`) |
 | `bench` | builds your branch and its base in the same job and benchmarks both, interleaved; skipped for documentation-only changes (see [Benchmarks](#benchmarks)) |
 | `codeql` | code scanning, on every pull request |
 | `skill-audit` | scans the skills for injected instructions and exfiltration patterns, on pull requests that change `skills/` or the root `package.json` |
@@ -82,6 +82,7 @@ inside `run:` steps, so these pins are bumped by hand:
 |---|---|
 | `uv` | `.github/workflows/skill-audit.yml` (`pipx install uv==…`) |
 | `cisco-ai-skill-scanner` | `.github/workflows/skill-audit.yml` (`uvx --from …`) |
+| `zizmor` | `.github/workflows/ci.yml`, `zizmor` job (version and the sha256 of the manylinux x86_64 wheel, from PyPI) |
 
 Bump to the newest release that is at least a week old, the same cooldown Dependabot applies.
 Read the release notes first: a security release is a reason to bump outside the usual rhythm.
