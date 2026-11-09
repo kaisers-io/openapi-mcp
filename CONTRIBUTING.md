@@ -107,6 +107,12 @@ Read the release notes first: a security release is a reason to bump outside the
   a private helper is not.
 - **A new test file that spawns the CLI without registering it** in
   `packages/cli/test/subprocess-budget.ts`. A guard test fails otherwise.
+- **Bumping a schema library without regenerating the validators.** The committed validators in
+  `packages/core/src/spec/generated/` are compiled from `ajv`, `ajv-formats`, `ajv-draft-04` and
+  `@seriousme/openapi-schema-validator`. A bump of any of them needs
+  `node scripts/generate-validators.ts` in the same pull request. Dependabot opens its own pull
+  request for each library bundled into the CLI (`.github/dependabot.yml`); for these four, add
+  the regenerated files to it before it merges.
 
 ## Benchmarks
 
