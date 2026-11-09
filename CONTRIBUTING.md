@@ -66,7 +66,7 @@ they run these jobs:
 | `ci` / zizmor | lints the workflows themselves, and fails when it cannot load one (`--strict-collection`) |
 | `bench` | builds your branch and its base in the same job and benchmarks both, interleaved; skipped for documentation-only changes (see [Benchmarks](#benchmarks)) |
 | `codeql` | code scanning, on every pull request |
-| `skill-audit` | scans the skills for injected instructions and exfiltration patterns, on pull requests that change `skills/` or the root `package.json` |
+| `skill-audit` | scans the skills for injected instructions and exfiltration patterns, on pull requests that change `skills/` or the root `package.json`: `static` with Cisco's skill scanner, `snyk` with Snyk Agent Scan (`pnpm skills:audit`). `snyk` needs the `SNYK_TOKEN` secret, so it is skipped on pull requests from forks and from Dependabot |
 | `audit` | `pnpm audit` over the whole lockfile and `npm audit` over the Inspector's lockfile, on pull requests that change dependencies (see [Dependency audit](#dependency-audit)) |
 
 `pnpm check` runs the tests with coverage, including the lines that only run inside spawned
@@ -82,6 +82,7 @@ inside `run:` steps, so these pins are bumped by hand:
 |---|---|
 | `uv` | `.github/workflows/skill-audit.yml` (`pipx install uv==…`) |
 | `cisco-ai-skill-scanner` | `.github/workflows/skill-audit.yml` (`uvx --from …`) |
+| `snyk-agent-scan` | `skills:audit` in the root `package.json` (`uvx snyk-agent-scan@…`); read the risk names again on each bump, the scanner's output is not stable between releases |
 | `zizmor` | `.github/workflows/ci.yml`, `zizmor` job (version and the sha256 of the manylinux x86_64 wheel, from PyPI) |
 
 Bump to the newest release that is at least a week old, the same cooldown Dependabot applies.
@@ -202,7 +203,10 @@ CI. When you change a skill's text, run the affected scenarios while you work, a
 them with at least two models before the pull request. Put the results in its description.
 Before you change the skill after a failed run, read the run's transcript (`transcript.txt` in
 the project the runner prints): a scenario or its check can be wrong too. The `skill-audit`
-workflow scans the skills for injected instructions and exfiltration patterns.
+workflow scans the skills for injected instructions and exfiltration patterns. To run the Snyk
+scan locally, install `uv`, set `SNYK_TOKEN` to a Snyk API token and run `pnpm skills:audit`. It
+fails on any risk except the one waived in `docs/security.md` ("Agent skills"), and when no token
+is set. Its judges are LLM-based: re-run a lone finding before you act on it.
 
 ## Dependency audit
 
