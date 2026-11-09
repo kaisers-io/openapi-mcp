@@ -16,10 +16,13 @@ concurrency:
 #   it); the `# vX.Y.Z` comment is what Dependabot (.github/dependabot.yml) reads to bump the pin.
 # - `persist-credentials: false`: no job pushes or fetches after checkout, so the GITHUB_TOKEN is not
 #   left in .git/config where PR-controlled code (tests, build tooling) could read it.
-# - `pnpm install --ignore-scripts`: no dependency lifecycle script runs. Nothing in the lockfile needs
-#   one (native tools — oxlint, oxfmt, rolldown, typescript — ship as prebuilt optionalDependencies),
-#   and pnpm's own build-script allow-list would block them anyway; this makes the intent explicit and
-#   independent of that config.
+# - Plain `pnpm install`, without `--ignore-scripts`: no dependency lifecycle script runs, because
+#   pnpm builds only the packages listed in `allowBuilds` (none) and `strictDepBuilds: true` in
+#   pnpm-workspace.yaml makes the install fail on any other package that has one. Nothing in the
+#   lockfile needs one (native tools — oxlint, oxfmt, rolldown, typescript — ship as prebuilt
+#   optionalDependencies). `--ignore-scripts` would skip that failure silently, so a dependency
+#   update that starts to need a build script would pass here unnoticed. release.yml keeps the
+#   flag: by tag time the same lockfile has passed CI without it.
 # - No dependency cache (`package-manager-cache: false`): a fresh `pnpm install` takes a few seconds,
 #   and restoring the cached store failed on macOS runners ("Egress is over the account limit") and
 #   then stalled setup-node for about ten minutes before it continued without the cache.
@@ -45,7 +48,7 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version: '${{ matrix.node }}', node-version-file: .node-version, package-manager-cache: false }
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm install --frozen-lockfile
       - run: pnpm check
   # Windows runs the whole test suite on the dev Node pin, on every pull request and on main, so a
   # change to platform-specific code (paths, the cache's filesystem adapter, the bin stub, process
@@ -62,7 +65,7 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version-file: .node-version, package-manager-cache: false }
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm install --frozen-lockfile
       - run: pnpm test
   # --allow and --deny against the real GitHub, Stripe and DigitalOcean specs, through the real CLI over
   # MCP stdio, on every platform (packages/cli/test/filters-real-specs.test.ts). The specs are downloaded
@@ -81,7 +84,7 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version-file: .node-version, package-manager-cache: false }
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm install --frozen-lockfile
       - run: pnpm test:real-specs
   # Every version site (packages/cli/package.json, the README and docs pins, the doctor example) must
   # declare the same version; see scripts/versions/run.ts. All of them are knowable on a PR, so drift
@@ -105,7 +108,7 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version-file: .node-version, package-manager-cache: false }
-      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm install --frozen-lockfile
       - run: bash scripts/check-bundle-determinism.sh
   # The packed tarball is installed globally and driven through the installed bin on every supported
   # platform: on Windows that path goes through npm's `.cmd` shim, which no other job exercises.
@@ -125,7 +128,7 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version-file: .node-version, package-manager-cache: false }
-      - run: pnpm install --frozen-lockfile --ignore-scripts && pnpm build
+      - run: pnpm install --frozen-lockfile && pnpm build
       - name: smoke-test the globally-installed bin
         # The "ad-hoc" install is the tarball packed one line above from this checkout (it has no
         # dependencies of its own) — not a registry package outside the lockfile.
@@ -149,7 +152,7 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: { node-version-file: .node-version, package-manager-cache: false }
-      - run: pnpm install --frozen-lockfile --ignore-scripts && pnpm build
+      - run: pnpm install --frozen-lockfile && pnpm build
       - run: npm ci --prefix scripts/inspector --ignore-scripts --no-audit --no-fund
       - run: node scripts/inspector/run.ts
   # The dependency audit is NOT here: it lives in audit.yml (weekly on main, on demand, and on PRs that
