@@ -15,10 +15,11 @@
 // reply (stdout, also saved as reply.txt). The graders live in grade.ts and are tested offline
 // by evals.test.ts.
 
-import { chmod, cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { cp, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { RUN_ENV, readReply, run, verify } from './grade.ts';
+import { writeShim } from './server.ts';
 import type { Scenario } from './grade.ts';
 
 const ROOT = join(import.meta.dirname, '..', '..');
@@ -26,27 +27,14 @@ const EVALS = join(import.meta.dirname, 'evals');
 const BIN = join(ROOT, 'packages', 'cli', 'bin', 'openapi-mcp.mjs');
 const FULL_RUNS = 3;
 
-// `npx -y @kaisers-io/openapi-mcp@<this version> ...` runs this repository's CLI; anything else,
-// an older version included, goes to the real npx
-const writeShim = async (dir: string, realNpx: string, version: string): Promise<void> => {
-  const shim = join(dir, 'npx');
-  await writeFile(
-    shim,
-    [
-      '#!/bin/sh',
-      'for arg in "$@"; do',
-      '  case "$arg" in',
-      `    @kaisers-io/openapi-mcp@${version})`,
-      '      while [ "$1" != "$arg" ]; do shift; done; shift',
-      `      exec "${process.execPath}" "${BIN}" "$@" ;;`,
-      '  esac',
-      'done',
-      `exec "${realNpx}" "$@"`,
-      '',
-    ].join('\n'),
+// The files a scenario's setup writes, with CURRENT replaced by this checkout's version
+const setupFiles = (scenario: Scenario, version: string): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(scenario.setup ?? {}).map(([file, content]) => [
+      file,
+      content.replaceAll('CURRENT', version),
+    ]),
   );
-  await chmod(shim, 0o755);
-};
 
 const prepare = async (scenario: Scenario, version: string): Promise<string> => {
   const project = await mkdtemp(join(tmpdir(), `openapi-mcp-eval-${scenario.id}-`));
@@ -54,14 +42,14 @@ const prepare = async (scenario: Scenario, version: string): Promise<string> => 
   await cp(join(ROOT, 'skills', scenario.skill), join(project, skillsDir, scenario.skill), {
     recursive: true,
   });
-  await cp(join(EVALS, 'shop.json'), join(project, 'shop.json'));
+  await cp(join(EVALS, scenario.spec ?? 'shop.json'), join(project, 'shop.json'));
   await cp(
     join(ROOT, 'packages', 'cli', 'test', 'fixtures', 'petstore.json'),
     join(project, 'petstore.json'),
   );
-  for (const [file, content] of Object.entries(scenario.setup ?? {})) {
+  for (const [file, content] of Object.entries(setupFiles(scenario, version))) {
     await mkdir(dirname(join(project, file)), { recursive: true });
-    await writeFile(join(project, file), content.replaceAll('CURRENT', version));
+    await writeFile(join(project, file), content);
   }
   return project;
 };
@@ -85,7 +73,7 @@ const shimPath = async (version: string): Promise<string> => {
   // The npx next to this Node, not the one PATH finds: a version manager's npx shim would
   // resolve npx through PATH again and reach this shim
   const shimDir = await mkdtemp(join(tmpdir(), 'openapi-mcp-eval-bin-'));
-  await writeShim(shimDir, join(dirname(process.execPath), 'npx'), version);
+  await writeShim(shimDir, { cli: BIN, version, realNpx: join(dirname(process.execPath), 'npx') });
   return shimDir;
 };
 
@@ -127,7 +115,8 @@ const manual = async (mode: string, id: string, project: string | undefined): Pr
     throw new Error('verify needs the project directory');
   }
   const reply = await readReply(project);
-  const failures = await verify(project, reply, scenario.expect, BIN);
+  const setup = setupFiles(scenario, await cliVersion());
+  const failures = await verify(project, reply, scenario.expect, { cli: BIN, setup });
   process.stdout.write(
     `${failures.length === 0 ? 'pass' : 'FAIL'} ${id}\n${failures.map((line) => `  ${line}\n`).join('')}`,
   );
@@ -147,6 +136,22 @@ const parseArgs = (argv: string[]): { positional: string[]; runs: number | undef
   return { positional: argv.filter((_arg, index) => index !== at && index !== at + 1), runs };
 };
 
+// Codex runs commands in a sandbox that may write only the project, so the CLI's spec cache under
+// HOME would fail with EPERM and the agent could not use the CLI at all. Its HOME is a directory
+// inside the project instead; CODEX_HOME keeps the login and config. That HOME also keeps the
+// user's own skills out of the run, so the agent sees only the skill under test.
+const codexHome = async (scenario: Scenario, project: string): Promise<Record<string, string>> => {
+  if (scenario.host !== 'codex') {
+    return {};
+  }
+  const home = join(project, '.home');
+  await mkdir(home, { recursive: true });
+  return {
+    HOME: home,
+    CODEX_HOME: process.env['CODEX_HOME'] ?? join(homedir(), '.codex'),
+  };
+};
+
 // One run of one scenario in a fresh project: the failures, empty when it passed
 const playOnce = async (
   scenario: Scenario,
@@ -160,13 +165,17 @@ const playOnce = async (
     ...process.env,
     PATH: `${context.shimDir}:${process.env['PATH'] ?? ''}`,
     ...RUN_ENV,
+    ...(await codexHome(scenario, project)),
   };
   const result = await run(command, args, { cwd: project, env });
   await writeFile(join(project, 'transcript.txt'), `${result.stderr}${result.stdout}`);
   await writeFile(join(project, 'reply.txt'), result.stdout);
   const failures = [
     ...(result.code === 0 ? [] : [`the agent exited with ${String(result.code)}`]),
-    ...(await verify(project, result.stdout, scenario.expect, BIN)),
+    ...(await verify(project, result.stdout, scenario.expect, {
+      cli: BIN,
+      setup: setupFiles(scenario, context.version),
+    })),
   ];
   return { project, failures };
 };
@@ -204,6 +213,7 @@ const main = async (): Promise<void> => {
   const context = { version, shimDir: await shimPath(version) };
   const count = runs ?? (ids.length === 0 ? FULL_RUNS : 1);
   const scores: string[] = [];
+  const boundary: string[] = [];
   let allPassed = true;
   for (const scenario of selected) {
     let passed = 0;
@@ -215,9 +225,17 @@ const main = async (): Promise<void> => {
       );
     }
     allPassed &&= passed === count;
-    scores.push(`${scenario.id} (${agent} ${model}): ${String(passed)}/${String(count)} passed`);
+    const line = `${scenario.id} (${agent} ${model}): ${String(passed)}/${String(count)} passed`;
+    (scenario.boundary === true ? boundary : scores).push(line);
   }
-  process.stdout.write(`\n${scores.join('\n')}\n`);
+  // The hostile-content scenarios are read on their own: a run that obeyed planted text is not
+  // offset by a good score elsewhere
+  if (scores.length > 0) {
+    process.stdout.write(`\n${scores.join('\n')}\n`);
+  }
+  if (boundary.length > 0) {
+    process.stdout.write(`\nhostile content (read on their own):\n${boundary.join('\n')}\n`);
+  }
   process.exitCode = allPassed ? 0 : 1;
 };
 
