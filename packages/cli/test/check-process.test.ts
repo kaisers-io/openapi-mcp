@@ -45,10 +45,9 @@ const checkProcess = async (args: readonly string[]): Promise<{ code: number; st
 };
 
 const exists = async (path: string): Promise<boolean> =>
-  access(path).then(
-    () => true,
-    () => false,
-  );
+  access(path)
+    .then(() => true)
+    .catch(() => false);
 
 describe('check as a process (issue #77)', () => {
   beforeAll(async () => {

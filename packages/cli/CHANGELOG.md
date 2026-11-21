@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The CLI bundles newer libraries.** undici 8.12.4 fixes six vulnerabilities in its cache and
+  redirect interceptors, its Subresource Integrity check and cache replay. openapi-mcp follows
+  redirects itself and uses neither interceptor, so its requests were not affected. The release
+  also fixes the replay of HTTP/2 requests that raced a `GOAWAY`. The spec check now validates
+  OpenAPI 3.1 and 3.2 documents against the schemas of 2026-11-05
+  (@seriousme/openapi-schema-validator 2.12.0). @hono/node-server 2.1.8, which serves the HTTP
+  transport, no longer reads a backslash in the request path as a path separator: behind a
+  reverse proxy that allows or blocks by path, such a path could reach a route the proxy should
+  have blocked. hono 4.13.18 fixes five advisories, re2js 2.10.0 and commander 15.1.0 bring bug
+  fixes.
+- **The skills run MCP Inspector 2.15.0** instead of 2.13.0 when they reproduce a problem or test
+  a Windows credential setup.
+
 ## [0.12.1] - 2026-11-10
 
 ### Changed
