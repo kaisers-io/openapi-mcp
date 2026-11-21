@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-11-21
+
 ### Changed
 
 - **The CLI bundles newer libraries.** undici 8.12.4 fixes six vulnerabilities in its cache and
