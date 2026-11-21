@@ -46,10 +46,10 @@
     "prepack": "tsdown"
   },
   "devDependencies": {
-    "@commander-js/extra-typings": "15.0.0",
+    "@commander-js/extra-typings": "15.1.0",
     "@kaisers-io/openapi-mcp-core": "workspace:*",
-    "commander": "15.0.0",
-    "undici": "8.12.3"
+    "commander": "15.1.0",
+    "undici": "8.12.4"
   },
   "engines": {
     "node": "^22.19.0 || >=24.11.0"

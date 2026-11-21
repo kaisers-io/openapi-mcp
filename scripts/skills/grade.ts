@@ -182,10 +182,9 @@ export const CLAUDE_ISOLATION = {
 // reply is never replaced by a transcript that holds the agent's intermediate steps;
 // transcript.txt only for a run saved by hand without reply.txt
 export const readReply = async (project: string): Promise<string> => {
-  const hasReply = await access(join(project, 'reply.txt')).then(
-    () => true,
-    () => false,
-  );
+  const hasReply = await access(join(project, 'reply.txt'))
+    .then(() => true)
+    .catch(() => false);
   const file = hasReply ? 'reply.txt' : 'transcript.txt';
   return readFile(join(project, file), 'utf8').catch(() => '');
 };
