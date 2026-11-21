@@ -163,7 +163,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@hono/node-server@': 2.1.5
+  '@hono/node-server@': 2.1.8
 
 importers:
 
@@ -304,8 +304,8 @@ packages:
   '@emnapi/wasi-threads@2.2.0':
     resolution: {integrity: sha512-JP7OYH38Q7+pyTAe14raZHLQIK7BDKbdwji+Xi3pcd/6QkJYQH3SX4wu6EplGrGJWRepoNzedfm0G3B9Z4e9Rw==}
 
-  '@hono/node-server@2.1.5':
-    resolution: {integrity: sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==}
+  '@hono/node-server@2.1.8':
+    resolution: {integrity: sha512-jdf7FHh6A1lzjpHHQUgxsg2GeER2vMetnAOfeActzcoli6jamlK+NAwL6Dsr5Fl3BS3tYUQzCdtZjU8Qxv7bEA==}
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4 || ^5.0.0-0
@@ -1610,7 +1610,7 @@ snapshots:
       tslib: 2.9.1
     optional: true
 
-  '@hono/node-server@2.1.5(hono@4.13.18)':
+  '@hono/node-server@2.1.8(hono@4.13.18)':
     dependencies:
       hono: 4.13.18
 
@@ -1645,7 +1645,7 @@ snapshots:
 
   '@modelcontextprotocol/node@2.1.2(@modelcontextprotocol/server@2.4.0)':
     dependencies:
-      '@hono/node-server': 2.1.5(hono@4.13.18)
+      '@hono/node-server': 2.1.8(hono@4.13.18)
       '@modelcontextprotocol/server': 2.4.0
       hono: 4.13.18
 
