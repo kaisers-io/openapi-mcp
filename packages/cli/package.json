@@ -49,7 +49,7 @@
     "@commander-js/extra-typings": "15.1.0",
     "@kaisers-io/openapi-mcp-core": "workspace:*",
     "commander": "15.1.0",
-    "undici": "8.12.4"
+    "undici": "8.13.0"
   },
   "engines": {
     "node": "^22.19.0 || >=24.11.0"
